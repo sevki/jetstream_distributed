@@ -236,6 +236,8 @@ pub proof fn routing_one_hop(r: Raymond, n: NodeId, head: NodeId) -> (r2: Raymon
     ensures
         ray_inv(r2),
         has_token(r2, head),
+        // Exported so callers can chain `ray_reachable_from` across the hop.
+        ray_step(r, r2, RayStep::AssignPrivilege { node: n, head: head }),
         r2.nodes == r.nodes,
         r2.queue == r.queue.insert(n, r.queue[n].drop_first()),
         r2.using == r.using,

@@ -22,16 +22,17 @@ use crate::transfer::*;
 
 verus! {
 
-/// Routing moves requests, never the token, so the coupling is untouched.
-pub proof fn lemma_composed_route_preserves_inv(pre: Composed, post: Composed, s: RayStep)
+/// A Raymond step that does not move the token - routing or critical-section
+/// bookkeeping - leaves the coupling untouched.
+pub proof fn lemma_composed_ray_preserves_inv(pre: Composed, post: Composed, s: RayStep)
     requires
         composed_inv(pre),
-        cs_route(pre, post, s),
+        cs_ray(pre, post, s),
     ensures
         composed_inv(post),
 {
     lemma_ray_step_preserves_inv(pre.ray, post.ray, s);
-    lemma_routing_preserves_holder(pre.ray, post.ray, s);
+    lemma_token_preserving_steps_keep_holder(pre.ray, post.ray, s);
     assert forall|nd: NodeId, e: Epoch|
         may_mutate(post.own.actors[post.actor], nd, e) implies has_token(post.ray, nd) by {
         assert(has_token(pre.ray, nd));
@@ -125,8 +126,8 @@ pub proof fn theorem_composed_step_preserves_inv(pre: Composed, post: Composed, 
         composed_inv(post),
 {
     match s {
-        ComposedStep::Route { ray_step } => {
-            lemma_composed_route_preserves_inv(pre, post, ray_step);
+        ComposedStep::Ray { ray_step } => {
+            lemma_composed_ray_preserves_inv(pre, post, ray_step);
         },
         ComposedStep::Own { own_step } => {
             lemma_composed_own_preserves_inv(pre, post, own_step);
@@ -195,6 +196,45 @@ pub proof fn theorem_composed_reachable_inv(c: Composed)
 {
     let tr = choose|tr: Seq<Composed>| composed_valid_execution(tr) && tr[tr.len() - 1] == c;
     lemma_composed_execution_inv(tr, tr.len() - 1);
+}
+
+/// The composed machine really does admit critical-section entry.
+///
+/// Without this, `composed_next` could not represent any Raymond execution that
+/// enters a critical section, every composed-reachable state would keep `using`
+/// uniformly false, and the composed theorems below would only cover a
+/// degenerate fragment of the real behaviour.
+pub proof fn theorem_composed_admits_critical_section(pre: Composed, post: Composed, n: NodeId)
+    requires
+        composed_inv(pre),
+        ray_enter_cs(pre.ray, post.ray, n),
+        post.own == pre.own,
+        post.actor == pre.actor,
+    ensures
+        composed_step(pre, post, ComposedStep::Ray { ray_step: RayStep::EnterCs { node: n } }),
+        composed_inv(post),
+        post.ray.using[n],
+{
+    lemma_composed_ray_preserves_inv(pre, post, RayStep::EnterCs { node: n });
+}
+
+/// Leaving the critical section is likewise a legal composed step.
+pub proof fn theorem_composed_admits_critical_section_exit(
+    pre: Composed,
+    post: Composed,
+    n: NodeId,
+)
+    requires
+        composed_inv(pre),
+        ray_exit_cs(pre.ray, post.ray, n),
+        post.own == pre.own,
+        post.actor == pre.actor,
+    ensures
+        composed_step(pre, post, ComposedStep::Ray { ray_step: RayStep::ExitCs { node: n } }),
+        composed_inv(post),
+        !post.ray.using[n],
+{
+    lemma_composed_ray_preserves_inv(pre, post, RayStep::ExitCs { node: n });
 }
 
 /// **The composed safety property.**

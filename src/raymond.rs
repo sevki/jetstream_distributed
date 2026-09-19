@@ -236,6 +236,23 @@ pub open spec fn is_routing_step(s: RayStep) -> bool {
     }
 }
 
+/// A step that does not move the token: everything except `AssignPrivilege`.
+///
+/// Both request routing and critical-section bookkeeping qualify - they leave
+/// `holder` untouched. This is the classification the composed machine needs:
+/// every Raymond step is either token-preserving (and can be carried freely) or
+/// the token transfer itself (which needs the ownership guard).
+pub open spec fn preserves_token(s: RayStep) -> bool {
+    match s {
+        RayStep::AssignPrivilege { node: _, head: _ } => false,
+        RayStep::RequestCs { node: _ } => true,
+        RayStep::MakeRequest { node: _ } => true,
+        RayStep::ReceiveRequest { at: _, from: _ } => true,
+        RayStep::EnterCs { node: _ } => true,
+        RayStep::ExitCs { node: _ } => true,
+    }
+}
+
 /// Initial routing state: exactly one node holds the token, no requests are
 /// outstanding, nobody is in the critical section.
 pub open spec fn ray_init(r: Raymond, root: NodeId) -> bool {

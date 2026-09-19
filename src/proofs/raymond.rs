@@ -58,6 +58,30 @@ pub proof fn lemma_routing_preserves_holder(pre: Raymond, post: Raymond, s: RayS
     }
 }
 
+/// Every step except the token transfer leaves `holder` - and therefore token
+/// possession - completely alone. This covers critical-section bookkeeping as
+/// well as request routing.
+pub proof fn lemma_token_preserving_steps_keep_holder(pre: Raymond, post: Raymond, s: RayStep)
+    requires
+        ray_step(pre, post, s),
+        preserves_token(s),
+    ensures
+        post.holder == pre.holder,
+        post.nodes == pre.nodes,
+        forall|n: NodeId| #[trigger] has_token(post, n) <==> has_token(pre, n),
+{
+    match s {
+        RayStep::RequestCs { node } => {},
+        RayStep::MakeRequest { node } => {},
+        RayStep::ReceiveRequest { at, from } => {},
+        RayStep::EnterCs { node } => {},
+        RayStep::ExitCs { node } => {},
+        RayStep::AssignPrivilege { node, head } => {
+            assert(false);
+        },
+    }
+}
+
 /// **Holder/routing changes cannot manufacture ownership.**
 ///
 /// A routing step leaves the token where it is, therefore it leaves the

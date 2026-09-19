@@ -157,6 +157,7 @@ verifying, the build fails.
 | R3 | **Raymond: duplicate/reordered requests cannot create a second owner** | `proofs::raymond::theorem_duplicate_requests_are_safe` | Raymond invariant |
 | R4 | **Raymond: token transfer preserves ownership safety** | `proofs::composed::lemma_composed_pass_token_preserves_inv` (and, as a layer-local lemma, `proofs::raymond::theorem_token_transfer_preserves_ownership_safety`) | none — in the composed machine the release-before-transfer condition is a *guard*, not an assumption |
 | R5 | **Composed exclusivity**: in every reachable composed state at most one node may mutate the actor, and it is the node holding the token | `proofs::composed::theorem_composed_exclusivity` | composed reachability |
+| C0 | The composed machine admits critical-section entry and exit, so its reachable states are not a degenerate `using`-free fragment | `proofs::composed::theorem_composed_admits_critical_section`, `..._exit` | composed invariant holds before the step |
 | C | The coupling is an **invariant** of the composed machine: `composed_init ==> composed_inv`, `composed_inv /\ composed_next ==> composed_inv`, hence `composed_reachable ==> composed_inv` | `proofs::composed::theorem_composed_reachable_inv`, `theorem_composed_step_preserves_inv` | the composed transition relation |
 | R6 | A concrete routing execution: request `D → B → A → C[token]`, token `C → A → B → D`, with the unique-token invariant carried through all eleven hops, then a twelfth step redelivering `D`'s original request after the token has finished moving | `proofs::raymond_routing::scenario_request_and_token_routing` | four distinct nodes |
 | R7 | A request outlives the topology it was routed against: after the token moves it is still in `requests` and still deliverable | `proofs::raymond::theorem_delayed_request_survives_token_move` | none |
@@ -213,7 +214,17 @@ synchronisation is a **guard**:
 * `PassToken` may only fire while the actor is *not* `Owned` — ownership must be
   released before the token is allowed to move;
 * `AcquireUnderToken` may only fire for a node that *holds* the token — authority
-  cannot be taken by a node routing has not elected.
+  cannot be taken by a node routing has not elected;
+* `Ray` carries every Raymond step that does *not* move the token — request
+  routing and critical-section entry/exit alike — and `Own` carries every
+  ownership transition that does not create authority over the actor.
+
+The `Ray` carrier is guarded on `preserves_token`, deliberately wider than
+`is_routing_step`: if it admitted only routing, no composed execution could ever
+enter a critical section, every composed-reachable state would keep `using`
+uniformly false, and the theorems below would cover only a degenerate fragment
+of the real behaviour. `theorem_composed_admits_critical_section` is the witness
+that this is not the case.
 
 `couples` is then an invariant of that machine rather than a side condition,
 which is what makes "token transfer preserves ownership safety" a claim about

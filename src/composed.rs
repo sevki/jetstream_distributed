@@ -15,8 +15,9 @@
 //!   the token - authority cannot be taken by a node the routing layer has not
 //!   elected;
 //! * [`ComposedStep::Own`] carries any ownership transition that does not create
-//!   authority over this actor, and [`ComposedStep::Route`] carries any request
-//!   routing, which never moves the token at all.
+//!   authority over this actor, and [`ComposedStep::Ray`] carries every Raymond
+//!   step that does not move the token - request routing and critical-section
+//!   bookkeeping alike.
 //!
 //! (The two carried-step fields are named apart because Verus only generates the
 //! `->field` accessor when a field has one type across all variants.)
@@ -61,9 +62,15 @@ pub open spec fn composed_inv(c: Composed) -> bool {
     &&& couples(c.ray, c.own.actors[c.actor])
 }
 
-/// Request routing. Never moves the token, never touches ownership.
-pub open spec fn cs_route(pre: Composed, post: Composed, s: RayStep) -> bool {
-    &&& is_routing_step(s)
+/// Any Raymond step that does not move the token: request routing *and*
+/// critical-section bookkeeping. None of them touch ownership.
+///
+/// The guard is `preserves_token`, not `is_routing_step`: the composed machine
+/// has to admit `EnterCs` and `ExitCs` too, or no composed execution could ever
+/// enter a critical section and the composed theorems would only cover states
+/// where `using` is uniformly false.
+pub open spec fn cs_ray(pre: Composed, post: Composed, s: RayStep) -> bool {
+    &&& preserves_token(s)
     &&& ray_step(pre.ray, post.ray, s)
     &&& post.own == pre.own
     &&& post.actor == pre.actor
@@ -99,7 +106,7 @@ pub open spec fn cs_acquire_under_token(pre: Composed, post: Composed, n: NodeId
 
 /// The labelled transitions of the composed machine.
 pub enum ComposedStep {
-    Route { ray_step: RayStep },
+    Ray { ray_step: RayStep },
     Own { own_step: Step },
     PassToken { node: NodeId, head: NodeId },
     AcquireUnderToken { node: NodeId },
@@ -107,7 +114,7 @@ pub enum ComposedStep {
 
 pub open spec fn composed_step(pre: Composed, post: Composed, s: ComposedStep) -> bool {
     match s {
-        ComposedStep::Route { ray_step } => cs_route(pre, post, ray_step),
+        ComposedStep::Ray { ray_step } => cs_ray(pre, post, ray_step),
         ComposedStep::Own { own_step } => cs_own(pre, post, own_step),
         ComposedStep::PassToken { node, head } => cs_pass_token(pre, post, node, head),
         ComposedStep::AcquireUnderToken { node } => cs_acquire_under_token(pre, post, node),

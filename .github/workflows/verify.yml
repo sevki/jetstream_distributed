@@ -19,6 +19,9 @@ jobs:
   verus:
     name: Verus proof check
     runs-on: ubuntu-24.04
+    # Bound the job: a hung verification is a CI defect in its own right, and a
+    # timeout gives a reportable failure instead of a runner that vanishes.
+    timeout-minutes: 15
     env:
       # Pinned Verus release. The Rust toolchain below must be the one this
       # release was built against (see rust-toolchain.toml).
@@ -93,6 +96,7 @@ jobs:
   cargo-verus:
     name: cargo verus verify
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     env:
       VERUS_VERSION: 0.2026.09.13.671956e
       VERUS_TOOLCHAIN: 1.98.1-x86_64-unknown-linux-gnu

@@ -57,7 +57,10 @@ jobs:
       - name: Verify all proofs
         run: |
           set -o pipefail
-          verus --crate-type=lib src/lib.rs --triggers-mode silent | tee /tmp/verus-output.txt
+          # Verify in parallel: several of the concrete scenarios are individually
+          # expensive, and the default single-threaded run makes the job drag.
+          verus --crate-type=lib src/lib.rs --triggers-mode silent \
+            --num-threads "$(nproc)" | tee /tmp/verus-output.txt
           grep -E '^verification results' /tmp/verus-output.txt >> "$GITHUB_STEP_SUMMARY"
 
       # The README claims the proofs use no escape hatches. Enforce that claim.

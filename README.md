@@ -393,11 +393,14 @@ invariant preservation):
 The proofs use no `assume`, `admit`, `external_body`, `axiom`, or any other way
 of asserting something Verus did not check.
 
-Three of the long concrete scenarios carry `#[verifier::rlimit(...)]`. That is a
-**solver budget, not an assumption**: it raises the resource ceiling for one
-SMT query and cannot let an unproven fact through. Those scenarios each replay a
-dozen protocol steps over concrete `Map`/`Set` literals, which is simply
-expensive to discharge. CI greps `src/` for the real escape hatches and fails the
-build if any appear. Everything the proofs rely on that
+Some of the long concrete scenarios carry `#[verifier::rlimit(...)]`. That is a
+**solver budget, not an assumption**: it raises the resource ceiling for one SMT
+query and cannot let an unproven fact through. Those scenarios replay a dozen
+protocol steps over concrete `Map`/`Set` literals, which is simply expensive to
+discharge — the composed handover is additionally split into
+`handover_phase_release` and `handover_phase_acquire`, which pass the mid state
+across as an *abstract* characterisation so neither phase has to reason about the
+other's literals. CI greps `src/` for the real escape hatches and fails the build
+if any appear. Everything the proofs rely on that
 is not derived is a modelled transition or an explicitly documented entry in the
 failure-model table above.

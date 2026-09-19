@@ -45,25 +45,38 @@ verus! {
 /// This is the non-vacuity witness for every `composed_reachable` theorem: it
 /// exhibits a reachable composed state in which somebody actually owns the actor
 /// and actually holds the token.
-#[verifier::rlimit(60)]
-pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
+/// Phase one of the handover: from `composed_init` to the point where the actor
+/// has been released at epoch 42 and `A` still holds the token.
+///
+/// Returning the state with an *abstract* characterisation rather than letting
+/// the caller keep the literal is what keeps the proof tractable: each phase
+/// reasons about a handful of `insert`s over an opaque base instead of a dozen
+/// nested `Map`/`Set` literals, which is what exhausted the solver before.
+#[verifier::rlimit(40)]
+pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (c: Composed)
     requires
         a != b,
     ensures
-        exists|c: Composed|
-            {
-                &&& #[trigger] composed_reachable(c)
-                &&& may_mutate(c.own.actors[c.actor], b, 42)
-                &&& has_token(c.ray, b)
-                &&& c.own.issued.contains(Token { actor: x, epoch: 41, holder: a })
-                &&& !may_mutate(c.own.actors[c.actor], a, 41)
-            },
+        composed_reachable(c),
+        composed_inv(c),
+        c.actor == x,
+        c.own.actors[x] == (OwnershipState::Unowned { epoch: 42, intended_owner: b }),
+        c.own.live.contains(b),
+        c.own.network.contains(Message::Grant { actor: x, to: b, epoch: 42 }),
+        c.own.issued.contains(Token { actor: x, epoch: 41, holder: a }),
+        c.ray.nodes.contains(a),
+        c.ray.nodes.contains(b),
+        c.ray.holder[b] == a,
+        has_token(c.ray, a),
+        c.ray.queue[a].len() == 0,
+        c.ray.queue[b].len() == 0,
+        !c.ray.asked[b],
+        !c.ray.using[a],
 {
     let nodes = Set::<NodeId>::empty().insert(a).insert(b);
     let stale = Token { actor: x, epoch: 41, holder: a };
     let empty_q = Seq::<NodeId>::empty();
 
-    // --- the ownership layer starts unowned at epoch 41 --------------------
     let own0 = System {
         actors: Map::<ActorId, OwnershipState>::empty().insert(
             x,
@@ -74,8 +87,6 @@ pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
         issued: Set::<Token>::empty(),
         network: Set::<Message>::empty(),
     };
-
-    // --- the routing layer starts with A holding the token -----------------
     let ray0 = Raymond {
         nodes: nodes,
         holder: Map::<NodeId, NodeId>::empty().insert(a, a).insert(b, a),
@@ -96,7 +107,7 @@ pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
     lemma_composed_init_inv(c0);
     assert(has_token(c0.ray, a));
 
-    // --- 1. publish the grant for epoch 41 ---------------------------------
+    // 1. publish the grant for epoch 41
     let grant_41 = Message::Grant { actor: x, to: a, epoch: 41 };
     let c1 = Composed {
         own: System {
@@ -115,7 +126,7 @@ pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
     lemma_composed_reachable_step(c0, c1, s1);
     theorem_composed_step_preserves_inv(c0, c1, s1);
 
-    // --- 2. A takes ownership, and it may only do so because it has the token
+    // 2. A takes ownership - permitted only because it holds the token
     let c2 = Composed {
         own: System {
             actors: c1.own.actors.insert(x, OwnershipState::Owned { owner: a, epoch: 41 }),
@@ -137,7 +148,7 @@ pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
     theorem_composed_step_preserves_inv(c1, c2, s2);
     assert(may_mutate(c2.own.actors[x], a, 41));
 
-    // --- 3. the handover begins; A is fenced out immediately ---------------
+    // 3. the handover begins; A is fenced out immediately
     let revoke = Message::Revoke { actor: x, target: a, old_epoch: 41, new_epoch: 42 };
     let c3 = Composed {
         own: System {
@@ -160,7 +171,7 @@ pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
     lemma_composed_reachable_step(c2, c3, s3);
     theorem_composed_step_preserves_inv(c2, c3, s3);
 
-    // --- 4. A acknowledges -------------------------------------------------
+    // 4. A acknowledges
     let released = Message::Released { actor: x, from: a, new_epoch: 42 };
     let c4 = Composed {
         own: System {
@@ -182,11 +193,14 @@ pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
     lemma_composed_reachable_step(c3, c4, s4);
     theorem_composed_step_preserves_inv(c3, c4, s4);
 
-    // --- 5. the actor becomes unowned at 42; only now may the token move ---
+    // 5. the actor becomes unowned at 42 - only now may the token move
     let grant_42 = Message::Grant { actor: x, to: b, epoch: 42 };
     let c5 = Composed {
         own: System {
-            actors: c4.own.actors.insert(x, OwnershipState::Unowned { epoch: 42, intended_owner: b }),
+            actors: c4.own.actors.insert(
+                x,
+                OwnershipState::Unowned { epoch: 42, intended_owner: b },
+            ),
             nodes: c4.own.nodes,
             live: c4.own.live,
             issued: c4.own.issued,
@@ -201,27 +215,62 @@ pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
     assert(composed_step(c4, c5, s5));
     lemma_composed_reachable_step(c4, c5, s5);
     theorem_composed_step_preserves_inv(c4, c5, s5);
-    assert(!is_owned(c5.own.actors[x]));
+    assert(is_unowned(c5.own.actors[x]));
+    assert(has_token(c5.ray, a));
+    c5
+}
 
-    // --- 6. B asks for the token -------------------------------------------
+/// Phase two: `B` requests the token, it moves `A -> B`, and `B` takes
+/// ownership at epoch 42.
+///
+/// Takes the mid state abstractly, so the solver never sees the literals built
+/// in phase one.
+#[verifier::rlimit(40)]
+pub proof fn handover_phase_acquire(c: Composed, x: ActorId, a: NodeId, b: NodeId) -> (r: Composed)
+    requires
+        a != b,
+        composed_reachable(c),
+        composed_inv(c),
+        c.actor == x,
+        c.own.actors[x] == (OwnershipState::Unowned { epoch: 42, intended_owner: b }),
+        c.own.live.contains(b),
+        c.own.network.contains(Message::Grant { actor: x, to: b, epoch: 42 }),
+        c.own.issued.contains(Token { actor: x, epoch: 41, holder: a }),
+        c.ray.nodes.contains(a),
+        c.ray.nodes.contains(b),
+        c.ray.holder[b] == a,
+        has_token(c.ray, a),
+        c.ray.queue[a].len() == 0,
+        c.ray.queue[b].len() == 0,
+        !c.ray.asked[b],
+        !c.ray.using[a],
+    ensures
+        composed_reachable(r),
+        composed_inv(r),
+        r.actor == x,
+        r.own.actors[x] == (OwnershipState::Owned { owner: b, epoch: 42 }),
+        has_token(r.ray, b),
+        r.own.issued.contains(Token { actor: x, epoch: 41, holder: a }),
+{
+    // 6. B asks for the token
     let c6 = Composed {
-        own: c5.own,
+        own: c.own,
         ray: Raymond {
-            nodes: c5.ray.nodes,
-            holder: c5.ray.holder,
-            queue: c5.ray.queue.insert(b, c5.ray.queue[b].push(b)),
-            asked: c5.ray.asked,
-            using: c5.ray.using,
-            requests: c5.ray.requests,
+            nodes: c.ray.nodes,
+            holder: c.ray.holder,
+            queue: c.ray.queue.insert(b, c.ray.queue[b].push(b)),
+            asked: c.ray.asked,
+            using: c.ray.using,
+            requests: c.ray.requests,
         },
         actor: x,
     };
     let s6 = ComposedStep::Ray { ray_step: RayStep::RequestCs { node: b } };
-    assert(composed_step(c5, c6, s6));
-    lemma_composed_reachable_step(c5, c6, s6);
-    theorem_composed_step_preserves_inv(c5, c6, s6);
+    assert(composed_step(c, c6, s6));
+    lemma_composed_reachable_step(c, c6, s6);
+    theorem_composed_step_preserves_inv(c, c6, s6);
 
-    // --- 7. B routes the request to its holder, A --------------------------
+    // 7. B routes the request to its holder, A
     let c7 = Composed {
         own: c6.own,
         ray: Raymond {
@@ -242,7 +291,7 @@ pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
     lemma_composed_reachable_step(c6, c7, s7);
     theorem_composed_step_preserves_inv(c6, c7, s7);
 
-    // --- 8. A receives it and queues B -------------------------------------
+    // 8. A receives it and queues B
     let c8 = Composed {
         own: c7.own,
         ray: Raymond {
@@ -261,7 +310,7 @@ pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
     lemma_composed_reachable_step(c7, c8, s8);
     theorem_composed_step_preserves_inv(c7, c8, s8);
 
-    // --- 9. the token moves A -> B. Legal *only* because X is Unowned ------
+    // 9. the token moves A -> B. Legal only because X is Unowned
     let c9 = Composed {
         own: c8.own,
         ray: Raymond {
@@ -279,14 +328,14 @@ pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
     assert(!c8.ray.using[a]);
     assert(c8.ray.queue[a].len() == 1);
     assert(c8.ray.queue[a][0] == b);
-    assert(!is_owned(c8.own.actors[x]));
+    assert(is_unowned(c8.own.actors[x]));
     assert(composed_step(c8, c9, s9));
     lemma_composed_reachable_step(c8, c9, s9);
     theorem_composed_step_preserves_inv(c8, c9, s9);
     lemma_composed_pass_token_preserves_inv(c8, c9, a, b);
     assert(has_token(c9.ray, b));
 
-    // --- 10. B takes ownership at epoch 42, holding the token --------------
+    // 10. B takes ownership at epoch 42, holding the token
     let c10 = Composed {
         own: System {
             actors: c9.own.actors.insert(x, OwnershipState::Owned { owner: b, epoch: 42 }),
@@ -301,20 +350,40 @@ pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
     let s10 = ComposedStep::AcquireUnderToken { node: b };
     assert(c9.own.live.contains(b));
     assert(c9.own.actors[x] == (OwnershipState::Unowned { epoch: 42, intended_owner: b }));
-    assert(c9.own.network.contains(grant_42));
+    assert(c9.own.network.contains(Message::Grant { actor: x, to: b, epoch: 42 }));
     assert(has_token(c9.ray, b));
     assert(tr_acquire(c9.own, c10.own, x, b));
     assert(composed_step(c9, c10, s10));
     lemma_composed_reachable_step(c9, c10, s10);
     theorem_composed_step_preserves_inv(c9, c10, s10);
+    c10
+}
 
-    // --- the payoff --------------------------------------------------------
-    assert(composed_reachable(c10));
-    assert(c10.own.actors[x] == (OwnershipState::Owned { owner: b, epoch: 42 }));
-    assert(may_mutate(c10.own.actors[c10.actor], b, 42));
-    assert(has_token(c10.ray, b));
-    assert(c10.own.issued.contains(stale));
-    assert(!may_mutate(c10.own.actors[c10.actor], a, 41));
+/// A full ownership handover coordinated across both layers.
+///
+/// This is the non-vacuity witness for every `composed_reachable` theorem: it
+/// exhibits a reachable composed state in which somebody actually owns the actor
+/// and actually holds the token.
+pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
+    requires
+        a != b,
+    ensures
+        exists|c: Composed|
+            {
+                &&& #[trigger] composed_reachable(c)
+                &&& may_mutate(c.own.actors[c.actor], b, 42)
+                &&& has_token(c.ray, b)
+                &&& c.own.issued.contains(Token { actor: x, epoch: 41, holder: a })
+                &&& !may_mutate(c.own.actors[c.actor], a, 41)
+            },
+{
+    let mid = handover_phase_release(x, a, b);
+    let fin = handover_phase_acquire(mid, x, a, b);
+    assert(composed_reachable(fin));
+    assert(may_mutate(fin.own.actors[fin.actor], b, 42));
+    assert(has_token(fin.ray, b));
+    assert(fin.own.issued.contains(Token { actor: x, epoch: 41, holder: a }));
+    assert(!may_mutate(fin.own.actors[fin.actor], a, 41));
 }
 
 /// **A reachable composed state in which a node is inside the critical section.**

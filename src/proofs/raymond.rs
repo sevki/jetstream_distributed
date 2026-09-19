@@ -253,6 +253,12 @@ pub proof fn lemma_repoint_acyclic(pre: Raymond, post: Raymond, from: NodeId, to
     requires
         ray_wf(pre),
         ray_acyclic(pre),
+        // The new root has to be a real node: the rank is defined on `nodes`,
+        // and rewriting a pointer to something outside them would not leave a
+        // tree over the nodes at all. Both callers guard it -
+        // `ray_assign_privilege` requires `pre.nodes.contains(head)` and
+        // `ray_seize` requires `pre.nodes.contains(to)`.
+        pre.nodes.contains(to),
         post.nodes == pre.nodes,
         post.holder == pre.holder.insert(from, to).insert(to, to),
     ensures
@@ -302,8 +308,22 @@ pub proof fn lemma_holder_iter_shift(r: Raymond, n: NodeId, k: nat)
         holder_iter(r, n, (k + 1) as nat) == holder_iter(r, r.holder[n], k),
     decreases k,
 {
-    if k > 0 {
+    // Each `assert` is one unfolding of `holder_iter` at a concrete argument,
+    // which is what the default fuel of 1 permits; the induction supplies the
+    // step between them.
+    if k == 0 {
+        assert(holder_iter(r, n, 0nat) == n);
+        assert(holder_iter(r, n, 1nat) == r.holder[holder_iter(r, n, 0nat)]);
+        assert(holder_iter(r, r.holder[n], 0nat) == r.holder[n]);
+    } else {
         lemma_holder_iter_shift(r, n, (k - 1) as nat);
+        assert(holder_iter(r, n, k) == holder_iter(r, r.holder[n], (k - 1) as nat));
+        assert(holder_iter(r, n, (k + 1) as nat) == r.holder[holder_iter(r, n, k)]);
+        assert(holder_iter(r, r.holder[n], k) == r.holder[holder_iter(
+            r,
+            r.holder[n],
+            (k - 1) as nat,
+        )]);
     }
 }
 

@@ -66,6 +66,17 @@ jobs:
       - name: Run clippy lints
         run: cargo clippy -- -D warnings
 
+      - name: Verify Verus proof files exist
+        run: |
+          if [ ! -f "verus/ownership.rs" ]; then
+            echo "ERROR: Verus proof file missing: verus/ownership.rs"
+            exit 1
+          fi
+          echo "✓ Verus proof files present and ready for verification"
+          echo "To verify proofs with Verus:"
+          echo "  1. Install Verus: https://github.com/verus-lang/verus"
+          echo "  2. Run: verus verus/ownership.rs"
+
   docs:
     name: Check Documentation
     runs-on: ubuntu-latest

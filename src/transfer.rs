@@ -191,10 +191,12 @@ pub fn apply_transition(
         if !is_legal_transition {
             return Err(TransitionError::InvalidSourceState);
         }
-    }
 
-    system.update_actor_state(actor_id, new_state);
-    Ok(())
+        system.update_actor_state(actor_id, new_state);
+        Ok(())
+    } else {
+        Err(TransitionError::InvalidSourceState)
+    }
 }
 
 #[cfg(test)]

@@ -1,0 +1,84 @@
+name: Verify Proofs
+
+on:
+  push:
+    branches: [ main, develop, 'claude/**' ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+
+jobs:
+  test:
+    name: Run Tests and Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run tests (core ownership and exclusivity proofs)
+        run: cargo test --lib ownership --verbose
+        continue-on-error: false
+
+      - name: Run tests (fencing and epoch proofs)
+        run: cargo test --lib fencing --verbose
+        continue-on-error: false
+
+      - name: Run tests (transfer safety proofs)
+        run: cargo test --lib transfer --verbose
+        continue-on-error: false
+
+      - name: Run tests (raymond token algorithm)
+        run: cargo test --lib raymond --verbose
+        continue-on-error: false
+
+      - name: Run all tests
+        run: cargo test --lib --verbose
+        continue-on-error: false
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+        continue-on-error: true
+
+      - name: Run clippy lints
+        run: cargo clippy -- -D warnings
+        continue-on-error: true
+
+  docs:
+    name: Check Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate documentation
+        run: cargo doc --no-deps --document-private-items
+        env:
+          RUSTDOCFLAGS: -D warnings
+        continue-on-error: true

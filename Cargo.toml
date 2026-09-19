@@ -1,0 +1,18 @@
+[package]
+name = "distributed-ownership"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+[dev-dependencies]
+
+[lib]
+name = "distributed_ownership"
+path = "src/lib.rs"
+
+[profile.release]
+opt-level = 3
+
+[profile.dev]
+opt-level = 0

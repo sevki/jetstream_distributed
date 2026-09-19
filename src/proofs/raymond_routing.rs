@@ -197,13 +197,48 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
 }
 
 
+/// One hop of the token, packaged so that callers never see the holder map.
+///
+/// This is the lever that makes the routing scenario cheap. `AssignPrivilege`
+/// rewrites two holder pointers, so chaining three of them inline leaves the
+/// solver unfolding `has_token` through six nested `Map::insert`s while
+/// `ray_wf` and `ray_unique_token` quantify over every node. Proving the hop
+/// once, against an *abstract* `r`, and exporting only what the next hop needs
+/// keeps `holder` out of the caller entirely.
+pub proof fn routing_one_hop(r: Raymond, n: NodeId, head: NodeId) -> (r2: Raymond)
+    requires
+        ray_inv(r),
+        has_token(r, n),
+        !r.using[n],
+        r.queue[n].len() > 0,
+        r.queue[n][0] == head,
+        head != n,
+        r.nodes.contains(head),
+    ensures
+        ray_inv(r2),
+        has_token(r2, head),
+        r2.nodes == r.nodes,
+        r2.queue == r.queue.insert(n, r.queue[n].drop_first()),
+        r2.using == r.using,
+        r2.requests == r.requests,
+{
+    let r2 = Raymond {
+        nodes: r.nodes,
+        holder: r.holder.insert(n, head).insert(head, head),
+        queue: r.queue.insert(n, r.queue[n].drop_first()),
+        asked: r.asked.insert(n, false),
+        using: r.using,
+        requests: r.requests,
+    };
+    assert(ray_assign_privilege(r, r2, n, head));
+    lemma_assign_privilege_preserves_unique_token(r, r2, n, head);
+    r2
+}
+
 /// Phase two: the token travels back `C -> A -> B -> D`.
 ///
-/// Three `AssignPrivilege` steps and nothing else. Keeping the critical-section
-/// entry and the delayed redelivery out of this function is what lets it verify
-/// within the default solver budget: each of the three hops rewrites two holder
-/// pointers, and asking one query to carry all five steps made it the single
-/// most expensive item in the whole proof run.
+/// Three hops, each delegated to [`routing_one_hop`], so this function only
+/// ever reasons about queues.
 pub proof fn routing_phase_token_hops(r7: Raymond, a: NodeId, b: NodeId, c: NodeId, d: NodeId) -> (r:
     Raymond)
     requires
@@ -237,53 +272,22 @@ pub proof fn routing_phase_token_hops(r7: Raymond, a: NodeId, b: NodeId, c: Node
         r.requests.contains((d, b)),
 {
     // 8. C hands the token to A.
-    let r8 = Raymond {
-        nodes: r7.nodes,
-        holder: r7.holder.insert(c, a).insert(a, a),
-        queue: r7.queue.insert(c, r7.queue[c].drop_first()),
-        asked: r7.asked.insert(c, false),
-        using: r7.using,
-        requests: r7.requests,
-    };
-    assert(ray_step(r7, r8, RayStep::AssignPrivilege { node: c, head: a }));
-    lemma_assign_privilege_preserves_unique_token(r7, r8, c, a);
-    assert(has_token(r8, a));
+    let r8 = routing_one_hop(r7, c, a);
+    assert(r8.queue[a] == r7.queue[a]);
+    assert(r8.queue[b] == r7.queue[b]);
+    assert(r8.queue[d] == r7.queue[d]);
 
     // 9. A hands the token to B.
-    let r9 = Raymond {
-        nodes: r8.nodes,
-        holder: r8.holder.insert(a, b).insert(b, b),
-        queue: r8.queue.insert(a, r8.queue[a].drop_first()),
-        asked: r8.asked.insert(a, false),
-        using: r8.using,
-        requests: r8.requests,
-    };
-    assert(r8.queue[a].len() == 1);
-    assert(r8.queue[a][0] == b);
-    assert(!r8.using[a]);
-    assert(ray_step(r8, r9, RayStep::AssignPrivilege { node: a, head: b }));
-    lemma_assign_privilege_preserves_unique_token(r8, r9, a, b);
-    assert(has_token(r9, b));
+    let r9 = routing_one_hop(r8, a, b);
+    assert(r9.queue[b] == r8.queue[b]);
+    assert(r9.queue[d] == r8.queue[d]);
 
     // 10. B hands the token to D. The path C -> A -> B -> D is complete.
-    let r10 = Raymond {
-        nodes: r9.nodes,
-        holder: r9.holder.insert(b, d).insert(d, d),
-        queue: r9.queue.insert(b, r9.queue[b].drop_first()),
-        asked: r9.asked.insert(b, false),
-        using: r9.using,
-        requests: r9.requests,
-    };
-    assert(r9.queue[b].len() == 1);
-    assert(r9.queue[b][0] == d);
-    assert(!r9.using[b]);
-    assert(ray_step(r9, r10, RayStep::AssignPrivilege { node: b, head: d }));
-    lemma_assign_privilege_preserves_unique_token(r9, r10, b, d);
-    assert(has_token(r10, d));
+    let r10 = routing_one_hop(r9, b, d);
+    assert(r10.queue[d] == r9.queue[d]);
 
-    // D's request to B, sent back at step 2, has survived all three transfers:
-    // the topology it was routed against is gone, but `requests` is not.
-    theorem_delayed_request_survives_token_move(r9, r10, b, d, b, d);
+    // `requests` is untouched by every hop, so D's request to B - sent back at
+    // step 2, against holder pointers that no longer exist - is still there.
     assert(r10.requests.contains((d, b)));
     r10
 }

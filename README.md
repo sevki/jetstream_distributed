@@ -414,18 +414,28 @@ There are also no raised solver budgets: no `#[verifier::rlimit]` anywhere. The
 long concrete scenarios are kept tractable purely by **splitting** them:
 
 * `scenario_composed_handover` = `handover_phase_release` +
-  `handover_phase_request` + `handover_phase_acquire`;
+  `handover_phase_request` + `handover_phase_pass_token` +
+  `handover_phase_acquire`;
 * `scenario_request_and_token_routing` = `routing_phase_requests` +
-  `routing_phase_token_hops` + `routing_phase_delivery`.
+  `routing_phase_token_hops` + `routing_phase_delivery`, with the token hops
+  themselves delegated to `routing_one_hop`, proved once against an abstract
+  state.
 
 Each phase hands the intermediate state to the next as an *abstract*
 characterisation, so no single query reasons about a dozen nested `Map`/`Set`
 literals at once, and every phase verifies within Verus's default budget. Two
 phases previously carried `#[verifier::rlimit(40)]`, and between them dominated
-the cost of the entire proof run; splitting them again removed the need.
-(`rlimit` would not have been an escape hatch — it is a solver budget and
-cannot admit an unproven fact — but a proof that needs a raised ceiling is
-usually a proof that wants splitting.)
+the cost of the entire proof run; splitting them removed the need. (`rlimit`
+would not have been an escape hatch — it is a solver budget and cannot admit an
+unproven fact — but a proof that needs a raised ceiling is usually a proof that
+wants splitting.)
+
+The pattern that did the most work is `routing_one_hop`: chaining three
+`AssignPrivilege` steps inline left the solver unfolding `has_token` through six
+nested `Map::insert`s while `ray_wf` and `ray_unique_token` quantified over
+every node. Proving one hop against an *abstract* state, and exporting only the
+queue facts the next hop needs, keeps the holder map out of the caller
+entirely.
 
 CI greps `src/` for the real escape hatches and fails the build if any appear.
 Everything the proofs rely on that is not derived is a modelled transition or an

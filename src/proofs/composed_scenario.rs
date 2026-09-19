@@ -40,11 +40,84 @@ use crate::raymond::*;
 
 verus! {
 
-/// A full ownership handover coordinated across both layers.
+// ---------------------------------------------------------------------------
+// The states the handover passes through
+// ---------------------------------------------------------------------------
+//
+// Each phase ends in one of these and the next begins from it. Naming them
+// keeps the phase contracts short enough to read, and states each hand-off
+// condition once rather than once on each side of the boundary.
+
+/// After phase one: the actor has been released at epoch 42, and `A` still
+/// holds the token.
+pub open spec fn handover_released_state(c: Composed, x: ActorId, a: NodeId, b: NodeId) -> bool {
+    &&& c.actor == x
+    &&& c.own.actors[x] == (OwnershipState::Unowned { epoch: 42, intended_owner: b })
+    &&& c.own.live.contains(a)
+    &&& c.own.live.contains(b)
+    &&& c.own.network.contains(Message::Grant { actor: x, to: b, epoch: 42 })
+    &&& c.own.issued.contains(Token { actor: x, epoch: 41, holder: a })
+    &&& c.ray.nodes.contains(a)
+    &&& c.ray.nodes.contains(b)
+    &&& c.ray.holder[b] == a
+    &&& has_token(c.ray, a)
+    &&& c.ray.queue[a].len() == 0
+    &&& c.ray.queue[b].len() == 0
+    &&& !c.ray.asked[b]
+    &&& !c.ray.using[a]
+}
+
+/// After phase two: `B`'s request has reached `A`, which now has `B` at the
+/// head of its queue. The ownership layer is untouched by the whole phase.
+pub open spec fn handover_requested_state(c: Composed, x: ActorId, a: NodeId, b: NodeId) -> bool {
+    &&& c.actor == x
+    &&& c.own.actors[x] == (OwnershipState::Unowned { epoch: 42, intended_owner: b })
+    &&& c.own.live.contains(a)
+    &&& c.own.live.contains(b)
+    &&& c.own.network.contains(Message::Grant { actor: x, to: b, epoch: 42 })
+    &&& c.own.issued.contains(Token { actor: x, epoch: 41, holder: a })
+    &&& c.ray.nodes.contains(a)
+    &&& c.ray.nodes.contains(b)
+    &&& has_token(c.ray, a)
+    &&& !c.ray.using[a]
+    &&& c.ray.queue[a].len() == 1
+    &&& c.ray.queue[a][0] == b
+}
+
+/// After phase three: the token is at `B`, and the actor is still unowned - the
+/// routing layer moved first and conferred nothing by moving.
+pub open spec fn handover_passed_state(c: Composed, x: ActorId, a: NodeId, b: NodeId) -> bool {
+    &&& c.actor == x
+    &&& c.own.actors[x] == (OwnershipState::Unowned { epoch: 42, intended_owner: b })
+    &&& c.own.live.contains(b)
+    &&& c.own.network.contains(Message::Grant { actor: x, to: b, epoch: 42 })
+    &&& c.own.issued.contains(Token { actor: x, epoch: 41, holder: a })
+    &&& has_token(c.ray, b)
+}
+
+/// The labels of the handover run, as a sequence: ten steps from
+/// `composed_init` to `B` owning at epoch 42 while holding the token.
 ///
-/// This is the non-vacuity witness for every `composed_reachable` theorem: it
-/// exhibits a reachable composed state in which somebody actually owns the actor
-/// and actually holds the token.
+/// Written out as one spec function so that the phases and the scenario agree
+/// on it by construction, and so the scenario's postcondition can say "the run
+/// is *this*" in a single clause.
+pub open spec fn handover_labels(x: ActorId, a: NodeId, b: NodeId) -> Seq<ComposedStep> {
+    seq![
+        ComposedStep::Own { own_step: Step::IssueGrant { actor: x } },
+        ComposedStep::AcquireUnderToken { node: a },
+        ComposedStep::Own { own_step: Step::BeginTransfer { actor: x, from: a, to: b } },
+        ComposedStep::Own {
+            own_step: Step::HandleRevoke { actor: x, target: a, old_epoch: 41, new_epoch: 42 },
+        },
+        ComposedStep::Own { own_step: Step::CompleteRelease { actor: x } },
+        ComposedStep::Ray { ray_step: RayStep::RequestCs { node: b } },
+        ComposedStep::Ray { ray_step: RayStep::MakeRequest { node: b } },
+        ComposedStep::Ray { ray_step: RayStep::ReceiveRequest { at: a, from: b } },
+        ComposedStep::PassToken { node: a, head: b },
+        ComposedStep::AcquireUnderToken { node: b },
+    ]
+}
+
 /// Phase one of the handover: from `composed_init` to the point where the actor
 /// has been released at epoch 42 and `A` still holds the token.
 ///
@@ -52,40 +125,50 @@ verus! {
 /// the caller keep the literal is what keeps the proof tractable: each phase
 /// reasons about a handful of `insert`s over an opaque base instead of a dozen
 /// nested `Map`/`Set` literals, which is what exhausted the solver before.
-pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (c: Composed)
+pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (res: (
+    Composed,
+    Seq<Composed>,
+    Seq<ComposedStep>,
+))
     requires
         a != b,
     ensures
-        composed_reachable(c),
-        composed_inv(c),
-        c.actor == x,
-        c.own.actors[x] == (OwnershipState::Unowned { epoch: 42, intended_owner: b }),
-        c.own.live.contains(a),
-        c.own.live.contains(b),
-        c.own.network.contains(Message::Grant { actor: x, to: b, epoch: 42 }),
-        c.own.issued.contains(Token { actor: x, epoch: 41, holder: a }),
-        c.ray.nodes.contains(a),
-        c.ray.nodes.contains(b),
-        c.ray.holder[b] == a,
-        has_token(c.ray, a),
-        c.ray.queue[a].len() == 0,
-        c.ray.queue[b].len() == 0,
-        !c.ray.asked[b],
-        !c.ray.using[a],
-        // The release actually happened. Without this the scenario's endpoint
-        // is satisfied by a run that never releases at all: acquire `A@41`,
-        // fire `RevokeOwner` at the still-live `A` to get `Unowned(42, B)`,
-        // pass the token, acquire `B@42`. No `BeginTransfer`, no
-        // `HandleRevoke`, no `CompleteRelease` - and the scenario named for the
-        // voluntary release would still verify.
-        exists|p: Composed|
-            {
-                &&& #[trigger] composed_step(p, c, ComposedStep::Own {
-                    own_step: Step::CompleteRelease { actor: x },
-                })
-                &&& composed_reachable(p)
-                &&& is_transferring(p.own.actors[x])
-            },
+        // The run so far, with its labels. Every phase hands on the run it has
+        // built rather than just the state it reached, which is what keeps the
+        // finished scenario from being satisfiable by a different execution
+        // that merely ends somewhere similar.
+        composed_labelled_execution(res.1, res.2),
+        res.1[res.1.len() - 1] == res.0,
+        composed_inv(res.0),
+        handover_released_state(res.0, x, a, b),
+        res.2.len() == 5,
+        res.2[0] == ComposedStep::Own { own_step: Step::IssueGrant { actor: x } },
+        res.2[1] == ComposedStep::AcquireUnderToken { node: a },
+        res.2[2] == ComposedStep::Own {
+            own_step: Step::BeginTransfer { actor: x, from: a, to: b },
+        },
+        res.2[3] == ComposedStep::Own {
+            own_step: Step::HandleRevoke { actor: x, target: a, old_epoch: 41, new_epoch: 42 },
+        },
+        res.2[4] == ComposedStep::Own { own_step: Step::CompleteRelease { actor: x } },
+        res.1.len() == 6,
+        // The epochs the scenario is named for, at the indices they occur at.
+        // The labels alone do not carry them: `BeginTransfer` names the actor
+        // and the two nodes, and takes its epochs from the state it fires in,
+        // so a run with this exact label sequence could transfer 39 -> 40.
+        res.1[3].own.actors[x] == (OwnershipState::Transferring {
+            from: a,
+            to: b,
+            old_epoch: 41,
+            new_epoch: 42,
+        }),
+        res.1[4].own.actors[x] == (OwnershipState::Transferring {
+            from: a,
+            to: b,
+            old_epoch: 41,
+            new_epoch: 42,
+        }),
+        res.1[5] == res.0,
 {
     let nodes = Set::<NodeId>::empty().insert(a).insert(b);
     let stale = Token { actor: x, epoch: 41, holder: a };
@@ -242,9 +325,67 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (c: Com
     assert(c5.own.live.contains(a));
     assert(c5.own.live.contains(b));
     assert(is_transferring(c4.own.actors[x]));
-    assert(composed_reachable(c4));
-    assert(composed_step(c4, c5, s5));
-    c5
+
+    // Collect the five steps into the run.
+    let tr0 = seq![c0];
+    let l0 = Seq::<ComposedStep>::empty();
+    lemma_composed_run_init(c0);
+    let tr1 = tr0.push(c1);
+    let l1 = l0.push(s1);
+    lemma_composed_run_push(tr0, l0, c1, s1);
+    assert(tr1.len() == 2);
+    assert(l1.len() == 1);
+    assert(tr1[0] == c0);
+    assert(tr1[1] == c1);
+    assert(l1[0] == s1);
+    let tr2 = tr1.push(c2);
+    let l2 = l1.push(s2);
+    lemma_composed_run_push(tr1, l1, c2, s2);
+    assert(tr2.len() == 3);
+    assert(l2.len() == 2);
+    assert(tr2[0] == c0);
+    assert(tr2[2] == c2);
+    assert(l2[0] == s1);
+    assert(l2[1] == s2);
+    let tr3 = tr2.push(c3);
+    let l3 = l2.push(s3);
+    lemma_composed_run_push(tr2, l2, c3, s3);
+    assert(tr3.len() == 4);
+    assert(l3.len() == 3);
+    assert(tr3[0] == c0);
+    assert(tr3[3] == c3);
+    assert(l3[0] == s1);
+    assert(l3[1] == s2);
+    assert(l3[2] == s3);
+    let tr4 = tr3.push(c4);
+    let l4 = l3.push(s4);
+    lemma_composed_run_push(tr3, l3, c4, s4);
+    assert(tr4.len() == 5);
+    assert(l4.len() == 4);
+    assert(tr4[0] == c0);
+    assert(tr4[4] == c4);
+    assert(l4[0] == s1);
+    assert(l4[1] == s2);
+    assert(l4[2] == s3);
+    assert(l4[3] == s4);
+    let tr5 = tr4.push(c5);
+    let l5 = l4.push(s5);
+    lemma_composed_run_push(tr4, l4, c5, s5);
+    assert(tr5.len() == 6);
+    assert(l5.len() == 5);
+    assert(tr5[0] == c0);
+    assert(tr5[5] == c5);
+    assert(l5[0] == s1);
+    assert(l5[1] == s2);
+    assert(l5[2] == s3);
+    assert(l5[3] == s4);
+    assert(l5[4] == s5);
+    assert(composed_init(tr5[0]));
+    assert(composed_labelled_execution(tr5, l5));
+    assert(handover_released_state(c5, x, a, b));
+    assert(tr5[3] == c3);
+    assert(tr5[4] == c4);
+    (c5, tr5, l5)
 }
 
 /// Phase two: `B` asks for the token and the request reaches `A`.
@@ -253,42 +394,36 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (c: Com
 /// ownership side abstractly. The mid state is handed on as a characterisation
 /// rather than a literal, so no single query ever carries the whole handover.
 pub proof fn handover_phase_request(
-    anchor: Composed,
+    tr: Seq<Composed>,
+    labels: Seq<ComposedStep>,
     c: Composed,
     x: ActorId,
     a: NodeId,
     b: NodeId,
-) -> (r: Composed)
+) -> (res: (Composed, Seq<Composed>, Seq<ComposedStep>))
     requires
-        composed_reachable_from(anchor, c),
         a != b,
-        composed_reachable(c),
+        composed_labelled_execution(tr, labels),
+        tr[tr.len() - 1] == c,
+        labels.len() == 5,
         composed_inv(c),
-        c.actor == x,
-        c.own.actors[x] == (OwnershipState::Unowned { epoch: 42, intended_owner: b }),
-        c.own.live.contains(a),
-        c.own.live.contains(b),
-        c.own.network.contains(Message::Grant { actor: x, to: b, epoch: 42 }),
-        c.own.issued.contains(Token { actor: x, epoch: 41, holder: a }),
-        c.ray.nodes.contains(a),
-        c.ray.nodes.contains(b),
-        c.ray.holder[b] == a,
-        has_token(c.ray, a),
-        c.ray.queue[a].len() == 0,
-        c.ray.queue[b].len() == 0,
-        !c.ray.asked[b],
-        !c.ray.using[a],
+        handover_released_state(c, x, a, b),
     ensures
-        composed_reachable(r),
-        composed_inv(r),
-        r.actor == x,
-        r.own == c.own,
-        composed_reachable_from(anchor, r),
-        r.ray.nodes.contains(a),
-        r.ray.nodes.contains(b),
-        has_token(r.ray, a),
-        !r.ray.using[a],
-        r.ray.queue[a].len() == 1 && r.ray.queue[a][0] == b,
+        composed_labelled_execution(res.1, res.2),
+        res.1[res.1.len() - 1] == res.0,
+        composed_inv(res.0),
+        handover_requested_state(res.0, x, a, b),
+        res.0.own == c.own,
+        res.2.len() == 8,
+        // The phase appends to the run it was given; it does not start a new
+        // one. This is what carries phase one's `CompleteRelease` forward into
+        // the finished scenario's label sequence.
+        forall|i: int| 0 <= i < 5 ==> #[trigger] res.2[i] == labels[i],
+        res.2[5] == ComposedStep::Ray { ray_step: RayStep::RequestCs { node: b } },
+        res.2[6] == ComposedStep::Ray { ray_step: RayStep::MakeRequest { node: b } },
+        res.2[7] == ComposedStep::Ray { ray_step: RayStep::ReceiveRequest { at: a, from: b } },
+        res.1.len() == 9,
+        forall|i: int| 0 <= i < tr.len() ==> #[trigger] res.1[i] == tr[i],
 {
     // 6. B asks for the token
     let c6 = Composed {
@@ -307,7 +442,6 @@ pub proof fn handover_phase_request(
     let s6 = ComposedStep::Ray { ray_step: RayStep::RequestCs { node: b } };
     assert(composed_step(c, c6, s6));
     lemma_composed_reachable_step(c, c6, s6);
-    lemma_composed_reachable_from_step(anchor, c, c6, s6);
     theorem_composed_step_preserves_inv(c, c6, s6);
 
     // 7. B routes the request to its holder, A
@@ -330,7 +464,6 @@ pub proof fn handover_phase_request(
     assert(!c6.ray.asked[b]);
     assert(composed_step(c6, c7, s7));
     lemma_composed_reachable_step(c6, c7, s7);
-    lemma_composed_reachable_from_step(anchor, c6, c7, s7);
     theorem_composed_step_preserves_inv(c6, c7, s7);
 
     // 8. A receives it and queues B
@@ -351,11 +484,51 @@ pub proof fn handover_phase_request(
     assert(c7.ray.requests.contains((b, a)));
     assert(composed_step(c7, c8, s8));
     lemma_composed_reachable_step(c7, c8, s8);
-    lemma_composed_reachable_from_step(anchor, c7, c8, s8);
     theorem_composed_step_preserves_inv(c7, c8, s8);
     assert(c8.ray.queue[a].len() == 1);
     assert(c8.ray.queue[a][0] == b);
-    c8
+
+    assert(tr.len() == 6);
+    let tr6 = tr.push(c6);
+    let l6 = labels.push(s6);
+    lemma_composed_run_push(tr, labels, c6, s6);
+    assert(tr6.len() == tr.len() + 1);
+    assert(l6.len() == 6);
+    assert(tr6[0] == tr[0]);
+    assert(tr6[6] == c6);
+    assert(l6[5] == s6);
+    assert(forall|i: int| 0 <= i < 5 ==> #[trigger] l6[i] == labels[i]);
+    let tr7 = tr6.push(c7);
+    let l7 = l6.push(s7);
+    lemma_composed_run_push(tr6, l6, c7, s7);
+    assert(l7.len() == 7);
+    assert(tr7[0] == tr6[0]);
+    assert(tr7[7] == c7);
+    assert(l7[5] == s6);
+    assert(l7[6] == s7);
+    assert forall|i: int| 0 <= i < 5 implies #[trigger] l7[i] == labels[i] by {
+        assert(l6[i] == labels[i]);
+    }
+    let tr8 = tr7.push(c8);
+    let l8 = l7.push(s8);
+    lemma_composed_run_push(tr7, l7, c8, s8);
+    assert(l8.len() == 8);
+    assert(tr8[0] == tr7[0]);
+    assert(tr8[8] == c8);
+    assert(l8[5] == s6);
+    assert(l8[6] == s7);
+    assert(l8[7] == s8);
+    assert forall|i: int| 0 <= i < 5 implies #[trigger] l8[i] == labels[i] by {
+        assert(l7[i] == labels[i]);
+    }
+    assert(composed_init(tr8[0]));
+    assert forall|i: int| 0 <= i < tr.len() implies #[trigger] tr8[i] == tr[i] by {
+        assert(tr7[i] == tr6[i]);
+        assert(tr6[i] == tr[i]);
+    }
+    assert(composed_labelled_execution(tr8, l8));
+    assert(handover_requested_state(c8, x, a, b));
+    (c8, tr8, l8)
 }
 
 /// Phase three: the token moves `A -> B`.
@@ -366,34 +539,31 @@ pub proof fn handover_phase_request(
 /// acquisition put two `composed_inv` re-establishments over freshly built
 /// `Map`/`Set` literals into one query, which alone exceeded the solver budget.
 pub proof fn handover_phase_pass_token(
-    anchor: Composed,
+    tr: Seq<Composed>,
+    labels: Seq<ComposedStep>,
     c: Composed,
     x: ActorId,
     a: NodeId,
     b: NodeId,
-) -> (r: Composed)
+) -> (res: (Composed, Seq<Composed>, Seq<ComposedStep>))
     requires
-        composed_reachable_from(anchor, c),
         a != b,
-        composed_reachable(c),
+        composed_labelled_execution(tr, labels),
+        tr[tr.len() - 1] == c,
+        labels.len() == 8,
         composed_inv(c),
-        c.actor == x,
-        c.own.actors[x] == (OwnershipState::Unowned { epoch: 42, intended_owner: b }),
-        c.own.live.contains(a),
-        c.ray.nodes.contains(a),
-        c.ray.nodes.contains(b),
-        has_token(c.ray, a),
-        !c.ray.using[a],
-        c.ray.queue[a].len() == 1 && c.ray.queue[a][0] == b,
+        handover_requested_state(c, x, a, b),
     ensures
-        composed_reachable(r),
-        composed_inv(r),
-        r.actor == x,
-        r.own == c.own,
-        has_token(r.ray, b),
-        // Exported so the scenario can link the handover to its outcome.
-        composed_step(c, r, ComposedStep::PassToken { node: a, head: b }),
-        composed_reachable_from(anchor, r),
+        composed_labelled_execution(res.1, res.2),
+        res.1[res.1.len() - 1] == res.0,
+        composed_inv(res.0),
+        handover_passed_state(res.0, x, a, b),
+        res.0.own == c.own,
+        res.2.len() == 9,
+        forall|i: int| 0 <= i < 8 ==> #[trigger] res.2[i] == labels[i],
+        res.2[8] == ComposedStep::PassToken { node: a, head: b },
+        res.1.len() == 10,
+        forall|i: int| 0 <= i < tr.len() ==> #[trigger] res.1[i] == tr[i],
 {
     let c9 = Composed {
         own: c.own,
@@ -413,11 +583,25 @@ pub proof fn handover_phase_pass_token(
     assert(c.own.live.contains(a));
     assert(composed_step(c, c9, s9));
     lemma_composed_reachable_step(c, c9, s9);
-    lemma_composed_reachable_from_step(anchor, c, c9, s9);
     theorem_composed_step_preserves_inv(c, c9, s9);
     lemma_composed_pass_token_preserves_inv(c, c9, a, b);
     assert(has_token(c9.ray, b));
-    c9
+
+    assert(tr.len() == 9);
+    let tr9 = tr.push(c9);
+    let l9 = labels.push(s9);
+    lemma_composed_run_push(tr, labels, c9, s9);
+    assert(l9.len() == 9);
+    assert(tr9[0] == tr[0]);
+    assert(tr9[9] == c9);
+    assert(l9[8] == s9);
+    assert(forall|i: int| 0 <= i < 8 ==> #[trigger] l9[i] == labels[i]);
+    assert(composed_init(tr9[0]));
+    assert forall|i: int| 0 <= i < tr.len() implies #[trigger] tr9[i] == tr[i] by {
+    }
+    assert(composed_labelled_execution(tr9, l9));
+    assert(handover_passed_state(c9, x, a, b));
+    (c9, tr9, l9)
 }
 
 /// Phase four: `B` takes ownership at epoch 42, holding the token.
@@ -425,32 +609,33 @@ pub proof fn handover_phase_pass_token(
 /// `AcquireUnderToken` is legal only because `B` holds the token - authority
 /// cannot be taken by a node routing has not elected.
 pub proof fn handover_phase_acquire(
-    anchor: Composed,
+    tr: Seq<Composed>,
+    labels: Seq<ComposedStep>,
     c: Composed,
     x: ActorId,
     a: NodeId,
     b: NodeId,
-) -> (r: Composed)
+) -> (res: (Composed, Seq<Composed>, Seq<ComposedStep>))
     requires
-        composed_reachable_from(anchor, c),
         a != b,
-        composed_reachable(c),
+        composed_labelled_execution(tr, labels),
+        tr[tr.len() - 1] == c,
+        labels.len() == 9,
         composed_inv(c),
-        c.actor == x,
-        c.own.actors[x] == (OwnershipState::Unowned { epoch: 42, intended_owner: b }),
-        c.own.live.contains(b),
-        c.own.network.contains(Message::Grant { actor: x, to: b, epoch: 42 }),
-        c.own.issued.contains(Token { actor: x, epoch: 41, holder: a }),
-        has_token(c.ray, b),
+        handover_passed_state(c, x, a, b),
     ensures
-        composed_reachable(r),
-        composed_inv(r),
-        r.actor == x,
-        r.own.actors[x] == (OwnershipState::Owned { owner: b, epoch: 42 }),
-        has_token(r.ray, b),
-        r.own.issued.contains(Token { actor: x, epoch: 41, holder: a }),
-        composed_reachable_from(c, r),
-        composed_reachable_from(anchor, r),
+        composed_labelled_execution(res.1, res.2),
+        res.1[res.1.len() - 1] == res.0,
+        composed_inv(res.0),
+        res.0.actor == x,
+        res.0.own.actors[x] == (OwnershipState::Owned { owner: b, epoch: 42 }),
+        has_token(res.0.ray, b),
+        res.0.own.issued.contains(Token { actor: x, epoch: 41, holder: a }),
+        res.2.len() == 10,
+        forall|i: int| 0 <= i < 9 ==> #[trigger] res.2[i] == labels[i],
+        res.2[9] == ComposedStep::AcquireUnderToken { node: b },
+        res.1.len() == 11,
+        forall|i: int| 0 <= i < tr.len() ==> #[trigger] res.1[i] == tr[i],
 {
     let c10 = Composed {
         own: System {
@@ -469,10 +654,21 @@ pub proof fn handover_phase_acquire(
     assert(composed_step(c, c10, s10));
     lemma_composed_reachable_step(c, c10, s10);
     theorem_composed_step_preserves_inv(c, c10, s10);
-    lemma_composed_reachable_from_refl(c);
-    lemma_composed_reachable_from_step(c, c, c10, s10);
-    lemma_composed_reachable_from_step(anchor, c, c10, s10);
-    c10
+
+    assert(tr.len() == 10);
+    let tr10 = tr.push(c10);
+    let l10 = labels.push(s10);
+    lemma_composed_run_push(tr, labels, c10, s10);
+    assert(l10.len() == 10);
+    assert(tr10[0] == tr[0]);
+    assert(tr10[10] == c10);
+    assert(l10[9] == s10);
+    assert(forall|i: int| 0 <= i < 9 ==> #[trigger] l10[i] == labels[i]);
+    assert(composed_init(tr10[0]));
+    assert forall|i: int| 0 <= i < tr.len() implies #[trigger] tr10[i] == tr[i] by {
+    }
+    assert(composed_labelled_execution(tr10, l10));
+    (c10, tr10, l10)
 }
 
 /// A full ownership handover coordinated across both layers.
@@ -484,62 +680,125 @@ pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
     requires
         a != b,
     ensures
-        // The **voluntary** handover, linked to its outcome. Two different
-        // executions end in that endpoint and neither is this scenario:
+        // One run, ten steps, every one of them named.
         //
-        //   * crash takeover - `B` owns at 42 holding the token, `A`'s
-        //     epoch-41 token issued, reached by `SeizeToken`;
-        //   * revocation of a *live* `A` - `RevokeOwner` produces
-        //     `Unowned(42, B)` directly, then the token is passed and `B`
-        //     acquires, with no `BeginTransfer`, `HandleRevoke` or
-        //     `CompleteRelease` anywhere.
+        // The previous contract exported a `CompleteRelease` step, a
+        // `PassToken` step and an endpoint, tied together by
+        // `composed_reachable_from`. Each of those existentials could be
+        // satisfied from a *different* execution, so the conjunction did not
+        // describe a single run: complete an unrelated `A -> B` transfer at
+        // epochs 39 -> 40, then acquire `A@41`, then reach `B@42` by
+        // `RevokeOwner`, pass the token and acquire. Every clause held, and
+        // the advertised 41 -> 42 release never happened.
         //
-        // So `PassToken` with `A` live rules out the first but not the second.
-        // Exporting the `CompleteRelease` step is what pins the release-based
-        // path, and `composed_reachable_from(rel, fin)` is what ties the
-        // outcome to it.
-        exists|p: Composed, rel: Composed, fin: Composed|
+        // `labels == handover_labels(x, a, b)` leaves nothing to assemble from
+        // elsewhere. There is exactly one run, its steps are fixed, and the
+        // release at index 4 is the one whose `BeginTransfer` at index 2 opened
+        // the 41 -> 42 transfer and whose `PassToken` at index 8 and
+        // `AcquireUnderToken` at index 9 finish it.
+        exists|tr: Seq<Composed>, labels: Seq<ComposedStep>|
             {
-                &&& #[trigger] composed_step(p, rel, ComposedStep::Own {
-                    own_step: Step::CompleteRelease { actor: x },
+                &&& #[trigger] composed_labelled_execution(tr, labels)
+                &&& labels == handover_labels(x, a, b)
+                &&& tr.len() == 11
+                // The transfer is opened and closed on the epochs the scenario
+                // is named for, in this run.
+                &&& tr[3].own.actors[x] == (OwnershipState::Transferring {
+                    from: a,
+                    to: b,
+                    old_epoch: 41,
+                    new_epoch: 42,
                 })
-                &&& #[trigger] composed_reachable_from(rel, fin)
-                &&& composed_reachable(p)
-                &&& is_transferring(p.own.actors[x])
-                &&& fin.actor == x
-                &&& may_mutate(fin.own.actors[x], b, 42)
-                &&& has_token(fin.ray, b)
-                &&& fin.own.issued.contains(Token { actor: x, epoch: 41, holder: a })
-                &&& !may_mutate(fin.own.actors[x], a, 41)
-            },
-        // And the token really was handed over by a live `A`, not seized.
-        exists|p: Composed, q: Composed|
-            {
-                &&& #[trigger] composed_step(p, q, ComposedStep::PassToken { node: a, head: b })
-                &&& composed_reachable(p)
-                &&& p.own.live.contains(a)
-                &&& is_unowned(p.own.actors[x])
-                &&& has_token(p.ray, a)
-                &&& has_token(q.ray, b)
+                &&& is_transferring(tr[4].own.actors[x])
+                &&& tr[5].own.actors[x] == (OwnershipState::Unowned {
+                    epoch: 42,
+                    intended_owner: b,
+                })
+                // The token is handed on by a live `A`, after the release and
+                // not before it.
+                &&& tr[8].own.live.contains(a)
+                &&& has_token(tr[8].ray, a)
+                &&& has_token(tr[9].ray, b)
+                // And the outcome.
+                &&& tr[10].actor == x
+                &&& may_mutate(tr[10].own.actors[x], b, 42)
+                &&& !may_mutate(tr[10].own.actors[x], a, 41)
+                &&& has_token(tr[10].ray, b)
+                &&& tr[10].own.issued.contains(Token { actor: x, epoch: 41, holder: a })
             },
 {
-    let released = handover_phase_release(x, a, b);
-    lemma_composed_reachable_from_refl(released);
-    let requested = handover_phase_request(released, released, x, a, b);
-    let passed = handover_phase_pass_token(released, requested, x, a, b);
-    let fin = handover_phase_acquire(released, passed, x, a, b);
-    assert(composed_reachable(fin));
-    assert(fin.actor == x);
+    let (released, tr_r, l_r) = handover_phase_release(x, a, b);
+    let (requested, tr_q, l_q) = handover_phase_request(tr_r, l_r, released, x, a, b);
+    let (passed, tr_p, l_p) = handover_phase_pass_token(tr_q, l_q, requested, x, a, b);
+    let (fin, tr, labels) = handover_phase_acquire(tr_p, l_p, passed, x, a, b);
+
+    assert(labels.len() == 10);
+    assert(tr.len() == 11);
+
+    // Phase one's five labels, carried through three phases of appending.
+    assert forall|i: int| 0 <= i < 5 implies #[trigger] labels[i] == l_r[i] by {
+        assert(l_p[i] == l_q[i]);
+        assert(l_q[i] == l_r[i]);
+    }
+    assert(labels[0] == ComposedStep::Own { own_step: Step::IssueGrant { actor: x } });
+    assert(labels[1] == ComposedStep::AcquireUnderToken { node: a });
+    assert(labels[2] == ComposedStep::Own {
+        own_step: Step::BeginTransfer { actor: x, from: a, to: b },
+    });
+    assert(labels[3] == ComposedStep::Own {
+        own_step: Step::HandleRevoke { actor: x, target: a, old_epoch: 41, new_epoch: 42 },
+    });
+    assert(labels[4] == ComposedStep::Own { own_step: Step::CompleteRelease { actor: x } });
+
+    // Phase two's three, carried through two phases of appending.
+    assert forall|i: int| 5 <= i < 8 implies #[trigger] labels[i] == l_q[i] by {
+        assert(l_p[i] == l_q[i]);
+    }
+    assert(labels[5] == ComposedStep::Ray { ray_step: RayStep::RequestCs { node: b } });
+    assert(labels[6] == ComposedStep::Ray { ray_step: RayStep::MakeRequest { node: b } });
+    assert(labels[7] == ComposedStep::Ray {
+        ray_step: RayStep::ReceiveRequest { at: a, from: b },
+    });
+    // Phase three's one, carried through one.
+    assert(labels[8] == l_p[8]);
+    assert(labels[8] == ComposedStep::PassToken { node: a, head: b });
+    assert(labels[9] == ComposedStep::AcquireUnderToken { node: b });
+
+    let expected = handover_labels(x, a, b);
+    assert(expected.len() == 10);
+    assert_seqs_equal!(labels == expected);
+
+    // The states, at the indices the postcondition names. Same shape as the
+    // labels: each phase preserved the run it was handed, so a fact proved
+    // about `tr_r[3]` in phase one is a fact about `tr[3]` at the end.
+    assert(tr_q[3] == tr_r[3]);
+    assert(tr_p[3] == tr_q[3]);
+    assert(tr[3] == tr_p[3]);
+    assert(tr_q[4] == tr_r[4]);
+    assert(tr_p[4] == tr_q[4]);
+    assert(tr[4] == tr_p[4]);
+    assert(tr_q[5] == tr_r[5]);
+    assert(tr_p[5] == tr_q[5]);
+    assert(tr[5] == tr_p[5]);
+    assert(tr_r[5] == released);
+    assert(is_transferring(tr[4].own.actors[x]));
+
+    // The pass itself: `tr_q` ends at `requested`, which is the state
+    // `PassToken` fires in, and `tr_p` ends at `passed`.
+    assert(tr_q.len() == 9);
+    assert(tr_q[8] == requested);
+    assert(tr_p[8] == tr_q[8]);
+    assert(tr[8] == tr_p[8]);
+    assert(tr_p.len() == 10);
+    assert(tr_p[9] == passed);
+    assert(tr[9] == tr_p[9]);
+    assert(tr[8].own.live.contains(a));
+    assert(has_token(tr[8].ray, a));
+    assert(has_token(tr[9].ray, b));
+
+    assert(tr[10] == fin);
     assert(may_mutate(fin.own.actors[x], b, 42));
-    assert(has_token(fin.ray, b));
-    assert(fin.own.issued.contains(Token { actor: x, epoch: 41, holder: a }));
     assert(!may_mutate(fin.own.actors[x], a, 41));
-    assert(composed_step(requested, passed, ComposedStep::PassToken { node: a, head: b }));
-    assert(requested.own.live.contains(a));
-    assert(is_unowned(requested.own.actors[x]));
-    assert(has_token(requested.ray, a));
-    assert(has_token(passed.ray, b));
-    assert(composed_reachable_from(released, fin));
 }
 
 /// **A reachable composed state in which a node is inside the critical section.**

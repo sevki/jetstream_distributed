@@ -21,11 +21,10 @@ jobs:
         run: |
           rustup toolchain install "$VERUS_TOOLCHAIN" \
             --component rustc-dev,llvm-tools,rust-std,cargo,rustfmt
-          rustup component list --toolchain "$VERUS_TOOLCHAIN" --installed
 
-      - name: Cache the Verus release archive
+      - name: Restore the Verus release from cache
         id: verus-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ~/verus
           key: verus-${{ env.VERUS_VERSION }}-x86-linux
@@ -40,14 +39,31 @@ jobs:
           mv /tmp/verus-unpacked/verus-x86-linux "$HOME/verus"
           chmod +x "$HOME/verus/verus" "$HOME/verus/rust_verify" "$HOME/verus/z3" "$HOME/verus/cargo-verus"
 
+      # Saved unconditionally so that a run whose proofs failed still primes the
+      # cache for the next attempt.
+      - name: Save the Verus release to cache
+        if: steps.verus-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/verus
+          key: verus-${{ env.VERUS_VERSION }}-x86-linux
+
       - name: Put Verus on PATH
         run: echo "$HOME/verus" >> "$GITHUB_PATH"
 
       - name: Report Verus version
         run: verus --version
 
-      - name: Verify all modules
-        run: verus --crate-type=lib src/lib.rs
+      - name: Verify all proofs
+        run: verus --crate-type=lib src/lib.rs --time
 
-      - name: Verify with per-function results
-        run: verus --crate-type=lib src/lib.rs --triggers-silent --time
+      # The README claims the proofs use no escape hatches. Enforce that claim.
+      - name: Reject verification escape hatches
+        run: |
+          set -euo pipefail
+          pattern='(^|[^A-Za-z0-9_])(assume|admit)[[:space:]]*\(|external_body|assume_specification|verifier::external'
+          if grep -rnE "$pattern" src/; then
+            echo "::error::found a verification escape hatch in src/"
+            exit 1
+          fi
+          echo "no escape hatches found"

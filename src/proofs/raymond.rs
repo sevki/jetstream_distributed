@@ -107,6 +107,162 @@ pub proof fn theorem_duplicate_requests_are_safe(
     lemma_ray_step_preserves_inv(mid, post, RayStep::ReceiveRequest { at: at, from: from });
 }
 
+/// A step that leaves `nodes` and `holder` alone leaves token possession alone.
+///
+/// Stated explicitly so that the `has_token(pre, _)` terms exist for the SMT
+/// solver: `ray_unique_token` triggers on them, and without this lemma the
+/// trigger never fires for framing steps.
+pub proof fn lemma_same_holder_same_token(pre: Raymond, post: Raymond)
+    requires
+        post.nodes == pre.nodes,
+        post.holder == pre.holder,
+    ensures
+        forall|m: NodeId| #[trigger] has_token(post, m) <==> has_token(pre, m),
+{
+}
+
+/// Unique token possession survives any step that does not move the token.
+pub proof fn lemma_frame_unique_token(pre: Raymond, post: Raymond)
+    requires
+        ray_unique_token(pre),
+        post.nodes == pre.nodes,
+        post.holder == pre.holder,
+    ensures
+        ray_unique_token(post),
+{
+    lemma_same_holder_same_token(pre, post);
+    assert forall|x: NodeId, y: NodeId|
+        #![trigger has_token(post, x), has_token(post, y)]
+        has_token(post, x) && has_token(post, y) implies x == y by {
+        assert(has_token(pre, x));
+        assert(has_token(pre, y));
+    }
+}
+
+/// The whole Raymond invariant survives any step that does not move the token,
+/// provided the per-node maps keep their entries and nobody enters the critical
+/// section without the token.
+pub proof fn lemma_ray_frame_inv(pre: Raymond, post: Raymond)
+    requires
+        ray_inv(pre),
+        post.nodes == pre.nodes,
+        post.holder == pre.holder,
+        forall|m: NodeId|
+            #[trigger] pre.nodes.contains(m) ==> post.queue.contains_key(m)
+                && post.asked.contains_key(m) && post.using.contains_key(m),
+        forall|m: NodeId| #[trigger] pre.nodes.contains(m) && post.using[m] ==> has_token(pre, m),
+    ensures
+        ray_inv(post),
+{
+    lemma_same_holder_same_token(pre, post);
+    lemma_frame_unique_token(pre, post);
+    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) implies post.holder.contains_key(m)
+        && post.queue.contains_key(m) && post.asked.contains_key(m) && post.using.contains_key(m)
+        && post.nodes.contains(post.holder[m]) by {
+        assert(pre.nodes.contains(m));
+    }
+    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) && post.using[m] implies has_token(
+        post,
+        m,
+    ) by {
+        assert(pre.nodes.contains(m));
+        assert(has_token(pre, m));
+    }
+}
+
+/// Exactly which holder pointers `AssignPrivilege` rewrites.
+pub proof fn lemma_assign_holder_pointers(pre: Raymond, post: Raymond, n: NodeId, head: NodeId)
+    requires
+        ray_assign_privilege(pre, post, n, head),
+    ensures
+        post.holder[head] == head,
+        post.holder[n] == head,
+        post.holder.contains_key(head),
+        post.holder.contains_key(n),
+        forall|m: NodeId| m != n && m != head ==> #[trigger] post.holder[m] == pre.holder[m],
+        forall|m: NodeId|
+            m != n && m != head ==> (#[trigger] post.holder.contains_key(m)
+                <==> pre.holder.contains_key(m)),
+{
+}
+
+/// The token moves from `n` to `head`, and stays unique while it does.
+pub proof fn lemma_assign_token_moves(pre: Raymond, post: Raymond, n: NodeId, head: NodeId)
+    requires
+        ray_inv(pre),
+        ray_assign_privilege(pre, post, n, head),
+    ensures
+        has_token(post, head),
+        !has_token(post, n),
+        forall|m: NodeId| #[trigger] has_token(post, m) ==> m == head,
+        ray_unique_token(post),
+{
+    lemma_assign_holder_pointers(pre, post, n, head);
+    assert(has_token(pre, n));
+    assert(has_token(post, head));
+    assert(!has_token(post, n));
+    assert forall|m: NodeId| #[trigger] has_token(post, m) implies m == head by {
+        if m != head {
+            assert(m != n);
+            assert(post.holder[m] == pre.holder[m]);
+            assert(pre.holder.contains_key(m));
+            assert(has_token(pre, m));
+            assert(has_token(pre, n));
+            assert(m == n);
+            assert(false);
+        }
+    }
+    assert forall|x: NodeId, y: NodeId|
+        #![trigger has_token(post, x), has_token(post, y)]
+        has_token(post, x) && has_token(post, y) implies x == y by {
+    }
+}
+
+/// `AssignPrivilege` keeps every node's maps well formed.
+pub proof fn lemma_assign_wf(pre: Raymond, post: Raymond, n: NodeId, head: NodeId)
+    requires
+        ray_wf(pre),
+        ray_assign_privilege(pre, post, n, head),
+    ensures
+        ray_wf(post),
+{
+    lemma_assign_holder_pointers(pre, post, n, head);
+    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) implies post.holder.contains_key(m)
+        && post.queue.contains_key(m) && post.asked.contains_key(m) && post.using.contains_key(m)
+        && post.nodes.contains(post.holder[m]) by {
+        assert(pre.nodes.contains(m));
+        if m == head || m == n {
+            assert(post.holder[m] == head);
+            assert(pre.nodes.contains(head));
+        } else {
+            assert(post.holder[m] == pre.holder[m]);
+        }
+    }
+}
+
+/// Nobody is in the critical section when the token is passed on, so
+/// `ray_using_implies_token` survives the move vacuously.
+pub proof fn lemma_assign_using(pre: Raymond, post: Raymond, n: NodeId, head: NodeId)
+    requires
+        ray_inv(pre),
+        ray_assign_privilege(pre, post, n, head),
+    ensures
+        ray_using_implies_token(post),
+{
+    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) && post.using[m] implies has_token(
+        post,
+        m,
+    ) by {
+        assert(pre.nodes.contains(m));
+        assert(pre.using[m]);
+        assert(has_token(pre, m));
+        assert(has_token(pre, n));
+        assert(m == n);
+        assert(!pre.using[n]);
+        assert(false);
+    }
+}
+
 /// Passing the token preserves the "exactly one token" invariant: the old
 /// holder stops being a root at the same instant the new holder becomes one.
 pub proof fn lemma_assign_privilege_preserves_unique_token(
@@ -122,51 +278,11 @@ pub proof fn lemma_assign_privilege_preserves_unique_token(
         ray_inv(post),
         has_token(post, head),
         !has_token(post, n),
-        forall|m: NodeId| has_token(post, m) ==> m == head,
+        forall|m: NodeId| #[trigger] has_token(post, m) ==> m == head,
 {
-    assert(post.holder[head] == head);
-    assert(post.holder[n] == head);
-    assert(has_token(post, head));
-
-    assert forall|m: NodeId| has_token(post, m) implies m == head by {
-        if m != head && m != n {
-            assert(post.holder[m] == pre.holder[m]);
-            assert(has_token(pre, m));
-            assert(has_token(pre, n));
-            assert(m == n);
-            assert(false);
-        }
-        if m == n {
-            assert(post.holder[n] == head);
-            assert(false);
-        }
-    }
-
-    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) && post.using[m] implies has_token(
-        post,
-        m,
-    ) by {
-        assert(pre.nodes.contains(m));
-        assert(pre.using[m]);
-        assert(has_token(pre, m));
-        assert(has_token(pre, n));
-        assert(m == n);
-        assert(!pre.using[n]);
-        assert(false);
-    }
-
-    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) implies post.holder.contains_key(m)
-        && post.queue.contains_key(m) && post.asked.contains_key(m) && post.using.contains_key(m)
-        && post.nodes.contains(post.holder[m]) by {
-        assert(pre.nodes.contains(m));
-        if m == head {
-            assert(post.holder[m] == head);
-        } else if m == n {
-            assert(post.holder[m] == head);
-        } else {
-            assert(post.holder[m] == pre.holder[m]);
-        }
-    }
+    lemma_assign_token_moves(pre, post, n, head);
+    lemma_assign_wf(pre, post, n, head);
+    lemma_assign_using(pre, post, n, head);
 }
 
 /// Every Raymond transition preserves the Raymond invariant.
@@ -182,27 +298,33 @@ pub proof fn lemma_ray_step_preserves_inv(pre: Raymond, post: Raymond, s: RaySte
             lemma_assign_privilege_preserves_unique_token(pre, post, node, head);
         },
         RayStep::EnterCs { node } => {
-            assert forall|m: NodeId| #[trigger] post.nodes.contains(m) && post.using[m]
-                implies has_token(post, m) by {
+            assert forall|m: NodeId| #[trigger] pre.nodes.contains(m) && post.using[m]
+                implies has_token(pre, m) by {
                 if m == node {
                     assert(has_token(pre, node));
                 } else {
                     assert(post.using[m] == pre.using[m]);
-                    assert(has_token(pre, m));
                 }
             }
+            lemma_ray_frame_inv(pre, post);
         },
         RayStep::ExitCs { node } => {
-            assert forall|m: NodeId| #[trigger] post.nodes.contains(m) && post.using[m]
-                implies has_token(post, m) by {
+            assert forall|m: NodeId| #[trigger] pre.nodes.contains(m) && post.using[m]
+                implies has_token(pre, m) by {
                 assert(m != node);
                 assert(post.using[m] == pre.using[m]);
-                assert(has_token(pre, m));
             }
+            lemma_ray_frame_inv(pre, post);
         },
-        RayStep::RequestCs { node } => {},
-        RayStep::MakeRequest { node } => {},
-        RayStep::ReceiveRequest { at, from } => {},
+        RayStep::RequestCs { node } => {
+            lemma_ray_frame_inv(pre, post);
+        },
+        RayStep::MakeRequest { node } => {
+            lemma_ray_frame_inv(pre, post);
+        },
+        RayStep::ReceiveRequest { at, from } => {
+            lemma_ray_frame_inv(pre, post);
+        },
     }
 }
 

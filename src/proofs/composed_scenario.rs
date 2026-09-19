@@ -197,7 +197,7 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (res: (
     assert(ray0.holder[b] == a);
     // `ray_init` requires the holder pointers to be acyclic; `A` is the root and
     // `B` is its only child, so ranking `A` below `B` witnesses it.
-    let ray_rank = Map::new(|k: NodeId| true, |k: NodeId| if k == a { 0nat } else { 1nat });
+    let ray_rank = Map::new(ray0.nodes, |k: NodeId| if k == a { 0nat } else { 1nat });
     assert forall|n: NodeId| #[trigger] ray0.nodes.contains(n) implies ray_rank.contains_key(n) by {
     }
     assert forall|n: NodeId|
@@ -887,7 +887,7 @@ pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId
     assert(ray0.holder[b] == a);
     // `ray_init` requires the holder pointers to be acyclic; `A` is the root and
     // `B` is its only child, so ranking `A` below `B` witnesses it.
-    let ray_rank = Map::new(|k: NodeId| true, |k: NodeId| if k == a { 0nat } else { 1nat });
+    let ray_rank = Map::new(ray0.nodes, |k: NodeId| if k == a { 0nat } else { 1nat });
     assert forall|n: NodeId| #[trigger] ray0.nodes.contains(n) implies ray_rank.contains_key(n) by {
     }
     assert forall|n: NodeId|
@@ -1127,7 +1127,7 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
     assert(ray0.holder[b] == a);
     // `ray_init` requires the holder pointers to be acyclic; `A` is the root and
     // `B` is its only child, so ranking `A` below `B` witnesses it.
-    let ray_rank = Map::new(|k: NodeId| true, |k: NodeId| if k == a { 0nat } else { 1nat });
+    let ray_rank = Map::new(ray0.nodes, |k: NodeId| if k == a { 0nat } else { 1nat });
     assert forall|n: NodeId| #[trigger] ray0.nodes.contains(n) implies ray_rank.contains_key(n) by {
     }
     assert forall|n: NodeId|

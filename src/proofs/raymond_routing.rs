@@ -149,7 +149,7 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
     // `ray_init` requires the holder pointers to be acyclic, and the start tree
     // `D -> B -> A -> C` is ranked by its distance from the root `C`.
     let ray_rank = Map::new(
-        |k: NodeId| true,
+        r0.nodes,
         |k: NodeId|
             if k == c {
                 0nat

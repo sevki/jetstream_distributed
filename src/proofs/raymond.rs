@@ -251,6 +251,7 @@ pub proof fn lemma_frame_acyclic(pre: Raymond, post: Raymond)
 ///   strict decrease comes straight from the old rank.
 pub proof fn lemma_repoint_acyclic(pre: Raymond, post: Raymond, from: NodeId, to: NodeId)
     requires
+        ray_wf(pre),
         ray_acyclic(pre),
         post.nodes == pre.nodes,
         post.holder == pre.holder.insert(from, to).insert(to, to),
@@ -258,13 +259,17 @@ pub proof fn lemma_repoint_acyclic(pre: Raymond, post: Raymond, from: NodeId, to
         ray_acyclic(post),
 {
     let rank = choose|rank: Map<NodeId, nat>| ray_ranked_by(pre, rank);
+    // Defined exactly on the nodes, which is where `ray_ranked_by` asks for it.
+    // `ray_wf`'s holder-closedness is what makes every parent's rank land inside
+    // that domain.
     let rank2 = Map::new(
-        |k: NodeId| true,
+        post.nodes,
         |k: NodeId| if k == to { 0nat } else { (rank[k] + 1) as nat },
     );
     assert(post.holder[to] == to);
     assert(post.holder[from] == to);
     assert(rank2[to] == 0nat);
+    assert(rank2.dom() == post.nodes);
     assert forall|n: NodeId| #[trigger] post.nodes.contains(n) implies rank2.contains_key(n) by {
     }
     assert forall|n: NodeId|
@@ -273,15 +278,19 @@ pub proof fn lemma_repoint_acyclic(pre: Raymond, post: Raymond, from: NodeId, to
         assert(n != to);
         assert(rank2[n] == (rank[n] + 1) as nat);
         if post.holder[n] == to {
-            assert(rank2[post.holder[n]] == 0nat);
+            assert(post.nodes.contains(to));
+            assert(rank2[to] == 0nat);
         } else {
             assert(n != from);
             assert(post.holder[n] == pre.holder[n]);
             assert(pre.nodes.contains(n));
+            // Holder-closedness: the parent is a node, so `rank2` is defined on
+            // it.
+            assert(pre.nodes.contains(pre.holder[n]));
             assert(pre.holder[n] != n);
             assert(rank.contains_key(n));
             assert(rank[pre.holder[n]] < rank[n]);
-            assert(rank2[post.holder[n]] == (rank[pre.holder[n]] + 1) as nat);
+            assert(rank2[pre.holder[n]] == (rank[pre.holder[n]] + 1) as nat);
         }
     }
     assert(ray_ranked_by(post, rank2));

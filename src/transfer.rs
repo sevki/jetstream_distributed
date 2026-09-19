@@ -192,8 +192,9 @@ pub fn apply_transition(
             return Err(TransitionError::InvalidSourceState);
         }
 
-        system.update_actor_state(actor_id, new_state);
-        Ok(())
+        system
+            .update_actor_state(actor_id, new_state)
+            .map_err(|_| TransitionError::InvalidSourceState)
     } else {
         Err(TransitionError::InvalidSourceState)
     }
@@ -308,8 +309,9 @@ mod transfer_tests {
         let mut system = ActorSystem::new();
         let actor = 100u64;
 
+        system.create_actor(actor, 1, 1).unwrap();
         let initial_state = OwnershipState::Owned { owner: 1, epoch: 1 };
-        system.update_actor_state(actor, initial_state.clone());
+        assert!(matches!(system.get_actor_state(actor), Some(state) if state == &initial_state));
 
         let transferring_state = transition_owned_to_transferring(1, 2, 1, 2).unwrap();
         assert!(apply_transition(&mut system, actor, transferring_state.clone()).is_ok());
@@ -329,11 +331,7 @@ mod transfer_tests {
         let mut system = ActorSystem::new();
         let actor = 100u64;
 
-        let initial_state = OwnershipState::Owned {
-            owner: 1,
-            epoch: 10,
-        };
-        system.update_actor_state(actor, initial_state);
+        system.create_actor(actor, 1, 10).unwrap();
 
         let bad_state = OwnershipState::Owned { owner: 2, epoch: 5 };
         let result = apply_transition(&mut system, actor, bad_state);

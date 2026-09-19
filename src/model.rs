@@ -67,6 +67,9 @@ impl ActorSystem {
         initial_owner: NodeId,
         epoch: Epoch,
     ) -> Result<(), &'static str> {
+        if initial_owner == 0 || epoch == 0 {
+            return Err("invalid initial owner or epoch");
+        }
         if self.actors.contains_key(&actor_id) {
             return Err("actor already exists");
         }
@@ -82,8 +85,16 @@ impl ActorSystem {
         self.actors.get(&actor_id)
     }
 
-    pub(crate) fn update_actor_state(&mut self, actor_id: ActorId, new_state: OwnershipState) {
+    pub(crate) fn update_actor_state(
+        &mut self,
+        actor_id: ActorId,
+        new_state: OwnershipState,
+    ) -> Result<(), &'static str> {
+        if !self.actors.contains_key(&actor_id) {
+            return Err("actor does not exist");
+        }
         self.actors.insert(actor_id, new_state);
+        Ok(())
     }
 
     pub fn is_valid(&self) -> bool {

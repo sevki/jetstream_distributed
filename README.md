@@ -393,13 +393,17 @@ invariant preservation):
 The proofs use no `assume`, `admit`, `external_body`, `axiom`, or any other way
 of asserting something Verus did not check.
 
-The long concrete scenarios are kept tractable by **splitting** them rather than
-by raising the solver's budget: `scenario_composed_handover` is
-`handover_phase_release` + `handover_phase_acquire`, and
-`scenario_request_and_token_routing` is `routing_phase_requests` +
-`routing_phase_token`. Each phase hands the intermediate state to the next as an
-*abstract* characterisation, so no single query has to reason about a dozen
-nested `Map`/`Set` literals at once. CI greps `src/` for the real escape hatches
-and fails the build if any appear. Everything the proofs rely on that
+The long concrete scenarios are kept tractable mainly by **splitting** them:
+`scenario_composed_handover` is `handover_phase_release` +
+`handover_phase_acquire`, and `scenario_request_and_token_routing` is
+`routing_phase_requests` + `routing_phase_token`. Each phase hands the
+intermediate state to the next as an *abstract* characterisation, so no single
+query reasons about a dozen nested `Map`/`Set` literals at once. The first phase
+of each then verifies within Verus's default solver budget; the second phase of
+each carries `#[verifier::rlimit(40)]`, since it builds five states on top of a
+state described by fifteen-odd preconditions. That attribute is a **solver
+budget, not an assumption** — it raises the resource ceiling for one query and
+cannot admit an unproven fact. CI greps `src/` for the real escape hatches and
+fails the build if any appear. Everything the proofs rely on that
 is not derived is a modelled transition or an explicitly documented entry in the
 failure-model table above.

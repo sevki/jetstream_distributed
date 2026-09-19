@@ -199,6 +199,10 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
 /// Phase two: the token travels back `C -> A -> B -> D`, `D` enters the
 /// critical section, and `D`'s *original* request to `B` is redelivered after
 /// the topology it was routed against is long gone.
+// As with the handover, the second phase is the larger query: three token
+// transfers plus the critical-section entry and the delayed redelivery, all over
+// a state described by eighteen preconditions.
+#[verifier::rlimit(40)]
 pub proof fn routing_phase_token(r7: Raymond, a: NodeId, b: NodeId, c: NodeId, d: NodeId) -> (r:
     Raymond)
     requires

@@ -224,6 +224,11 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (c: Com
 ///
 /// Takes the mid state abstractly, so the solver never sees the literals built
 /// in phase one.
+// Phase one verifies within the default budget; this one needs more. It carries
+// fifteen preconditions and builds five composed states on top of them, so the
+// single query is inherently larger. `rlimit` is a solver budget, not an
+// assumption: it cannot admit an unproven fact.
+#[verifier::rlimit(40)]
 pub proof fn handover_phase_acquire(c: Composed, x: ActorId, a: NodeId, b: NodeId) -> (r: Composed)
     requires
         a != b,

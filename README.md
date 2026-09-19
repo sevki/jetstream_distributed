@@ -305,7 +305,7 @@ request, so a PR fails if any proof stops verifying.
 ## Status: proven, modelled, future work
 
 Against the pinned Verus release, `verus --crate-type=lib src/lib.rs` reports
-`75 verified, 0 errors`. CI writes the current count into each run's job summary,
+`88 verified, 0 errors`. CI writes the current count into each run's job summary,
 which is the authoritative figure if this snapshot has drifted.
 
 **Machine-checked** (every `proof fn` in `src/proofs/` is checked by Verus in

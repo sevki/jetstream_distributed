@@ -145,7 +145,7 @@ verifying, the build fails.
 | 6a | **Token uniqueness (physical)** - at most one token is ever *issued* per `(ActorId, Epoch)` | `proofs::tokens::theorem_issued_token_unique_per_actor_epoch` | reachability |
 | 6b | Stale physical tokens confer no authority | `proofs::tokens::theorem_stale_token_has_no_authority` | none |
 | 6c | No token is ever minted for a future epoch | `proofs::tokens::theorem_no_future_tokens` | reachability |
-| E | The runtime `u64` fence check returns exactly the model's verdict, and rejects any superseded epoch | `exec::FenceGuard::accepts`, `exec::FenceGuard::rejects_stale` | the guard is the node's own record of one actor; it is query-only, so nothing here can change who owns what |
+| E | The runtime `u64` fence check returns exactly the model's verdict, and rejects any superseded epoch | `exec::FenceGuard::accepts`, `exec::FenceGuard::rejects_stale` | the guard is the node's own record of one actor, immutable after `FenceGuard::new` (private fields, no setter), so nothing in this API can change who owns what |
 | P1 | **Issued tokens never disappear** — no crash, partition or recovery retracts a capability, which is why stale tokens must be fenced rather than revoked | `proofs::properties::theorem_issued_monotone` | none |
 | P2 | **Sent messages never disappear** — the fact that makes duplication, reordering and unbounded delay free in the model | `proofs::properties::theorem_network_monotone` | none |
 | P3 | **The actor population is constant** — no transition creates or destroys an actor | `proofs::properties::theorem_actor_domain_constant` | none |
@@ -300,9 +300,12 @@ them under `src/proofs/` is the ordinary Rust way to express that; a top-level
 
 Executable code is confined to `src/exec.rs`, which holds the `u64`-valued
 fence check a node actually runs, proved to return exactly the model's verdict.
-It offers **queries only**: a `FenceGuard` has no mutator, because any mutator
-would move its ghost view straight from `Owned(A, e)` to `Owned(B, e + 1)` -
-exactly the atomic ownership assignment this model refuses to admit. Making a
+It offers **queries only**: a `FenceGuard` has private fields, a single
+constructor and no setter, so its ghost view is fixed at construction. Were it
+mutable — by a `bump` method or by assigning to a public field — its view could
+drift from `Owned(A, e)` to `Owned(B, e + 1)`, exactly the atomic ownership
+assignment this model refuses to admit. Observing a new generation means
+constructing a new guard. Making a
 guard follow the protocol needs the refinement relation listed under future work.
 Everything else in the crate is specification or proof.
 

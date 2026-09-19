@@ -42,7 +42,6 @@ verus! {
 /// than as a literal, so phase two never has to reason about the `Map`/`Set`
 /// nest built here. Replaying all twelve hops in one function made the single
 /// SMT query large enough to dominate the whole proof run.
-#[verifier::rlimit(40)]
 pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) -> (r: Raymond)
     requires
         a != b,
@@ -200,7 +199,6 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
 /// Phase two: the token travels back `C -> A -> B -> D`, `D` enters the
 /// critical section, and `D`'s *original* request to `B` is redelivered after
 /// the topology it was routed against is long gone.
-#[verifier::rlimit(40)]
 pub proof fn routing_phase_token(r7: Raymond, a: NodeId, b: NodeId, c: NodeId, d: NodeId) -> (r:
     Raymond)
     requires

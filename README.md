@@ -393,14 +393,13 @@ invariant preservation):
 The proofs use no `assume`, `admit`, `external_body`, `axiom`, or any other way
 of asserting something Verus did not check.
 
-Some of the long concrete scenarios carry `#[verifier::rlimit(...)]`. That is a
-**solver budget, not an assumption**: it raises the resource ceiling for one SMT
-query and cannot let an unproven fact through. Those scenarios replay a dozen
-protocol steps over concrete `Map`/`Set` literals, which is simply expensive to
-discharge — the composed handover is additionally split into
-`handover_phase_release` and `handover_phase_acquire`, which pass the mid state
-across as an *abstract* characterisation so neither phase has to reason about the
-other's literals. CI greps `src/` for the real escape hatches and fails the build
-if any appear. Everything the proofs rely on that
+The long concrete scenarios are kept tractable by **splitting** them rather than
+by raising the solver's budget: `scenario_composed_handover` is
+`handover_phase_release` + `handover_phase_acquire`, and
+`scenario_request_and_token_routing` is `routing_phase_requests` +
+`routing_phase_token`. Each phase hands the intermediate state to the next as an
+*abstract* characterisation, so no single query has to reason about a dozen
+nested `Map`/`Set` literals at once. CI greps `src/` for the real escape hatches
+and fails the build if any appear. Everything the proofs rely on that
 is not derived is a modelled transition or an explicitly documented entry in the
 failure-model table above.

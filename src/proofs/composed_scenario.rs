@@ -52,7 +52,6 @@ verus! {
 /// the caller keep the literal is what keeps the proof tractable: each phase
 /// reasons about a handful of `insert`s over an opaque base instead of a dozen
 /// nested `Map`/`Set` literals, which is what exhausted the solver before.
-#[verifier::rlimit(40)]
 pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (c: Composed)
     requires
         a != b,
@@ -225,7 +224,6 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (c: Com
 ///
 /// Takes the mid state abstractly, so the solver never sees the literals built
 /// in phase one.
-#[verifier::rlimit(40)]
 pub proof fn handover_phase_acquire(c: Composed, x: ActorId, a: NodeId, b: NodeId) -> (r: Composed)
     requires
         a != b,
@@ -394,7 +392,6 @@ pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
 /// on its own it does not establish that any reachable composed state has
 /// `using` set. This does: it drives `RequestCs`, `EnterCs` and `ExitCs` from
 /// `composed_init` through `lemma_composed_reachable_step`.
-#[verifier::rlimit(30)]
 pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId)
     requires
         a != b,

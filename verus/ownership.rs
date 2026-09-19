@@ -54,8 +54,7 @@ pub open spec fn may_mutate_spec(state: OwnershipState, node: NodeId, epoch: Epo
 // ============================================================================
 
 pub proof fn lemma_owned_only_owner_mutates(owner: NodeId, epoch: Epoch, node: NodeId, e: Epoch)
-    requires may_mutate_spec(OwnershipState::Owned { owner, epoch }, node, e)
-    ensures node == owner && e == epoch
+    ensures may_mutate_spec(OwnershipState::Owned { owner, epoch }, node, e) ==> (node == owner && e == epoch)
 {
 }
 
@@ -71,8 +70,7 @@ pub proof fn lemma_transferring_no_mutate(
     node: NodeId,
     epoch: Epoch,
 )
-    requires may_mutate_spec(OwnershipState::Transferring { from, to, old_epoch, new_epoch }, node, epoch)
-    ensures false
+    ensures !may_mutate_spec(OwnershipState::Transferring { from, to, old_epoch, new_epoch }, node, epoch)
 {
 }
 
@@ -86,8 +84,7 @@ pub proof fn lemma_unowned_no_mutate(
     node: NodeId,
     supplied_epoch: Epoch,
 )
-    requires may_mutate_spec(OwnershipState::Unowned { epoch, intended_owner }, node, supplied_epoch)
-    ensures false
+    ensures !may_mutate_spec(OwnershipState::Unowned { epoch, intended_owner }, node, supplied_epoch)
 {
 }
 
@@ -113,12 +110,16 @@ pub proof fn theorem_exclusive_mutable_ownership(
         OwnershipState::Owned { owner, epoch } => {
             lemma_owned_only_owner_mutates(owner, epoch, node_a, epoch_a);
             lemma_owned_only_owner_mutates(owner, epoch, node_b, epoch_b);
+            assert!(node_a == owner && epoch_a == epoch);
+            assert!(node_b == owner && epoch_b == epoch);
         }
         OwnershipState::Transferring { from, to, old_epoch, new_epoch } => {
             lemma_transferring_no_mutate(from, to, old_epoch, new_epoch, node_a, epoch_a);
+            assert!(false);
         }
         OwnershipState::Unowned { epoch, intended_owner } => {
             lemma_unowned_no_mutate(epoch, intended_owner, node_a, epoch_a);
+            assert!(false);
         }
     }
 }

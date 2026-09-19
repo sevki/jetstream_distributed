@@ -357,6 +357,8 @@ pub proof fn handover_phase_pass_token(c: Composed, x: ActorId, a: NodeId, b: No
         r.actor == x,
         r.own == c.own,
         has_token(r.ray, b),
+        // Exported so the scenario can link the handover to its outcome.
+        composed_step(c, r, ComposedStep::PassToken { node: a, head: b }),
 {
     let c9 = Composed {
         own: c.own,
@@ -404,6 +406,7 @@ pub proof fn handover_phase_acquire(c: Composed, x: ActorId, a: NodeId, b: NodeI
         r.own.actors[x] == (OwnershipState::Owned { owner: b, epoch: 42 }),
         has_token(r.ray, b),
         r.own.issued.contains(Token { actor: x, epoch: 41, holder: a }),
+        composed_reachable_from(c, r),
 {
     let c10 = Composed {
         own: System {
@@ -422,6 +425,8 @@ pub proof fn handover_phase_acquire(c: Composed, x: ActorId, a: NodeId, b: NodeI
     assert(composed_step(c, c10, s10));
     lemma_composed_reachable_step(c, c10, s10);
     theorem_composed_step_preserves_inv(c, c10, s10);
+    lemma_composed_reachable_from_refl(c);
+    lemma_composed_reachable_from_step(c, c, c10, s10);
     c10
 }
 
@@ -434,14 +439,26 @@ pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
     requires
         a != b,
     ensures
-        exists|c: Composed|
+        // The **voluntary** handover, linked to its outcome. The endpoint alone
+        // is satisfied by the crash-takeover execution - which also ends with
+        // `B` owning at 42, the token at `B` and `A`'s epoch-41 token issued -
+        // so a contract that exports only the endpoint does not distinguish the
+        // scenario it is named for from the one beside it. `PassToken` with
+        // `A` still **live** is what makes it a handover rather than a seizure.
+        exists|p: Composed, q: Composed, fin: Composed|
             {
-                &&& #[trigger] composed_reachable(c)
-                &&& c.actor == x
-                &&& may_mutate(c.own.actors[x], b, 42)
-                &&& has_token(c.ray, b)
-                &&& c.own.issued.contains(Token { actor: x, epoch: 41, holder: a })
-                &&& !may_mutate(c.own.actors[x], a, 41)
+                &&& #[trigger] composed_step(p, q, ComposedStep::PassToken { node: a, head: b })
+                &&& #[trigger] composed_reachable_from(q, fin)
+                &&& composed_reachable(p)
+                &&& p.own.live.contains(a)
+                &&& is_unowned(p.own.actors[x])
+                &&& has_token(p.ray, a)
+                &&& has_token(q.ray, b)
+                &&& fin.actor == x
+                &&& may_mutate(fin.own.actors[x], b, 42)
+                &&& has_token(fin.ray, b)
+                &&& fin.own.issued.contains(Token { actor: x, epoch: 41, holder: a })
+                &&& !may_mutate(fin.own.actors[x], a, 41)
             },
 {
     let released = handover_phase_release(x, a, b);
@@ -454,6 +471,12 @@ pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
     assert(has_token(fin.ray, b));
     assert(fin.own.issued.contains(Token { actor: x, epoch: 41, holder: a }));
     assert(!may_mutate(fin.own.actors[x], a, 41));
+    assert(composed_step(requested, passed, ComposedStep::PassToken { node: a, head: b }));
+    assert(composed_reachable_from(passed, fin));
+    assert(requested.own.live.contains(a));
+    assert(is_unowned(requested.own.actors[x]));
+    assert(has_token(requested.ray, a));
+    assert(has_token(passed.ray, b));
 }
 
 /// **A reachable composed state in which a node is inside the critical section.**

@@ -351,7 +351,15 @@ pub proof fn theorem_crash_recovery_cannot_change_ownership(pre: System, post: S
 
 /// An interrupted transfer leaves nobody with authority, and burns the epoch
 /// that the interrupted handover had allocated.
-pub proof fn scenario_interrupted_transfer(
+///
+/// Named a theorem rather than a scenario, because it is one: it takes the
+/// `Transferring` state and the `AbortTransfer` step as hypotheses rather than
+/// constructing a reachable execution that contains them. Every other
+/// `scenario_*` in this crate builds a run from `init`, so calling this one a
+/// scenario claimed more than it delivers. It is not weaker for being a step
+/// property - `theorem_reachable_inv` gives `inv` for every reachable state, so
+/// it applies to all of them - but the name should say which it is.
+pub proof fn theorem_interrupted_transfer_burns_the_epoch(
     pre: System,
     post: System,
     x: ActorId,

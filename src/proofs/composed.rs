@@ -175,6 +175,68 @@ pub proof fn theorem_composed_step_preserves_inv(pre: Composed, post: Composed, 
     }
 }
 
+/// **Only two composed steps move the token, and the holder's liveness decides
+/// which.**
+///
+/// A live holder passes it on ([`cs_pass_token`]); a fail-stopped one has it
+/// taken ([`cs_seize_token`]); nothing else touches it. The `false` arms are the
+/// content: routing, ownership transitions and acquisition all leave token
+/// possession exactly as they found it, so there is no third way for the token
+/// to move and in particular no step in which a crashed node hands it over as
+/// though it were acting.
+pub proof fn theorem_token_movement_is_partitioned(
+    pre: Composed,
+    post: Composed,
+    s: ComposedStep,
+    m: NodeId,
+)
+    requires
+        composed_inv(pre),
+        composed_step(pre, post, s),
+        has_token(pre.ray, m),
+        !has_token(post.ray, m),
+    ensures
+        match s {
+            ComposedStep::PassToken { node, head } => node == m && pre.own.live.contains(m),
+            ComposedStep::SeizeToken { from, to } => from == m && !pre.own.live.contains(m),
+            ComposedStep::Ray { ray_step } => false,
+            ComposedStep::Own { own_step } => false,
+            ComposedStep::AcquireUnderToken { node } => false,
+        },
+{
+    match s {
+        ComposedStep::Ray { ray_step } => {
+            lemma_token_preserving_steps_keep_holder(pre.ray, post.ray, ray_step);
+            assert(has_token(post.ray, m));
+            assert(false);
+        },
+        ComposedStep::Own { own_step } => {
+            assert(post.ray == pre.ray);
+            assert(has_token(post.ray, m));
+            assert(false);
+        },
+        ComposedStep::AcquireUnderToken { node } => {
+            assert(post.ray == pre.ray);
+            assert(has_token(post.ray, m));
+            assert(false);
+        },
+        ComposedStep::PassToken { node, head } => {
+            // `ray_assign_privilege` needs the *holder* to act, and the token is
+            // unique, so that holder is `m`.
+            assert(has_token(pre.ray, node));
+            theorem_ray_at_most_one_token(pre.ray, m, node);
+            assert(node == m);
+            assert(pre.own.live.contains(node));
+        },
+        ComposedStep::SeizeToken { from, to } => {
+            assert(has_token(pre.ray, from));
+            theorem_ray_at_most_one_token(pre.ray, m, from);
+            assert(from == m);
+            assert(!pre.own.live.contains(from));
+        },
+    }
+}
+
 pub proof fn lemma_composed_next_preserves_inv(pre: Composed, post: Composed)
     requires
         composed_inv(pre),

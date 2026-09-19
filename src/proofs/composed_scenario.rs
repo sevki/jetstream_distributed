@@ -60,6 +60,7 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (c: Com
         composed_inv(c),
         c.actor == x,
         c.own.actors[x] == (OwnershipState::Unowned { epoch: 42, intended_owner: b }),
+        c.own.live.contains(a),
         c.own.live.contains(b),
         c.own.network.contains(Message::Grant { actor: x, to: b, epoch: 42 }),
         c.own.issued.contains(Token { actor: x, epoch: 41, holder: a }),
@@ -216,6 +217,10 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (c: Com
     theorem_composed_step_preserves_inv(c4, c5, s5);
     assert(is_unowned(c5.own.actors[x]));
     assert(has_token(c5.ray, a));
+    // Nothing in this phase crashes anyone, so `A` is still live and can hand
+    // the token on itself - which `cs_pass_token` now requires.
+    assert(c5.own.live.contains(a));
+    assert(c5.own.live.contains(b));
     c5
 }
 
@@ -231,6 +236,7 @@ pub proof fn handover_phase_request(c: Composed, x: ActorId, a: NodeId, b: NodeI
         composed_inv(c),
         c.actor == x,
         c.own.actors[x] == (OwnershipState::Unowned { epoch: 42, intended_owner: b }),
+        c.own.live.contains(a),
         c.own.live.contains(b),
         c.own.network.contains(Message::Grant { actor: x, to: b, epoch: 42 }),
         c.own.issued.contains(Token { actor: x, epoch: 41, holder: a }),
@@ -330,6 +336,7 @@ pub proof fn handover_phase_pass_token(c: Composed, x: ActorId, a: NodeId, b: No
         composed_inv(c),
         c.actor == x,
         c.own.actors[x] == (OwnershipState::Unowned { epoch: 42, intended_owner: b }),
+        c.own.live.contains(a),
         c.ray.nodes.contains(a),
         c.ray.nodes.contains(b),
         has_token(c.ray, a),
@@ -356,6 +363,7 @@ pub proof fn handover_phase_pass_token(c: Composed, x: ActorId, a: NodeId, b: No
     };
     let s9 = ComposedStep::PassToken { node: a, head: b };
     assert(is_unowned(c.own.actors[x]));
+    assert(c.own.live.contains(a));
     assert(composed_step(c, c9, s9));
     lemma_composed_reachable_step(c, c9, s9);
     theorem_composed_step_preserves_inv(c, c9, s9);

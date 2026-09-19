@@ -14,8 +14,10 @@
 //!   (`Transferring` is not enough: it satisfies `!is_owned`, but the outgoing
 //!   owner has not acknowledged the revoke yet);
 //! * [`ComposedStep::SeizeToken`] moves the token *without* the holder acting,
-//!   under the same guard, so that crash-driven takeover - the case epochs
-//!   exist for - is reachable rather than requiring a dead node to cooperate;
+//!   and only from a node that has fail-stopped, so that crash-driven takeover -
+//!   the case epochs exist for - is reachable rather than requiring a dead node
+//!   to cooperate. Token movement is therefore partitioned by liveness: a live
+//!   holder passes, a crashed one is seized from, and there is no third way;
 //! * [`ComposedStep::AcquireUnderToken`] may only fire for a node that *holds*
 //!   the token - authority cannot be taken by a node the routing layer has not
 //!   elected;
@@ -95,14 +97,28 @@ pub open spec fn cs_own(pre: Composed, post: Composed, s: Step) -> bool {
 /// condition of `theorem_token_transfer_preserves_ownership_safety` into
 /// something the machine enforces.
 ///
-/// The guard is `is_unowned`, not merely `!is_owned`: `Transferring` also
+/// The first guard is `is_unowned`, not merely `!is_owned`: `Transferring` also
 /// satisfies `!is_owned`, so the weaker form would let the token move while a
 /// handover was still in flight and the outgoing owner had not yet
 /// acknowledged the revoke. Safety would survive that - nobody has authority
 /// while `Transferring` either - but it would not be the
 /// release-before-transfer discipline this module claims to enforce.
+///
+/// The second guard, `pre.own.live.contains(n)`, is what makes this step mean
+/// what it is written as. `ray_assign_privilege` models the holder *acting* -
+/// choosing to hand the privilege to the head of its queue - and a crashed node
+/// cannot act. Without it, a dead node could still voluntarily pass the token,
+/// which is exactly the cooperation [`cs_seize_token`] exists to avoid needing;
+/// adding seizure without this guard would have opened the forcible path while
+/// leaving the impossible one open beside it.
+///
+/// Together the two transitions partition token movement by the holder's
+/// liveness: a live holder passes, a crashed one is seized from, and
+/// `proofs::composed::theorem_token_movement_is_partitioned` proves there is no
+/// third way.
 pub open spec fn cs_pass_token(pre: Composed, post: Composed, n: NodeId, head: NodeId) -> bool {
     &&& is_unowned(pre.own.actors[pre.actor])
+    &&& pre.own.live.contains(n)
     &&& ray_assign_privilege(pre.ray, post.ray, n, head)
     &&& post.own == pre.own
     &&& post.actor == pre.actor

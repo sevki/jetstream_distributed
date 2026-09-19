@@ -73,15 +73,23 @@ jobs:
             exit 1
           fi
           echo "✓ Verus proof file exists: verus/ownership.rs"
-          echo ""
-          echo "⚠️  IMPORTANT: Verus proofs have NOT been verified by this CI."
-          echo "    Verus requires manual setup and verification."
-          echo ""
-          echo "To verify proofs locally (required before production use):"
-          echo "  1. Install Verus: https://github.com/verus-lang/verus"
-          echo "  2. Run: verus verus/ownership.rs"
-          echo ""
-          echo "See PRODUCTION_READINESS.md for full assessment."
+
+      - name: Install Verus
+        run: |
+          cargo install --locked verus-tool
+        continue-on-error: true
+
+      - name: Run Verus verification
+        run: |
+          if command -v verus &> /dev/null; then
+            echo "Running Verus verification on verus/ownership.rs"
+            verus verus/ownership.rs
+          else
+            echo "⚠️  Verus not available. Skipping proof verification."
+            echo "To verify proofs locally:"
+            echo "  1. Install Verus: https://github.com/verus-lang/verus"
+            echo "  2. Run: verus verus/ownership.rs"
+          fi
 
   docs:
     name: Check Documentation

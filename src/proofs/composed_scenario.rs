@@ -426,6 +426,11 @@ pub proof fn handover_phase_request(
         res.1.len() == 9,
         forall|i: int| 0 <= i < tr.len() ==> #[trigger] res.1[i] == tr[i],
 {
+    // The run the phase was handed is its own evidence that `c` is
+    // reachable; the phase does not need it as a separate hypothesis.
+    lemma_composed_labelled_execution_is_execution(tr, labels);
+    assert(composed_reachable(c));
+
     // 6. B asks for the token
     let c6 = Composed {
         own: c.own,
@@ -566,6 +571,11 @@ pub proof fn handover_phase_pass_token(
         res.1.len() == 10,
         forall|i: int| 0 <= i < tr.len() ==> #[trigger] res.1[i] == tr[i],
 {
+    // The run the phase was handed is its own evidence that `c` is
+    // reachable; the phase does not need it as a separate hypothesis.
+    lemma_composed_labelled_execution_is_execution(tr, labels);
+    assert(composed_reachable(c));
+
     let c9 = Composed {
         own: c.own,
         ray: Raymond {
@@ -638,6 +648,11 @@ pub proof fn handover_phase_acquire(
         res.1.len() == 11,
         forall|i: int| 0 <= i < tr.len() ==> #[trigger] res.1[i] == tr[i],
 {
+    // The run the phase was handed is its own evidence that `c` is
+    // reachable; the phase does not need it as a separate hypothesis.
+    lemma_composed_labelled_execution_is_execution(tr, labels);
+    assert(composed_reachable(c));
+
     let c10 = Composed {
         own: System {
             actors: c.own.actors.insert(x, OwnershipState::Owned { owner: b, epoch: 42 }),
@@ -814,20 +829,23 @@ pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId
     requires
         a != b,
     ensures
-        exists|c: Composed| #[trigger] composed_reachable(c) && c.ray.using[a],
-        // The *exit*, as a step out of a state that was actually inside. A bare
-        // `exists|c| composed_reachable(c) && !c.ray.using[a]` is satisfied by
-        // `composed_init`, where `using` is uniformly false, so it would say
-        // nothing about leaving a critical section.
-        exists|p: Composed, q: Composed|
+        // The run, with its labels. This scenario's old contract exported a
+        // reachable state with `using` set and an `ExitCs` step as two
+        // independent existentials; they could come from different executions,
+        // and neither said that the node inside the critical section got there
+        // by entering it. Three labels say it.
+        exists|tr: Seq<Composed>, labels: Seq<ComposedStep>|
             {
-                &&& #[trigger] composed_step(p, q, ComposedStep::Ray {
-                    ray_step: RayStep::ExitCs { node: a },
-                })
-                &&& composed_reachable(p)
-                &&& composed_reachable(q)
-                &&& p.ray.using[a]
-                &&& !q.ray.using[a]
+                &&& #[trigger] composed_labelled_execution(tr, labels)
+                &&& labels.len() == 3
+                &&& labels[0] == (ComposedStep::Ray { ray_step: RayStep::RequestCs { node: a } })
+                &&& labels[1] == (ComposedStep::Ray { ray_step: RayStep::EnterCs { node: a } })
+                &&& labels[2] == (ComposedStep::Ray { ray_step: RayStep::ExitCs { node: a } })
+                &&& !tr[0].ray.using[a]
+                &&& !tr[1].ray.using[a]
+                &&& tr[2].ray.using[a]
+                &&& !tr[3].ray.using[a]
+                &&& has_token(tr[2].ray, a)
             },
 {
     let nodes = Set::<NodeId>::empty().insert(a).insert(b);
@@ -933,7 +951,36 @@ pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId
     assert(composed_reachable(c3));
     assert(c2.ray.using[a]);
     assert(!c3.ray.using[a]);
-    assert(composed_step(c2, c3, ComposedStep::Ray { ray_step: RayStep::ExitCs { node: a } }));
+
+    let tr = seq![c0, c1, c2, c3];
+    let labels = seq![s1, s2, s3];
+    assert(tr.len() == 4);
+    assert(labels.len() == 3);
+    assert(tr[0] == c0);
+    assert(tr[1] == c1);
+    assert(tr[2] == c2);
+    assert(tr[3] == c3);
+    assert(labels[0] == s1);
+    assert(labels[1] == s2);
+    assert(labels[2] == s3);
+    assert forall|i: int|
+        #![trigger tr[i], tr[i + 1], labels[i]]
+        0 <= i < labels.len() implies composed_step(tr[i], tr[i + 1], labels[i]) by {
+        if i == 0 {
+            assert(composed_step(c0, c1, s1));
+        } else if i == 1 {
+            assert(composed_step(c1, c2, s2));
+        } else {
+            assert(i == 2);
+            assert(composed_step(c2, c3, s3));
+        }
+    }
+    assert(composed_run(tr, labels));
+    assert(composed_init(tr[0]));
+    assert(composed_labelled_execution(tr, labels));
+    assert(!c0.ray.using[a]);
+    assert(!c1.ray.using[a]);
+    assert(has_token(c2.ray, a));
 }
 
 /// **Crash-driven takeover, in the composed machine.**

@@ -65,9 +65,9 @@ impl FenceGuard {
         requires
             old(self).epoch < u64::MAX,
         ensures
-            self.epoch == old(self).epoch + 1,
-            self.owner == next_owner,
-            current_epoch(self.view()) > current_epoch(old(self).view()),
+            final(self).epoch == old(self).epoch + 1,
+            final(self).owner == next_owner,
+            current_epoch(final(self).view()) > current_epoch(old(self).view()),
     {
         self.epoch = self.epoch + 1;
         self.owner = next_owner;

@@ -70,3 +70,43 @@ jobs:
             exit 1
           fi
           echo "no escape hatches found"
+
+  # The crate is also a normal Cargo package. This job checks that the `vstd`
+  # version pinned in Cargo.toml really is the one this Verus release expects,
+  # so the Cargo entry point is not an untested claim.
+  cargo-verus:
+    name: cargo verus verify
+    runs-on: ubuntu-24.04
+    env:
+      VERUS_VERSION: 0.2026.09.13.671956e
+      VERUS_TOOLCHAIN: 1.98.1-x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Rust toolchain Verus was built against
+        run: |
+          rustup toolchain install "$VERUS_TOOLCHAIN" \
+            --component rustc-dev,llvm-tools,rust-std,cargo,rustfmt
+
+      - name: Restore the Verus release from cache
+        id: verus-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/verus
+          key: verus-${{ env.VERUS_VERSION }}-x86-linux
+
+      - name: Download Verus
+        if: steps.verus-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euxo pipefail
+          url="https://github.com/verus-lang/verus/releases/download/release%2F${VERUS_VERSION}/verus-${VERUS_VERSION}-x86-linux.zip"
+          curl --fail --location --silent --show-error -o /tmp/verus.zip "$url"
+          unzip -q /tmp/verus.zip -d /tmp/verus-unpacked
+          mv /tmp/verus-unpacked/verus-x86-linux "$HOME/verus"
+          chmod +x "$HOME/verus/verus" "$HOME/verus/rust_verify" "$HOME/verus/z3" "$HOME/verus/cargo-verus"
+
+      - name: Put Verus on PATH
+        run: echo "$HOME/verus" >> "$GITHUB_PATH"
+
+      - name: Verify through cargo-verus
+        run: cargo verus verify

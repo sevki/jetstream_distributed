@@ -515,26 +515,56 @@ invariant preservation):
   protocol. Verifying the protocol says nothing about whether an implementation
   follows it.
 
-### Scenarios export runs, not endpoints
+### Scenarios export labelled runs, not endpoints
 
 The recurring defect on this PR was a scenario whose postcondition described the
 world afterwards but never how it got there — and "how it got there" is the
-entire content of a scenario. Exporting a *step* was the first fix; it was not
-enough, because a step and an endpoint exported as independent existentials can
-come from different executions.
+entire content of a scenario. The repair went through three stages, and only the
+third one holds:
 
-So both layers now carry a reachability-**from** relation —
-`composed_reachable_from` and `ray_reachable_from` — and the scenarios export
-runs:
+1. **`ensures true`** — a scenario that proved nothing.
+2. **An exported *step*** — better, but a step and an endpoint exported as
+   independent existentials can come from different executions.
+3. **A reachability-*from* relation** tying them together — better still, and
+   still not enough: `composed_reachable_from(c, d)` says *some* run joins `c`
+   to `d`, but which steps that run took is hidden inside `composed_next`'s
+   existential. Every scenario built this way turned out to be satisfiable by a
+   substitute execution, and each repair excluded only the one substitute that
+   had been found:
 
-* `scenario_composed_crash_takeover` exports the `SeizeToken` step *and*
-  `composed_reachable_from(q, fin)`, so the `B`-owned outcome is reachable from
-  the seizure post-state rather than merely reachable; likewise `Reconcile`
-  linked to `A` being back and running.
-* `scenario_request_and_token_routing` exports `ray_init(r0, c)` and
-  `ray_reachable_from(r0, p)`, pinning where the run began — four nodes, token
-  at `C` — so a directly built state with `D` already root cannot satisfy it and
-  `A` and `C` must participate.
+   | Scenario | Substitute execution that satisfied it |
+   | --- | --- |
+   | crash takeover | `Acquire(A@41) → BeginTransfer → HandleRevoke → CompleteRelease → Crash(A) → SeizeToken → Acquire(B@42)` — `A` gave the actor up *voluntarily*, and no `RevokeOwner` occurred at all |
+   | voluntary handover | an unrelated `A → B` transfer at epochs 39 → 40, then `Acquire(A@41)`, then `RevokeOwner` to reach `B@42` — the advertised 41 → 42 release never happened |
+   | request routing | `A`, `B` and `D` each call `RequestCs` independently and then serve their own queue heads — `D`'s request is never forwarded `B → A → C` |
+
+4. **The labelled run.** `composed_run(tr, labels)` and `ray_run(tr, labels)`
+   carry the step labels alongside the states, and a scenario exports the whole
+   object. Fixing every entry of `labels` says exactly which steps the run
+   consists of and in what order, so no other run can satisfy it — not because
+   each alternative was anticipated and ruled out, but because nothing is left
+   free to vary.
+
+`lemma_composed_labelled_execution_is_execution` and `lemma_ray_run_is_segment`
+show the labelled forms imply the unlabelled ones, so every theorem stated over
+`composed_reachable` still applies; the scenarios only got stronger.
+
+What labels do **not** carry is data the step takes from the state it fires in.
+`ComposedStep::Own { own_step: Step::BeginTransfer { actor, from, to } }` names
+no epochs, so the handover's label sequence alone is satisfied by a 39 → 40
+transfer. The scenario therefore also exports the `Transferring` state *at the
+index it occupies*:
+
+| Scenario | Exported run |
+| --- | --- |
+| `scenario_composed_crash_takeover` | 8 labels, `Crash(A)` at index 2 and `RevokeOwner` at index 3, with no `CompleteRelease` anywhere for a voluntary release to hide behind; plus `tr[4]` showing `A` crashed, epoch burned and still holding the token |
+| `scenario_composed_handover` | `labels == handover_labels(x, a, b)` — 10 steps — plus `tr[3]` pinned to `Transferring { a, b, 41, 42 }` |
+| `scenario_request_and_token_routing` | `labels == routing_labels(a, b, c, d)` — 12 steps — plus `tr[0] == routing_init_state(a, b, c, d)`. One `RequestCs` in the whole run and it is `D`'s, so `MakeRequest { node: b }` at index 3 can only fire because `ReceiveRequest { at: b, from: d }` at index 2 filled `B`'s queue |
+
+The phases that keep these proofs tractable thread the run rather than an
+anchor: each takes the run built so far, appends its own steps with their
+labels, and hands the whole thing on, so splitting a scenario for the solver's
+benefit costs nothing in what the scenario claims.
 
 ## No escape hatches
 

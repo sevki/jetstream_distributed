@@ -28,6 +28,7 @@
 //! physically holds its epoch-41 token and has no authority at all.
 #![allow(unused_imports)]
 
+use vstd::assert_seqs_equal;
 use vstd::prelude::*;
 
 use crate::composed::*;

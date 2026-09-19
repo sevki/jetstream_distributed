@@ -26,6 +26,7 @@
 //! it was routed against are long gone.
 #![allow(unused_imports)]
 
+use vstd::assert_seqs_equal;
 use vstd::prelude::*;
 
 use crate::fencing::*;

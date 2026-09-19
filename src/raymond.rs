@@ -50,10 +50,10 @@ impl RaymondState {
         if request.actor_id != actor_id {
             return;
         }
-        self.request_queue
-            .entry(actor_id)
-            .or_default()
-            .push_back(request);
+        let queue = self.request_queue.entry(actor_id).or_default();
+        if !queue.iter().any(|r| r == &request) {
+            queue.push_back(request);
+        }
     }
 
     pub fn dequeue_request(&mut self, actor_id: ActorId) -> Option<TokenRequest> {

@@ -1,12 +1,8 @@
 use crate::model::{Epoch, NodeId, OwnershipState};
 use crate::ownership::may_mutate;
 
-pub fn valid_fence(state: &OwnershipState, epoch: Epoch) -> bool {
-    match state {
-        OwnershipState::Owned { epoch: e, .. } => epoch == *e,
-        OwnershipState::Transferring { new_epoch, .. } => epoch == *new_epoch,
-        OwnershipState::Unowned { epoch: e, .. } => epoch == *e,
-    }
+pub fn valid_fence(state: &OwnershipState, node: NodeId, epoch: Epoch) -> bool {
+    epoch == state.current_epoch() && may_mutate(state, node, epoch)
 }
 
 pub fn current_epoch(state: &OwnershipState) -> Epoch {
@@ -60,10 +56,11 @@ mod fencing_tests {
             epoch: 42,
         };
 
-        assert!(!valid_fence(&state, 0));
-        assert!(!valid_fence(&state, 21));
-        assert!(valid_fence(&state, 42));
-        assert!(!valid_fence(&state, 43));
+        assert!(!valid_fence(&state, 1, 0));
+        assert!(!valid_fence(&state, 1, 21));
+        assert!(valid_fence(&state, 1, 42));
+        assert!(!valid_fence(&state, 1, 43));
+        assert!(!valid_fence(&state, 2, 42)); // node 2 cannot mutate even at current epoch
     }
 
     #[test]
@@ -75,11 +72,12 @@ mod fencing_tests {
             new_epoch: 42,
         };
 
-        assert!(!valid_fence(&state, 0));
-        assert!(!valid_fence(&state, 40));
-        assert!(!valid_fence(&state, 41));
-        assert!(valid_fence(&state, 42));
-        assert!(!valid_fence(&state, 43));
+        assert!(!valid_fence(&state, 1, 0));
+        assert!(!valid_fence(&state, 1, 40));
+        assert!(!valid_fence(&state, 1, 41));
+        assert!(!valid_fence(&state, 1, 42)); // neither party can mutate during transfer
+        assert!(!valid_fence(&state, 2, 42)); // transfer destination cannot mutate either
+        assert!(!valid_fence(&state, 1, 43));
     }
 
     #[test]

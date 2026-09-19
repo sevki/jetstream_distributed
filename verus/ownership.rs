@@ -7,23 +7,15 @@
 // This specification is meant to be verified with the Verus prover.
 // Verification command: verus verus/ownership.rs
 
-use builtin::*;
-use std::collections::HashMap;
+use vstd::prelude::*;
 
-/// Node identifier in the distributed system
-#[is_variant]
-pub struct NodeId(pub u64);
+verus! {
 
-/// Epoch/generation number for ownership versioning
-#[is_variant]
-pub struct Epoch(pub u64);
-
-/// Actor identifier
-#[is_variant]
-pub struct ActorId(pub u64);
+pub type NodeId = u64;
+pub type Epoch = u64;
+pub type ActorId = u64;
 
 /// The three possible ownership states for an actor
-#[is_variant]
 pub enum OwnershipState {
     /// Owned: Single node has exclusive authority at a specific epoch
     Owned {
@@ -49,13 +41,7 @@ pub enum OwnershipState {
 // ============================================================================
 
 /// Specification of which node(s) can mutate an actor given its ownership state
-pub open spec fn may_mutate_spec(state: &OwnershipState, node: NodeId, epoch: Epoch) -> bool {
-    matches!(state, OwnershipState::Owned { owner, epoch: e }
-        if *owner == node && *e == epoch)
-}
-
-/// Pure specification function for Verus proofs
-pub open spec fn may_mutate_spec_fn(state: OwnershipState, node: NodeId, epoch: Epoch) -> bool {
+pub open spec fn may_mutate_spec(state: OwnershipState, node: NodeId, epoch: Epoch) -> bool {
     match state {
         OwnershipState::Owned { owner, epoch: e } => owner == node && e == epoch,
         OwnershipState::Transferring { .. } => false,
@@ -68,10 +54,8 @@ pub open spec fn may_mutate_spec_fn(state: OwnershipState, node: NodeId, epoch: 
 // ============================================================================
 
 pub proof fn lemma_owned_only_owner_mutates(owner: NodeId, epoch: Epoch, node: NodeId, e: Epoch)
-    requires
-        may_mutate_spec_fn(OwnershipState::Owned { owner, epoch }, node, e),
-    ensures
-        node == owner && e == epoch,
+    requires may_mutate_spec(OwnershipState::Owned { owner, epoch }, node, e)
+    ensures node == owner && e == epoch
 {
 }
 
@@ -87,14 +71,8 @@ pub proof fn lemma_transferring_no_mutate(
     node: NodeId,
     epoch: Epoch,
 )
-    requires
-        !may_mutate_spec_fn(
-            OwnershipState::Transferring { from, to, old_epoch, new_epoch },
-            node,
-            epoch,
-        ),
-    ensures
-        true,
+    requires may_mutate_spec(OwnershipState::Transferring { from, to, old_epoch, new_epoch }, node, epoch)
+    ensures false
 {
 }
 
@@ -102,146 +80,47 @@ pub proof fn lemma_transferring_no_mutate(
 // LEMMA 3: Unowned State - No Mutation Allowed
 // ============================================================================
 
-pub proof fn lemma_unowned_no_mutate(epoch: Epoch, intended_owner: NodeId, node: NodeId, e: Epoch)
-    requires
-        !may_mutate_spec_fn(OwnershipState::Unowned { epoch, intended_owner }, node, e),
-    ensures
-        true,
+pub proof fn lemma_unowned_no_mutate(
+    epoch: Epoch,
+    intended_owner: NodeId,
+    node: NodeId,
+    supplied_epoch: Epoch,
+)
+    requires may_mutate_spec(OwnershipState::Unowned { epoch, intended_owner }, node, supplied_epoch)
+    ensures false
 {
 }
 
 // ============================================================================
-// THEOREM: Exclusive Mutable Ownership (Core Claim)
+// THEOREM: Exclusive Mutable Ownership
 // ============================================================================
 
-pub proof fn exclusive_mutable_ownership_t(
+/// Main safety property: For any state, at most one node can mutate at a time
+pub proof fn theorem_exclusive_mutable_ownership(
     state: OwnershipState,
     node_a: NodeId,
-    epoch_a: Epoch,
     node_b: NodeId,
+    epoch_a: Epoch,
     epoch_b: Epoch,
 )
     requires
-        may_mutate_spec_fn(state, node_a, epoch_a),
-        may_mutate_spec_fn(state, node_b, epoch_b),
+        may_mutate_spec(state, node_a, epoch_a) &&
+        may_mutate_spec(state, node_b, epoch_b)
     ensures
-        node_a == node_b && epoch_a == epoch_b,
+        node_a == node_b && epoch_a == epoch_b
 {
     match state {
-        OwnershipState::Owned { owner, epoch: e } => {
-            assert!(owner == node_a && e == epoch_a);
-            assert!(owner == node_b && e == epoch_b);
-            assert!(node_a == node_b);
-            assert!(epoch_a == epoch_b);
+        OwnershipState::Owned { owner, epoch } => {
+            lemma_owned_only_owner_mutates(owner, epoch, node_a, epoch_a);
+            lemma_owned_only_owner_mutates(owner, epoch, node_b, epoch_b);
         }
-        OwnershipState::Transferring { .. } => {
-            assert!(false);
+        OwnershipState::Transferring { from, to, old_epoch, new_epoch } => {
+            lemma_transferring_no_mutate(from, to, old_epoch, new_epoch, node_a, epoch_a);
         }
-        OwnershipState::Unowned { .. } => {
-            assert!(false);
+        OwnershipState::Unowned { epoch, intended_owner } => {
+            lemma_unowned_no_mutate(epoch, intended_owner, node_a, epoch_a);
         }
     }
 }
 
-// ============================================================================
-// THEOREM: Mutual Exclusion - Two Different Nodes Cannot Both Mutate
-// ============================================================================
-
-pub proof fn mutual_exclusion_t(
-    state: OwnershipState,
-    node_a: NodeId,
-    epoch_a: Epoch,
-    node_b: NodeId,
-    epoch_b: Epoch,
-)
-    requires
-        node_a != node_b,
-        may_mutate_spec_fn(state, node_a, epoch_a),
-    ensures
-        !may_mutate_spec_fn(state, node_b, epoch_b),
-{
-    match state {
-        OwnershipState::Owned { owner, epoch: e } => {
-            assert!(owner == node_a && e == epoch_a);
-            assert!(node_a != node_b);
-            assert!(owner != node_b);
-            assert!(!may_mutate_spec_fn(state, node_b, epoch_b));
-        }
-        OwnershipState::Transferring { .. } => {
-            assert!(!may_mutate_spec_fn(state, node_a, epoch_a));
-            assert!(false);
-        }
-        OwnershipState::Unowned { .. } => {
-            assert!(!may_mutate_spec_fn(state, node_a, epoch_a));
-            assert!(false);
-        }
-    }
-}
-
-// ============================================================================
-// THEOREM: Global Invariant - All Reachable States Maintain Exclusivity
-// ============================================================================
-
-pub proof fn may_mutate_invariant_holds_t(state: OwnershipState)
-    ensures
-        forall|node_a: NodeId, epoch_a: Epoch, node_b: NodeId, epoch_b: Epoch|
-            may_mutate_spec_fn(state, node_a, epoch_a) && may_mutate_spec_fn(state, node_b, epoch_b)
-                ==> (node_a == node_b && epoch_a == epoch_b),
-{
-    assert forall|node_a: NodeId, epoch_a: Epoch, node_b: NodeId, epoch_b: Epoch| {
-        if may_mutate_spec_fn(state, node_a, epoch_a)
-            && may_mutate_spec_fn(state, node_b, epoch_b)
-        {
-            exclusive_mutable_ownership_t(state, node_a, epoch_a, node_b, epoch_b);
-        }
-    } by {
-        match state {
-            OwnershipState::Owned { owner, epoch } => {}
-            OwnershipState::Transferring { .. } => {}
-            OwnershipState::Unowned { .. } => {}
-        }
-    }
-}
-
-// ============================================================================
-// THEOREM: State-Based Safety - Each State Variant Maintains Invariant
-// ============================================================================
-
-pub proof fn owned_state_safe_t(owner: NodeId, epoch: Epoch)
-    ensures
-        forall|node_a: NodeId, epoch_a: Epoch, node_b: NodeId, epoch_b: Epoch|
-            may_mutate_spec_fn(OwnershipState::Owned { owner, epoch }, node_a, epoch_a)
-                && may_mutate_spec_fn(OwnershipState::Owned { owner, epoch }, node_b, epoch_b)
-                ==> (node_a == node_b && epoch_a == epoch_b),
-{
-}
-
-pub proof fn transferring_state_safe_t(
-    from: NodeId,
-    to: NodeId,
-    old_epoch: Epoch,
-    new_epoch: Epoch,
-)
-    ensures
-        forall|node_a: NodeId, epoch_a: Epoch, node_b: NodeId, epoch_b: Epoch|
-            may_mutate_spec_fn(
-                OwnershipState::Transferring { from, to, old_epoch, new_epoch },
-                node_a,
-                epoch_a,
-            ) && may_mutate_spec_fn(
-                OwnershipState::Transferring { from, to, old_epoch, new_epoch },
-                node_b,
-                epoch_b,
-            )
-                ==> false,
-{
-}
-
-pub proof fn unowned_state_safe_t(epoch: Epoch, intended_owner: NodeId)
-    ensures
-        forall|node_a: NodeId, epoch_a: Epoch, node_b: NodeId, epoch_b: Epoch|
-            may_mutate_spec_fn(OwnershipState::Unowned { epoch, intended_owner }, node_a, epoch_a)
-                && may_mutate_spec_fn(OwnershipState::Unowned { epoch, intended_owner }, node_b, epoch_b)
-                ==> false,
-{
-}
+} // verus!

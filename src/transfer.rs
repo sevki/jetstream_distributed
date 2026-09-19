@@ -49,8 +49,8 @@ pub fn transition_transferring_to_unowned(
 
 pub fn transition_unowned_to_owned(
     to: NodeId,
-    new_epoch: Epoch,
     old_epoch: Epoch,
+    new_epoch: Epoch,
 ) -> Result<OwnershipState, TransitionError> {
     if to == 0 {
         return Err(TransitionError::InvalidNodeIds);
@@ -246,7 +246,7 @@ mod transfer_tests {
 
         let _state_unowned = transition_transferring_to_unowned(1, 2, 41, 42).unwrap();
 
-        let state_final = transition_unowned_to_owned(2, 42, 41).unwrap();
+        let state_final = transition_unowned_to_owned(2, 41, 42).unwrap();
 
         assert!(transfer_preserves_mutual_exclusion(
             &state_owned,
@@ -309,7 +309,7 @@ mod transfer_tests {
         let unowned_state = transition_transferring_to_unowned(1, 2, 1, 2).unwrap();
         assert!(apply_transition(&mut system, actor, unowned_state.clone()).is_ok());
 
-        let final_state = transition_unowned_to_owned(2, 2, 1).unwrap();
+        let final_state = transition_unowned_to_owned(2, 1, 2).unwrap();
         assert!(apply_transition(&mut system, actor, final_state.clone()).is_ok());
 
         let final_stored = system.get_actor_state(actor).unwrap();

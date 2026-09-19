@@ -427,14 +427,22 @@ This simplifies recovery and avoids a centralized authority to revoke tokens.
 
 ---
 
-## Future Work
+## Future Work & Roadmap
 
-1. **Full Verus Formalization**: Rewrite proofs in Verus and verify against SMT solvers
-2. **Liveness Proofs**: Prove that token eventually reaches requesting nodes (under fairness assumptions)
-3. **Network Protocol**: Implement actual message passing and routing
-4. **Persistence**: Add durability layer (journaling, snapshots)
-5. **Actor Runtime**: Build a working actor scheduler on top
-6. **Byzantine Fault Tolerance**: Extend to tolerate malicious nodes
+See [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) for honest gap analysis.
+
+**Phases**:
+1. ✅ **Phase 0**: Verus proof verification (1 day)
+2. 📋 **Phase 1**: Distributed protocol implementation with gRPC (3-4 weeks) - see [PHASE1_PROTOCOL_DESIGN.md](PHASE1_PROTOCOL_DESIGN.md)
+3. ⏳ **Phase 2**: Persistence and crash recovery (2-3 weeks)
+4. ⏳ **Phase 3**: Liveness proofs in Verus (2-3 months)
+5. ⏳ **Phase 4**: Performance analysis and benchmarks (2-3 weeks)
+
+**Optional future additions**:
+- Full Verus formalization of transfer protocol, fencing, and Raymond algorithm
+- Byzantine Fault Tolerance extension
+- Persistence layer (journaling, snapshots)
+- Complete actor runtime integration
 
 ---
 

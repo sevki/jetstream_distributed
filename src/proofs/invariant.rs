@@ -347,7 +347,7 @@ pub proof fn lemma_reachable_step(pre: System, post: System, s: Step)
     let tr2 = tr.push(post);
     assert(tr2.len() == tr.len() + 1);
     assert(tr2[0] == tr[0]);
-    assert forall|i: int| 0 <= i < tr2.len() - 1 implies next(tr2[i], tr2[i + 1]) by {
+    assert forall|i: int| 0 <= i < tr2.len() - 1 implies next(#[trigger] tr2[i], tr2[i + 1]) by {
         if i < tr.len() - 1 {
             assert(tr2[i] == tr[i]);
             assert(tr2[i + 1] == tr[i + 1]);

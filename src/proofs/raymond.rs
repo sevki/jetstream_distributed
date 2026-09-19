@@ -46,7 +46,7 @@ pub proof fn lemma_routing_preserves_holder(pre: Raymond, post: Raymond, s: RayS
     ensures
         post.holder == pre.holder,
         post.nodes == pre.nodes,
-        forall|n: NodeId| has_token(post, n) <==> has_token(pre, n),
+        forall|n: NodeId| #[trigger] has_token(post, n) <==> has_token(pre, n),
 {
     match s {
         RayStep::RequestCs { node } => {},
@@ -77,7 +77,7 @@ pub proof fn theorem_routing_cannot_manufacture_ownership(
         couples(pre, own),
     ensures
         couples(post, own),
-        forall|n: NodeId| has_token(post, n) <==> has_token(pre, n),
+        forall|n: NodeId| #[trigger] has_token(post, n) <==> has_token(pre, n),
 {
     lemma_routing_preserves_holder(pre, post, s);
 }
@@ -101,7 +101,7 @@ pub proof fn theorem_duplicate_requests_are_safe(
         ray_receive_request(mid, post, at, from),
     ensures
         ray_inv(post),
-        forall|n: NodeId| has_token(post, n) <==> has_token(pre, n),
+        forall|n: NodeId| #[trigger] has_token(post, n) <==> has_token(pre, n),
 {
     lemma_ray_step_preserves_inv(pre, mid, RayStep::ReceiveRequest { at: at, from: from });
     lemma_ray_step_preserves_inv(mid, post, RayStep::ReceiveRequest { at: at, from: from });

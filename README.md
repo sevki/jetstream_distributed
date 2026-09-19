@@ -155,8 +155,9 @@ verifying, the build fails.
 | R1 | **Raymond: at most one valid token** | `proofs::raymond::theorem_ray_at_most_one_token`, preserved by `lemma_ray_step_preserves_inv` | Raymond invariant |
 | R2 | **Raymond: holder/routing changes cannot manufacture ownership** | `proofs::raymond::theorem_routing_cannot_manufacture_ownership` | Raymond invariant, coupling |
 | R3 | **Raymond: duplicate/reordered requests cannot create a second owner** | `proofs::raymond::theorem_duplicate_requests_are_safe` | Raymond invariant |
-| R4 | **Raymond: token transfer preserves ownership safety** | `proofs::raymond::theorem_token_transfer_preserves_ownership_safety` | the actor is not `Owned` when the token moves |
-| R5 | Composed exclusivity: under the coupling, the only node that can mutate is the token holder | `proofs::raymond::theorem_coupled_exclusivity` | Raymond invariant, coupling |
+| R4 | **Raymond: token transfer preserves ownership safety** | `proofs::composed::lemma_composed_pass_token_preserves_inv` (and, as a layer-local lemma, `proofs::raymond::theorem_token_transfer_preserves_ownership_safety`) | none — in the composed machine the release-before-transfer condition is a *guard*, not an assumption |
+| R5 | **Composed exclusivity**: in every reachable composed state at most one node may mutate the actor, and it is the node holding the token | `proofs::composed::theorem_composed_exclusivity` | composed reachability |
+| C | The coupling is an **invariant** of the composed machine: `composed_init ==> composed_inv`, `composed_inv /\ composed_next ==> composed_inv`, hence `composed_reachable ==> composed_inv` | `proofs::composed::theorem_composed_reachable_inv`, `theorem_composed_step_preserves_inv` | the composed transition relation |
 | R6 | A concrete routing execution: request `D → B → A → C[token]`, token `C → A → B → D`, with the unique-token invariant carried through all eleven hops, then a twelfth step redelivering `D`'s original request after the token has finished moving | `proofs::raymond_routing::scenario_request_and_token_routing` | four distinct nodes |
 | R7 | A request outlives the topology it was routed against: after the token moves it is still in `requests` and still deliverable | `proofs::raymond::theorem_delayed_request_survives_token_move` | none |
 | R8 | Delivering an arbitrarily delayed request preserves the Raymond invariant and leaves token possession completely unchanged | `proofs::raymond::theorem_delayed_request_delivery_is_safe` | Raymond invariant |
@@ -203,6 +204,21 @@ state and its epoch. That is why a routing step - including a duplicated or
 reordered request - cannot manufacture an owner: it does not touch `holder` at
 all, so it cannot even change *who could* be the owner.
 
+On its own, though, `couples` is only a predicate: `ray_assign_privilege` never
+sees the ownership state, so nothing in the routing layer stops a token from
+moving out from under a node that still has authority. `src/composed.rs` closes
+that gap by defining a single state machine over both layers in which the
+synchronisation is a **guard**:
+
+* `PassToken` may only fire while the actor is *not* `Owned` — ownership must be
+  released before the token is allowed to move;
+* `AcquireUnderToken` may only fire for a node that *holds* the token — authority
+  cannot be taken by a node routing has not elected.
+
+`couples` is then an invariant of that machine rather than a side condition,
+which is what makes "token transfer preserves ownership safety" a claim about
+the system instead of a hypothetical.
+
 Raymond's **liveness** (every request is eventually served) needs FIFO,
 reliable links and no crashes. None of those are assumed here and none of it is
 claimed.
@@ -221,6 +237,7 @@ distributed-ownership/
 │   ├── fencing.rs      current_epoch, valid_fence, staleness
 │   ├── transfer.rs     the multi-step handover and its lemmas
 │   ├── raymond.rs      Raymond routing layer + the coupling predicate
+│   ├── composed.rs     both layers as one machine; coupling enforced by guards
 │   ├── exec.rs         the only executable code: the u64 fence check
 │   └── proofs/
 │       ├── mod.rs
@@ -231,6 +248,7 @@ distributed-ownership/
 │       ├── tokens.rs       claim 6
 │       ├── adversarial.rs  concrete adversarial executions
 │       ├── raymond.rs      claim 7
+│       ├── composed.rs     the coupling as a composed-machine invariant
 │       └── raymond_routing.rs  the D → B → A → C routing execution
 └── .github/workflows/verify.yml
 ```
@@ -293,9 +311,12 @@ CI, with no `assume`/`admit`/`external_body`/`axiom`):
   `(ActorId, Epoch)`" and the stronger "at most one token is ever issued per
   `(ActorId, Epoch)`";
 * stale tokens surviving crash, partition and recovery confer no authority;
-* Raymond: at most one token, routing cannot manufacture ownership, duplicate
-  and reordered requests are safe, and token transfer preserves the coupling to
-  the ownership layer.
+* Raymond: at most one token, routing cannot manufacture ownership, duplicate,
+  reordered and arbitrarily delayed requests are safe, and token transfer
+  preserves the coupling to the ownership layer;
+* the coupling itself, as an invariant of the composed machine: in every
+  reachable composed state the only node that may mutate the actor is the node
+  holding the token.
 
 **Modelled but not proven** (present in the state machine, no theorem beyond
 invariant preservation):

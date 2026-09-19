@@ -185,8 +185,13 @@ pub open spec fn ray_enter_cs(pre: Raymond, post: Raymond, n: NodeId) -> bool {
 }
 
 /// Leaving the critical section.
+///
+/// Guarded on `n` actually being in it: without that, an arbitrary node could
+/// "leave" a section it never entered, and the transition relation would admit
+/// executions that are not Raymond executions.
 pub open spec fn ray_exit_cs(pre: Raymond, post: Raymond, n: NodeId) -> bool {
     &&& pre.nodes.contains(n)
+    &&& pre.using[n]
     &&& post.using == pre.using.insert(n, false)
     &&& post.holder == pre.holder
     &&& post.queue == pre.queue

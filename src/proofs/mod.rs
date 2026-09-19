@@ -5,6 +5,7 @@
 #![allow(unused_imports)]
 
 pub mod adversarial;
+pub mod composed;
 pub mod exclusivity;
 pub mod fencing;
 pub mod invariant;

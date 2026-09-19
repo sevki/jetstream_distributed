@@ -550,4 +550,209 @@ pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId
     assert(!c3.ray.using[a]);
 }
 
+/// **Crash-driven takeover, in the composed machine.**
+///
+/// This is the execution the composed layer could not represent before
+/// `ComposedStep::SeizeToken` existed, and it is the one the ownership layer
+/// has epochs *for*:
+///
+/// ```text
+/// init                   X: Unowned(41, A)     token: A    live: {A, B}
+/// Own(IssueGrant)        network += Grant(X, A, 41)
+/// AcquireUnderToken(A)   X: Owned(A, 41)       token: A    A owns and holds the token
+/// Own(Crash A)                                             live: {B}
+/// Own(RevokeOwner X->B)  X: Unowned(42, B)     network += Grant(X, B, 42)
+/// SeizeToken(A -> B)     token: B                          A never acts again
+/// AcquireUnderToken(B)   X: Owned(B, 42)       token: B
+/// ```
+///
+/// The point is the last three steps. `A` crashes and takes **no further step**
+/// - it is not in `live`, and nothing after the crash is an `A` action. The
+/// coordinator burns the epoch, the token is seized, and `B` takes over. Under
+/// the old machine this was not reachable: the only token movement was
+/// `PassToken`, which requires `has_token(pre.ray, A)` and models `A` handing
+/// the privilege on, so the composed theorems were quantified over executions
+/// in which the dead node cooperates.
+///
+/// `A`'s epoch-41 token is still in `issued` at the end, and still confers
+/// nothing.
+pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
+    requires
+        a != b,
+    ensures
+        exists|c: Composed|
+            {
+                &&& #[trigger] composed_reachable(c)
+                &&& !c.own.live.contains(a)
+                &&& may_mutate(c.own.actors[c.actor], b, 42)
+                &&& has_token(c.ray, b)
+                &&& c.own.issued.contains(Token { actor: x, epoch: 41, holder: a })
+                &&& !may_mutate(c.own.actors[c.actor], a, 41)
+            },
+{
+    let nodes = Set::<NodeId>::empty().insert(a).insert(b);
+    let empty_q = Seq::<NodeId>::empty();
+    let stale = Token { actor: x, epoch: 41, holder: a };
+
+    let own0 = System {
+        actors: Map::<ActorId, OwnershipState>::empty().insert(
+            x,
+            OwnershipState::Unowned { epoch: 41, intended_owner: a },
+        ),
+        nodes: nodes,
+        live: nodes,
+        issued: Set::<Token>::empty(),
+        network: Set::<Message>::empty(),
+    };
+    let ray0 = Raymond {
+        nodes: nodes,
+        holder: Map::<NodeId, NodeId>::empty().insert(a, a).insert(b, a),
+        queue: Map::<NodeId, Seq<NodeId>>::empty().insert(a, empty_q).insert(b, empty_q),
+        asked: Map::<NodeId, bool>::empty().insert(a, false).insert(b, false),
+        using: Map::<NodeId, bool>::empty().insert(a, false).insert(b, false),
+        requests: Set::<(NodeId, NodeId)>::empty(),
+    };
+    assert(ray0.holder[a] == a);
+    assert(ray0.holder[b] == a);
+    assert(ray_init(ray0, a));
+
+    let c0 = Composed { own: own0, ray: ray0, actor: x };
+    assert(own0.actors.contains_key(x));
+    assert(init(own0));
+    assert(composed_init(c0));
+    lemma_composed_reachable_init(c0);
+    lemma_composed_init_inv(c0);
+    assert(has_token(c0.ray, a));
+
+    // 1. The coordinator offers X to A at epoch 41.
+    let grant_41 = Message::Grant { actor: x, to: a, epoch: 41 };
+    let c1 = Composed {
+        own: System {
+            actors: c0.own.actors,
+            nodes: c0.own.nodes,
+            live: c0.own.live,
+            issued: c0.own.issued,
+            network: c0.own.network.insert(grant_41),
+        },
+        ray: c0.ray,
+        actor: x,
+    };
+    let s1 = ComposedStep::Own { own_step: Step::IssueGrant { actor: x } };
+    assert(composed_step(c0, c1, s1));
+    lemma_composed_reachable_step(c0, c1, s1);
+    theorem_composed_step_preserves_inv(c0, c1, s1);
+
+    // 2. A takes ownership at 41, holding the token.
+    let c2 = Composed {
+        own: System {
+            actors: c1.own.actors.insert(x, OwnershipState::Owned { owner: a, epoch: 41 }),
+            nodes: c1.own.nodes,
+            live: c1.own.live,
+            issued: c1.own.issued.insert(stale),
+            network: c1.own.network,
+        },
+        ray: c1.ray,
+        actor: x,
+    };
+    let s2 = ComposedStep::AcquireUnderToken { node: a };
+    assert(has_token(c1.ray, a));
+    assert(tr_acquire(c1.own, c2.own, x, a));
+    assert(composed_step(c1, c2, s2));
+    lemma_composed_reachable_step(c1, c2, s2);
+    theorem_composed_step_preserves_inv(c1, c2, s2);
+    assert(c2.own.issued.contains(stale));
+
+    // 3. A crashes. It keeps its epoch-41 token, and takes no further step.
+    let c3 = Composed {
+        own: System {
+            actors: c2.own.actors,
+            nodes: c2.own.nodes,
+            live: c2.own.live.remove(a),
+            issued: c2.own.issued,
+            network: c2.own.network,
+        },
+        ray: c2.ray,
+        actor: x,
+    };
+    let s3 = ComposedStep::Own { own_step: Step::Crash { node: a } };
+    assert(c2.own.live.contains(a));
+    assert(composed_step(c2, c3, s3));
+    lemma_composed_reachable_step(c2, c3, s3);
+    theorem_composed_step_preserves_inv(c2, c3, s3);
+    assert(!c3.own.live.contains(a));
+    assert(c3.own.live.contains(b));
+
+    // 4. The failure detector fires: the epoch is burned and X is offered to B.
+    let grant_42 = Message::Grant { actor: x, to: b, epoch: 42 };
+    let c4 = Composed {
+        own: System {
+            actors: c3.own.actors.insert(
+                x,
+                OwnershipState::Unowned { epoch: 42, intended_owner: b },
+            ),
+            nodes: c3.own.nodes,
+            live: c3.own.live,
+            issued: c3.own.issued,
+            network: c3.own.network.insert(grant_42),
+        },
+        ray: c3.ray,
+        actor: x,
+    };
+    let s4 = ComposedStep::Own { own_step: Step::RevokeOwner { actor: x, next: b } };
+    assert(c3.own.actors[x] == (OwnershipState::Owned { owner: a, epoch: 41 }));
+    assert(composed_step(c3, c4, s4));
+    lemma_composed_reachable_step(c3, c4, s4);
+    theorem_composed_step_preserves_inv(c3, c4, s4);
+    assert(is_unowned(c4.own.actors[x]));
+    assert(has_token(c4.ray, a));
+
+    // 5. The token is seized from the crashed node. A does not act.
+    let c5 = Composed {
+        own: c4.own,
+        ray: Raymond {
+            nodes: c4.ray.nodes,
+            holder: c4.ray.holder.insert(a, b).insert(b, b),
+            queue: c4.ray.queue,
+            asked: c4.ray.asked.insert(a, false),
+            using: c4.ray.using.insert(a, false),
+            requests: c4.ray.requests,
+        },
+        actor: x,
+    };
+    let s5 = ComposedStep::SeizeToken { from: a, to: b };
+    assert(ray_seize(c4.ray, c5.ray, a, b));
+    assert(composed_step(c4, c5, s5));
+    lemma_composed_reachable_step(c4, c5, s5);
+    theorem_composed_step_preserves_inv(c4, c5, s5);
+    lemma_composed_seize_preserves_inv(c4, c5, a, b);
+    assert(has_token(c5.ray, b));
+
+    // 6. B takes over at epoch 42, holding the token.
+    let c6 = Composed {
+        own: System {
+            actors: c5.own.actors.insert(x, OwnershipState::Owned { owner: b, epoch: 42 }),
+            nodes: c5.own.nodes,
+            live: c5.own.live,
+            issued: c5.own.issued.insert(Token { actor: x, epoch: 42, holder: b }),
+            network: c5.own.network,
+        },
+        ray: c5.ray,
+        actor: x,
+    };
+    let s6 = ComposedStep::AcquireUnderToken { node: b };
+    assert(c5.own.live.contains(b));
+    assert(c5.own.network.contains(grant_42));
+    assert(tr_acquire(c5.own, c6.own, x, b));
+    assert(composed_step(c5, c6, s6));
+    lemma_composed_reachable_step(c5, c6, s6);
+    theorem_composed_step_preserves_inv(c5, c6, s6);
+
+    assert(composed_reachable(c6));
+    assert(!c6.own.live.contains(a));
+    assert(may_mutate(c6.own.actors[c6.actor], b, 42));
+    assert(has_token(c6.ray, b));
+    assert(c6.own.issued.contains(stale));
+    assert(!may_mutate(c6.own.actors[c6.actor], a, 41));
+}
+
 } // verus!

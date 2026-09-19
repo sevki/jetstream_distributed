@@ -87,6 +87,37 @@ pub proof fn lemma_composed_pass_token_preserves_inv(
     }
 }
 
+/// **Seizing the token preserves the coupling.**
+///
+/// Same argument as `lemma_composed_pass_token_preserves_inv`, and it is worth
+/// noticing that it is the *same* argument: the guard is `is_unowned`, so
+/// nobody has authority over the actor, so `couples` holds vacuously however
+/// the token moves. Safety here does not come from the holder agreeing to let
+/// go - it comes from the epoch having been burned before the token moved,
+/// which is what lets a takeover be forcible at all.
+pub proof fn lemma_composed_seize_preserves_inv(
+    pre: Composed,
+    post: Composed,
+    from: NodeId,
+    to: NodeId,
+)
+    requires
+        composed_inv(pre),
+        cs_seize_token(pre, post, from, to),
+    ensures
+        composed_inv(post),
+        has_token(post.ray, to),
+        !has_token(post.ray, from),
+        forall|m: NodeId| #[trigger] has_token(post.ray, m) ==> m == to,
+{
+    lemma_seize_preserves_inv(pre.ray, post.ray, from, to);
+    assert forall|nd: NodeId, e: Epoch|
+        may_mutate(post.own.actors[post.actor], nd, e) implies has_token(post.ray, nd) by {
+        assert(is_unowned(pre.own.actors[pre.actor]));
+        assert(false);
+    }
+}
+
 /// Taking ownership requires holding the token, so the node that gains authority
 /// is the token holder by construction.
 pub proof fn lemma_composed_acquire_preserves_inv(pre: Composed, post: Composed, n: NodeId)
@@ -134,6 +165,9 @@ pub proof fn theorem_composed_step_preserves_inv(pre: Composed, post: Composed, 
         },
         ComposedStep::PassToken { node, head } => {
             lemma_composed_pass_token_preserves_inv(pre, post, node, head);
+        },
+        ComposedStep::SeizeToken { from, to } => {
+            lemma_composed_seize_preserves_inv(pre, post, from, to);
         },
         ComposedStep::AcquireUnderToken { node } => {
             lemma_composed_acquire_preserves_inv(pre, post, node);

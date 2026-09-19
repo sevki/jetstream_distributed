@@ -174,6 +174,8 @@ verifying, the build fails.
 | C0 | **Non-degeneracy**: a composed state in which a node is *actually inside* the critical section is reachable from `composed_init` — driven through `RequestCs`, `EnterCs`, `ExitCs` — so the composed claims are not restricted to a `using`-free fragment | `proofs::composed_scenario::scenario_composed_critical_section` | `A != B` |
 | C0a | (Step-level lemma backing C0) `EnterCs`/`ExitCs` are legal `ComposedStep::Ray` transitions and preserve the composed invariant | `proofs::composed::theorem_composed_admits_critical_section`, `..._exit` | composed invariant holds before the step |
 | C1 | **Non-vacuity**: a complete handover driven through *both* layers is reachable — `A` owns X@41 while holding the token, releases it, the token moves `A → B`, and `B` ends up owning X@42 *and* holding the token, with `A`'s epoch-41 token still issued and powerless | `proofs::composed_scenario::scenario_composed_handover` | `A != B` |
+| C2 | **Crash-driven takeover is reachable in the composed machine**: `A` owns X@41 holding the token, crashes and takes no further step; the coordinator burns the epoch; the token is *seized*; `B` ends up owning X@42 and holding the token, with `A`'s epoch-41 token still issued and powerless | `proofs::composed_scenario::scenario_composed_crash_takeover` | `A != B` |
+| C3 | Seizing the token preserves the coupling and leaves the target holding the one token — safety comes from the epoch being burned first, not from the holder agreeing to let go | `proofs::composed::lemma_composed_seize_preserves_inv`, `proofs::raymond::lemma_seize_preserves_inv` | composed invariant |
 | C | The coupling is an **invariant** of the composed machine: `composed_init ==> composed_inv`, `composed_inv /\ composed_next ==> composed_inv`, hence `composed_reachable ==> composed_inv` | `proofs::composed::theorem_composed_reachable_inv`, `theorem_composed_step_preserves_inv` | the composed transition relation |
 | R6 | A concrete routing execution: request `D → B → A → C[token]`, token `C → A → B → D`, with the unique-token invariant carried through all eleven hops, then a twelfth step redelivering `D`'s original request after the token has finished moving. Its postcondition *exports* the endpoint (a state satisfying `ray_inv` with `D` holding the unique token and inside the critical section), so the construction cannot silently regress | `proofs::raymond_routing::scenario_request_and_token_routing` | four distinct nodes |
 | R7 | A request outlives the topology it was routed against: after the token moves it is still in `requests` and still deliverable | `proofs::raymond::theorem_delayed_request_survives_token_move` | none |
@@ -421,14 +423,22 @@ invariant preservation):
 
 **Not modelled at all** (a gap, stated rather than papered over):
 
-* **the Raymond layer has no crash model.** The ownership layer models crash,
-  recovery and unreliable failure detection; the routing layer does not. If the
-  token holder crashes, the token is simply lost, and the model cannot express
-  that state — `ray_token_exists` is an invariant, so a Raymond in which nobody
-  holds the token is not a state the machine can reach. This does not weaken any
-  safety claim (a lost token cannot create a second owner; if anything it is the
-  safe direction) but it does mean the Raymond layer's failure model is strictly
-  weaker than the ownership layer's, and the two are not symmetric.
+* **Raymond itself has no crash model.** The ownership layer models crash,
+  recovery and unreliable failure detection; Raymond's own steps do not. A
+  Raymond in which nobody holds the token is not reachable, because
+  `ray_token_exists` is an invariant.
+
+  What *is* now modelled is the case that matters for the composed claim:
+  `ComposedStep::SeizeToken` re-establishes the token at another node **without
+  the holder acting**, so crash-driven takeover is reachable rather than
+  requiring a dead node to cooperate. Before that existed, the only token
+  movement in the composed machine was `PassToken`, which requires
+  `has_token(pre.ray, from)` and models `from` voluntarily handing the privilege
+  on — so `theorem_composed_reachable_inv` was quantified over executions in
+  which the token always moves *voluntarily*, and crash-driven takeover, the
+  case epochs exist for, was not among them. That was a real narrowing of the
+  composed claim, and it is fixed rather than documented away
+  (`scenario_composed_crash_takeover` exhibits the execution).
 
 **Future work** (deliberately out of scope):
 

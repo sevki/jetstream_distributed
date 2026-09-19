@@ -308,6 +308,41 @@ pub open spec fn ray_init(r: Raymond, root: NodeId) -> bool {
     &&& (forall|m: (NodeId, NodeId)| !(#[trigger] r.requests.contains(m)))
 }
 
+/// **The token is seized.** It is re-established at `to` without the current
+/// holder acting at all.
+///
+/// This is deliberately *not* a [`RayStep`]. Raymond's algorithm has no
+/// seizure: every token movement in it is the holder voluntarily passing the
+/// privilege to the head of its queue. Seizure is a recovery action taken by
+/// the coordinator after it has revoked an owner, so it belongs to the composed
+/// machine ([`crate::composed::cs_seize_token`]), where the revocation that
+/// justifies it is visible. Keeping it out of `RayStep` also keeps
+/// `preserves_token` and every Raymond-local theorem honest: they are about
+/// Raymond, and Raymond does not do this.
+///
+/// It exists because without it the composed machine cannot express the case
+/// the ownership layer has epochs *for*. After `RevokeOwner` fires against a
+/// crashed owner `A`, the actor is `Unowned` at the next epoch and offered to
+/// `B` - but the token is still at `A`, and `ray_assign_privilege` requires
+/// `has_token(pre, A)`, i.e. requires the crashed node to act. Modelling
+/// takeover as the holder cooperating is exactly the thing fencing is supposed
+/// to make unnecessary.
+///
+/// `using[from]` is cleared rather than guarded against: a node whose token is
+/// being seized is not in a critical section afterwards, whatever it believed.
+/// That is what keeps `ray_using_implies_token` true across the step.
+pub open spec fn ray_seize(pre: Raymond, post: Raymond, from: NodeId, to: NodeId) -> bool {
+    &&& has_token(pre, from)
+    &&& pre.nodes.contains(to)
+    &&& to != from
+    &&& post.holder == pre.holder.insert(from, to).insert(to, to)
+    &&& post.queue == pre.queue
+    &&& post.asked == pre.asked.insert(from, false)
+    &&& post.using == pre.using.insert(from, false)
+    &&& post.nodes == pre.nodes
+    &&& post.requests == pre.requests
+}
+
 // ---------------------------------------------------------------------------
 // Coupling to the ownership layer
 // ---------------------------------------------------------------------------

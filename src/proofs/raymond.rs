@@ -377,6 +377,139 @@ pub proof fn lemma_assign_privilege_preserves_unique_token(
     assert(ray_token_exists(post));
 }
 
+// ---------------------------------------------------------------------------
+// Seizure
+// ---------------------------------------------------------------------------
+//
+// These mirror the `assign` family above. `ray_seize` rewrites the same two
+// holder pointers as `ray_assign_privilege`, so the token-uniqueness argument
+// is identical; the differences are that it does not touch the queue and that
+// it clears `using[from]` instead of requiring it to be false.
+
+/// Exactly which holder pointers a seizure rewrites.
+pub proof fn lemma_seize_holder_pointers(pre: Raymond, post: Raymond, from: NodeId, to: NodeId)
+    requires
+        ray_seize(pre, post, from, to),
+    ensures
+        post.holder[to] == to,
+        post.holder[from] == to,
+        post.holder.contains_key(to),
+        post.holder.contains_key(from),
+        forall|m: NodeId| m != from && m != to ==> #[trigger] post.holder[m] == pre.holder[m],
+        forall|m: NodeId|
+            m != from && m != to ==> (#[trigger] post.holder.contains_key(m)
+                <==> pre.holder.contains_key(m)),
+{
+}
+
+/// The token moves to `to`, and stays unique while it does.
+pub proof fn lemma_seize_token_moves(pre: Raymond, post: Raymond, from: NodeId, to: NodeId)
+    requires
+        ray_inv(pre),
+        ray_seize(pre, post, from, to),
+    ensures
+        has_token(post, to),
+        !has_token(post, from),
+        forall|m: NodeId| #[trigger] has_token(post, m) ==> m == to,
+        ray_unique_token(post),
+{
+    lemma_seize_holder_pointers(pre, post, from, to);
+    assert(has_token(pre, from));
+    assert(has_token(post, to));
+    assert(!has_token(post, from));
+    assert forall|m: NodeId| #[trigger] has_token(post, m) implies m == to by {
+        if m != to {
+            assert(m != from);
+            assert(post.holder[m] == pre.holder[m]);
+            assert(pre.holder.contains_key(m));
+            assert(has_token(pre, m));
+            assert(has_token(pre, from));
+            assert(m == from);
+            assert(false);
+        }
+    }
+    assert forall|x: NodeId, y: NodeId|
+        #![trigger has_token(post, x), has_token(post, y)]
+        has_token(post, x) && has_token(post, y) implies x == y by {
+    }
+}
+
+/// A seizure keeps every node's maps well formed.
+pub proof fn lemma_seize_wf(pre: Raymond, post: Raymond, from: NodeId, to: NodeId)
+    requires
+        ray_wf(pre),
+        ray_seize(pre, post, from, to),
+    ensures
+        ray_wf(post),
+{
+    lemma_seize_holder_pointers(pre, post, from, to);
+    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) implies post.holder.contains_key(m)
+        && post.queue.contains_key(m) && post.asked.contains_key(m)
+        && post.using.contains_key(m) by {
+        assert(pre.nodes.contains(m));
+    }
+    assert forall|m: NodeId| post.nodes.contains(m) implies post.nodes.contains(
+        #[trigger] post.holder[m],
+    ) by {
+        assert(pre.nodes.contains(m));
+        if m == to || m == from {
+            assert(post.holder[m] == to);
+            assert(pre.nodes.contains(to));
+        } else {
+            assert(post.holder[m] == pre.holder[m]);
+        }
+    }
+}
+
+/// The node whose token is seized is no longer in a critical section, and it is
+/// the only node that could have been, so `ray_using_implies_token` survives.
+pub proof fn lemma_seize_using(pre: Raymond, post: Raymond, from: NodeId, to: NodeId)
+    requires
+        ray_inv(pre),
+        ray_seize(pre, post, from, to),
+    ensures
+        ray_using_implies_token(post),
+{
+    lemma_seize_token_moves(pre, post, from, to);
+    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) && post.using[m] implies has_token(
+        post,
+        m,
+    ) by {
+        assert(pre.nodes.contains(m));
+        if m == from {
+            assert(post.using[m] == false);
+            assert(false);
+        } else {
+            assert(post.using[m] == pre.using[m]);
+            assert(pre.using[m]);
+            assert(has_token(pre, m));
+            assert(has_token(pre, from));
+            assert(m == from);
+            assert(false);
+        }
+    }
+}
+
+/// **A seizure preserves the Raymond invariant and leaves `to` holding the one
+/// token.** The routing layer cannot end up with two tokens, or none, because
+/// the coordinator took one away from a node that was not cooperating.
+pub proof fn lemma_seize_preserves_inv(pre: Raymond, post: Raymond, from: NodeId, to: NodeId)
+    requires
+        ray_inv(pre),
+        ray_seize(pre, post, from, to),
+    ensures
+        ray_inv(post),
+        has_token(post, to),
+        !has_token(post, from),
+        forall|m: NodeId| #[trigger] has_token(post, m) ==> m == to,
+{
+    lemma_seize_token_moves(pre, post, from, to);
+    lemma_seize_wf(pre, post, from, to);
+    lemma_seize_using(pre, post, from, to);
+    assert(has_token(post, to));
+    assert(ray_token_exists(post));
+}
+
 /// Every Raymond transition preserves the Raymond invariant.
 pub proof fn lemma_ray_step_preserves_inv(pre: Raymond, post: Raymond, s: RayStep)
     requires

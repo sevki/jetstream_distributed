@@ -11,6 +11,9 @@
 //!
 //! * [`ComposedStep::PassToken`] may only fire while the actor is *not* `Owned` -
 //!   ownership has to be released before the token is allowed to move;
+//! * [`ComposedStep::SeizeToken`] moves the token *without* the holder acting,
+//!   under the same guard, so that crash-driven takeover - the case epochs
+//!   exist for - is reachable rather than requiring a dead node to cooperate;
 //! * [`ComposedStep::AcquireUnderToken`] may only fire for a node that *holds*
 //!   the token - authority cannot be taken by a node the routing layer has not
 //!   elected;
@@ -103,6 +106,31 @@ pub open spec fn cs_pass_token(pre: Composed, post: Composed, n: NodeId, head: N
     &&& post.actor == pre.actor
 }
 
+/// The token is **seized** and re-established at `to`, without the node that
+/// holds it acting.
+///
+/// This is the step that makes crash-driven takeover expressible. Without it
+/// the only way the token can move is [`ComposedStep::PassToken`], which
+/// requires `has_token(pre.ray, from)` *and* models `from` voluntarily passing
+/// the privilege on. So after `RevokeOwner` fires against a crashed owner `A` -
+/// leaving the actor `Unowned` at the next epoch and offered to `B` - the only
+/// composed continuation was `A`, a node the ownership layer has marked dead,
+/// taking a routing step. That is precisely the cooperation epochs and fencing
+/// exist to make unnecessary, so a composed machine that required it was
+/// proving something narrower than it appeared to: agreement along executions
+/// where the token always moves *voluntarily*.
+///
+/// The guard is the same `is_unowned` as [`cs_pass_token`], and for the same
+/// reason: in `Unowned` nobody has authority at all, so moving the token cannot
+/// strand it. Seizure is therefore safe for exactly the reason revocation is -
+/// the epoch was burned first.
+pub open spec fn cs_seize_token(pre: Composed, post: Composed, from: NodeId, to: NodeId) -> bool {
+    &&& is_unowned(pre.own.actors[pre.actor])
+    &&& ray_seize(pre.ray, post.ray, from, to)
+    &&& post.own == pre.own
+    &&& post.actor == pre.actor
+}
+
 /// A node takes ownership - **only** if it is the node holding the token.
 pub open spec fn cs_acquire_under_token(pre: Composed, post: Composed, n: NodeId) -> bool {
     &&& has_token(pre.ray, n)
@@ -116,6 +144,7 @@ pub enum ComposedStep {
     Ray { ray_step: RayStep },
     Own { own_step: Step },
     PassToken { node: NodeId, head: NodeId },
+    SeizeToken { from: NodeId, to: NodeId },
     AcquireUnderToken { node: NodeId },
 }
 
@@ -124,6 +153,7 @@ pub open spec fn composed_step(pre: Composed, post: Composed, s: ComposedStep) -
         ComposedStep::Ray { ray_step } => cs_ray(pre, post, ray_step),
         ComposedStep::Own { own_step } => cs_own(pre, post, own_step),
         ComposedStep::PassToken { node, head } => cs_pass_token(pre, post, node, head),
+        ComposedStep::SeizeToken { from, to } => cs_seize_token(pre, post, from, to),
         ComposedStep::AcquireUnderToken { node } => cs_acquire_under_token(pre, post, node),
     }
 }

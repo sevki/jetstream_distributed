@@ -171,8 +171,62 @@ pub proof fn theorem_composed_step_preserves_inv(pre: Composed, post: Composed, 
         ComposedStep::SeizeToken { from, to } => {
             lemma_composed_seize_preserves_inv(pre, post, from, to);
         },
+        ComposedStep::Reconcile { node } => {
+            lemma_composed_reconcile_preserves_inv(pre, post, node);
+        },
         ComposedStep::AcquireUnderToken { node } => {
             lemma_composed_acquire_preserves_inv(pre, post, node);
+        },
+    }
+}
+
+/// Reconciliation touches only the seizure marker, so every part of the
+/// invariant rides through untouched.
+pub proof fn lemma_composed_reconcile_preserves_inv(pre: Composed, post: Composed, n: NodeId)
+    requires
+        composed_inv(pre),
+        cs_reconcile(pre, post, n),
+    ensures
+        composed_inv(post),
+{
+}
+
+/// **A seized node cannot rejoin `live` while it is still seized.**
+///
+/// `cs_own` refuses `Step::Recover` for such a node, so the only way back is
+/// through [`cs_reconcile`] first. This is what stops recovery from silently
+/// inheriting the routing rewrite that happened while the node was down.
+pub proof fn theorem_seized_node_cannot_recover(
+    pre: Composed,
+    post: Composed,
+    s: ComposedStep,
+    n: NodeId,
+)
+    requires
+        composed_step(pre, post, s),
+        pre.seized.contains(n),
+        !pre.own.live.contains(n),
+    ensures
+        !post.own.live.contains(n),
+{
+    match s {
+        ComposedStep::Own { own_step } => {
+            assert(!recovers_a_seized_node(pre, own_step));
+            match own_step {
+                Step::Recover { node } => {
+                    assert(node != n);
+                    assert(post.own.live == pre.own.live.insert(node));
+                },
+                Step::Crash { node } => {
+                    assert(post.own.live == pre.own.live.remove(node));
+                },
+                _ => {
+                    assert(post.own.live == pre.own.live);
+                },
+            }
+        },
+        _ => {
+            assert(post.own.live == pre.own.live);
         },
     }
 }
@@ -203,6 +257,7 @@ pub proof fn theorem_token_movement_is_partitioned(
             ComposedStep::SeizeToken { from, to } => from == m && !pre.own.live.contains(m),
             ComposedStep::Ray { ray_step } => false,
             ComposedStep::Own { own_step } => false,
+            ComposedStep::Reconcile { node } => false,
             ComposedStep::AcquireUnderToken { node } => false,
         },
 {
@@ -218,6 +273,11 @@ pub proof fn theorem_token_movement_is_partitioned(
             assert(false);
         },
         ComposedStep::AcquireUnderToken { node } => {
+            assert(post.ray == pre.ray);
+            assert(has_token(post.ray, m));
+            assert(false);
+        },
+        ComposedStep::Reconcile { node } => {
             assert(post.ray == pre.ray);
             assert(has_token(post.ray, m));
             assert(false);

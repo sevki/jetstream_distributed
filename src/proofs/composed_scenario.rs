@@ -99,7 +99,7 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (c: Com
     assert(ray0.holder[b] == a);
     assert(ray_init(ray0, a));
 
-    let c0 = Composed { own: own0, ray: ray0, actor: x };
+    let c0 = Composed { own: own0, ray: ray0, actor: x, seized: Set::<NodeId>::empty() };
     assert(own0.actors.contains_key(x));
     assert(init(own0));
     assert(own0.nodes == ray0.nodes);
@@ -120,6 +120,7 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (c: Com
         },
         ray: c0.ray,
         actor: x,
+        seized: c0.seized,
     };
     let s1 = ComposedStep::Own { own_step: Step::IssueGrant { actor: x } };
     assert(step(c0.own, c1.own, Step::IssueGrant { actor: x }));
@@ -138,6 +139,7 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (c: Com
         },
         ray: c1.ray,
         actor: x,
+        seized: c1.seized,
     };
     let s2 = ComposedStep::AcquireUnderToken { node: a };
     assert(c1.own.live.contains(a));
@@ -164,6 +166,7 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (c: Com
         },
         ray: c2.ray,
         actor: x,
+        seized: c2.seized,
     };
     let s3 = ComposedStep::Own { own_step: Step::BeginTransfer { actor: x, from: a, to: b } };
     assert(c2.own.nodes.contains(b));
@@ -184,6 +187,7 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (c: Com
         },
         ray: c3.ray,
         actor: x,
+        seized: c3.seized,
     };
     let s4 = ComposedStep::Own {
         own_step: Step::HandleRevoke { actor: x, target: a, old_epoch: 41, new_epoch: 42 },
@@ -209,6 +213,7 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (c: Com
         },
         ray: c4.ray,
         actor: x,
+        seized: c4.seized,
     };
     let s5 = ComposedStep::Own { own_step: Step::CompleteRelease { actor: x } };
     assert(c4.own.network.contains(released));
@@ -272,6 +277,7 @@ pub proof fn handover_phase_request(c: Composed, x: ActorId, a: NodeId, b: NodeI
             requests: c.ray.requests,
         },
         actor: x,
+        seized: c.seized,
     };
     let s6 = ComposedStep::Ray { ray_step: RayStep::RequestCs { node: b } };
     assert(composed_step(c, c6, s6));
@@ -290,6 +296,7 @@ pub proof fn handover_phase_request(c: Composed, x: ActorId, a: NodeId, b: NodeI
             requests: c6.ray.requests.insert((b, c6.ray.holder[b])),
         },
         actor: x,
+        seized: c6.seized,
     };
     let s7 = ComposedStep::Ray { ray_step: RayStep::MakeRequest { node: b } };
     assert(c6.ray.holder[b] == a);
@@ -311,6 +318,7 @@ pub proof fn handover_phase_request(c: Composed, x: ActorId, a: NodeId, b: NodeI
             requests: c7.ray.requests,
         },
         actor: x,
+        seized: c7.seized,
     };
     let s8 = ComposedStep::Ray { ray_step: RayStep::ReceiveRequest { at: a, from: b } };
     assert(c7.ray.requests.contains((b, a)));
@@ -361,6 +369,7 @@ pub proof fn handover_phase_pass_token(c: Composed, x: ActorId, a: NodeId, b: No
             requests: c.ray.requests,
         },
         actor: x,
+        seized: c.seized,
     };
     let s9 = ComposedStep::PassToken { node: a, head: b };
     assert(is_unowned(c.own.actors[x]));
@@ -406,6 +415,7 @@ pub proof fn handover_phase_acquire(c: Composed, x: ActorId, a: NodeId, b: NodeI
         },
         ray: c.ray,
         actor: x,
+        seized: c.seized,
     };
     let s10 = ComposedStep::AcquireUnderToken { node: b };
     assert(tr_acquire(c.own, c10.own, x, b));
@@ -499,7 +509,7 @@ pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId
     assert(ray0.holder[b] == a);
     assert(ray_init(ray0, a));
 
-    let c0 = Composed { own: own0, ray: ray0, actor: x };
+    let c0 = Composed { own: own0, ray: ray0, actor: x, seized: Set::<NodeId>::empty() };
     assert(own0.actors.contains_key(x));
     assert(init(own0));
     assert(own0.nodes == ray0.nodes);
@@ -520,6 +530,7 @@ pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId
             requests: c0.ray.requests,
         },
         actor: x,
+        seized: c0.seized,
     };
     let s1 = ComposedStep::Ray { ray_step: RayStep::RequestCs { node: a } };
     assert(composed_step(c0, c1, s1));
@@ -538,6 +549,7 @@ pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId
             requests: c1.ray.requests,
         },
         actor: x,
+        seized: c1.seized,
     };
     let s2 = ComposedStep::Ray { ray_step: RayStep::EnterCs { node: a } };
     assert(has_token(c1.ray, a));
@@ -564,6 +576,7 @@ pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId
             requests: c2.ray.requests,
         },
         actor: x,
+        seized: c2.seized,
     };
     let s3 = ComposedStep::Ray { ray_step: RayStep::ExitCs { node: a } };
     assert(c2.ray.using[a]);
@@ -634,6 +647,21 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
                 &&& c.own.issued.contains(Token { actor: x, epoch: 41, holder: a })
                 &&& !may_mutate(c.own.actors[x], a, 41)
             },
+        // Reconciliation is not a dead end: `A` can be told what happened and
+        // then rejoin, holding no token and no authority. Without this clause
+        // `cs_reconcile` could be unsatisfiable and the recovery guard would be
+        // an unreachable restriction rather than a discipline.
+        exists|c: Composed|
+            {
+                &&& #[trigger] composed_reachable(c)
+                &&& c.actor == x
+                &&& c.own.live.contains(a)
+                &&& !c.seized.contains(a)
+                &&& !has_token(c.ray, a)
+                &&& has_token(c.ray, b)
+                &&& c.own.issued.contains(Token { actor: x, epoch: 41, holder: a })
+                &&& !may_mutate(c.own.actors[x], a, 41)
+            },
 {
     let nodes = Set::<NodeId>::empty().insert(a).insert(b);
     let empty_q = Seq::<NodeId>::empty();
@@ -661,7 +689,7 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
     assert(ray0.holder[b] == a);
     assert(ray_init(ray0, a));
 
-    let c0 = Composed { own: own0, ray: ray0, actor: x };
+    let c0 = Composed { own: own0, ray: ray0, actor: x, seized: Set::<NodeId>::empty() };
     assert(own0.actors.contains_key(x));
     assert(init(own0));
     assert(own0.nodes == ray0.nodes);
@@ -682,6 +710,7 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
         },
         ray: c0.ray,
         actor: x,
+        seized: c0.seized,
     };
     let s1 = ComposedStep::Own { own_step: Step::IssueGrant { actor: x } };
     assert(composed_step(c0, c1, s1));
@@ -699,6 +728,7 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
         },
         ray: c1.ray,
         actor: x,
+        seized: c1.seized,
     };
     let s2 = ComposedStep::AcquireUnderToken { node: a };
     assert(has_token(c1.ray, a));
@@ -719,6 +749,7 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
         },
         ray: c2.ray,
         actor: x,
+        seized: c2.seized,
     };
     let s3 = ComposedStep::Own { own_step: Step::Crash { node: a } };
     assert(c2.own.live.contains(a));
@@ -743,6 +774,7 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
         },
         ray: c3.ray,
         actor: x,
+        seized: c3.seized,
     };
     let s4 = ComposedStep::Own { own_step: Step::RevokeOwner { actor: x, next: b } };
     assert(c3.own.actors[x] == (OwnershipState::Owned { owner: a, epoch: 41 }));
@@ -764,6 +796,7 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
             requests: c4.ray.requests,
         },
         actor: x,
+        seized: c4.seized.insert(a),
     };
     let s5 = ComposedStep::SeizeToken { from: a, to: b };
     assert(!c4.own.live.contains(a));
@@ -785,6 +818,7 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
         },
         ray: c5.ray,
         actor: x,
+        seized: c5.seized,
     };
     let s6 = ComposedStep::AcquireUnderToken { node: b };
     assert(c5.own.live.contains(b));
@@ -801,6 +835,54 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
     assert(has_token(c6.ray, b));
     assert(c6.own.issued.contains(stale));
     assert(!may_mutate(c6.own.actors[x], a, 41));
+    assert(c6.seized.contains(a));
+
+    // 7. A reconciles: it is told what happened to its routing state while it
+    // was down. Nothing but the marker changes, because in this model the
+    // routing state already *is* the truth - the step exists so that an
+    // execution has to contain it rather than assume it.
+    let c7 = Composed {
+        own: c6.own,
+        ray: c6.ray,
+        actor: x,
+        seized: c6.seized.remove(a),
+    };
+    let s7 = ComposedStep::Reconcile { node: a };
+    assert(!c6.own.live.contains(a));
+    assert(c6.seized.contains(a));
+    assert(composed_step(c6, c7, s7));
+    lemma_composed_reachable_step(c6, c7, s7);
+    theorem_composed_step_preserves_inv(c6, c7, s7);
+    assert(!c7.seized.contains(a));
+
+    // 8. Only now may A come back - and it comes back with no authority, its
+    // epoch-41 token still issued and still worthless, and no token.
+    let c8 = Composed {
+        own: System {
+            actors: c7.own.actors,
+            nodes: c7.own.nodes,
+            live: c7.own.live.insert(a),
+            issued: c7.own.issued,
+            network: c7.own.network,
+        },
+        ray: c7.ray,
+        actor: x,
+        seized: c7.seized,
+    };
+    let s8 = ComposedStep::Own { own_step: Step::Recover { node: a } };
+    assert(c7.own.nodes.contains(a));
+    assert(!c7.own.live.contains(a));
+    assert(!recovers_a_seized_node(c7, Step::Recover { node: a }));
+    assert(composed_step(c7, c8, s8));
+    lemma_composed_reachable_step(c7, c8, s8);
+    theorem_composed_step_preserves_inv(c7, c8, s8);
+
+    assert(composed_reachable(c8));
+    assert(c8.own.live.contains(a));
+    assert(!has_token(c8.ray, a));
+    assert(has_token(c8.ray, b));
+    assert(c8.own.issued.contains(stale));
+    assert(!may_mutate(c8.own.actors[x], a, 41));
 }
 
 } // verus!

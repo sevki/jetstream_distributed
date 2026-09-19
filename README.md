@@ -179,6 +179,8 @@ verifying, the build fails.
 | C4 | **Token movement is partitioned by the holder's liveness**: a live holder passes it on, a fail-stopped one is seized from, and no other composed step moves the token at all | `proofs::composed::theorem_token_movement_is_partitioned` | composed invariant |
 | C5 | The two layers describe the **same cluster**: `ray.nodes == own.nodes` is part of `composed_inv` and `composed_init`. Without it a Raymond root could be a node the ownership layer never heard of, so `!own.live.contains(n)` would hold for it with no `Crash` having happened, and the seizure guard would be satisfied by unmodelled liveness rather than by a fail-stop | `composed::composed_inv`, preserved by `proofs::composed::theorem_composed_step_preserves_inv` | — |
 | P10 | **The node population is constant** — `Crash` and `Recover` move nodes in and out of `live`, never out of `nodes` | `proofs::properties::theorem_node_domain_constant` | none |
+| C6 | **A seized node cannot rejoin `live` while still seized** — `cs_own` refuses `Recover` for it, so the only way back is through `Reconcile`, which makes the reconciliation a real deployment must perform a step an execution has to contain rather than an assumption | `proofs::composed::theorem_seized_node_cannot_recover` | — |
+| C7 | Reconciliation is **not a dead end**: `A` can be told what happened and then rejoin, holding no token and no authority | `proofs::composed_scenario::scenario_composed_crash_takeover` (third witness) | `A != B` |
 | C | The coupling is an **invariant** of the composed machine: `composed_init ==> composed_inv`, `composed_inv /\ composed_next ==> composed_inv`, hence `composed_reachable ==> composed_inv` | `proofs::composed::theorem_composed_reachable_inv`, `theorem_composed_step_preserves_inv` | the composed transition relation |
 | R6 | A concrete routing execution: request `D → B → A → C[token]`, token `C → A → B → D`, with the unique-token invariant carried through all eleven hops, then a twelfth step redelivering `D`'s original request after the token has finished moving. Its postcondition exports the final redelivery *step*, out of a state that holds the unique token, is inside the critical section, contains all four nodes and still carries `D`'s original request — exporting the endpoint alone would be satisfied by a singleton Raymond with `D` as sole root and no routing history at all | `proofs::raymond_routing::scenario_request_and_token_routing` | four distinct nodes |
 | R7 | A request outlives the topology it was routed against: after the token moves it is still in `requests` and still deliverable | `proofs::raymond::theorem_delayed_request_survives_token_move` | none |
@@ -202,6 +204,26 @@ written as. `ray_assign_privilege` models the holder *acting* — choosing to ha
 the privilege to the head of its queue — and a crashed node cannot act. Adding
 seizure without it would have opened the forcible path while leaving the
 impossible one open beside it.
+
+### A seized node must reconcile before it returns
+
+`cs_seize_token` rewrites the seized node's `holder` and `using` entries **while
+it is down**, and `Step::Recover`'s contract says a node comes back *with no
+knowledge of what happened meanwhile*. Left alone, recovery would silently
+inherit that rewrite: the model would have the returning node know it had lost
+the token, while the real one would still believe `holder[n] == n` and could
+enter its Raymond critical section beside the new holder. Ownership would stay
+safe — the epoch fences it — but Raymond's critical section has no epoch, which
+is the same asymmetry as above.
+
+So `Composed` carries `seized`, the set of nodes whose routing state was
+rewritten behind their back. `cs_own` refuses `Step::Recover` for a node in it,
+and `ComposedStep::Reconcile` is the only way out. The reconciliation a real
+deployment must perform — re-read the routing state rather than trust what you
+remember — is therefore a **modelled transition** rather than an assumption:
+an execution has to contain it. `scenario_composed_crash_takeover` runs it
+through to `A` rejoining afterwards, so the guard is a discipline rather than an
+unreachable restriction.
 
 ### Seizure only applies to a crashed node
 

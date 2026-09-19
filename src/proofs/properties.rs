@@ -641,6 +641,8 @@ pub proof fn theorem_composed_epoch_monotone(pre: Composed, post: Composed, s: C
         ComposedStep::PassToken { node, head } => {},
         // A seizure rewrites routing state only; `own` is untouched.
         ComposedStep::SeizeToken { from, to } => {},
+        // Reconciliation touches only the seizure marker.
+        ComposedStep::Reconcile { node } => {},
         ComposedStep::Own { own_step } => {
             lemma_step_epoch_monotone(pre.own, post.own, own_step, pre.actor);
         },

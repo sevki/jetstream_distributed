@@ -3,9 +3,11 @@
 A formally verified distributed ownership protocol for actor runtimes, implemented in Rust with comprehensive test coverage.
 
 **Status**: Active formalization in progress. Core safety invariants are verified through:
-- **Verus formal proofs** (verus/): Machine-checked proofs of exclusive mutable ownership and state safety
+- **Verus formal proofs** (verus/): Proof specifications written in Verus (⚠️ not yet verified against Verus prover)
 - **Comprehensive Rust tests** (src/): 33 unit and scenario tests covering all state transitions and edge cases
 - **Proof sketches** (proofs/): Detailed mathematical proofs documenting the formal reasoning
+
+⚠️ **Important**: See [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) for honest assessment of gaps (no network protocol, liveness unproven, no persistence layer)
 
 ## High-Level Design
 

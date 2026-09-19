@@ -72,10 +72,16 @@ jobs:
             echo "ERROR: Verus proof file missing: verus/ownership.rs"
             exit 1
           fi
-          echo "✓ Verus proof files present and ready for verification"
-          echo "To verify proofs with Verus:"
+          echo "✓ Verus proof file exists: verus/ownership.rs"
+          echo ""
+          echo "⚠️  IMPORTANT: Verus proofs have NOT been verified by this CI."
+          echo "    Verus requires manual setup and verification."
+          echo ""
+          echo "To verify proofs locally (required before production use):"
           echo "  1. Install Verus: https://github.com/verus-lang/verus"
           echo "  2. Run: verus verus/ownership.rs"
+          echo ""
+          echo "See PRODUCTION_READINESS.md for full assessment."
 
   docs:
     name: Check Documentation

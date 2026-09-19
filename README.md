@@ -158,6 +158,8 @@ verifying, the build fails.
 | P9 | **Epoch monotonicity survives composition** | `proofs::properties::theorem_composed_epoch_monotone` | none |
 | R9 | **The token is never lost** — every Raymond transition preserves token existence, which is why it can live in `ray_inv` | `proofs::raymond::lemma_ray_token_exists_init`, `lemma_ray_token_exists_step` | Raymond invariant |
 | R10 | **Raymond critical sections are exclusive** — at most one node is inside at a time | `proofs::raymond::theorem_ray_critical_section_is_exclusive` | Raymond invariant |
+| R11 | **The holder pointers are acyclic** — part of `ray_inv`, preserved by every transition. Both token movers rewrite the same two pointers, so one lemma covers `AssignPrivilege` and `SeizeToken` alike: the new rank is the old one shifted up by one with the new root sent to zero | `proofs::raymond::lemma_frame_acyclic`, `lemma_repoint_acyclic` | Raymond invariant |
+| R12 | **Every node reaches the token by following holder pointers** — which is what makes "requests travel hop-by-hop towards the token" a checked claim. Needs R11: with a non-root cycle beside the real root, a node in the cycle follows its pointers for ever and never arrives | `proofs::raymond::theorem_every_node_reaches_the_token` | Raymond invariant |
 | I | The inductive invariant holds in every reachable state (`init ==> inv`, `inv /\ next ==> inv`) | `proofs::invariant::theorem_reachable_inv` | the model's transition relation |
 | S | **The headline scenario**: `A` owns X@41, a transfer and a crash/recovery occur, `B` owns X@42, `A` returns still holding its epoch-41 token - and cannot perform an authoritative mutation. The postcondition exports the whole nine-step run, so the crash, the recovery and the outcome are the same execution — exported as separate existentials they need not have been, and an ordinary live handover could supply the outcome | `proofs::adversarial::scenario_stale_owner_returns` | `A != B` |
 | S1 | A stale `Grant` cannot resurrect a superseded epoch | `proofs::adversarial::theorem_stale_grant_cannot_be_used` | none |
@@ -514,6 +516,32 @@ invariant preservation):
 * the actual actor runtime: networking, persistence, and the code that obeys the
   protocol. Verifying the protocol says nothing about whether an implementation
   follows it.
+
+### The holder graph is a tree, and now says so
+
+`ray_unique_token` and `ray_token_exists` together say there is exactly one
+root. That is not the same as the holder graph being a tree: nothing stopped a
+set of non-root nodes from pointing at each other in a cycle, off to one side of
+the real root. `ray_init` permitted it too — it forbids only a non-root pointing
+at *itself*, so `A → B`, `B → A` beside a root `C → C` satisfied it.
+
+The consequence was visible in `src/raymond.rs`'s own opening comment: "requests
+travel hop-by-hop towards the token" is false for a node inside such a cycle,
+whose request would circle for ever. Nothing in the safety proofs depended on the
+claim, which is exactly why it went unchecked for eight review rounds.
+
+`ray_acyclic` is now part of both `ray_inv` and `ray_init`, stated as the
+existence of a rank — a `nat` per node that strictly decreases along every
+non-root edge, which is well-foundedness and so admits no cycle. The existential
+is the form the proofs want, because a step preserves acyclicity by *exhibiting*
+a new rank. For both token movers that rank is the old one shifted up by one with
+the new root sent to zero, and `lemma_repoint_acyclic` proves it once for both:
+they rewrite exactly the same two pointers, and neither the old token position
+nor any parent-child relationship between the two nodes is needed.
+
+`theorem_every_node_reaches_the_token` is the payoff, by induction on the rank.
+It is still a safety property — the route exists in the current state — and not
+liveness, which would need the assumptions listed above.
 
 ### Scenarios export labelled runs, not endpoints
 

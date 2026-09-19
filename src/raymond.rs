@@ -116,6 +116,53 @@ pub open spec fn ray_token_exists(r: Raymond) -> bool {
     exists|n: NodeId| #[trigger] has_token(r, n)
 }
 
+/// A rank witnessing that the holder pointers form a forest directed at its
+/// roots: every node that is not a root has a parent strictly closer to one.
+///
+/// A strictly decreasing `nat` along every edge is exactly well-foundedness, so
+/// no cycle can satisfy this - going round one would have to return to a rank
+/// it had already gone below.
+pub open spec fn ray_ranked_by(r: Raymond, rank: Map<NodeId, nat>) -> bool {
+    &&& (forall|n: NodeId| #[trigger] r.nodes.contains(n) ==> rank.contains_key(n))
+    &&& (forall|n: NodeId|
+        r.nodes.contains(n) && #[trigger] r.holder[n] != n ==> rank[r.holder[n]] < rank[n])
+}
+
+/// **The holder pointers are acyclic.**
+///
+/// `ray_unique_token` and `ray_token_exists` together say there is exactly one
+/// root, and that is *still* not enough to make the holder graph a tree: nothing
+/// stopped a set of non-root nodes from pointing at each other in a cycle, off
+/// to one side of the real root. `ray_init` permitted it too - it forbids only a
+/// non-root pointing at *itself*, so `A -> B`, `B -> A` beside a root `C -> C`
+/// satisfied it.
+///
+/// Such a state is not a Raymond state, and the consequence is visible in this
+/// module's own documentation: "requests travel hop-by-hop towards the token"
+/// is false for a node in such a cycle, whose request would circle for ever.
+/// Nothing in the safety proofs depended on the claim, which is precisely why
+/// it went unchecked.
+///
+/// Stated as the *existence* of a rank rather than as "no cycle" because the
+/// existential is what the proofs want: a step preserves acyclicity by
+/// exhibiting a new rank, which for both token movers is the old one shifted up
+/// by one with the new root sent to zero (see
+/// `crate::proofs::raymond::lemma_repoint_acyclic`).
+pub open spec fn ray_acyclic(r: Raymond) -> bool {
+    exists|rank: Map<NodeId, nat>| #[trigger] ray_ranked_by(r, rank)
+}
+
+/// Following holder pointers `k` times from `n`.
+pub open spec fn holder_iter(r: Raymond, n: NodeId, k: nat) -> NodeId
+    decreases k,
+{
+    if k == 0 {
+        n
+    } else {
+        r.holder[holder_iter(r, n, (k - 1) as nat)]
+    }
+}
+
 /// Only the token holder can be inside the critical section.
 pub open spec fn ray_using_implies_token(r: Raymond) -> bool {
     forall|n: NodeId| #[trigger] r.nodes.contains(n) && r.using[n] ==> has_token(r, n)
@@ -127,6 +174,7 @@ pub open spec fn ray_inv(r: Raymond) -> bool {
     &&& ray_unique_token(r)
     &&& ray_token_exists(r)
     &&& ray_using_implies_token(r)
+    &&& ray_acyclic(r)
 }
 
 // ---------------------------------------------------------------------------
@@ -306,6 +354,11 @@ pub open spec fn ray_init(r: Raymond, root: NodeId) -> bool {
     &&& (forall|n: NodeId|
         #[trigger] r.nodes.contains(n) ==> r.queue[n].len() == 0 && !r.asked[n] && !r.using[n])
     &&& (forall|m: (NodeId, NodeId)| !(#[trigger] r.requests.contains(m)))
+    // Without this clause `ray_init` admits a non-root cycle in `holder` - the
+    // clause above forbids only a non-root pointing at itself - so an initial
+    // state could contain nodes that never reach the token at all. See
+    // `ray_acyclic`.
+    &&& ray_acyclic(r)
 }
 
 /// **The token is seized.** It is re-established at `to` without the current

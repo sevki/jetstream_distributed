@@ -181,6 +181,7 @@ pub proof fn lemma_ray_frame_inv(pre: Raymond, post: Raymond)
 {
     lemma_same_holder_same_token(pre, post);
     lemma_frame_unique_token(pre, post);
+    lemma_frame_acyclic(pre, post);
     let root = choose|n: NodeId| has_token(pre, n);
     assert(has_token(post, root));
     assert(ray_token_exists(post));
@@ -206,6 +207,146 @@ pub proof fn lemma_ray_frame_inv(pre: Raymond, post: Raymond)
         assert(pre.nodes.contains(m));
         assert(has_token(pre, m));
     }
+}
+
+/// Acyclicity survives any step that leaves `nodes` and `holder` alone: the
+/// same rank still works.
+pub proof fn lemma_frame_acyclic(pre: Raymond, post: Raymond)
+    requires
+        ray_acyclic(pre),
+        post.nodes == pre.nodes,
+        post.holder == pre.holder,
+    ensures
+        ray_acyclic(post),
+{
+    let rank = choose|rank: Map<NodeId, nat>| ray_ranked_by(pre, rank);
+    assert forall|n: NodeId| #[trigger] post.nodes.contains(n) implies rank.contains_key(n) by {
+        assert(pre.nodes.contains(n));
+    }
+    assert forall|n: NodeId|
+        post.nodes.contains(n) && #[trigger] post.holder[n] != n implies rank[post.holder[n]]
+            < rank[n] by {
+        assert(pre.nodes.contains(n));
+        assert(pre.holder[n] == post.holder[n]);
+    }
+    assert(ray_ranked_by(post, rank));
+}
+
+/// **Reversing the edge at the root keeps the tree a tree.**
+///
+/// Both token movers rewrite exactly the same two pointers -
+/// `holder[from] := to` and `holder[to] := to` - so one lemma serves
+/// `ray_assign_privilege` and `ray_seize` alike. Note what it does *not* need:
+/// no assumption that `to` was a child of `from`, and no assumption about where
+/// the token was. Reversing the pointer at any node and rooting the result at
+/// the target is acyclicity-preserving on its own.
+///
+/// The new rank is the old one shifted up by one with `to` sent to zero:
+///
+/// * `to` is now a root, so it is unconstrained;
+/// * every edge that now points at `to` decreases, because nothing else has
+///   rank zero - this covers `from`'s new edge and any node that already
+///   pointed at `to`;
+/// * every other edge is unchanged and both its ends moved up together, so its
+///   strict decrease comes straight from the old rank.
+pub proof fn lemma_repoint_acyclic(pre: Raymond, post: Raymond, from: NodeId, to: NodeId)
+    requires
+        ray_acyclic(pre),
+        post.nodes == pre.nodes,
+        post.holder == pre.holder.insert(from, to).insert(to, to),
+    ensures
+        ray_acyclic(post),
+{
+    let rank = choose|rank: Map<NodeId, nat>| ray_ranked_by(pre, rank);
+    let rank2 = Map::new(
+        |k: NodeId| true,
+        |k: NodeId| if k == to { 0nat } else { (rank[k] + 1) as nat },
+    );
+    assert(post.holder[to] == to);
+    assert(post.holder[from] == to);
+    assert(rank2[to] == 0nat);
+    assert forall|n: NodeId| #[trigger] post.nodes.contains(n) implies rank2.contains_key(n) by {
+    }
+    assert forall|n: NodeId|
+        post.nodes.contains(n) && #[trigger] post.holder[n] != n implies rank2[post.holder[n]]
+            < rank2[n] by {
+        assert(n != to);
+        assert(rank2[n] == (rank[n] + 1) as nat);
+        if post.holder[n] == to {
+            assert(rank2[post.holder[n]] == 0nat);
+        } else {
+            assert(n != from);
+            assert(post.holder[n] == pre.holder[n]);
+            assert(pre.nodes.contains(n));
+            assert(pre.holder[n] != n);
+            assert(rank.contains_key(n));
+            assert(rank[pre.holder[n]] < rank[n]);
+            assert(rank2[post.holder[n]] == (rank[pre.holder[n]] + 1) as nat);
+        }
+    }
+    assert(ray_ranked_by(post, rank2));
+}
+
+/// One more hop from `n` is the same as one fewer hop from `n`'s parent.
+pub proof fn lemma_holder_iter_shift(r: Raymond, n: NodeId, k: nat)
+    ensures
+        holder_iter(r, n, (k + 1) as nat) == holder_iter(r, r.holder[n], k),
+    decreases k,
+{
+    if k > 0 {
+        lemma_holder_iter_shift(r, n, (k - 1) as nat);
+    }
+}
+
+/// Following holder pointers from any node reaches the token, by induction on
+/// the node's rank.
+proof fn lemma_reaches_token_from(r: Raymond, rank: Map<NodeId, nat>, n: NodeId) -> (k: nat)
+    requires
+        ray_wf(r),
+        ray_ranked_by(r, rank),
+        r.nodes.contains(n),
+    ensures
+        has_token(r, holder_iter(r, n, k)),
+    decreases rank[n],
+{
+    if r.holder[n] == n {
+        assert(holder_iter(r, n, 0nat) == n);
+        assert(has_token(r, n));
+        0nat
+    } else {
+        let m = r.holder[n];
+        // `ray_holder_closed` - the parent is a real node.
+        assert(r.nodes.contains(m));
+        // `ray_ranked_by` - and it is strictly closer to a root, which is what
+        // makes this recursion terminate.
+        assert(rank[m] < rank[n]);
+        let j = lemma_reaches_token_from(r, rank, m);
+        lemma_holder_iter_shift(r, n, j);
+        assert(holder_iter(r, n, (j + 1) as nat) == holder_iter(r, m, j));
+        (j + 1) as nat
+    }
+}
+
+/// **Every node reaches the token by following holder pointers.**
+///
+/// This is what turns this module's opening claim - "requests travel hop-by-hop
+/// towards the token" - into something checked. It needs acyclicity and does not
+/// follow from the rest of the invariant: with a non-root cycle beside the real
+/// root, a node inside the cycle follows its holder pointers for ever and never
+/// arrives.
+///
+/// It is still a *safety* property, not liveness: it says the route exists in
+/// the current state, not that any request traverses it. Raymond's liveness
+/// needs reliable FIFO links and no crashes, none of which this model assumes.
+pub proof fn theorem_every_node_reaches_the_token(r: Raymond, n: NodeId) -> (k: nat)
+    requires
+        ray_inv(r),
+        r.nodes.contains(n),
+    ensures
+        has_token(r, holder_iter(r, n, k)),
+{
+    let rank = choose|rank: Map<NodeId, nat>| ray_ranked_by(r, rank);
+    lemma_reaches_token_from(r, rank, n)
 }
 
 /// Exactly which holder pointers `AssignPrivilege` rewrites.
@@ -373,6 +514,7 @@ pub proof fn lemma_assign_privilege_preserves_unique_token(
     lemma_assign_token_moves(pre, post, n, head);
     lemma_assign_wf(pre, post, n, head);
     lemma_assign_using(pre, post, n, head);
+    lemma_repoint_acyclic(pre, post, n, head);
     assert(has_token(post, head));
     assert(ray_token_exists(post));
 }
@@ -506,6 +648,7 @@ pub proof fn lemma_seize_preserves_inv(pre: Raymond, post: Raymond, from: NodeId
     lemma_seize_token_moves(pre, post, from, to);
     lemma_seize_wf(pre, post, from, to);
     lemma_seize_using(pre, post, from, to);
+    lemma_repoint_acyclic(pre, post, from, to);
     assert(has_token(post, to));
     assert(ray_token_exists(post));
 }

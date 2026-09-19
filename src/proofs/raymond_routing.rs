@@ -146,6 +146,38 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
     assert(r0.holder[b] == a);
     assert(r0.holder[c] == c);
     assert(r0.holder[d] == b);
+    // `ray_init` requires the holder pointers to be acyclic, and the start tree
+    // `D -> B -> A -> C` is ranked by its distance from the root `C`.
+    let ray_rank = Map::new(
+        |k: NodeId| true,
+        |k: NodeId|
+            if k == c {
+                0nat
+            } else if k == a {
+                1nat
+            } else if k == b {
+                2nat
+            } else {
+                3nat
+            },
+    );
+    assert forall|n: NodeId| #[trigger] r0.nodes.contains(n) implies ray_rank.contains_key(n) by {
+    }
+    assert forall|n: NodeId|
+        r0.nodes.contains(n) && #[trigger] r0.holder[n] != n implies ray_rank[r0.holder[n]]
+            < ray_rank[n] by {
+        assert(n == a || n == b || n == c || n == d);
+        assert(n != c);
+        if n == a {
+            assert(r0.holder[a] == c);
+        } else if n == b {
+            assert(r0.holder[b] == a);
+        } else {
+            assert(r0.holder[d] == b);
+        }
+    }
+    assert(ray_ranked_by(r0, ray_rank));
+    assert(ray_acyclic(r0));
     assert(ray_init(r0, c));
     theorem_ray_init_inv(r0, c);
     assert(has_token(r0, c));

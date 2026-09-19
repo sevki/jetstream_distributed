@@ -13,19 +13,23 @@ use crate::transfer::*;
 verus! {
 
 /// **Unique current epoch.** An actor has exactly one authoritative fencing
-/// epoch: one exists, and any two authoritative epochs are equal.
-pub proof fn theorem_unique_current_epoch(s: OwnershipState, e1: Epoch, e2: Epoch)
-    requires
-        is_authoritative_epoch(s, e1),
-        is_authoritative_epoch(s, e2),
+/// epoch.
+///
+/// Stated unconditionally: existence is asserted outright rather than under the
+/// assumption that some authoritative epoch was already supplied, and
+/// uniqueness is an implication over *arbitrary* epochs. A version taking two
+/// authoritative epochs as hypotheses would establish existence only where a
+/// witness already existed, which is not the claim.
+pub proof fn theorem_unique_current_epoch(s: OwnershipState)
     ensures
-        e1 == e2,
         is_authoritative_epoch(s, current_epoch(s)),
-        e1 == current_epoch(s),
+        forall|e: Epoch| #[trigger] is_authoritative_epoch(s, e) ==> e == current_epoch(s),
 {
     lemma_authoritative_epoch_exists(s);
-    lemma_authoritative_epoch_unique(s, e1, e2);
-    lemma_authoritative_epoch_unique(s, e1, current_epoch(s));
+    assert forall|e: Epoch| #[trigger] is_authoritative_epoch(s, e) implies e == current_epoch(s)
+        by {
+        lemma_authoritative_epoch_unique(s, e, current_epoch(s));
+    }
 }
 
 /// **Stale-owner fencing.**

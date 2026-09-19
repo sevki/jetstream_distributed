@@ -131,7 +131,7 @@ verifying, the build fails.
 | 1 | **Exclusive mutable ownership** - in any reachable state, if `A` and `B` may both mutate an actor then `A == B` (and their epochs are equal) | `proofs::exclusivity::theorem_exclusive_mutable_ownership` | reachability; none beyond the model |
 | 1a | The same, structurally: no state at all, reachable or not, admits two mutable owners | `proofs::exclusivity::theorem_exclusive_mutable_ownership_structural` | none |
 | 1b | Two capability tokens that both confer authority over the same actor are the same token | `proofs::exclusivity::theorem_authorized_token_unique` | reachability |
-| 2 | **Unique current epoch** - an actor has exactly one authoritative fencing epoch, and it exists | `proofs::fencing::theorem_unique_current_epoch` | none |
+| 2 | **Unique current epoch** - existence stated outright, and uniqueness as an implication over *arbitrary* epochs (not under the assumption that a witness was already supplied) | `proofs::fencing::theorem_unique_current_epoch` | none |
 | 3 | **Stale-owner fencing** - `current_epoch(actor) > supplied_epoch ==> !can_mutate(actor, node, supplied_epoch)` | `proofs::fencing::theorem_stale_epoch_cannot_mutate` | none |
 | 3a | Advancing `n -> n+1` strips authority from every holder of `n` | `proofs::fencing::theorem_epoch_advance_fences_previous` | none |
 | 3b | For issued tokens the fence check is exactly epoch equality (no token is ever ahead of the actor) | `proofs::fencing::theorem_fence_is_exact_for_issued_tokens` | reachability |
@@ -155,7 +155,7 @@ verifying, the build fails.
 | P7 | **Staleness is permanent** — a fenced-out node can never be fenced back in by waiting | `proofs::properties::theorem_stale_stays_stale` | valid execution |
 | P8 | **No authority without a capability** — a node that may mutate provably holds an issued token for exactly that `(actor, epoch)` | `proofs::properties::theorem_no_authority_without_token` | reachability |
 | P9 | **Epoch monotonicity survives composition** | `proofs::properties::theorem_composed_epoch_monotone` | none |
-| R9 | **Exactly one token** — `ray_inv` gives at most one; with `ray_token_exists` (preserved by every step, so the token is never lost) there is exactly one | `proofs::raymond::theorem_ray_exactly_one_token`, `lemma_ray_token_exists_init`, `lemma_ray_token_exists_step` | Raymond invariant |
+| R9 | **The token is never lost** — every Raymond transition preserves token existence, which is why it can live in `ray_inv` | `proofs::raymond::lemma_ray_token_exists_init`, `lemma_ray_token_exists_step` | Raymond invariant |
 | R10 | **Raymond critical sections are exclusive** — at most one node is inside at a time | `proofs::raymond::theorem_ray_critical_section_is_exclusive` | Raymond invariant |
 | I | The inductive invariant holds in every reachable state (`init ==> inv`, `inv /\ next ==> inv`) | `proofs::invariant::theorem_reachable_inv` | the model's transition relation |
 | S | **The headline scenario**: `A` owns X@41, a transfer and a crash/recovery occur, `B` owns X@42, `A` returns still holding its epoch-41 token - and cannot perform an authoritative mutation | `proofs::adversarial::scenario_stale_owner_returns` | `A != B` |
@@ -163,7 +163,7 @@ verifying, the build fails.
 | S2 | Message duplication / reordering / delay cannot change ownership | `proofs::adversarial::theorem_network_steps_cannot_change_ownership` | none |
 | S3 | Crash and stale-node recovery cannot change ownership | `proofs::adversarial::theorem_crash_recovery_cannot_change_ownership` | none |
 | S4 | An interrupted transfer leaves nobody with authority and burns the epoch | `proofs::adversarial::scenario_interrupted_transfer` | `inv` holds before the step |
-| R1 | **Raymond: at most one valid token** | `proofs::raymond::theorem_ray_at_most_one_token`, preserved by `lemma_ray_step_preserves_inv` | Raymond invariant |
+| R1 | **Raymond: exactly one valid token** - `ray_inv` carries token *existence* as well as uniqueness, so a root is guaranteed rather than merely not-duplicated | `proofs::raymond::theorem_ray_exactly_one_token`, `theorem_ray_at_most_one_token`, preserved by `lemma_ray_step_preserves_inv` | Raymond invariant |
 | R2 | **Raymond: holder/routing changes cannot manufacture ownership** | `proofs::raymond::theorem_routing_cannot_manufacture_ownership` | Raymond invariant, coupling |
 | R3 | **Raymond: duplicate/reordered requests cannot create a second owner** | `proofs::raymond::theorem_duplicate_requests_are_safe` | Raymond invariant |
 | R4 | **Raymond: token transfer preserves ownership safety** | `proofs::composed::lemma_composed_pass_token_preserves_inv` (and, as a layer-local lemma, `proofs::raymond::theorem_token_transfer_preserves_ownership_safety`) | none — in the composed machine the release-before-transfer condition is a *guard*, not an assumption |
@@ -172,7 +172,7 @@ verifying, the build fails.
 | C0a | (Step-level lemma backing C0) `EnterCs`/`ExitCs` are legal `ComposedStep::Ray` transitions and preserve the composed invariant | `proofs::composed::theorem_composed_admits_critical_section`, `..._exit` | composed invariant holds before the step |
 | C1 | **Non-vacuity**: a complete handover driven through *both* layers is reachable — `A` owns X@41 while holding the token, releases it, the token moves `A → B`, and `B` ends up owning X@42 *and* holding the token, with `A`'s epoch-41 token still issued and powerless | `proofs::composed_scenario::scenario_composed_handover` | `A != B` |
 | C | The coupling is an **invariant** of the composed machine: `composed_init ==> composed_inv`, `composed_inv /\ composed_next ==> composed_inv`, hence `composed_reachable ==> composed_inv` | `proofs::composed::theorem_composed_reachable_inv`, `theorem_composed_step_preserves_inv` | the composed transition relation |
-| R6 | A concrete routing execution: request `D → B → A → C[token]`, token `C → A → B → D`, with the unique-token invariant carried through all eleven hops, then a twelfth step redelivering `D`'s original request after the token has finished moving | `proofs::raymond_routing::scenario_request_and_token_routing` | four distinct nodes |
+| R6 | A concrete routing execution: request `D → B → A → C[token]`, token `C → A → B → D`, with the unique-token invariant carried through all eleven hops, then a twelfth step redelivering `D`'s original request after the token has finished moving. Its postcondition *exports* the endpoint (a state satisfying `ray_inv` with `D` holding the unique token and inside the critical section), so the construction cannot silently regress | `proofs::raymond_routing::scenario_request_and_token_routing` | four distinct nodes |
 | R7 | A request outlives the topology it was routed against: after the token moves it is still in `requests` and still deliverable | `proofs::raymond::theorem_delayed_request_survives_token_move` | none |
 | R8 | Delivering an arbitrarily delayed request preserves the Raymond invariant and leaves token possession completely unchanged | `proofs::raymond::theorem_delayed_request_delivery_is_safe` | Raymond invariant |
 
@@ -224,8 +224,11 @@ moving out from under a node that still has authority. `src/composed.rs` closes
 that gap by defining a single state machine over both layers in which the
 synchronisation is a **guard**:
 
-* `PassToken` may only fire while the actor is *not* `Owned` — ownership must be
-  released before the token is allowed to move;
+* `PassToken` may only fire while the actor is `Unowned` — ownership must be
+  genuinely released before the token is allowed to move. (`Transferring` also
+  satisfies `!is_owned`, so guarding on that weaker condition would let the token
+  move while a handover was still in flight and the outgoing owner had not yet
+  acknowledged the revoke.);
 * `AcquireUnderToken` may only fire for a node that *holds* the token — authority
   cannot be taken by a node routing has not elected;
 * `Ray` carries every Raymond step that does *not* move the token — request

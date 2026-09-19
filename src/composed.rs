@@ -84,13 +84,20 @@ pub open spec fn cs_own(pre: Composed, post: Composed, s: Step) -> bool {
     &&& post.actor == pre.actor
 }
 
-/// The token moves - **only** once the actor has been released.
+/// The token moves - **only** once the actor has actually been released.
 ///
 /// This guard is the whole point of the module: it is what turns the side
 /// condition of `theorem_token_transfer_preserves_ownership_safety` into
 /// something the machine enforces.
+///
+/// The guard is `is_unowned`, not merely `!is_owned`: `Transferring` also
+/// satisfies `!is_owned`, so the weaker form would let the token move while a
+/// handover was still in flight and the outgoing owner had not yet
+/// acknowledged the revoke. Safety would survive that - nobody has authority
+/// while `Transferring` either - but it would not be the
+/// release-before-transfer discipline this module claims to enforce.
 pub open spec fn cs_pass_token(pre: Composed, post: Composed, n: NodeId, head: NodeId) -> bool {
-    &&& !is_owned(pre.own.actors[pre.actor])
+    &&& is_unowned(pre.own.actors[pre.actor])
     &&& ray_assign_privilege(pre.ray, post.ray, n, head)
     &&& post.own == pre.own
     &&& post.actor == pre.actor

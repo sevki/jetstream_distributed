@@ -25,6 +25,8 @@ pub proof fn theorem_ray_init_inv(r: Raymond, root: NodeId)
         ray_inv(r),
         has_token(r, root),
 {
+    assert(has_token(r, root));
+    assert(ray_token_exists(r));
     assert forall|n: NodeId, m: NodeId| has_token(r, n) && has_token(r, m) implies n == m by {
         if n != root {
             assert(r.holder[n] != n);
@@ -179,6 +181,9 @@ pub proof fn lemma_ray_frame_inv(pre: Raymond, post: Raymond)
 {
     lemma_same_holder_same_token(pre, post);
     lemma_frame_unique_token(pre, post);
+    let root = choose|n: NodeId| has_token(pre, n);
+    assert(has_token(post, root));
+    assert(ray_token_exists(post));
     assert forall|m: NodeId| #[trigger] post.nodes.contains(m) implies post.holder.contains_key(m)
         && post.queue.contains_key(m) && post.asked.contains_key(m) && post.using.contains_key(m)
         && post.nodes.contains(post.holder[m]) by {
@@ -353,6 +358,8 @@ pub proof fn lemma_assign_privilege_preserves_unique_token(
     lemma_assign_token_moves(pre, post, n, head);
     lemma_assign_wf(pre, post, n, head);
     lemma_assign_using(pre, post, n, head);
+    assert(has_token(post, head));
+    assert(ray_token_exists(post));
 }
 
 /// Every Raymond transition preserves the Raymond invariant.
@@ -409,14 +416,6 @@ pub proof fn theorem_ray_at_most_one_token(r: Raymond, n: NodeId, m: NodeId)
 {
 }
 
-/// The token exists somewhere.
-///
-/// `ray_inv` only says there is *at most* one token. Together with this, the
-/// Raymond layer has *exactly* one: the token is never lost, only moved.
-pub open spec fn ray_token_exists(r: Raymond) -> bool {
-    exists|n: NodeId| #[trigger] has_token(r, n)
-}
-
 /// The initial routing state has the token.
 pub proof fn lemma_ray_token_exists_init(r: Raymond, root: NodeId)
     requires
@@ -433,7 +432,6 @@ pub proof fn lemma_ray_token_exists_init(r: Raymond, root: NodeId)
 pub proof fn lemma_ray_token_exists_step(pre: Raymond, post: Raymond, s: RayStep)
     requires
         ray_inv(pre),
-        ray_token_exists(pre),
         ray_step(pre, post, s),
     ensures
         ray_token_exists(post),
@@ -456,7 +454,6 @@ pub proof fn lemma_ray_token_exists_step(pre: Raymond, post: Raymond, s: RayStep
 pub proof fn theorem_ray_exactly_one_token(r: Raymond)
     requires
         ray_inv(r),
-        ray_token_exists(r),
     ensures
         exists|n: NodeId| #[trigger] has_token(r, n),
         forall|n: NodeId, m: NodeId| has_token(r, n) && has_token(r, m) ==> n == m,

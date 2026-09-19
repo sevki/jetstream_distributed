@@ -46,7 +46,13 @@ pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId,
         b != d,
         c != d,
     ensures
-        true,
+        exists|r: Raymond|
+            {
+                &&& #[trigger] ray_inv(r)
+                &&& has_token(r, d)
+                &&& r.using[d]
+                &&& forall|m: NodeId| has_token(r, m) ==> m == d
+            },
 {
     let nodes = Set::<NodeId>::empty().insert(a).insert(b).insert(c).insert(d);
     let empty_q = Seq::<NodeId>::empty();

@@ -80,6 +80,17 @@ pub open spec fn ray_unique_token(r: Raymond) -> bool {
         has_token(r, n) && has_token(r, m) ==> n == m
 }
 
+/// **The token exists somewhere.**
+///
+/// `ray_unique_token` alone only rules out a *second* root; on its own it
+/// admits states where every holder pointer sits in a non-root cycle and nobody
+/// has the token. Carrying existence in the invariant is what makes the claim
+/// "exactly one token" rather than "at most one", and it is what lets every
+/// theorem parameterised by `ray_inv` rely on a root being there.
+pub open spec fn ray_token_exists(r: Raymond) -> bool {
+    exists|n: NodeId| #[trigger] has_token(r, n)
+}
+
 /// Only the token holder can be inside the critical section.
 pub open spec fn ray_using_implies_token(r: Raymond) -> bool {
     forall|n: NodeId| #[trigger] r.nodes.contains(n) && r.using[n] ==> has_token(r, n)
@@ -89,6 +100,7 @@ pub open spec fn ray_using_implies_token(r: Raymond) -> bool {
 pub open spec fn ray_inv(r: Raymond) -> bool {
     &&& ray_wf(r)
     &&& ray_unique_token(r)
+    &&& ray_token_exists(r)
     &&& ray_using_implies_token(r)
 }
 

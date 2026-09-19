@@ -90,9 +90,10 @@ jobs:
           fi
           echo "no escape hatches found"
 
-  # The crate is also a normal Cargo package. This job checks that the `vstd`
-  # version pinned in Cargo.toml really is the one this Verus release expects,
-  # so the Cargo entry point is not an untested claim.
+  # The crate is also a normal Cargo package. This job verifies it through the
+  # Cargo entry point, against the `vstd` version pinned in Cargo.toml rather
+  # than the prebuilt one inside the Verus release - so the pin is checked, and
+  # the Cargo entry point is not an untested claim.
   cargo-verus:
     name: cargo verus verify
     runs-on: ubuntu-24.04
@@ -128,15 +129,32 @@ jobs:
       - name: Put Verus on PATH
         run: echo "$HOME/verus" >> "$GITHUB_PATH"
 
-      # `cargo verus verify` exits 0 after merely building the crate if it does
-      # not actually run the verifier, which makes this a false-green check.
-      # Require the verification summary to appear in its output.
+      # `cargo verus verify` only verifies crates that opt in via
+      # `[package.metadata.verus] verify = true`. Without that it builds this
+      # crate with ordinary rustc, verifies `vstd` alone, prints *vstd's*
+      # `verification results` line and exits 0 - a false green that a naive
+      # grep for the summary does not catch, because the summary is there.
+      #
+      # So the check is positional: a verification summary has to appear after
+      # the line where Cargo starts compiling this crate. vstd's summary is
+      # emitted before that point and cannot satisfy it.
       - name: Verify through cargo-verus
         run: |
           set -o pipefail
           cargo verus verify 2>&1 | tee /tmp/cargo-verus.txt
-          if ! grep -qE 'verification results' /tmp/cargo-verus.txt; then
-            echo "::error::cargo verus produced no verification summary - it built but did not verify"
+
+          if grep -q 'did not find any crates that opted into verification' /tmp/cargo-verus.txt; then
+            echo "::error::cargo verus verified nothing in this crate - is [package.metadata.verus] verify = true still in Cargo.toml?"
             exit 1
           fi
-          grep -E 'verification results' /tmp/cargo-verus.txt
+
+          start=$(grep -n 'Checking distributed-ownership' /tmp/cargo-verus.txt | tail -1 | cut -d: -f1)
+          if [ -z "$start" ]; then
+            echo "::error::cargo verus never compiled this crate, so it cannot have verified it"
+            exit 1
+          fi
+          if ! awk -v n="$start" 'NR > n && /verification results/ { found = 1 } END { exit !found }' /tmp/cargo-verus.txt; then
+            echo "::error::no verification summary for this crate - cargo verus built it without verifying it"
+            exit 1
+          fi
+          awk -v n="$start" 'NR > n && /verification results/' /tmp/cargo-verus.txt | tee -a "$GITHUB_STEP_SUMMARY"

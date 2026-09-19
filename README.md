@@ -337,11 +337,28 @@ verus --crate-type=lib src/lib.rs
 CI (`.github/workflows/verify.yml`) runs exactly this on every push and pull
 request, so a PR fails if any proof stops verifying.
 
+A second job runs the same crate through `cargo verus verify`, which checks it
+against the `vstd` version pinned in `Cargo.toml` rather than the prebuilt one
+inside the Verus release. That entry point needs
+
+```toml
+[package.metadata.verus]
+verify = true
+```
+
+in `Cargo.toml`: without it, `cargo verus verify` compiles this crate with
+ordinary rustc, verifies only `vstd`, prints *vstd's* `verification results`
+line and exits 0. It is a false green that survives a naive grep for the
+summary, because a summary is present — just not this crate's. The CI step
+therefore requires a summary emitted *after* Cargo starts compiling this
+crate.
+
 ## Status: proven, modelled, future work
 
-Against the pinned Verus release, `verus --crate-type=lib src/lib.rs` reports
-`88 verified, 0 errors`. CI writes the current count into each run's job summary,
-which is the authoritative figure if this snapshot has drifted.
+Against the pinned Verus release, `verus --crate-type=lib src/lib.rs` verifies
+the whole crate with no errors. CI writes the current count into each run's job
+summary, which is the authoritative figure — the snapshot in prose drifts, the
+job summary does not.
 
 **Machine-checked** (every `proof fn` in `src/proofs/` is checked by Verus in
 CI, with no `assume`/`admit`/`external_body`/`axiom`):
@@ -393,17 +410,23 @@ invariant preservation):
 The proofs use no `assume`, `admit`, `external_body`, `axiom`, or any other way
 of asserting something Verus did not check.
 
-The long concrete scenarios are kept tractable mainly by **splitting** them:
-`scenario_composed_handover` is `handover_phase_release` +
-`handover_phase_acquire`, and `scenario_request_and_token_routing` is
-`routing_phase_requests` + `routing_phase_token`. Each phase hands the
-intermediate state to the next as an *abstract* characterisation, so no single
-query reasons about a dozen nested `Map`/`Set` literals at once. The first phase
-of each then verifies within Verus's default solver budget; the second phase of
-each carries `#[verifier::rlimit(40)]`, since it builds five states on top of a
-state described by fifteen-odd preconditions. That attribute is a **solver
-budget, not an assumption** — it raises the resource ceiling for one query and
-cannot admit an unproven fact. CI greps `src/` for the real escape hatches and
-fails the build if any appear. Everything the proofs rely on that
-is not derived is a modelled transition or an explicitly documented entry in the
-failure-model table above.
+There are also no raised solver budgets: no `#[verifier::rlimit]` anywhere. The
+long concrete scenarios are kept tractable purely by **splitting** them:
+
+* `scenario_composed_handover` = `handover_phase_release` +
+  `handover_phase_request` + `handover_phase_acquire`;
+* `scenario_request_and_token_routing` = `routing_phase_requests` +
+  `routing_phase_token_hops` + `routing_phase_delivery`.
+
+Each phase hands the intermediate state to the next as an *abstract*
+characterisation, so no single query reasons about a dozen nested `Map`/`Set`
+literals at once, and every phase verifies within Verus's default budget. Two
+phases previously carried `#[verifier::rlimit(40)]`, and between them dominated
+the cost of the entire proof run; splitting them again removed the need.
+(`rlimit` would not have been an escape hatch — it is a solver budget and
+cannot admit an unproven fact — but a proof that needs a raised ceiling is
+usually a proof that wants splitting.)
+
+CI greps `src/` for the real escape hatches and fails the build if any appear.
+Everything the proofs rely on that is not derived is a modelled transition or an
+explicitly documented entry in the failure-model table above.

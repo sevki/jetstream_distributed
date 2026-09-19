@@ -17,3 +17,25 @@ path = "src/lib.rs"
 # inside the Verus release archive instead.
 [dependencies]
 vstd = "=0.0.0-2026-09-06-0133"
+
+# Opt this crate into verification.
+#
+# Without it, `cargo verus verify` builds the crate with ordinary rustc and
+# verifies only the dependencies that opted in - which means `vstd`. It still
+# exits 0 and still prints `verification results:: N verified, 0 errors`, but
+# that summary is vstd's, not this crate's. cargo-verus warns about it
+# ("cargo did not find any crates that opted into verification"), and the CI
+# step now checks that a summary appears *after* this crate is compiled, so the
+# omission cannot come back silently.
+[package.metadata.verus]
+verify = true
+
+# Verus sets these cfgs when it compiles ghost code; Cargo does not know them,
+# so without this every `verus!` block produces two `unexpected_cfgs` warnings.
+# Thirty-six lines of noise is how the false-green above stayed hidden.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(verus_keep_ghost)',
+  'cfg(verus_keep_ghost_body)',
+  'cfg(verus_only)',
+] }

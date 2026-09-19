@@ -39,9 +39,9 @@ verus! {
 /// Phase one: the request travels `D -> B -> A -> C`.
 ///
 /// The end state is handed back through an *abstract* characterisation rather
-/// than as a literal, so phase two never has to reason about the `Map`/`Set`
-/// nest built here. Replaying all twelve hops in one function made the single
-/// SMT query large enough to dominate the whole proof run.
+/// than as a literal, so the later phases never have to reason about the
+/// `Map`/`Set` nest built here. Replaying all twelve hops in one function made
+/// the single SMT query large enough to dominate the whole proof run.
 pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) -> (r: Raymond)
     requires
         a != b,
@@ -196,14 +196,15 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
     r7
 }
 
-/// Phase two: the token travels back `C -> A -> B -> D`, `D` enters the
-/// critical section, and `D`'s *original* request to `B` is redelivered after
-/// the topology it was routed against is long gone.
-// As with the handover, the second phase is the larger query: three token
-// transfers plus the critical-section entry and the delayed redelivery, all over
-// a state described by eighteen preconditions.
-#[verifier::rlimit(40)]
-pub proof fn routing_phase_token(r7: Raymond, a: NodeId, b: NodeId, c: NodeId, d: NodeId) -> (r:
+
+/// Phase two: the token travels back `C -> A -> B -> D`.
+///
+/// Three `AssignPrivilege` steps and nothing else. Keeping the critical-section
+/// entry and the delayed redelivery out of this function is what lets it verify
+/// within the default solver budget: each of the three hops rewrites two holder
+/// pointers, and asking one query to carry all five steps made it the single
+/// most expensive item in the whole proof run.
+pub proof fn routing_phase_token_hops(r7: Raymond, a: NodeId, b: NodeId, c: NodeId, d: NodeId) -> (r:
     Raymond)
     requires
         a != b,
@@ -230,8 +231,10 @@ pub proof fn routing_phase_token(r7: Raymond, a: NodeId, b: NodeId, c: NodeId, d
     ensures
         ray_inv(r),
         has_token(r, d),
-        r.using[d],
-        forall|m: NodeId| #[trigger] has_token(r, m) ==> m == d,
+        r.nodes.contains(b),
+        r.queue[d].len() == 1 && r.queue[d][0] == d,
+        !r.using[d],
+        r.requests.contains((d, b)),
 {
     // 8. C hands the token to A.
     let r8 = Raymond {
@@ -278,6 +281,35 @@ pub proof fn routing_phase_token(r7: Raymond, a: NodeId, b: NodeId, c: NodeId, d
     lemma_assign_privilege_preserves_unique_token(r9, r10, b, d);
     assert(has_token(r10, d));
 
+    // D's request to B, sent back at step 2, has survived all three transfers:
+    // the topology it was routed against is gone, but `requests` is not.
+    theorem_delayed_request_survives_token_move(r9, r10, b, d, b, d);
+    assert(r10.requests.contains((d, b)));
+    r10
+}
+
+/// Phase three: `D` enters the critical section, and `D`'s *original* request to
+/// `B` is redelivered afterwards - when the holder pointers it was routed
+/// against are long gone.
+///
+/// Note how little this phase needs to know: the whole eleven-hop history is
+/// compressed into six preconditions. That is the point of splitting - the
+/// solver never sees the `Map`/`Set` nest the earlier phases built.
+pub proof fn routing_phase_delivery(r10: Raymond, b: NodeId, d: NodeId) -> (r: Raymond)
+    requires
+        b != d,
+        ray_inv(r10),
+        has_token(r10, d),
+        r10.nodes.contains(b),
+        r10.queue[d].len() == 1 && r10.queue[d][0] == d,
+        !r10.using[d],
+        r10.requests.contains((d, b)),
+    ensures
+        ray_inv(r),
+        has_token(r, d),
+        r.using[d],
+        forall|m: NodeId| #[trigger] has_token(r, m) ==> m == d,
+{
     // 11. D, at the head of its own queue, enters the critical section.
     let r11 = Raymond {
         nodes: r10.nodes,
@@ -287,9 +319,6 @@ pub proof fn routing_phase_token(r7: Raymond, a: NodeId, b: NodeId, c: NodeId, d
         using: r10.using.insert(d, true),
         requests: r10.requests,
     };
-    assert(r10.queue[d].len() == 1);
-    assert(r10.queue[d][0] == d);
-    assert(!r10.using[d]);
     assert(ray_step(r10, r11, RayStep::EnterCs { node: d }));
     lemma_ray_step_preserves_inv(r10, r11, RayStep::EnterCs { node: d });
     assert(has_token(r11, d));
@@ -300,7 +329,6 @@ pub proof fn routing_phase_token(r7: Raymond, a: NodeId, b: NodeId, c: NodeId, d
     // gone. It is still deliverable, because `requests` records what was sent.
     assert(r11.holder[d] == d);
     assert(r11.requests.contains((d, b)));
-    theorem_delayed_request_survives_token_move(r9, r10, b, d, b, d);
     let r12 = Raymond {
         nodes: r11.nodes,
         holder: r11.holder,
@@ -338,8 +366,9 @@ pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId,
                 &&& forall|m: NodeId| has_token(r, m) ==> m == d
             },
 {
-    let mid = routing_phase_requests(a, b, c, d);
-    let fin = routing_phase_token(mid, a, b, c, d);
+    let after_requests = routing_phase_requests(a, b, c, d);
+    let after_hops = routing_phase_token_hops(after_requests, a, b, c, d);
+    let fin = routing_phase_delivery(after_hops, b, d);
     assert(ray_inv(fin));
     assert(has_token(fin, d));
     assert(fin.using[d]);

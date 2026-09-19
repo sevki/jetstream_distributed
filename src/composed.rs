@@ -122,12 +122,29 @@ pub open spec fn cs_pass_token(pre: Composed, post: Composed, n: NodeId, head: N
 /// proving something narrower than it appeared to: agreement along executions
 /// where the token always moves *voluntarily*.
 ///
-/// The guard is the same `is_unowned` as [`cs_pass_token`], and for the same
-/// reason: in `Unowned` nobody has authority at all, so moving the token cannot
-/// strand it. Seizure is therefore safe for exactly the reason revocation is -
-/// the epoch was burned first.
+/// The first guard is the same `is_unowned` as [`cs_pass_token`], and for the
+/// same reason: in `Unowned` nobody has authority at all, so moving the token
+/// cannot strand it. Seizure is safe for exactly the reason revocation is - the
+/// epoch was burned first.
+///
+/// The second guard, `!pre.own.live.contains(from)`, is **not** decoration, and
+/// `is_unowned` alone is not enough. `RevokeOwner` may fire against a perfectly
+/// healthy owner - unreliable detection is modelled on purpose - so without a
+/// liveness check a seizure could fire against a live node that is inside its
+/// Raymond critical section. `ray_seize` clears `using[from]`, so the model
+/// would then report exclusivity while two nodes were really inside: the
+/// invariant would be preserved by *erasing* the first node's execution rather
+/// than by anything the protocol does.
+///
+/// The asymmetry is the point. Revoking the *ownership record* is safe against
+/// a healthy node because the epoch fences it. Seizing the *token* is not,
+/// because Raymond's critical section has no epoch - there is nothing to fence
+/// a node that believes it still holds the privilege. So seizure is restricted
+/// to fail-stopped nodes, where clearing `using` is a fact about the world
+/// rather than a convenience: a crashed node is not executing anything.
 pub open spec fn cs_seize_token(pre: Composed, post: Composed, from: NodeId, to: NodeId) -> bool {
     &&& is_unowned(pre.own.actors[pre.actor])
+    &&& !pre.own.live.contains(from)
     &&& ray_seize(pre.ray, post.ray, from, to)
     &&& post.own == pre.own
     &&& post.actor == pre.actor

@@ -174,8 +174,8 @@ verifying, the build fails.
 | C0 | **Non-degeneracy**: a composed state in which a node is *actually inside* the critical section is reachable from `composed_init` — driven through `RequestCs`, `EnterCs`, `ExitCs` — so the composed claims are not restricted to a `using`-free fragment | `proofs::composed_scenario::scenario_composed_critical_section` | `A != B` |
 | C0a | (Step-level lemma backing C0) `EnterCs`/`ExitCs` are legal `ComposedStep::Ray` transitions and preserve the composed invariant | `proofs::composed::theorem_composed_admits_critical_section`, `..._exit` | composed invariant holds before the step |
 | C1 | **Non-vacuity**: a complete handover driven through *both* layers is reachable — `A` owns X@41 while holding the token, releases it, the token moves `A → B`, and `B` ends up owning X@42 *and* holding the token, with `A`'s epoch-41 token still issued and powerless | `proofs::composed_scenario::scenario_composed_handover` | `A != B` |
-| C2 | **Crash-driven takeover is reachable in the composed machine**: `A` owns X@41 holding the token, crashes and takes no further step; the coordinator burns the epoch; the token is *seized*; `B` ends up owning X@42 and holding the token, with `A`'s epoch-41 token still issued and powerless | `proofs::composed_scenario::scenario_composed_crash_takeover` | `A != B` |
-| C3 | Seizing the token preserves the coupling and leaves the target holding the one token — safety comes from the epoch being burned first, not from the holder agreeing to let go | `proofs::composed::lemma_composed_seize_preserves_inv`, `proofs::raymond::lemma_seize_preserves_inv` | composed invariant |
+| C2 | **Crash-driven takeover is reachable in the composed machine**: `A` owns X@41 holding the token, crashes and takes no further step; the coordinator burns the epoch; the token is *seized*; `B` ends up owning X@42 and holding the token, with `A`'s epoch-41 token still issued and powerless. The postcondition exports the `SeizeToken` step itself, from a state where `A` is already non-live, so the theorem cannot be satisfied by a voluntary handover followed by a crash | `proofs::composed_scenario::scenario_composed_crash_takeover` | `A != B` |
+| C3 | Seizing the token preserves the coupling and leaves the target holding the one token — safety comes from the epoch being burned first, not from the holder agreeing to let go | `proofs::composed::lemma_composed_seize_preserves_inv`, `proofs::raymond::lemma_seize_preserves_inv` | composed invariant; **the seized node has fail-stopped** (`!live`) — see below |
 | C | The coupling is an **invariant** of the composed machine: `composed_init ==> composed_inv`, `composed_inv /\ composed_next ==> composed_inv`, hence `composed_reachable ==> composed_inv` | `proofs::composed::theorem_composed_reachable_inv`, `theorem_composed_step_preserves_inv` | the composed transition relation |
 | R6 | A concrete routing execution: request `D → B → A → C[token]`, token `C → A → B → D`, with the unique-token invariant carried through all eleven hops, then a twelfth step redelivering `D`'s original request after the token has finished moving. Its postcondition *exports* the endpoint (a state satisfying `ray_inv` with `D` holding the unique token and inside the critical section), so the construction cannot silently regress | `proofs::raymond_routing::scenario_request_and_token_routing` | four distinct nodes |
 | R7 | A request outlives the topology it was routed against: after the token moves it is still in `requests` and still deliverable | `proofs::raymond::theorem_delayed_request_survives_token_move` | none |
@@ -184,6 +184,26 @@ verifying, the build fails.
 "Reachability" means the hypothesis `reachable(sys)`, i.e. some finite execution
 starting from an `init` state ends in `sys`. It is discharged once and for all by
 `theorem_reachable_inv`.
+
+### Seizure only applies to a crashed node
+
+`ComposedStep::SeizeToken` requires `!pre.own.live.contains(from)`, and
+`is_unowned` alone would not be enough.
+
+`RevokeOwner` may fire against a perfectly healthy owner — unreliable detection
+is modelled on purpose — so without the liveness guard a seizure could fire
+against a live node that is inside its Raymond critical section. `ray_seize`
+clears `using[from]`, so the model would then report exclusivity while two nodes
+were really inside: the invariant would be preserved by *erasing* the first
+node's execution rather than by anything the protocol does.
+
+The asymmetry is the point, and it is worth stating because it marks the edge of
+what epochs buy. Revoking the **ownership record** is safe against a healthy
+node, because the epoch fences it. Seizing the **token** is not, because
+Raymond's critical section has no epoch — there is nothing to fence a node that
+believes it still holds the privilege. So seizure is restricted to fail-stopped
+nodes, where clearing `using` is a fact about the world rather than a modelling
+convenience.
 
 ### A node cannot fence itself
 

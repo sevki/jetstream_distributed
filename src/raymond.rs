@@ -330,7 +330,11 @@ pub open spec fn ray_init(r: Raymond, root: NodeId) -> bool {
 ///
 /// `using[from]` is cleared rather than guarded against: a node whose token is
 /// being seized is not in a critical section afterwards, whatever it believed.
-/// That is what keeps `ray_using_implies_token` true across the step.
+/// That is what keeps `ray_using_implies_token` true across the step - and it
+/// is only *honest* because [`crate::composed::cs_seize_token`] additionally
+/// requires `from` to have fail-stopped. Clearing the flag of a live node would
+/// preserve the invariant by erasing that node's execution rather than by
+/// anything the protocol does.
 pub open spec fn ray_seize(pre: Raymond, post: Raymond, from: NodeId, to: NodeId) -> bool {
     &&& has_token(pre, from)
     &&& pre.nodes.contains(to)

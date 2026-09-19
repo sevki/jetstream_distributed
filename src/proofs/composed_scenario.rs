@@ -418,10 +418,11 @@ pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
         exists|c: Composed|
             {
                 &&& #[trigger] composed_reachable(c)
-                &&& may_mutate(c.own.actors[c.actor], b, 42)
+                &&& c.actor == x
+                &&& may_mutate(c.own.actors[x], b, 42)
                 &&& has_token(c.ray, b)
                 &&& c.own.issued.contains(Token { actor: x, epoch: 41, holder: a })
-                &&& !may_mutate(c.own.actors[c.actor], a, 41)
+                &&& !may_mutate(c.own.actors[x], a, 41)
             },
 {
     let released = handover_phase_release(x, a, b);
@@ -429,10 +430,11 @@ pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
     let passed = handover_phase_pass_token(requested, x, a, b);
     let fin = handover_phase_acquire(passed, x, a, b);
     assert(composed_reachable(fin));
-    assert(may_mutate(fin.own.actors[fin.actor], b, 42));
+    assert(fin.actor == x);
+    assert(may_mutate(fin.own.actors[x], b, 42));
     assert(has_token(fin.ray, b));
     assert(fin.own.issued.contains(Token { actor: x, epoch: 41, holder: a }));
-    assert(!may_mutate(fin.own.actors[fin.actor], a, 41));
+    assert(!may_mutate(fin.own.actors[x], a, 41));
 }
 
 /// **A reachable composed state in which a node is inside the critical section.**
@@ -448,7 +450,20 @@ pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId
         a != b,
     ensures
         exists|c: Composed| #[trigger] composed_reachable(c) && c.ray.using[a],
-        exists|c: Composed| #[trigger] composed_reachable(c) && !c.ray.using[a],
+        // The *exit*, as a step out of a state that was actually inside. A bare
+        // `exists|c| composed_reachable(c) && !c.ray.using[a]` is satisfied by
+        // `composed_init`, where `using` is uniformly false, so it would say
+        // nothing about leaving a critical section.
+        exists|p: Composed, q: Composed|
+            {
+                &&& #[trigger] composed_step(p, q, ComposedStep::Ray {
+                    ray_step: RayStep::ExitCs { node: a },
+                })
+                &&& composed_reachable(p)
+                &&& composed_reachable(q)
+                &&& p.ray.using[a]
+                &&& !q.ray.using[a]
+            },
 {
     let nodes = Set::<NodeId>::empty().insert(a).insert(b);
     let empty_q = Seq::<NodeId>::empty();
@@ -547,7 +562,9 @@ pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId
     theorem_composed_step_preserves_inv(c2, c3, s3);
 
     assert(composed_reachable(c3));
+    assert(c2.ray.using[a]);
     assert(!c3.ray.using[a]);
+    assert(composed_step(c2, c3, ComposedStep::Ray { ray_step: RayStep::ExitCs { node: a } }));
 }
 
 /// **Crash-driven takeover, in the composed machine.**
@@ -580,14 +597,32 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
     requires
         a != b,
     ensures
+        // The seizure itself, as a reachable composed step taken *from a node
+        // that has already crashed*. Without this clause the postcondition
+        // below would be satisfied by the voluntary-handover scenario followed
+        // by `Crash(A)`, and would keep verifying even if seizure became
+        // unreachable or were deleted outright.
+        exists|p: Composed, q: Composed|
+            {
+                &&& #[trigger] composed_step(p, q, ComposedStep::SeizeToken { from: a, to: b })
+                &&& composed_reachable(p)
+                &&& composed_reachable(q)
+                &&& p.actor == x
+                &&& !p.own.live.contains(a)
+                &&& is_unowned(p.own.actors[x])
+                &&& has_token(p.ray, a)
+                &&& has_token(q.ray, b)
+            },
+        // The outcome, stated against `x` rather than against `c.actor`.
         exists|c: Composed|
             {
                 &&& #[trigger] composed_reachable(c)
+                &&& c.actor == x
                 &&& !c.own.live.contains(a)
-                &&& may_mutate(c.own.actors[c.actor], b, 42)
+                &&& may_mutate(c.own.actors[x], b, 42)
                 &&& has_token(c.ray, b)
                 &&& c.own.issued.contains(Token { actor: x, epoch: 41, holder: a })
-                &&& !may_mutate(c.own.actors[c.actor], a, 41)
+                &&& !may_mutate(c.own.actors[x], a, 41)
             },
 {
     let nodes = Set::<NodeId>::empty().insert(a).insert(b);
@@ -720,6 +755,7 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
         actor: x,
     };
     let s5 = ComposedStep::SeizeToken { from: a, to: b };
+    assert(!c4.own.live.contains(a));
     assert(ray_seize(c4.ray, c5.ray, a, b));
     assert(composed_step(c4, c5, s5));
     lemma_composed_reachable_step(c4, c5, s5);
@@ -748,11 +784,12 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
     theorem_composed_step_preserves_inv(c5, c6, s6);
 
     assert(composed_reachable(c6));
+    assert(c6.actor == x);
     assert(!c6.own.live.contains(a));
-    assert(may_mutate(c6.own.actors[c6.actor], b, 42));
+    assert(may_mutate(c6.own.actors[x], b, 42));
     assert(has_token(c6.ray, b));
     assert(c6.own.issued.contains(stale));
-    assert(!may_mutate(c6.own.actors[c6.actor], a, 41));
+    assert(!may_mutate(c6.own.actors[x], a, 41));
 }
 
 } // verus!

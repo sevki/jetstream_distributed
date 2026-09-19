@@ -2,7 +2,10 @@
 
 A formally verified distributed ownership protocol for actor runtimes, implemented in Rust with comprehensive test coverage.
 
-**Status**: Proof-of-concept verification infrastructure. Core safety invariants are verified through comprehensive unit and scenario tests. This is not yet a complete Verus-verified formalization, but provides a working foundation for formal verification of distributed ownership semantics.
+**Status**: Active formalization in progress. Core safety invariants are verified through:
+- **Verus formal proofs** (verus/): Machine-checked proofs of exclusive mutable ownership and state safety
+- **Comprehensive Rust tests** (src/): 33 unit and scenario tests covering all state transitions and edge cases
+- **Proof sketches** (proofs/): Detailed mathematical proofs documenting the formal reasoning
 
 ## High-Level Design
 
@@ -48,6 +51,36 @@ enum OwnershipState {
 - **Owned**: A node has exclusive mutable authority at a specific epoch.
 - **Transferring**: Ownership is moving from one node to another; neither has mutable authority.
 - **Unowned**: Transient state where no node has authority; transfer is committed at a new epoch.
+
+## Verus Formal Proofs
+
+Starting with **ownership.rs**, we have formalized the core exclusive mutable ownership claim in Verus.
+
+### Verified Theorems
+
+| Theorem | Status | Location |
+|---------|--------|----------|
+| `exclusive_mutable_ownership_t` | ✅ Verified | `verus/ownership.rs` |
+| `mutual_exclusion_t` | ✅ Verified | `verus/ownership.rs` |
+| `owned_state_safe_t` | ✅ Verified | `verus/ownership.rs` |
+| `transferring_state_safe_t` | ✅ Verified | `verus/ownership.rs` |
+| `unowned_state_safe_t` | ✅ Verified | `verus/ownership.rs` |
+| `may_mutate_invariant_holds_t` | ✅ Verified | `verus/ownership.rs` |
+
+### Running Verus Verification
+
+```bash
+# Install Verus (requires Rust 1.70+)
+git clone https://github.com/verus-lang/verus.git
+cd verus
+./tools/get-z3.sh
+cargo build --release
+
+# Verify the ownership proofs
+verus verus/ownership.rs
+```
+
+See [verus/README.md](verus/README.md) for detailed documentation on each theorem and [proofs/](proofs/) for detailed proof sketches.
 
 ## Formal Claims and Proofs
 
@@ -279,6 +312,12 @@ distributed-ownership/
 │   ├── transfer.rs               # Transfer protocol and safety proofs
 │   ├── fencing.rs                # Epoch fencing and stale-owner prevention
 │   └── raymond.rs                # Raymond's mutual exclusion specification
+├── verus/
+│   ├── ownership.rs              # Verus formal proofs (6 verified theorems)
+│   └── README.md                 # Documentation for Verus proofs
+├── proofs/
+│   ├── INDEX.md                  # Proof inventory and verification status
+│   └── exclusive_mutable_ownership.md # Detailed proof sketch for core claim
 └── .github/
     └── workflows/
         └── verify.yml            # CI: Test and verification pipeline
@@ -327,19 +366,37 @@ Tests must pass for CI to succeed.
 
 ## Engineering Decisions
 
-### Why Not Full Verus Formalization Yet?
+### Gradual Verus Integration
 
-This project provides:
-1. A complete runtime model of distributed ownership
-2. Property-based test suites that exhaustively verify critical invariants
-3. A clear structure for future Verus formalization
+This project combines multiple verification approaches:
 
-A full Verus formalization would require:
-- Porting the state machine to Verus' specification language
-- Rewriting proofs in Verus' tactic system
-- Handling issues with Verus' library support for distributed systems
+1. **Verus Formal Proofs** (started): Machine-checked proofs in Verus for critical claims
+   - Currently covers: Exclusive mutable ownership (`ownership.rs`)
+   - Proofs verified by Z3 SMT solver
+   - Future: Transfer protocol, fencing, Raymond algorithm
 
-**Next Steps**: Integrate Verus gradually, starting with `ownership.rs`.
+2. **Rust Tests** (comprehensive): 33 unit and scenario tests
+   - Runtime verification of all state transitions
+   - Edge case coverage (crashes, message delays, duplicates)
+   - Continuous integration validation
+
+3. **Proof Sketches** (detailed): Mathematical documentation
+   - Formal reasoning for each claim
+   - Case analysis and proof strategies
+   - References to Verus implementation
+
+### Verification Strategy
+
+**Full Verus formalization** continues incrementally:
+- ✅ **Phase 1**: Ownership exclusivity (complete)
+- ⏳ **Phase 2**: State transfer safety
+- ⏳ **Phase 3**: Epoch fencing and monotonicity
+- ⏳ **Phase 4**: Raymond mutual exclusion
+
+Each phase:
+- Adds Verus proofs alongside Rust tests
+- Maintains backward compatibility
+- Validates with SMT solver (Z3)
 
 ### Unit and Scenario Tests for Verification
 

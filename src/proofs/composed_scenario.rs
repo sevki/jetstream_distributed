@@ -316,4 +316,119 @@ pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
     assert(!may_mutate(c10.own.actors[c10.actor], a, 41));
 }
 
+/// **A reachable composed state in which a node is inside the critical section.**
+///
+/// `theorem_composed_admits_critical_section` only shows that an *already
+/// assumed* `EnterCs` transition matches `ComposedStep::Ray`; it takes the
+/// transition as a hypothesis and its `pre` is not required to be reachable, so
+/// on its own it does not establish that any reachable composed state has
+/// `using` set. This does: it drives `RequestCs`, `EnterCs` and `ExitCs` from
+/// `composed_init` through `lemma_composed_reachable_step`.
+pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId)
+    requires
+        a != b,
+    ensures
+        exists|c: Composed| #[trigger] composed_reachable(c) && c.ray.using[a],
+        exists|c: Composed| #[trigger] composed_reachable(c) && !c.ray.using[a],
+{
+    let nodes = Set::<NodeId>::empty().insert(a).insert(b);
+    let empty_q = Seq::<NodeId>::empty();
+
+    let own0 = System {
+        actors: Map::<ActorId, OwnershipState>::empty().insert(
+            x,
+            OwnershipState::Unowned { epoch: 41, intended_owner: a },
+        ),
+        nodes: nodes,
+        live: nodes,
+        issued: Set::<Token>::empty(),
+        network: Set::<Message>::empty(),
+    };
+    let ray0 = Raymond {
+        nodes: nodes,
+        holder: Map::<NodeId, NodeId>::empty().insert(a, a).insert(b, a),
+        queue: Map::<NodeId, Seq<NodeId>>::empty().insert(a, empty_q).insert(b, empty_q),
+        asked: Map::<NodeId, bool>::empty().insert(a, false).insert(b, false),
+        using: Map::<NodeId, bool>::empty().insert(a, false).insert(b, false),
+        requests: Set::<(NodeId, NodeId)>::empty(),
+    };
+    assert(ray0.holder[a] == a);
+    assert(ray0.holder[b] == a);
+    assert(ray_init(ray0, a));
+
+    let c0 = Composed { own: own0, ray: ray0, actor: x };
+    assert(own0.actors.contains_key(x));
+    assert(init(own0));
+    assert(composed_init(c0));
+    lemma_composed_reachable_init(c0);
+    lemma_composed_init_inv(c0);
+    assert(has_token(c0.ray, a));
+
+    // 1. A queues itself.
+    let c1 = Composed {
+        own: c0.own,
+        ray: Raymond {
+            nodes: c0.ray.nodes,
+            holder: c0.ray.holder,
+            queue: c0.ray.queue.insert(a, c0.ray.queue[a].push(a)),
+            asked: c0.ray.asked,
+            using: c0.ray.using,
+            requests: c0.ray.requests,
+        },
+        actor: x,
+    };
+    let s1 = ComposedStep::Ray { ray_step: RayStep::RequestCs { node: a } };
+    assert(composed_step(c0, c1, s1));
+    lemma_composed_reachable_step(c0, c1, s1);
+    theorem_composed_step_preserves_inv(c0, c1, s1);
+
+    // 2. A is at the head of its own queue and holds the token, so it enters.
+    let c2 = Composed {
+        own: c1.own,
+        ray: Raymond {
+            nodes: c1.ray.nodes,
+            holder: c1.ray.holder,
+            queue: c1.ray.queue.insert(a, c1.ray.queue[a].drop_first()),
+            asked: c1.ray.asked,
+            using: c1.ray.using.insert(a, true),
+            requests: c1.ray.requests,
+        },
+        actor: x,
+    };
+    let s2 = ComposedStep::Ray { ray_step: RayStep::EnterCs { node: a } };
+    assert(has_token(c1.ray, a));
+    assert(!c1.ray.using[a]);
+    assert(c1.ray.queue[a].len() == 1);
+    assert(c1.ray.queue[a][0] == a);
+    assert(composed_step(c1, c2, s2));
+    lemma_composed_reachable_step(c1, c2, s2);
+    theorem_composed_step_preserves_inv(c1, c2, s2);
+
+    // A reachable composed state with `using` actually set.
+    assert(composed_reachable(c2));
+    assert(c2.ray.using[a]);
+
+    // 3. And A can leave again.
+    let c3 = Composed {
+        own: c2.own,
+        ray: Raymond {
+            nodes: c2.ray.nodes,
+            holder: c2.ray.holder,
+            queue: c2.ray.queue,
+            asked: c2.ray.asked,
+            using: c2.ray.using.insert(a, false),
+            requests: c2.ray.requests,
+        },
+        actor: x,
+    };
+    let s3 = ComposedStep::Ray { ray_step: RayStep::ExitCs { node: a } };
+    assert(c2.ray.using[a]);
+    assert(composed_step(c2, c3, s3));
+    lemma_composed_reachable_step(c2, c3, s3);
+    theorem_composed_step_preserves_inv(c2, c3, s3);
+
+    assert(composed_reachable(c3));
+    assert(!c3.ray.using[a]);
+}
+
 } // verus!

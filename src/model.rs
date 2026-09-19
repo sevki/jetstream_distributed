@@ -61,12 +61,16 @@ impl ActorSystem {
         }
     }
 
-    pub fn create_actor(&mut self, actor_id: ActorId, initial_owner: NodeId, epoch: Epoch) {
+    pub fn create_actor(&mut self, actor_id: ActorId, initial_owner: NodeId, epoch: Epoch) -> Result<(), &'static str> {
+        if self.actors.contains_key(&actor_id) {
+            return Err("actor already exists");
+        }
         let state = OwnershipState::Owned {
             owner: initial_owner,
             epoch,
         };
         self.actors.insert(actor_id, state);
+        Ok(())
     }
 
     pub fn get_actor_state(&self, actor_id: ActorId) -> Option<&OwnershipState> {

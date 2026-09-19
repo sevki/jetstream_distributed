@@ -8,12 +8,8 @@ pub fn may_mutate(state: &OwnershipState, node: NodeId, epoch: Epoch) -> bool {
     }
 }
 
-pub fn can_mutate_at_epoch(state: &OwnershipState, node: NodeId) -> bool {
-    match state {
-        OwnershipState::Owned { owner, .. } => *owner == node,
-        OwnershipState::Transferring { .. } => false,
-        OwnershipState::Unowned { .. } => false,
-    }
+pub fn can_mutate_at_epoch(state: &OwnershipState, node: NodeId, epoch: Epoch) -> bool {
+    may_mutate(state, node, epoch)
 }
 
 #[cfg(test)]

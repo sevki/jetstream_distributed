@@ -36,7 +36,7 @@ impl RaymondState {
     }
 
     pub fn initialize_token(&mut self, actor_id: ActorId, initial_holder: NodeId, epoch: Epoch) {
-        if initial_holder == 0 || epoch == 0 {
+        if initial_holder == 0 || epoch == 0 || self.tokens.contains_key(&actor_id) {
             return;
         }
         let token = RaymondToken {
@@ -49,6 +49,9 @@ impl RaymondState {
     }
 
     pub fn enqueue_request(&mut self, actor_id: ActorId, request: TokenRequest) {
+        if request.actor_id != actor_id {
+            return;
+        }
         self.request_queue
             .entry(actor_id)
             .or_default()

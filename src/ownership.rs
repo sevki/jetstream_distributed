@@ -51,6 +51,28 @@ pub open spec fn is_transferring(s: OwnershipState) -> bool {
     }
 }
 
+/// The node a `Transferring` actor is moving away from.
+///
+/// Only meaningful under `is_transferring(s)`; the other cases return a
+/// placeholder. These accessors exist so that facts about the live handover can
+/// be stated without an existential over all four `Transferring` fields — a
+/// four-variable `exists` needs a trigger covering all four, and the natural
+/// trigger (the `Released` message) mentions only two.
+pub open spec fn transferring_from(s: OwnershipState) -> NodeId {
+    match s {
+        OwnershipState::Transferring { from, to: _, old_epoch: _, new_epoch: _ } => from,
+        _ => 0,
+    }
+}
+
+/// The epoch a `Transferring` actor is moving to. See [`transferring_from`].
+pub open spec fn transferring_new_epoch(s: OwnershipState) -> Epoch {
+    match s {
+        OwnershipState::Transferring { from: _, to: _, old_epoch: _, new_epoch } => new_epoch,
+        _ => 0,
+    }
+}
+
 /// `s` is unowned.
 pub open spec fn is_unowned(s: OwnershipState) -> bool {
     match s {

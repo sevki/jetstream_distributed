@@ -365,22 +365,19 @@ pub proof fn theorem_complete_release_needs_the_matching_released(
     ensures
         pre.actors.contains_key(a),
         is_transferring(pre.actors[a]),
-        exists|from: NodeId, to: NodeId, old_epoch: Epoch, new_epoch: Epoch|
-            {
-                &&& pre.actors[a] == (OwnershipState::Transferring {
-                    from: from,
-                    to: to,
-                    old_epoch: old_epoch,
-                    new_epoch: new_epoch,
-                })
-                &&& #[trigger] pre.network.contains(
-                    Message::Released { actor: a, from: from, new_epoch: new_epoch },
-                )
+        pre.network.contains(
+            Message::Released {
+                actor: a,
+                from: transferring_from(pre.actors[a]),
+                new_epoch: transferring_new_epoch(pre.actors[a]),
             },
+        ),
 {
     assert(tr_complete_release(pre, post, a));
     match pre.actors[a] {
         OwnershipState::Transferring { from, to, old_epoch, new_epoch } => {
+            assert(transferring_from(pre.actors[a]) == from);
+            assert(transferring_new_epoch(pre.actors[a]) == new_epoch);
             assert(pre.network.contains(
                 Message::Released { actor: a, from: from, new_epoch: new_epoch },
             ));

@@ -282,6 +282,46 @@ pub open spec fn composed_valid_execution(tr: Seq<Composed>) -> bool {
         0 <= i < tr.len() - 1 ==> composed_next(tr[i], tr[i + 1]))
 }
 
+/// A **labelled** finite run: `tr` holds the states and `labels[i]` is the step
+/// that takes `tr[i]` to `tr[i + 1]`.
+///
+/// This is the strongest of the run predicates in this file, and it exists
+/// because the weaker ones cannot pin a *named* scenario down.
+/// `composed_reachable_from(c, d)` says that some run joins `c` to `d`, but
+/// which steps it took is hidden inside `composed_next`'s existential. A
+/// contract assembled out of reachability plus a handful of exported endpoints
+/// therefore claims much less than its name suggests: **any** run ending in a
+/// state of the same shape satisfies it. Three scenarios in this crate were
+/// caught that way, each by a different substitute execution - a seizure
+/// standing in for a handover, a revocation standing in for a voluntary
+/// release, independent requests standing in for a forwarded one - and each
+/// time the repair was to exclude the one substitute that had been found.
+///
+/// Exhibiting `labels` removes the room to substitute at all. A scenario that
+/// fixes every entry of `labels` has said precisely which steps its run
+/// consists of and in what order, so no other run can satisfy it - not because
+/// each alternative was anticipated and ruled out one at a time, but because
+/// nothing is left free to vary.
+pub open spec fn composed_run(tr: Seq<Composed>, labels: Seq<ComposedStep>) -> bool {
+    &&& tr.len() > 0
+    &&& labels.len() == tr.len() - 1
+    // Multi-trigger on the two adjacent states and the label between them, for
+    // the reason documented on `crate::model::valid_execution`.
+    &&& (forall|i: int|
+        #![trigger tr[i], tr[i + 1], labels[i]]
+        0 <= i < labels.len() ==> composed_step(tr[i], tr[i + 1], labels[i]))
+}
+
+/// A labelled run that starts at initialisation: the full history of a system
+/// from `composed_init`, with every step named.
+pub open spec fn composed_labelled_execution(
+    tr: Seq<Composed>,
+    labels: Seq<ComposedStep>,
+) -> bool {
+    &&& composed_run(tr, labels)
+    &&& composed_init(tr[0])
+}
+
 /// A finite run of the composed machine that need **not** start at
 /// `composed_init`.
 ///

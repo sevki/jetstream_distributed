@@ -422,6 +422,110 @@ pub proof fn lemma_composed_reachable_step(pre: Composed, post: Composed, s: Com
     assert(tr2[tr2.len() - 1] == post);
 }
 
+/// A one-state labelled run, starting from initialisation.
+pub proof fn lemma_composed_run_init(c: Composed)
+    requires
+        composed_init(c),
+    ensures
+        composed_labelled_execution(seq![c], Seq::<ComposedStep>::empty()),
+{
+    let tr = seq![c];
+    let labels = Seq::<ComposedStep>::empty();
+    assert(tr.len() == 1);
+    assert(labels.len() == 0);
+    assert(tr[0] == c);
+}
+
+/// A labelled run extends by one **named** step.
+///
+/// This is `lemma_composed_reachable_from_step` with the label kept rather than
+/// thrown away, and it is the only way a scenario in this crate builds a run:
+/// start from `lemma_composed_run_init` and push each step with the label that
+/// takes it. The label sequence that comes out the other end is the scenario's
+/// evidence.
+pub proof fn lemma_composed_run_push(
+    tr: Seq<Composed>,
+    labels: Seq<ComposedStep>,
+    post: Composed,
+    s: ComposedStep,
+)
+    requires
+        composed_run(tr, labels),
+        composed_step(tr[tr.len() - 1], post, s),
+    ensures
+        composed_run(tr.push(post), labels.push(s)),
+        tr.push(post).len() == tr.len() + 1,
+        labels.push(s).len() == labels.len() + 1,
+        tr.push(post)[tr.len() as int] == post,
+        labels.push(s)[labels.len() as int] == s,
+        forall|i: int| 0 <= i < tr.len() ==> #[trigger] tr.push(post)[i] == tr[i],
+        forall|i: int| 0 <= i < labels.len() ==> #[trigger] labels.push(s)[i] == labels[i],
+{
+    let tr2 = tr.push(post);
+    let l2 = labels.push(s);
+    assert(tr2.len() == tr.len() + 1);
+    assert(l2.len() == labels.len() + 1);
+    // Same shape as the unlabelled extension lemmas: everything below the last
+    // index is the old run, and the last index is the new step.
+    assert forall|i: int|
+        #![trigger tr2[i], tr2[i + 1], l2[i]]
+        0 <= i < l2.len() implies composed_step(tr2[i], tr2[i + 1], l2[i]) by {
+        if i < labels.len() {
+            assert(tr2[i] == tr[i]);
+            assert(tr2[i + 1] == tr[i + 1]);
+            assert(l2[i] == labels[i]);
+            assert(composed_step(tr[i], tr[i + 1], labels[i]));
+        } else {
+            assert(i == labels.len());
+            assert(i == tr.len() - 1);
+            assert(tr2[i] == tr[i]);
+            assert(tr2[i + 1] == post);
+            assert(l2[i] == s);
+        }
+    }
+}
+
+/// **A labelled execution is an execution.** The labels are exactly the
+/// witnesses `composed_next` existentially quantifies over, so every theorem
+/// stated about `composed_valid_execution` or `composed_reachable` applies
+/// unchanged to a run exported with its labels. Strengthening the scenarios
+/// costs nothing downstream.
+pub proof fn lemma_composed_labelled_execution_is_execution(
+    tr: Seq<Composed>,
+    labels: Seq<ComposedStep>,
+)
+    requires
+        composed_labelled_execution(tr, labels),
+    ensures
+        composed_valid_execution(tr),
+        composed_reachable(tr[tr.len() - 1]),
+{
+    assert forall|i: int|
+        #![trigger tr[i], tr[i + 1]]
+        0 <= i < tr.len() - 1 implies composed_next(tr[i], tr[i + 1]) by {
+        // Mentions all three terms of `composed_run`'s multi-trigger.
+        assert(composed_step(tr[i], tr[i + 1], labels[i]));
+    }
+    assert(composed_valid_execution(tr));
+}
+
+/// Every state of a labelled execution is reachable, and satisfies the
+/// composed invariant.
+pub proof fn lemma_composed_run_state_inv(
+    tr: Seq<Composed>,
+    labels: Seq<ComposedStep>,
+    i: int,
+)
+    requires
+        composed_labelled_execution(tr, labels),
+        0 <= i < tr.len(),
+    ensures
+        composed_inv(tr[i]),
+{
+    lemma_composed_labelled_execution_is_execution(tr, labels);
+    lemma_composed_execution_inv(tr, i);
+}
+
 pub proof fn lemma_composed_execution_inv(tr: Seq<Composed>, i: int)
     requires
         composed_valid_execution(tr),

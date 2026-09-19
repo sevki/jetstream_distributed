@@ -706,60 +706,64 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
     requires
         a != b,
     ensures
-        // The seizure itself, as a reachable composed step taken *from a node
-        // that has already crashed*. Without this clause the postcondition
-        // below would be satisfied by the voluntary-handover scenario followed
-        // by `Crash(A)`, and would keep verifying even if seizure became
-        // unreachable or were deleted outright.
-        exists|p: Composed, q: Composed|
+        // The whole run, with every step named.
+        //
+        // Earlier versions of this contract exported the seizure and the
+        // takeover as separate existentials tied together by
+        // `composed_reachable_from`. That is weaker than it reads: the steps a
+        // `composed_reachable_from` run took are hidden inside
+        // `composed_next`, so nothing forced the epoch to have been burned by
+        // a *revocation*. The run
+        // `Acquire(A@41) -> BeginTransfer -> HandleRevoke -> CompleteRelease
+        // -> Crash(A) -> SeizeToken -> Acquire(B@42)` satisfied every clause
+        // while `A` gave the actor up voluntarily before crashing, which is
+        // the opposite of the scenario this theorem is named for.
+        //
+        // Exhibiting `labels` settles it. The run is these eight steps and
+        // nothing else: `Crash` at index 2 and `RevokeOwner` at index 3 are
+        // *in* it, and there is no `CompleteRelease` anywhere in it to let a
+        // voluntary release stand in for the crash.
+        exists|tr: Seq<Composed>, labels: Seq<ComposedStep>|
             {
-                &&& #[trigger] composed_step(p, q, ComposedStep::SeizeToken { from: a, to: b })
-                &&& composed_reachable(p)
-                &&& composed_reachable(q)
-                &&& p.actor == x
-                &&& !p.own.live.contains(a)
-                &&& is_unowned(p.own.actors[x])
-                &&& has_token(p.ray, a)
-                &&& has_token(q.ray, b)
-            },
-        // The takeover, **linked to the seizure**. `composed_reachable_from(q, fin)`
-        // is what ties them: exported as two independent existentials, the
-        // endpoint could come from any other execution - an ordinary voluntary
-        // handover supplies one - and the theorem would keep verifying even if
-        // acquiring after a seizure became impossible.
-        exists|p: Composed, q: Composed, fin: Composed|
-            {
-                &&& #[trigger] composed_step(p, q, ComposedStep::SeizeToken { from: a, to: b })
-                &&& #[trigger] composed_reachable_from(q, fin)
-                &&& composed_reachable(p)
-                &&& !p.own.live.contains(a)
-                &&& has_token(p.ray, a)
-                &&& has_token(q.ray, b)
-                &&& fin.actor == x
-                &&& !fin.own.live.contains(a)
-                &&& may_mutate(fin.own.actors[x], b, 42)
-                &&& has_token(fin.ray, b)
-                &&& fin.own.issued.contains(Token { actor: x, epoch: 41, holder: a })
-                &&& !may_mutate(fin.own.actors[x], a, 41)
-            },
-        // Reconciliation is not a dead end, and this too is linked: `A` is told
-        // what happened, and the state in which it is back and running is
-        // reachable *from that reconciliation*, not merely reachable.
-        exists|p: Composed, q: Composed, fin: Composed|
-            {
-                &&& #[trigger] composed_step(p, q, ComposedStep::Reconcile { node: a })
-                &&& #[trigger] composed_reachable_from(q, fin)
-                &&& composed_reachable(p)
-                &&& p.seized.contains(a)
-                &&& !p.own.live.contains(a)
-                &&& !q.seized.contains(a)
-                &&& fin.actor == x
-                &&& fin.own.live.contains(a)
-                &&& !fin.seized.contains(a)
-                &&& !has_token(fin.ray, a)
-                &&& has_token(fin.ray, b)
-                &&& fin.own.issued.contains(Token { actor: x, epoch: 41, holder: a })
-                &&& !may_mutate(fin.own.actors[x], a, 41)
+                &&& #[trigger] composed_labelled_execution(tr, labels)
+                &&& labels.len() == 8
+                &&& labels[0] == ComposedStep::Own {
+                    own_step: Step::IssueGrant { actor: x },
+                }
+                &&& labels[1] == ComposedStep::AcquireUnderToken { node: a }
+                &&& labels[2] == ComposedStep::Own { own_step: Step::Crash { node: a } }
+                &&& labels[3] == ComposedStep::Own {
+                    own_step: Step::RevokeOwner { actor: x, next: b },
+                }
+                &&& labels[4] == ComposedStep::SeizeToken { from: a, to: b }
+                &&& labels[5] == ComposedStep::AcquireUnderToken { node: b }
+                &&& labels[6] == ComposedStep::Reconcile { node: a }
+                &&& labels[7] == ComposedStep::Own { own_step: Step::Recover { node: a } }
+                &&& tr[0].actor == x
+                // The state the seizure fires from: `A` has crashed, its epoch
+                // has been burned by the revocation at index 3, and it still
+                // holds the token. These are facts about `tr` at the index the
+                // seizure actually occupies, not about some other state of the
+                // same shape.
+                &&& !tr[4].own.live.contains(a)
+                &&& is_unowned(tr[4].own.actors[x])
+                &&& has_token(tr[4].ray, a)
+                &&& has_token(tr[5].ray, b)
+                // `A` is marked as having had its token seized, and has to
+                // reconcile before it may come back.
+                &&& tr[6].seized.contains(a)
+                &&& !tr[7].seized.contains(a)
+                // The end of the run: `B` owns at 42 and holds the token, `A`
+                // is back with its epoch-41 token still issued and still
+                // worthless.
+                &&& tr[8].actor == x
+                &&& may_mutate(tr[8].own.actors[x], b, 42)
+                &&& !may_mutate(tr[8].own.actors[x], a, 41)
+                &&& tr[8].own.issued.contains(Token { actor: x, epoch: 41, holder: a })
+                &&& has_token(tr[8].ray, b)
+                &&& !has_token(tr[8].ray, a)
+                &&& tr[8].own.live.contains(a)
+                &&& !tr[8].seized.contains(a)
             },
 {
     let nodes = Set::<NodeId>::empty().insert(a).insert(b);
@@ -983,19 +987,57 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
     assert(c8.own.issued.contains(stale));
     assert(!may_mutate(c8.own.actors[x], a, 41));
 
-    // Link the seizure to the takeover: c5 -> c6 is a run of the machine, so
-    // the B-owned outcome is reachable *from the seizure post-state* rather
-    // than merely reachable.
-    lemma_composed_reachable_from_refl(c5);
-    lemma_composed_reachable_from_step(c5, c5, c6, s6);
-    assert(composed_reachable_from(c5, c6));
-    assert(composed_step(c4, c5, s5));
-
-    // And link the reconciliation to A being back and running: c7 -> c8.
-    lemma_composed_reachable_from_refl(c7);
-    lemma_composed_reachable_from_step(c7, c7, c8, s8);
-    assert(composed_reachable_from(c7, c8));
-    assert(composed_step(c6, c7, s7));
+    // The run itself, states and labels side by side. Every `composed_step`
+    // below was already proved above, one per step; all this does is collect
+    // them into the single object the postcondition exports, so that the
+    // scenario's evidence is the run rather than a handful of endpoints that
+    // some other run could also produce.
+    let tr = seq![c0, c1, c2, c3, c4, c5, c6, c7, c8];
+    let labels = seq![s1, s2, s3, s4, s5, s6, s7, s8];
+    assert(tr.len() == 9);
+    assert(labels.len() == 8);
+    assert(tr[0] == c0);
+    assert(tr[1] == c1);
+    assert(tr[2] == c2);
+    assert(tr[3] == c3);
+    assert(tr[4] == c4);
+    assert(tr[5] == c5);
+    assert(tr[6] == c6);
+    assert(tr[7] == c7);
+    assert(tr[8] == c8);
+    assert(labels[0] == s1);
+    assert(labels[1] == s2);
+    assert(labels[2] == s3);
+    assert(labels[3] == s4);
+    assert(labels[4] == s5);
+    assert(labels[5] == s6);
+    assert(labels[6] == s7);
+    assert(labels[7] == s8);
+    assert forall|i: int|
+        #![trigger tr[i], tr[i + 1], labels[i]]
+        0 <= i < labels.len() implies composed_step(tr[i], tr[i + 1], labels[i]) by {
+        if i == 0 {
+            assert(composed_step(c0, c1, s1));
+        } else if i == 1 {
+            assert(composed_step(c1, c2, s2));
+        } else if i == 2 {
+            assert(composed_step(c2, c3, s3));
+        } else if i == 3 {
+            assert(composed_step(c3, c4, s4));
+        } else if i == 4 {
+            assert(composed_step(c4, c5, s5));
+        } else if i == 5 {
+            assert(composed_step(c5, c6, s6));
+        } else if i == 6 {
+            assert(composed_step(c6, c7, s7));
+        } else {
+            assert(i == 7);
+            assert(composed_step(c7, c8, s8));
+        }
+    }
+    assert(composed_run(tr, labels));
+    assert(composed_init(tr[0]));
+    assert(composed_labelled_execution(tr, labels));
 }
 
 } // verus!

@@ -90,6 +90,9 @@ impl ActorSystem {
         actor_id: ActorId,
         new_state: OwnershipState,
     ) -> Result<(), &'static str> {
+        if !new_state.is_valid() {
+            return Err("invalid new state");
+        }
         if !self.actors.contains_key(&actor_id) {
             return Err("actor does not exist");
         }

@@ -175,16 +175,6 @@ pub fn apply_transition(
                 },
                 OwnershipState::Owned { owner, epoch: oe },
             ) => *owner == *intended_owner && *oe == *ue,
-            (
-                OwnershipState::Owned {
-                    owner: old_o,
-                    epoch: old_e,
-                },
-                OwnershipState::Owned {
-                    owner: new_o,
-                    epoch: new_e,
-                },
-            ) => *old_o != *new_o && *new_e > *old_e,
             _ => false,
         };
 

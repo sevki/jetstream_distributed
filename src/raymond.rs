@@ -21,7 +21,6 @@ pub struct RaymondState {
     pub request_queue: HashMap<ActorId, VecDeque<TokenRequest>>,
     pub holder: HashMap<ActorId, NodeId>,
     pub asked: HashMap<ActorId, bool>,
-    pub outstanding_requests: HashMap<ActorId, Vec<TokenRequest>>,
 }
 
 impl RaymondState {
@@ -31,7 +30,6 @@ impl RaymondState {
             request_queue: HashMap::new(),
             holder: HashMap::new(),
             asked: HashMap::new(),
-            outstanding_requests: HashMap::new(),
         }
     }
 
@@ -90,10 +88,6 @@ impl RaymondState {
                 self.holder.insert(actor_id, new_holder);
             }
         }
-    }
-
-    pub fn set_outstanding_requests(&mut self, actor_id: ActorId, requests: Vec<TokenRequest>) {
-        self.outstanding_requests.insert(actor_id, requests);
     }
 
     pub fn token_exists(&self, actor_id: ActorId) -> bool {
@@ -265,33 +259,9 @@ mod raymond_tests {
     }
 
     #[test]
-    fn test_outstanding_requests() {
-        let mut state = RaymondState::new();
-        state.initialize_token(1, 2, 1);
-
-        let req = TokenRequest {
-            requester: 1,
-            actor_id: 1,
-            request_id: 1,
-        };
-
-        state.set_outstanding_requests(1, vec![req.clone()]);
-
-        assert_eq!(state.outstanding_requests.get(&1), Some(&vec![req]));
-    }
-
-    #[test]
     fn test_request_hop_by_hop_routing() {
         let mut state = RaymondState::new();
         state.initialize_token(1, 4, 1);
-
-        let req = TokenRequest {
-            requester: 1,
-            actor_id: 1,
-            request_id: 1,
-        };
-
-        state.set_outstanding_requests(1, vec![req.clone()]);
 
         assert!(request_routing_preserves_token_uniqueness(&state, 1));
 

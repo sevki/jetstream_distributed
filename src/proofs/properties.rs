@@ -566,9 +566,14 @@ pub proof fn lemma_authority_backed_execution(tr: Seq<System>, i: int)
     if i == 0 {
         lemma_authority_backed_init(tr[0]);
     } else {
-        lemma_authority_backed_execution(tr, i - 1);
-        let prev = tr[i - 1];
+        let j = i - 1;
+        lemma_authority_backed_execution(tr, j);
+        // `tr[j + 1]`, not `tr[i]`: `valid_execution`'s multi-trigger needs both
+        // adjacent terms in the shape it names.
+        assert(next(tr[j], tr[j + 1]));
+        let prev = tr[j];
         let cur = tr[i];
+        assert(tr[j + 1] == cur);
         assert(next(prev, cur));
         let s = choose|s: Step| step(prev, cur, s);
         lemma_authority_backed_step(prev, cur, s);

@@ -227,9 +227,14 @@ pub proof fn lemma_composed_execution_inv(tr: Seq<Composed>, i: int)
     if i == 0 {
         lemma_composed_init_inv(tr[0]);
     } else {
-        lemma_composed_execution_inv(tr, i - 1);
-        assert(composed_next(tr[i - 1], tr[i]));
-        lemma_composed_next_preserves_inv(tr[i - 1], tr[i]);
+        let j = i - 1;
+        lemma_composed_execution_inv(tr, j);
+        // Phrased as `tr[j], tr[j + 1]` rather than `tr[i - 1], tr[i]` so that
+        // both halves of `composed_valid_execution`'s multi-trigger are present
+        // as terms; `tr[i]` alone does not match `tr[j + 1]` syntactically.
+        assert(composed_next(tr[j], tr[j + 1]));
+        assert(tr[j + 1] == tr[i]);
+        lemma_composed_next_preserves_inv(tr[j], tr[i]);
     }
 }
 

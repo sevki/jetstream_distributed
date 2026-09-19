@@ -380,9 +380,14 @@ pub proof fn lemma_execution_inv(tr: Seq<System>, i: int)
     if i == 0 {
         lemma_init_inv(tr[0]);
     } else {
-        lemma_execution_inv(tr, i - 1);
-        assert(next(tr[i - 1], tr[i]));
-        lemma_next_preserves_inv(tr[i - 1], tr[i]);
+        let j = i - 1;
+        lemma_execution_inv(tr, j);
+        // See the note in `crate::proofs::composed::lemma_composed_execution_inv`:
+        // `valid_execution`'s trigger needs a `tr[_ + 1]` term, which `tr[i]`
+        // does not provide.
+        assert(next(tr[j], tr[j + 1]));
+        assert(tr[j + 1] == tr[i]);
+        lemma_next_preserves_inv(tr[j], tr[i]);
     }
 }
 

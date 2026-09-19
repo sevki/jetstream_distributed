@@ -37,6 +37,7 @@ use crate::raymond::*;
 verus! {
 
 /// Requests route `D -> B -> A -> C`, then the token routes `C -> A -> B -> D`.
+#[verifier::rlimit(60)]
 pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId, d: NodeId)
     requires
         a != b,

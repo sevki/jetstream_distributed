@@ -45,6 +45,7 @@ verus! {
 /// This is the non-vacuity witness for every `composed_reachable` theorem: it
 /// exhibits a reachable composed state in which somebody actually owns the actor
 /// and actually holds the token.
+#[verifier::rlimit(60)]
 pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
     requires
         a != b,
@@ -324,6 +325,7 @@ pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
 /// on its own it does not establish that any reachable composed state has
 /// `using` set. This does: it drives `RequestCs`, `EnterCs` and `ExitCs` from
 /// `composed_init` through `lemma_composed_reachable_step`.
+#[verifier::rlimit(30)]
 pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId)
     requires
         a != b,

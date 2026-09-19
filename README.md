@@ -145,7 +145,7 @@ verifying, the build fails.
 | 6a | **Token uniqueness (physical)** - at most one token is ever *issued* per `(ActorId, Epoch)` | `proofs::tokens::theorem_issued_token_unique_per_actor_epoch` | reachability |
 | 6b | Stale physical tokens confer no authority | `proofs::tokens::theorem_stale_token_has_no_authority` | none |
 | 6c | No token is ever minted for a future epoch | `proofs::tokens::theorem_no_future_tokens` | reachability |
-| E | The runtime `u64` fence check returns exactly the model's verdict, and rejects any superseded epoch | `exec::FenceGuard::accepts`, `exec::FenceGuard::rejects_stale` | epoch fits in `u64`; the guard is the node's own view of the actor |
+| E | The runtime `u64` fence check returns exactly the model's verdict, and rejects any superseded epoch | `exec::FenceGuard::accepts`, `exec::FenceGuard::rejects_stale` | the guard is the node's own record of one actor; it is query-only, so nothing here can change who owns what |
 | I | The inductive invariant holds in every reachable state (`init ==> inv`, `inv /\ next ==> inv`) | `proofs::invariant::theorem_reachable_inv` | the model's transition relation |
 | S | **The headline scenario**: `A` owns X@41, a transfer and a crash/recovery occur, `B` owns X@42, `A` returns still holding its epoch-41 token - and cannot perform an authoritative mutation | `proofs::adversarial::scenario_stale_owner_returns` | `A != B` |
 | S1 | A stale `Grant` cannot resurrect a superseded epoch | `proofs::adversarial::theorem_stale_grant_cannot_be_used` | none |
@@ -232,6 +232,10 @@ them under `src/proofs/` is the ordinary Rust way to express that; a top-level
 
 Executable code is confined to `src/exec.rs`, which holds the `u64`-valued
 fence check a node actually runs, proved to return exactly the model's verdict.
+It offers **queries only**: a `FenceGuard` has no mutator, because any mutator
+would move its ghost view straight from `Owned(A, e)` to `Owned(B, e + 1)` -
+exactly the atomic ownership assignment this model refuses to admit. Making a
+guard follow the protocol needs the refinement relation listed under future work.
 Everything else in the crate is specification or proof.
 
 Specification and proof code are kept apart from the model: `src/model.rs`
@@ -299,7 +303,9 @@ invariant preservation):
   (reliable FIFO links, eventual failure detection) that this model does not
   make.
 * a refinement from the `nat`-valued model to an executable `u64` implementation,
-  with the epoch-exhaustion case handled;
+  with the epoch-exhaustion case handled. Until that exists, `src/exec.rs`
+  deliberately offers no way to *advance* a node's fence guard - only to consult
+  it - so that no executable API can perform a handover the model does not;
 * the actual actor runtime: networking, persistence, and the code that obeys the
   protocol. Verifying the protocol says nothing about whether an implementation
   follows it.

@@ -9,6 +9,15 @@
 //! runtime; proving the protocol says nothing about whether an implementation
 //! follows it, and this module exists only to pin down the one place where the
 //! two meet.
+//!
+//! Note what is *not* here: there is no operation that mutates a [`FenceGuard`].
+//! A guard only ever answers questions. Any mutator would, at the level of
+//! [`FenceGuard::view`], move an actor straight from `Owned(A, e)` to
+//! `Owned(B, e + 1)` - precisely the atomic ownership assignment the model
+//! refuses to admit, and which `proofs::transfer::theorem_ownership_only_via_acquire`
+//! rules out for the model's own transitions. Making a guard follow the protocol
+//! needs the refinement relation listed as future work in `README.md`, so until
+//! that exists this module offers queries only.
 #![allow(unused_imports)]
 
 use vstd::prelude::*;
@@ -54,23 +63,6 @@ impl FenceGuard {
             lemma_stale_epoch_cannot_mutate(self.view(), node as nat, epoch as nat);
         }
         !self.accepts(node, epoch)
-    }
-
-    /// Start the next ownership generation.
-    ///
-    /// Epoch exhaustion is a hard failure rather than a wraparound: the model
-    /// uses `nat`, so an implementation must guarantee there is room. The
-    /// precondition is that guarantee, made explicit.
-    pub fn bump(&mut self, next_owner: u64)
-        requires
-            old(self).epoch < u64::MAX,
-        ensures
-            final(self).epoch == old(self).epoch + 1,
-            final(self).owner == next_owner,
-            current_epoch(final(self).view()) > current_epoch(old(self).view()),
-    {
-        self.epoch = self.epoch + 1;
-        self.owner = next_owner;
     }
 }
 

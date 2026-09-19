@@ -9,8 +9,10 @@
 //! This module is what closes that gap. It defines a single state machine over
 //! both layers in which the synchronisation is a **guard**, not an assumption:
 //!
-//! * [`ComposedStep::PassToken`] may only fire while the actor is *not* `Owned` -
-//!   ownership has to be released before the token is allowed to move;
+//! * [`ComposedStep::PassToken`] may only fire while the actor is `Unowned` -
+//!   the release has to have *completed* before the token is allowed to move
+//!   (`Transferring` is not enough: it satisfies `!is_owned`, but the outgoing
+//!   owner has not acknowledged the revoke yet);
 //! * [`ComposedStep::SeizeToken`] moves the token *without* the holder acting,
 //!   under the same guard, so that crash-driven takeover - the case epochs
 //!   exist for - is reachable rather than requiring a dead node to cooperate;

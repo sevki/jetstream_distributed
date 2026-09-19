@@ -142,15 +142,15 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (res: (
         composed_inv(res.0),
         handover_released_state(res.0, x, a, b),
         res.2.len() == 5,
-        res.2[0] == ComposedStep::Own { own_step: Step::IssueGrant { actor: x } },
-        res.2[1] == ComposedStep::AcquireUnderToken { node: a },
-        res.2[2] == ComposedStep::Own {
+        res.2[0] == (ComposedStep::Own { own_step: Step::IssueGrant { actor: x } }),
+        res.2[1] == (ComposedStep::AcquireUnderToken { node: a }),
+        res.2[2] == (ComposedStep::Own {
             own_step: Step::BeginTransfer { actor: x, from: a, to: b },
-        },
-        res.2[3] == ComposedStep::Own {
+        }),
+        res.2[3] == (ComposedStep::Own {
             own_step: Step::HandleRevoke { actor: x, target: a, old_epoch: 41, new_epoch: 42 },
-        },
-        res.2[4] == ComposedStep::Own { own_step: Step::CompleteRelease { actor: x } },
+        }),
+        res.2[4] == (ComposedStep::Own { own_step: Step::CompleteRelease { actor: x } }),
         res.1.len() == 6,
         // The epochs the scenario is named for, at the indices they occur at.
         // The labels alone do not carry them: `BeginTransfer` names the actor
@@ -419,9 +419,9 @@ pub proof fn handover_phase_request(
         // one. This is what carries phase one's `CompleteRelease` forward into
         // the finished scenario's label sequence.
         forall|i: int| 0 <= i < 5 ==> #[trigger] res.2[i] == labels[i],
-        res.2[5] == ComposedStep::Ray { ray_step: RayStep::RequestCs { node: b } },
-        res.2[6] == ComposedStep::Ray { ray_step: RayStep::MakeRequest { node: b } },
-        res.2[7] == ComposedStep::Ray { ray_step: RayStep::ReceiveRequest { at: a, from: b } },
+        res.2[5] == (ComposedStep::Ray { ray_step: RayStep::RequestCs { node: b } }),
+        res.2[6] == (ComposedStep::Ray { ray_step: RayStep::MakeRequest { node: b } }),
+        res.2[7] == (ComposedStep::Ray { ray_step: RayStep::ReceiveRequest { at: a, from: b } }),
         res.1.len() == 9,
         forall|i: int| 0 <= i < tr.len() ==> #[trigger] res.1[i] == tr[i],
 {
@@ -561,7 +561,7 @@ pub proof fn handover_phase_pass_token(
         res.0.own == c.own,
         res.2.len() == 9,
         forall|i: int| 0 <= i < 8 ==> #[trigger] res.2[i] == labels[i],
-        res.2[8] == ComposedStep::PassToken { node: a, head: b },
+        res.2[8] == (ComposedStep::PassToken { node: a, head: b }),
         res.1.len() == 10,
         forall|i: int| 0 <= i < tr.len() ==> #[trigger] res.1[i] == tr[i],
 {
@@ -633,7 +633,7 @@ pub proof fn handover_phase_acquire(
         res.0.own.issued.contains(Token { actor: x, epoch: 41, holder: a }),
         res.2.len() == 10,
         forall|i: int| 0 <= i < 9 ==> #[trigger] res.2[i] == labels[i],
-        res.2[9] == ComposedStep::AcquireUnderToken { node: b },
+        res.2[9] == (ComposedStep::AcquireUnderToken { node: b }),
         res.1.len() == 11,
         forall|i: int| 0 <= i < tr.len() ==> #[trigger] res.1[i] == tr[i],
 {

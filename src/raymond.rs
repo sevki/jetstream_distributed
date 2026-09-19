@@ -367,6 +367,24 @@ pub open spec fn ray_segment(tr: Seq<Raymond>) -> bool {
         0 <= i < tr.len() - 1 ==> ray_next(tr[i], tr[i + 1]))
 }
 
+/// A **labelled** finite run of the routing layer: `tr` holds the states and
+/// `labels[i]` is the transition from `tr[i]` to `tr[i + 1]`.
+///
+/// `ray_segment` hides its steps inside `ray_next`'s existential, which is
+/// enough to say "this state leads to that one" and not enough to say *how*.
+/// For a scenario named after a route it is the how that matters: the request
+/// path `D -> B -> A -> C` and a run in which `A`, `B` and `D` each request
+/// independently and then serve their own queues end in the same place, and a
+/// contract written against `ray_segment` cannot tell them apart. Carrying the
+/// labels does.
+pub open spec fn ray_run(tr: Seq<Raymond>, labels: Seq<RayStep>) -> bool {
+    &&& tr.len() > 0
+    &&& labels.len() == tr.len() - 1
+    &&& (forall|i: int|
+        #![trigger tr[i], tr[i + 1], labels[i]]
+        0 <= i < labels.len() ==> ray_step(tr[i], tr[i + 1], labels[i]))
+}
+
 /// `post` is reachable **from** `pre` by a finite run of the routing layer.
 pub open spec fn ray_reachable_from(pre: Raymond, post: Raymond) -> bool {
     exists|tr: Seq<Raymond>|

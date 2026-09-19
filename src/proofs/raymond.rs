@@ -554,6 +554,94 @@ pub proof fn lemma_ray_reachable_from_step(pre: Raymond, mid: Raymond, post: Ray
     assert(tr2[tr2.len() - 1] == post);
 }
 
+/// A one-state labelled run.
+pub proof fn lemma_ray_run_init(r: Raymond)
+    ensures
+        ray_run(seq![r], Seq::<RayStep>::empty()),
+{
+    let tr = seq![r];
+    let labels = Seq::<RayStep>::empty();
+    assert(tr.len() == 1);
+    assert(labels.len() == 0);
+}
+
+/// A labelled run extends by one **named** transition.
+pub proof fn lemma_ray_run_push(
+    tr: Seq<Raymond>,
+    labels: Seq<RayStep>,
+    post: Raymond,
+    s: RayStep,
+)
+    requires
+        ray_run(tr, labels),
+        ray_step(tr[tr.len() - 1], post, s),
+    ensures
+        ray_run(tr.push(post), labels.push(s)),
+        tr.push(post).len() == tr.len() + 1,
+        labels.push(s).len() == labels.len() + 1,
+        tr.push(post)[tr.len() as int] == post,
+        labels.push(s)[labels.len() as int] == s,
+        forall|i: int| 0 <= i < tr.len() ==> #[trigger] tr.push(post)[i] == tr[i],
+        forall|i: int| 0 <= i < labels.len() ==> #[trigger] labels.push(s)[i] == labels[i],
+{
+    let tr2 = tr.push(post);
+    let l2 = labels.push(s);
+    assert(tr2.len() == tr.len() + 1);
+    assert(l2.len() == labels.len() + 1);
+    assert forall|i: int|
+        #![trigger tr2[i], tr2[i + 1], l2[i]]
+        0 <= i < l2.len() implies ray_step(tr2[i], tr2[i + 1], l2[i]) by {
+        if i < labels.len() {
+            assert(tr2[i] == tr[i]);
+            assert(tr2[i + 1] == tr[i + 1]);
+            assert(l2[i] == labels[i]);
+            assert(ray_step(tr[i], tr[i + 1], labels[i]));
+        } else {
+            assert(i == labels.len());
+            assert(i == tr.len() - 1);
+            assert(tr2[i] == tr[i]);
+            assert(tr2[i + 1] == post);
+            assert(l2[i] == s);
+        }
+    }
+}
+
+/// **A labelled run is a run.** Exporting the labels loses nothing: the
+/// unlabelled `ray_segment` and `ray_reachable_from` follow from it.
+pub proof fn lemma_ray_run_is_segment(tr: Seq<Raymond>, labels: Seq<RayStep>)
+    requires
+        ray_run(tr, labels),
+    ensures
+        ray_segment(tr),
+        ray_reachable_from(tr[0], tr[tr.len() - 1]),
+{
+    assert forall|i: int|
+        #![trigger tr[i], tr[i + 1]]
+        0 <= i < tr.len() - 1 implies ray_next(tr[i], tr[i + 1]) by {
+        assert(ray_step(tr[i], tr[i + 1], labels[i]));
+    }
+    assert(ray_segment(tr));
+}
+
+/// Every state of a labelled run whose first state satisfies the Raymond
+/// invariant satisfies it too.
+pub proof fn lemma_ray_run_inv(tr: Seq<Raymond>, labels: Seq<RayStep>, i: int)
+    requires
+        ray_run(tr, labels),
+        ray_inv(tr[0]),
+        0 <= i < tr.len(),
+    ensures
+        ray_inv(tr[i]),
+    decreases i,
+{
+    if i > 0 {
+        let j = i - 1;
+        lemma_ray_run_inv(tr, labels, j);
+        assert(ray_step(tr[j], tr[j + 1], labels[j]));
+        lemma_ray_step_preserves_inv(tr[j], tr[j + 1], labels[j]);
+    }
+}
+
 /// Every Raymond transition preserves the Raymond invariant.
 pub proof fn lemma_ray_step_preserves_inv(pre: Raymond, post: Raymond, s: RayStep)
     requires

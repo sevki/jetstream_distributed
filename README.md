@@ -158,6 +158,7 @@ verifying, the build fails.
 | R4 | **Raymond: token transfer preserves ownership safety** | `proofs::composed::lemma_composed_pass_token_preserves_inv` (and, as a layer-local lemma, `proofs::raymond::theorem_token_transfer_preserves_ownership_safety`) | none — in the composed machine the release-before-transfer condition is a *guard*, not an assumption |
 | R5 | **Composed exclusivity**: in every reachable composed state at most one node may mutate the actor, and it is the node holding the token | `proofs::composed::theorem_composed_exclusivity` | composed reachability |
 | C0 | The composed machine admits critical-section entry and exit, so its reachable states are not a degenerate `using`-free fragment | `proofs::composed::theorem_composed_admits_critical_section`, `..._exit` | composed invariant holds before the step |
+| C1 | **Non-vacuity**: a complete handover driven through *both* layers is reachable — `A` owns X@41 while holding the token, releases it, the token moves `A → B`, and `B` ends up owning X@42 *and* holding the token, with `A`'s epoch-41 token still issued and powerless | `proofs::composed_scenario::scenario_composed_handover` | `A != B` |
 | C | The coupling is an **invariant** of the composed machine: `composed_init ==> composed_inv`, `composed_inv /\ composed_next ==> composed_inv`, hence `composed_reachable ==> composed_inv` | `proofs::composed::theorem_composed_reachable_inv`, `theorem_composed_step_preserves_inv` | the composed transition relation |
 | R6 | A concrete routing execution: request `D → B → A → C[token]`, token `C → A → B → D`, with the unique-token invariant carried through all eleven hops, then a twelfth step redelivering `D`'s original request after the token has finished moving | `proofs::raymond_routing::scenario_request_and_token_routing` | four distinct nodes |
 | R7 | A request outlives the topology it was routed against: after the token moves it is still in `requests` and still deliverable | `proofs::raymond::theorem_delayed_request_survives_token_move` | none |
@@ -230,6 +231,12 @@ that this is not the case.
 which is what makes "token transfer preserves ownership safety" a claim about
 the system instead of a hypothetical.
 
+Every composed theorem is of the form "every *reachable* composed state
+satisfies ...", and such statements are worthless if nothing interesting is
+reachable. `scenario_composed_handover` closes that off by exhibiting a complete
+handover driven through both layers at once, ending in a reachable state where
+`B` genuinely owns the actor at epoch 42 *and* holds the token.
+
 Raymond's **liveness** (every request is eventually served) needs FIFO,
 reliable links and no crashes. None of those are assumed here and none of it is
 claimed.
@@ -260,6 +267,7 @@ distributed-ownership/
 │       ├── adversarial.rs  concrete adversarial executions
 │       ├── raymond.rs      claim 7
 │       ├── composed.rs     the coupling as a composed-machine invariant
+│       ├── composed_scenario.rs  an end-to-end handover across both layers
 │       └── raymond_routing.rs  the D → B → A → C routing execution
 └── .github/workflows/verify.yml
 ```

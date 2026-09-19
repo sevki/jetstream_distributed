@@ -170,6 +170,49 @@ pub proof fn lemma_composed_init_inv(c: Composed)
     }
 }
 
+/// An initial composed state is reachable.
+pub proof fn lemma_composed_reachable_init(c: Composed)
+    requires
+        composed_init(c),
+    ensures
+        composed_reachable(c),
+{
+    let tr = Seq::<Composed>::empty().push(c);
+    assert(tr.len() == 1);
+    assert(tr[0] == c);
+    assert(composed_valid_execution(tr));
+    assert(tr[tr.len() - 1] == c);
+}
+
+/// Composed reachability is closed under taking a step.
+pub proof fn lemma_composed_reachable_step(pre: Composed, post: Composed, s: ComposedStep)
+    requires
+        composed_reachable(pre),
+        composed_step(pre, post, s),
+    ensures
+        composed_reachable(post),
+{
+    let tr = choose|tr: Seq<Composed>| composed_valid_execution(tr) && tr[tr.len() - 1] == pre;
+    let tr2 = tr.push(post);
+    assert(tr2.len() == tr.len() + 1);
+    assert(tr2[0] == tr[0]);
+    assert forall|i: int| 0 <= i < tr2.len() - 1 implies composed_next(#[trigger] tr2[i], tr2[i + 1])
+        by {
+        if i < tr.len() - 1 {
+            assert(tr2[i] == tr[i]);
+            assert(tr2[i + 1] == tr[i + 1]);
+            assert(composed_next(tr[i], tr[i + 1]));
+        } else {
+            assert(i == tr.len() - 1);
+            assert(tr2[i] == tr[i]);
+            assert(tr2[i + 1] == post);
+            assert(composed_step(pre, post, s));
+        }
+    }
+    assert(composed_valid_execution(tr2));
+    assert(tr2[tr2.len() - 1] == post);
+}
+
 pub proof fn lemma_composed_execution_inv(tr: Seq<Composed>, i: int)
     requires
         composed_valid_execution(tr),

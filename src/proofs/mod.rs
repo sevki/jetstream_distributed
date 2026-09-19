@@ -6,6 +6,7 @@
 
 pub mod adversarial;
 pub mod composed;
+pub mod composed_scenario;
 pub mod exclusivity;
 pub mod fencing;
 pub mod invariant;

@@ -437,6 +437,32 @@ pub open spec fn valid_execution(tr: Seq<System>) -> bool {
         0 <= i < tr.len() - 1 ==> next(tr[i], tr[i + 1]))
 }
 
+/// A **labelled** finite run: `tr` holds the states and `labels[i]` is the step
+/// that takes `tr[i]` to `tr[i + 1]`.
+///
+/// `valid_execution` quantifies over `next`, which hides which step was taken
+/// at each index. That is the right notion for a safety theorem - "whatever the
+/// system did, this holds" - and the wrong one for a scenario, whose entire
+/// content is *which* steps were taken. A scenario assembled from reachable
+/// endpoints and a step or two claims much less than it appears to: the
+/// existentials can be satisfied from different executions, so the conjunction
+/// need not describe any single run.
+pub open spec fn run(tr: Seq<System>, labels: Seq<Step>) -> bool {
+    &&& tr.len() > 0
+    &&& labels.len() == tr.len() - 1
+    // Multi-trigger on both adjacent states and the label between them, for the
+    // reason documented on `valid_execution`.
+    &&& (forall|i: int|
+        #![trigger tr[i], tr[i + 1], labels[i]]
+        0 <= i < labels.len() ==> step(tr[i], tr[i + 1], labels[i]))
+}
+
+/// A labelled run that starts at initialisation.
+pub open spec fn labelled_execution(tr: Seq<System>, labels: Seq<Step>) -> bool {
+    &&& run(tr, labels)
+    &&& init(tr[0])
+}
+
 /// `sys` is reachable if some finite execution ends in it.
 pub open spec fn reachable(sys: System) -> bool {
     exists|tr: Seq<System>| valid_execution(tr) && tr[tr.len() - 1] == sys

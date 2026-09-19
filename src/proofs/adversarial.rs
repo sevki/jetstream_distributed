@@ -54,39 +54,59 @@ pub proof fn scenario_stale_owner_returns(x: ActorId, a: NodeId, b: NodeId)
     requires
         a != b,
     ensures
-        // The crash and the recovery, exported as named steps between reachable
-        // states, with the epoch-41 token retained across both. Without these
-        // the endpoint clause below is satisfied by an ordinary live handover
-        // from A@41 to B@42 - no crash, no recovery, no replay - so the
-        // headline scenario would keep verifying with its whole failure
-        // portion deleted.
-        exists|p: System, q: System|
+        // The whole run, with every step named.
+        //
+        // Exporting the crash, the recovery and the endpoint as three separate
+        // existentials was not enough: nothing made them the *same* execution,
+        // so an ordinary live handover could supply the endpoint while some
+        // other run supplied the crash. The nine labels below are one run, and
+        // they are the failure story - `Crash(A)` at index 5 between the
+        // release and `B`'s acquisition, `Recover(A)` at 7, and the replay of
+        // `A`'s epoch-41 grant at 8.
+        exists|tr: Seq<System>, labels: Seq<Step>|
             {
-                &&& #[trigger] step(p, q, Step::Crash { node: a })
-                &&& reachable(p)
-                &&& reachable(q)
-                &&& p.live.contains(a)
-                &&& !q.live.contains(a)
-                &&& q.issued.contains(Token { actor: x, epoch: 41, holder: a })
-            },
-        exists|p: System, q: System|
-            {
-                &&& #[trigger] step(p, q, Step::Recover { node: a })
-                &&& reachable(p)
-                &&& reachable(q)
-                &&& !p.live.contains(a)
-                &&& q.live.contains(a)
-                &&& q.issued.contains(Token { actor: x, epoch: 41, holder: a })
-                &&& q.actors[x] == (OwnershipState::Owned { owner: b, epoch: 42 })
-            },
-        exists|sys: System|
-            {
-                &&& reachable(sys)
-                &&& #[trigger] sys.issued.contains(Token { actor: x, epoch: 41, holder: a })
-                &&& !token_authorized(sys, Token { actor: x, epoch: 41, holder: a })
-                &&& !can_mutate(sys, x, a, 41)
-                &&& can_mutate(sys, x, b, 42)
-                &&& sys.live.contains(a)
+                &&& #[trigger] labelled_execution(tr, labels)
+                &&& labels.len() == 9
+                &&& labels[0] == (Step::IssueGrant { actor: x })
+                &&& labels[1] == (Step::Acquire { actor: x, node: a })
+                &&& labels[2] == (Step::BeginTransfer { actor: x, from: a, to: b })
+                &&& labels[3] == (Step::HandleRevoke {
+                    actor: x,
+                    target: a,
+                    old_epoch: 41,
+                    new_epoch: 42,
+                })
+                &&& labels[4] == (Step::CompleteRelease { actor: x })
+                &&& labels[5] == (Step::Crash { node: a })
+                &&& labels[6] == (Step::Acquire { actor: x, node: b })
+                &&& labels[7] == (Step::Recover { node: a })
+                &&& labels[8] == (Step::Replay {
+                    msg: Message::Grant { actor: x, to: a, epoch: 41 },
+                })
+                // The epochs, which the labels do not carry.
+                &&& tr[2].actors[x] == (OwnershipState::Owned { owner: a, epoch: 41 })
+                &&& tr[3].actors[x] == (OwnershipState::Transferring {
+                    from: a,
+                    to: b,
+                    old_epoch: 41,
+                    new_epoch: 42,
+                })
+                // `A` is live up to the crash and gone after it, and keeps its
+                // epoch-41 token throughout.
+                &&& tr[5].live.contains(a)
+                &&& !tr[6].live.contains(a)
+                &&& !tr[7].live.contains(a)
+                &&& tr[8].live.contains(a)
+                &&& tr[6].issued.contains(Token { actor: x, epoch: 41, holder: a })
+                // And the headline: `A` is back, still physically holding its
+                // epoch-41 token, with no authority at all, while `B` owns at
+                // 42 - after `A`'s original grant has been redelivered to it.
+                &&& tr[9].live.contains(a)
+                &&& tr[9].issued.contains(Token { actor: x, epoch: 41, holder: a })
+                &&& !token_authorized(tr[9], Token { actor: x, epoch: 41, holder: a })
+                &&& !can_mutate(tr[9], x, a, 41)
+                &&& can_mutate(tr[9], x, b, 42)
+                &&& tr[9].network.contains(Message::Grant { actor: x, to: a, epoch: 41 })
             },
 {
     let nodes = Set::<NodeId>::empty().insert(a).insert(b);
@@ -257,19 +277,73 @@ pub proof fn scenario_stale_owner_returns(x: ActorId, a: NodeId, b: NodeId)
     assert(reachable(s9));
     assert(s9.live.contains(a));
 
-    // The crash and the recovery, named, so that deleting the failure portion
-    // of this execution cannot leave the theorem verifying.
-    assert(reachable(s6));
-    assert(s5.live.contains(a));
-    assert(!s6.live.contains(a));
-    assert(step(s5, s6, Step::Crash { node: a }));
-
-    assert(reachable(s8));
-    assert(!s7.live.contains(a));
-    assert(s8.live.contains(a));
-    assert(s8.issued.contains(stale));
-    assert(s8.actors[x] == (OwnershipState::Owned { owner: b, epoch: 42 }));
-    assert(step(s7, s8, Step::Recover { node: a }));
+    // The run: nine states and the nine labels between them. Each `step` was
+    // proved above; collecting them makes the scenario's evidence the run
+    // rather than three endpoints that three different runs could supply.
+    let tr = seq![s0, s1, s2, s3, s4, s5, s6, s7, s8, s9];
+    let labels = seq![
+        Step::IssueGrant { actor: x },
+        Step::Acquire { actor: x, node: a },
+        Step::BeginTransfer { actor: x, from: a, to: b },
+        Step::HandleRevoke { actor: x, target: a, old_epoch: 41, new_epoch: 42 },
+        Step::CompleteRelease { actor: x },
+        Step::Crash { node: a },
+        Step::Acquire { actor: x, node: b },
+        Step::Recover { node: a },
+        Step::Replay { msg: grant_41 },
+    ];
+    assert(tr.len() == 10);
+    assert(labels.len() == 9);
+    assert(tr[0] == s0);
+    assert(tr[1] == s1);
+    assert(tr[2] == s2);
+    assert(tr[3] == s3);
+    assert(tr[4] == s4);
+    assert(tr[5] == s5);
+    assert(tr[6] == s6);
+    assert(tr[7] == s7);
+    assert(tr[8] == s8);
+    assert(tr[9] == s9);
+    assert(labels[0] == (Step::IssueGrant { actor: x }));
+    assert(labels[1] == (Step::Acquire { actor: x, node: a }));
+    assert(labels[2] == (Step::BeginTransfer { actor: x, from: a, to: b }));
+    assert(labels[3] == (Step::HandleRevoke { actor: x, target: a, old_epoch: 41, new_epoch: 42 }));
+    assert(labels[4] == (Step::CompleteRelease { actor: x }));
+    assert(labels[5] == (Step::Crash { node: a }));
+    assert(labels[6] == (Step::Acquire { actor: x, node: b }));
+    assert(labels[7] == (Step::Recover { node: a }));
+    assert(labels[8] == (Step::Replay { msg: grant_41 }));
+    assert forall|i: int|
+        #![trigger tr[i], tr[i + 1], labels[i]]
+        0 <= i < labels.len() implies step(tr[i], tr[i + 1], labels[i]) by {
+        if i == 0 {
+            assert(step(s0, s1, Step::IssueGrant { actor: x }));
+        } else if i == 1 {
+            assert(step(s1, s2, Step::Acquire { actor: x, node: a }));
+        } else if i == 2 {
+            assert(step(s2, s3, Step::BeginTransfer { actor: x, from: a, to: b }));
+        } else if i == 3 {
+            assert(step(
+                s3,
+                s4,
+                Step::HandleRevoke { actor: x, target: a, old_epoch: 41, new_epoch: 42 },
+            ));
+        } else if i == 4 {
+            assert(step(s4, s5, Step::CompleteRelease { actor: x }));
+        } else if i == 5 {
+            assert(step(s5, s6, Step::Crash { node: a }));
+        } else if i == 6 {
+            assert(step(s6, s7, Step::Acquire { actor: x, node: b }));
+        } else if i == 7 {
+            assert(step(s7, s8, Step::Recover { node: a }));
+        } else {
+            assert(i == 8);
+            assert(step(s8, s9, Step::Replay { msg: grant_41 }));
+        }
+    }
+    assert(run(tr, labels));
+    assert(init(tr[0]));
+    assert(labelled_execution(tr, labels));
 }
 
 /// A stale `Grant` cannot resurrect a superseded epoch: if the actor has moved
@@ -369,21 +443,30 @@ pub proof fn scenario_interrupted_transfer(x: ActorId, a: NodeId, b: NodeId)
     requires
         a != b,
     ensures
-        exists|p: System, q: System|
+        // The run, with every step named: the abort at index 3 follows the
+        // `BeginTransfer` at index 2 that opened the very transfer it
+        // interrupts.
+        exists|tr: Seq<System>, labels: Seq<Step>|
             {
-                &&& #[trigger] step(p, q, Step::AbortTransfer { actor: x })
-                &&& reachable(p)
-                &&& reachable(q)
-                &&& p.actors[x] == (OwnershipState::Transferring {
+                &&& #[trigger] labelled_execution(tr, labels)
+                &&& labels.len() == 4
+                &&& labels[0] == (Step::IssueGrant { actor: x })
+                &&& labels[1] == (Step::Acquire { actor: x, node: a })
+                &&& labels[2] == (Step::BeginTransfer { actor: x, from: a, to: b })
+                &&& labels[3] == (Step::AbortTransfer { actor: x })
+                &&& tr[3].actors[x] == (OwnershipState::Transferring {
                     from: a,
                     to: b,
                     old_epoch: 41,
                     new_epoch: 42,
                 })
-                &&& q.actors[x] == (OwnershipState::Unowned { epoch: 43, intended_owner: a })
-                &&& !can_mutate(q, x, a, 41)
-                &&& !can_mutate(q, x, b, 42)
-                &&& q.issued.contains(Token { actor: x, epoch: 41, holder: a })
+                &&& tr[4].actors[x] == (OwnershipState::Unowned {
+                    epoch: 43,
+                    intended_owner: a,
+                })
+                &&& !can_mutate(tr[4], x, a, 41)
+                &&& !can_mutate(tr[4], x, b, 42)
+                &&& tr[4].issued.contains(Token { actor: x, epoch: 41, holder: a })
             },
 {
     let nodes = Set::<NodeId>::empty().insert(a).insert(b);
@@ -463,14 +546,48 @@ pub proof fn scenario_interrupted_transfer(x: ActorId, a: NodeId, b: NodeId)
     assert(step(s3, s4, Step::AbortTransfer { actor: x }));
     lemma_reachable_step(s3, s4, Step::AbortTransfer { actor: x });
 
-    assert(reachable(s3));
-    assert(reachable(s4));
     assert(s4.actors[x] == (OwnershipState::Unowned { epoch: 43, intended_owner: a }));
     assert(!may_mutate(s4.actors[x], a, 41));
     assert(!may_mutate(s4.actors[x], b, 42));
     assert(!can_mutate(s4, x, a, 41));
     assert(!can_mutate(s4, x, b, 42));
     assert(s4.issued.contains(stale));
+
+    let tr = seq![s0, s1, s2, s3, s4];
+    let labels = seq![
+        Step::IssueGrant { actor: x },
+        Step::Acquire { actor: x, node: a },
+        Step::BeginTransfer { actor: x, from: a, to: b },
+        Step::AbortTransfer { actor: x },
+    ];
+    assert(tr.len() == 5);
+    assert(labels.len() == 4);
+    assert(tr[0] == s0);
+    assert(tr[1] == s1);
+    assert(tr[2] == s2);
+    assert(tr[3] == s3);
+    assert(tr[4] == s4);
+    assert(labels[0] == (Step::IssueGrant { actor: x }));
+    assert(labels[1] == (Step::Acquire { actor: x, node: a }));
+    assert(labels[2] == (Step::BeginTransfer { actor: x, from: a, to: b }));
+    assert(labels[3] == (Step::AbortTransfer { actor: x }));
+    assert forall|i: int|
+        #![trigger tr[i], tr[i + 1], labels[i]]
+        0 <= i < labels.len() implies step(tr[i], tr[i + 1], labels[i]) by {
+        if i == 0 {
+            assert(step(s0, s1, Step::IssueGrant { actor: x }));
+        } else if i == 1 {
+            assert(step(s1, s2, Step::Acquire { actor: x, node: a }));
+        } else if i == 2 {
+            assert(step(s2, s3, Step::BeginTransfer { actor: x, from: a, to: b }));
+        } else {
+            assert(i == 3);
+            assert(step(s3, s4, Step::AbortTransfer { actor: x }));
+        }
+    }
+    assert(run(tr, labels));
+    assert(init(tr[0]));
+    assert(labelled_execution(tr, labels));
 }
 
 /// An interrupted transfer leaves nobody with authority, and burns the epoch

@@ -322,6 +322,89 @@ pub proof fn lemma_init_inv(sys: System)
 }
 
 /// An initial state is reachable.
+/// A one-state labelled run, from an initial state.
+pub proof fn lemma_run_init(sys: System)
+    requires
+        init(sys),
+    ensures
+        labelled_execution(seq![sys], Seq::<Step>::empty()),
+{
+    let tr = seq![sys];
+    let labels = Seq::<Step>::empty();
+    assert(tr.len() == 1);
+    assert(labels.len() == 0);
+    assert(tr[0] == sys);
+}
+
+/// A labelled run extends by one **named** step.
+pub proof fn lemma_run_push(tr: Seq<System>, labels: Seq<Step>, post: System, s: Step)
+    requires
+        run(tr, labels),
+        step(tr[tr.len() - 1], post, s),
+    ensures
+        run(tr.push(post), labels.push(s)),
+        tr.push(post).len() == tr.len() + 1,
+        labels.push(s).len() == labels.len() + 1,
+        tr.push(post)[tr.len() as int] == post,
+        labels.push(s)[labels.len() as int] == s,
+        forall|i: int| 0 <= i < tr.len() ==> #[trigger] tr.push(post)[i] == tr[i],
+        forall|i: int| 0 <= i < labels.len() ==> #[trigger] labels.push(s)[i] == labels[i],
+{
+    let tr2 = tr.push(post);
+    let l2 = labels.push(s);
+    assert(tr2.len() == tr.len() + 1);
+    assert(l2.len() == labels.len() + 1);
+    assert forall|i: int|
+        #![trigger tr2[i], tr2[i + 1], l2[i]]
+        0 <= i < l2.len() implies step(tr2[i], tr2[i + 1], l2[i]) by {
+        if i < labels.len() {
+            assert(tr2[i] == tr[i]);
+            assert(tr2[i + 1] == tr[i + 1]);
+            assert(l2[i] == labels[i]);
+            assert(step(tr[i], tr[i + 1], labels[i]));
+        } else {
+            assert(i == labels.len());
+            assert(i == tr.len() - 1);
+            assert(tr2[i] == tr[i]);
+            assert(tr2[i + 1] == post);
+            assert(l2[i] == s);
+        }
+    }
+}
+
+/// **A labelled execution is an execution.** The labels are exactly the
+/// witnesses `next` quantifies over, so every safety theorem stated about
+/// `valid_execution` or `reachable` applies unchanged to a run exported with
+/// its labels: a scenario loses nothing by exporting the stronger object.
+pub proof fn lemma_labelled_execution_is_execution(tr: Seq<System>, labels: Seq<Step>)
+    requires
+        labelled_execution(tr, labels),
+    ensures
+        valid_execution(tr),
+        reachable(tr[tr.len() - 1]),
+{
+    assert forall|i: int|
+        #![trigger tr[i], tr[i + 1]]
+        0 <= i < tr.len() - 1 implies next(tr[i], tr[i + 1]) by {
+        // Mentions all three terms of `run`'s multi-trigger.
+        assert(step(tr[i], tr[i + 1], labels[i]));
+    }
+    assert(valid_execution(tr));
+}
+
+/// Every state of a labelled execution is reachable and satisfies the
+/// invariant.
+pub proof fn lemma_run_state_inv(tr: Seq<System>, labels: Seq<Step>, i: int)
+    requires
+        labelled_execution(tr, labels),
+        0 <= i < tr.len(),
+    ensures
+        inv(tr[i]),
+{
+    lemma_labelled_execution_is_execution(tr, labels);
+    lemma_execution_inv(tr, i);
+}
+
 pub proof fn lemma_reachable_init(sys: System)
     requires
         init(sys),

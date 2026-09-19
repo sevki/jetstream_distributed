@@ -510,50 +510,6 @@ pub proof fn lemma_seize_preserves_inv(pre: Raymond, post: Raymond, from: NodeId
     assert(ray_token_exists(post));
 }
 
-/// Every routing state reaches itself.
-pub proof fn lemma_ray_reachable_from_refl(r: Raymond)
-    ensures
-        ray_reachable_from(r, r),
-{
-    let tr = seq![r];
-    assert(tr.len() == 1);
-    assert(tr[0] == r);
-    assert(tr[tr.len() - 1] == r);
-    assert(ray_segment(tr));
-}
-
-/// Reachability-from extends by one transition.
-pub proof fn lemma_ray_reachable_from_step(pre: Raymond, mid: Raymond, post: Raymond, s: RayStep)
-    requires
-        ray_reachable_from(pre, mid),
-        ray_step(mid, post, s),
-    ensures
-        ray_reachable_from(pre, post),
-{
-    let tr = choose|tr: Seq<Raymond>|
-        ray_segment(tr) && tr[0] == pre && tr[tr.len() - 1] == mid;
-    let tr2 = tr.push(post);
-    assert(tr2.len() == tr.len() + 1);
-    assert(tr2[0] == tr[0]);
-    assert forall|i: int|
-        #![trigger tr2[i], tr2[i + 1]]
-        0 <= i < tr2.len() - 1 implies ray_next(tr2[i], tr2[i + 1]) by {
-        if i < tr.len() - 1 {
-            assert(tr2[i] == tr[i]);
-            assert(tr2[i + 1] == tr[i + 1]);
-            assert(ray_next(tr[i], tr[i + 1]));
-        } else {
-            assert(i == tr.len() - 1);
-            assert(tr2[i] == tr[i]);
-            assert(tr2[i + 1] == post);
-            assert(ray_step(mid, post, s));
-            assert(ray_next(mid, post));
-        }
-    }
-    assert(ray_segment(tr2));
-    assert(tr2[tr2.len() - 1] == post);
-}
-
 /// A one-state labelled run.
 pub proof fn lemma_ray_run_init(r: Raymond)
     ensures

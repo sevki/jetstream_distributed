@@ -80,6 +80,21 @@ pub enum Message {
 /// The whole system.
 pub struct System {
     /// Ownership state of every actor. The domain never changes.
+    ///
+    /// **This is the ownership registry, not per-node state.** Every
+    /// epoch-advancing transition reads `pre.actors[a]` and writes
+    /// `post.actors.insert(a, ..)` in one step, so each actor's record is a
+    /// single value updated atomically. That is an assumption about the
+    /// deployment, and it is the strongest one this model makes: it rules out,
+    /// *by construction*, two coordinators deciding concurrently — both reading
+    /// `Owned { owner, epoch }` and both allocating `epoch + 1` for different
+    /// successors. The model cannot express that, because the second read
+    /// necessarily sees the first write.
+    ///
+    /// A real deployment has to buy that atomicity somewhere: consensus, or an
+    /// object store with compare-and-swap, which is what makes "read
+    /// `Owned { A, 41 }`, write `Unowned { 42, B }`" a single step. See the
+    /// failure-model table in `README.md`.
     pub actors: Map<ActorId, OwnershipState>,
     /// All nodes that exist.
     pub nodes: Set<NodeId>,
@@ -153,8 +168,28 @@ pub open spec fn tr_begin_transfer(
     }
 }
 
-/// A live node acknowledges a revocation it received. Pure message traffic:
-/// no ownership state changes, so this step is safe to replay at will.
+/// A live node acknowledges a revocation it received.
+///
+/// The guard is deliberately weak: it requires only that *some* `Revoke` for
+/// this actor is on the never-shrinking network and that `target` is live. It
+/// does **not** require the actor to be `Transferring`, nor `target` to be its
+/// owner, so any live node can manufacture a `Released` from any `Revoke` ever
+/// sent, however ancient.
+///
+/// That is safe, but the reason is not "no ownership state changes" — it spans
+/// three transitions, and is machine-checked rather than asserted here:
+///
+/// * `proofs::adversarial::theorem_complete_release_needs_the_matching_released`
+///   — the only step that consumes a `Released` is `CompleteRelease`, which
+///   re-reads the actor's *current* state, so a `Released` is inert unless the
+///   actor is `Transferring` right now, away from exactly that node, at exactly
+///   that `new_epoch`;
+/// * `proofs::adversarial::theorem_complete_release_outcome_is_fixed_by_state`
+///   — the resulting epoch is read from the live `Transferring` record, not
+///   from the message, so a fabricated `Released` cannot steer the handover;
+/// * `proofs::properties::theorem_stale_stays_stale` — no epoch is ever
+///   revisited, so a `new_epoch` cannot come back around and make an old
+///   `Released` relevant again.
 pub open spec fn tr_handle_revoke(
     pre: System,
     post: System,

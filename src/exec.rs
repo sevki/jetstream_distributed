@@ -10,6 +10,24 @@
 //! follows it, and this module exists only to pin down the one place where the
 //! two meet.
 //!
+//! **What this check is, and what it is not.** `accepts` consults the node's
+//! *own* belief about the actor, which is whatever generation it last observed.
+//! A partitioned `A` still holding `FenceGuard::new(A, 41)` gets
+//! `accepts(A, 41) == true` while the system has already moved to
+//! `Owned { B, 42 }`. That is not a contradiction — the postcondition promises
+//! `may_mutate(self.view(), ..)`, and `view()` is exactly that stale belief —
+//! but it means **a node cannot fence itself**. The safety property proved in
+//! `crate::proofs` is about the *system's* state (`can_mutate(sys, ..)`), and
+//! nothing in this module connects a guard to it.
+//!
+//! So what a guard buys is node-local staleness rejection, not fencing. Real
+//! fencing has to happen where the effect lands, against authoritative state:
+//! the storage layer rejecting a write whose epoch is superseded, or a reply
+//! gate that re-reads the ownership record after a write is durable and before
+//! acknowledging it, refusing the acknowledgement if the record no longer names
+//! this node at this epoch. That check is what turns exclusivity into something
+//! an outsider can rely on, and it is not in this crate.
+//!
 //! Note what is *not* here: there is no operation that mutates a [`FenceGuard`],
 //! and its fields are private so callers cannot assign to them either. A guard
 //! is an immutable record that only ever answers questions. Any mutator would,
@@ -63,7 +81,9 @@ impl FenceGuard {
         FenceGuard { owner: owner, epoch: epoch }
     }
 
-    /// **The runtime fence check.** Returns exactly the model's verdict.
+    /// **The node-local staleness check.** Returns exactly the model's verdict
+    /// *for the generation this guard records* — see the module docs on why
+    /// that is not the same as fencing. A stale guard accepts stale requests.
     pub fn accepts(&self, node: u64, epoch: u64) -> (r: bool)
         ensures
             r == may_mutate(self.view(), node as nat, epoch as nat),

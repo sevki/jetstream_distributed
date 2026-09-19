@@ -338,4 +338,95 @@ pub proof fn scenario_interrupted_transfer(
     lemma_step_preserves_inv(pre, post, Step::AbortTransfer { actor: x });
 }
 
+// ---------------------------------------------------------------------------
+// Fabricated `Released` messages
+// ---------------------------------------------------------------------------
+
+/// **`CompleteRelease` needs the `Released` that matches the live handover.**
+///
+/// `tr_handle_revoke` is deliberately permissive: it requires only that *some*
+/// `Revoke` for the actor is on the never-shrinking network and that the target
+/// is live. It does not check that the actor is currently `Transferring`, nor
+/// that `target` is its owner, so any live node can manufacture a `Released`
+/// for any `Revoke` ever sent, however ancient.
+///
+/// This theorem is the first half of why that is harmless. The only transition
+/// that consumes a `Released` is `CompleteRelease`, and it re-reads the actor's
+/// *current* state: so if it fires at all, the actor is `Transferring` right
+/// now, and the message that enabled it names exactly that handover's `from`
+/// and `new_epoch`. A `Released` naming anything else is inert.
+pub proof fn theorem_complete_release_needs_the_matching_released(
+    pre: System,
+    post: System,
+    a: ActorId,
+)
+    requires
+        step(pre, post, Step::CompleteRelease { actor: a }),
+    ensures
+        pre.actors.contains_key(a),
+        is_transferring(pre.actors[a]),
+        exists|from: NodeId, to: NodeId, old_epoch: Epoch, new_epoch: Epoch|
+            {
+                &&& pre.actors[a] == (OwnershipState::Transferring {
+                    from: from,
+                    to: to,
+                    old_epoch: old_epoch,
+                    new_epoch: new_epoch,
+                })
+                &&& #[trigger] pre.network.contains(
+                    Message::Released { actor: a, from: from, new_epoch: new_epoch },
+                )
+            },
+{
+    assert(tr_complete_release(pre, post, a));
+    match pre.actors[a] {
+        OwnershipState::Transferring { from, to, old_epoch, new_epoch } => {
+            assert(pre.network.contains(
+                Message::Released { actor: a, from: from, new_epoch: new_epoch },
+            ));
+        },
+        _ => {
+            assert(false);
+        },
+    }
+}
+
+/// **The outcome of `CompleteRelease` is fixed by the actor's state, not by the
+/// message.**
+///
+/// The second half. Even granting that some matching `Released` exists, the
+/// epoch the actor lands on is read from the live `Transferring` record, not
+/// taken from the message. So a fabricated `Released` cannot steer the handover
+/// anywhere: at most it can let a handover that was already in progress finish
+/// slightly earlier than the real acknowledgement would have.
+///
+/// Together with the freshness of `new_epoch` — no epoch is ever revisited, by
+/// `proofs::properties::theorem_stale_stays_stale` — this is the whole reason
+/// `tr_handle_revoke` can afford to be as permissive as it is.
+pub proof fn theorem_complete_release_outcome_is_fixed_by_state(
+    pre: System,
+    post: System,
+    a: ActorId,
+    from: NodeId,
+    to: NodeId,
+    old_epoch: Epoch,
+    new_epoch: Epoch,
+)
+    requires
+        step(pre, post, Step::CompleteRelease { actor: a }),
+        pre.actors.contains_key(a),
+        pre.actors[a] == (OwnershipState::Transferring {
+            from: from,
+            to: to,
+            old_epoch: old_epoch,
+            new_epoch: new_epoch,
+        }),
+    ensures
+        post.actors[a] == (OwnershipState::Unowned { epoch: new_epoch, intended_owner: to }),
+        current_epoch(post.actors[a]) == new_epoch,
+        forall|n: NodeId| !(#[trigger] may_mutate(post.actors[a], n, new_epoch)),
+{
+    assert(tr_complete_release(pre, post, a));
+}
+
 } // verus!

@@ -107,6 +107,7 @@ not hidden side conditions.
 
 | Assumption | How it is modelled |
 | --- | --- |
+| **Ownership records are updated atomically (linearizably)** | Every epoch-advancing transition reads `pre.actors[a]` and writes `post.actors.insert(a, ..)` in one step, so an actor's record is a single value with no interleaving. This is the **strongest assumption in the model** and it is load-bearing: it rules out, by construction, two coordinators deciding concurrently — both reading `Owned { owner, epoch }` and both allocating `epoch + 1` for different successors. A real deployment must buy that atomicity from consensus or from a store with compare-and-swap, which is what makes "read `Owned { A, 41 }`, write `Unowned { 42, B }`" one step. `System::actors` is that registry, **not** per-node state. |
 | The network may duplicate, reorder, delay and lose messages arbitrarily | `System::network` is a set that only grows, and delivery does not consume. A message is therefore deliverable zero, one or many times, in any order, at any later point. `Step::Replay` additionally makes duplication an explicit transition. The Raymond layer models its requests the same way, via `Raymond::requests`. |
 | Nodes may crash at any time | `Step::Crash` removes a node from `live`. It does **not** remove that node's tokens from `issued`. |
 | Crashed nodes may come back with stale beliefs | `Step::Recover` puts the node back in `live`. It regains nothing else - in particular it still holds only its old, superseded tokens. |
@@ -145,7 +146,7 @@ verifying, the build fails.
 | 6a | **Token uniqueness (physical)** - at most one token is ever *issued* per `(ActorId, Epoch)` | `proofs::tokens::theorem_issued_token_unique_per_actor_epoch` | reachability |
 | 6b | Stale physical tokens confer no authority | `proofs::tokens::theorem_stale_token_has_no_authority` | none |
 | 6c | No token is ever minted for a future epoch | `proofs::tokens::theorem_no_future_tokens` | reachability |
-| E | The runtime `u64` fence check returns exactly the model's verdict, and rejects any superseded epoch | `exec::FenceGuard::accepts`, `exec::FenceGuard::rejects_stale` | the guard is the node's own record of one actor, immutable after `FenceGuard::new` (private fields, no setter), so nothing in this API can change who owns what |
+| E | The runtime `u64` check returns exactly the model's verdict **for the generation the guard records**, and rejects any epoch superseded *within that record* | `exec::FenceGuard::accepts`, `exec::FenceGuard::rejects_stale` | the guard is the node's own belief, immutable after `FenceGuard::new`. **This is node-local staleness rejection, not fencing**: a partitioned `A` still holding `FenceGuard::new(A, 41)` accepts `(A, 41)` while the system is at `Owned { B, 42 }`. A node cannot fence itself — see below |
 | P1 | **Issued tokens never disappear** — no crash, partition or recovery retracts a capability, which is why stale tokens must be fenced rather than revoked | `proofs::properties::theorem_issued_monotone` | none |
 | P2 | **Sent messages never disappear** — the fact that makes duplication, reordering and unbounded delay free in the model | `proofs::properties::theorem_network_monotone` | none |
 | P3 | **The actor population is constant** — no transition creates or destroys an actor | `proofs::properties::theorem_actor_domain_constant` | none |
@@ -163,6 +164,8 @@ verifying, the build fails.
 | S2 | Message duplication / reordering / delay cannot change ownership | `proofs::adversarial::theorem_network_steps_cannot_change_ownership` | none |
 | S3 | Crash and stale-node recovery cannot change ownership | `proofs::adversarial::theorem_crash_recovery_cannot_change_ownership` | none |
 | S4 | An interrupted transfer leaves nobody with authority and burns the epoch | `proofs::adversarial::scenario_interrupted_transfer` | `inv` holds before the step |
+| S5 | **A fabricated `Released` is inert.** `HandleRevoke` lets any live node manufacture a `Released` from any `Revoke` ever sent, however old. `CompleteRelease` is the only step that consumes one, and it re-reads the actor's current state, so it fires only if the actor is `Transferring` right now, away from exactly that node, at exactly that `new_epoch` | `proofs::adversarial::theorem_complete_release_needs_the_matching_released` | none |
+| S6 | **A fabricated `Released` cannot steer a handover.** The resulting epoch is read from the live `Transferring` record, not from the message | `proofs::adversarial::theorem_complete_release_outcome_is_fixed_by_state` | none |
 | R1 | **Raymond: exactly one valid token** - `ray_inv` carries token *existence* as well as uniqueness, so a root is guaranteed rather than merely not-duplicated | `proofs::raymond::theorem_ray_exactly_one_token`, `theorem_ray_at_most_one_token`, preserved by `lemma_ray_step_preserves_inv` | Raymond invariant |
 | R2 | **Raymond: holder/routing changes cannot manufacture ownership** | `proofs::raymond::theorem_routing_cannot_manufacture_ownership` | Raymond invariant, coupling |
 | R3 | **Raymond: duplicate/reordered requests cannot create a second owner** | `proofs::raymond::theorem_duplicate_requests_are_safe` | Raymond invariant |
@@ -179,6 +182,31 @@ verifying, the build fails.
 "Reachability" means the hypothesis `reachable(sys)`, i.e. some finite execution
 starting from an `init` state ends in `sys`. It is discharged once and for all by
 `theorem_reachable_inv`.
+
+### A node cannot fence itself
+
+Row E is narrower than it looks, and the gap is worth stating plainly rather
+than leaving a reader to infer it.
+
+`FenceGuard::accepts` consults the node's **own** belief about the actor —
+whatever generation it last observed. A partitioned `A` still holding
+`FenceGuard::new(A, 41)` gets `accepts(A, 41) == true` while the system has
+already moved to `Owned { B, 42 }`. The stale owner from the headline scenario
+passes its own fence, every time.
+
+That is not a contradiction: the postcondition promises
+`may_mutate(self.view(), ..)`, and `view()` is exactly that stale belief. But
+the safety property proved here is about the *system's* state
+(`can_mutate(sys, ..)`), and nothing in `src/exec.rs` connects a guard to it.
+What a guard buys is **node-local staleness rejection, not fencing**.
+
+Real fencing has to happen where the effect lands, against authoritative state:
+the storage layer refusing a write whose epoch is superseded, or a reply gate
+that re-reads the ownership record after a write is durable and before
+acknowledging it, refusing the acknowledgement if the record no longer names
+this node at this epoch. That check is what turns exclusivity into a property an
+outsider can rely on. It is not in this crate, and proving the protocol says
+nothing about whether an implementation performs it.
 
 ## The Raymond layer
 

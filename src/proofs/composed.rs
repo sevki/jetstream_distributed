@@ -15,6 +15,7 @@ use crate::fencing::*;
 use crate::model::*;
 use crate::ownership::*;
 use crate::proofs::invariant::*;
+use crate::proofs::properties::*;
 use crate::proofs::raymond::*;
 use crate::proofs::transfer::*;
 use crate::raymond::*;
@@ -51,6 +52,7 @@ pub proof fn lemma_composed_own_preserves_inv(pre: Composed, post: Composed, s: 
 {
     lemma_step_preserves_inv(pre.own, post.own, s);
     lemma_step_epoch_monotone(pre.own, post.own, s, pre.actor);
+    theorem_node_domain_constant(pre.own, post.own, s);
     assert forall|nd: NodeId, e: Epoch|
         may_mutate(post.own.actors[post.actor], nd, e) implies has_token(post.ray, nd) by {
         if !may_mutate(pre.own.actors[pre.actor], nd, e) {

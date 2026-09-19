@@ -260,6 +260,31 @@ pub proof fn theorem_actor_domain_constant(pre: System, post: System, s: Step)
 /// **An epoch advances by at most one per transition.** Combined with
 /// monotonicity this pins the epoch sequence down completely: it is
 /// non-decreasing and never skips a generation.
+/// **The node population is constant.** No transition creates or destroys a
+/// node; `Crash` and `Recover` move nodes in and out of `live`, never out of
+/// `nodes`.
+pub proof fn theorem_node_domain_constant(pre: System, post: System, s: Step)
+    requires
+        step(pre, post, s),
+    ensures
+        post.nodes == pre.nodes,
+{
+    match s {
+        Step::Acquire { actor, node } => {},
+        Step::BeginTransfer { actor, from, to } => {},
+        Step::HandleRevoke { actor, target, old_epoch, new_epoch } => {},
+        Step::CompleteRelease { actor } => {},
+        Step::AbortTransfer { actor } => {},
+        Step::RevokeOwner { actor, next } => {},
+        Step::ReassignUnowned { actor, next } => {},
+        Step::IssueGrant { actor } => {},
+        Step::Crash { node } => {},
+        Step::Recover { node } => {},
+        Step::Replay { msg } => {},
+        Step::Stutter => {},
+    }
+}
+
 pub proof fn theorem_epoch_increases_by_at_most_one(
     pre: System,
     post: System,

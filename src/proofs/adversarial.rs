@@ -54,6 +54,31 @@ pub proof fn scenario_stale_owner_returns(x: ActorId, a: NodeId, b: NodeId)
     requires
         a != b,
     ensures
+        // The crash and the recovery, exported as named steps between reachable
+        // states, with the epoch-41 token retained across both. Without these
+        // the endpoint clause below is satisfied by an ordinary live handover
+        // from A@41 to B@42 - no crash, no recovery, no replay - so the
+        // headline scenario would keep verifying with its whole failure
+        // portion deleted.
+        exists|p: System, q: System|
+            {
+                &&& #[trigger] step(p, q, Step::Crash { node: a })
+                &&& reachable(p)
+                &&& reachable(q)
+                &&& p.live.contains(a)
+                &&& !q.live.contains(a)
+                &&& q.issued.contains(Token { actor: x, epoch: 41, holder: a })
+            },
+        exists|p: System, q: System|
+            {
+                &&& #[trigger] step(p, q, Step::Recover { node: a })
+                &&& reachable(p)
+                &&& reachable(q)
+                &&& !p.live.contains(a)
+                &&& q.live.contains(a)
+                &&& q.issued.contains(Token { actor: x, epoch: 41, holder: a })
+                &&& q.actors[x] == (OwnershipState::Owned { owner: b, epoch: 42 })
+            },
         exists|sys: System|
             {
                 &&& reachable(sys)
@@ -61,6 +86,7 @@ pub proof fn scenario_stale_owner_returns(x: ActorId, a: NodeId, b: NodeId)
                 &&& !token_authorized(sys, Token { actor: x, epoch: 41, holder: a })
                 &&& !can_mutate(sys, x, a, 41)
                 &&& can_mutate(sys, x, b, 42)
+                &&& sys.live.contains(a)
             },
 {
     let nodes = Set::<NodeId>::empty().insert(a).insert(b);
@@ -229,6 +255,21 @@ pub proof fn scenario_stale_owner_returns(x: ActorId, a: NodeId, b: NodeId)
     assert(!can_mutate(s9, x, a, 41));
     assert(can_mutate(s9, x, b, 42));
     assert(reachable(s9));
+    assert(s9.live.contains(a));
+
+    // The crash and the recovery, named, so that deleting the failure portion
+    // of this execution cannot leave the theorem verifying.
+    assert(reachable(s6));
+    assert(s5.live.contains(a));
+    assert(!s6.live.contains(a));
+    assert(step(s5, s6, Step::Crash { node: a }));
+
+    assert(reachable(s8));
+    assert(!s7.live.contains(a));
+    assert(s8.live.contains(a));
+    assert(s8.issued.contains(stale));
+    assert(s8.actors[x] == (OwnershipState::Owned { owner: b, epoch: 42 }));
+    assert(step(s7, s8, Step::Recover { node: a }));
 }
 
 /// A stale `Grant` cannot resurrect a superseded epoch: if the actor has moved

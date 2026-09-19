@@ -102,6 +102,7 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (c: Com
     let c0 = Composed { own: own0, ray: ray0, actor: x };
     assert(own0.actors.contains_key(x));
     assert(init(own0));
+    assert(own0.nodes == ray0.nodes);
     assert(composed_init(c0));
     lemma_composed_reachable_init(c0);
     lemma_composed_init_inv(c0);
@@ -501,6 +502,7 @@ pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId
     let c0 = Composed { own: own0, ray: ray0, actor: x };
     assert(own0.actors.contains_key(x));
     assert(init(own0));
+    assert(own0.nodes == ray0.nodes);
     assert(composed_init(c0));
     lemma_composed_reachable_init(c0);
     lemma_composed_init_inv(c0);
@@ -662,6 +664,7 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
     let c0 = Composed { own: own0, ray: ray0, actor: x };
     assert(own0.actors.contains_key(x));
     assert(init(own0));
+    assert(own0.nodes == ray0.nodes);
     assert(composed_init(c0));
     lemma_composed_reachable_init(c0);
     lemma_composed_init_inv(c0);

@@ -67,6 +67,13 @@ pub open spec fn composed_inv(c: Composed) -> bool {
     &&& ray_inv(c.ray)
     &&& c.own.actors.contains_key(c.actor)
     &&& couples(c.ray, c.own.actors[c.actor])
+    // The two layers talk about the *same* cluster. Without this, a state could
+    // have a Raymond root that the ownership layer has never heard of, so
+    // `!own.live.contains(n)` would hold for it with no `Crash` ever having
+    // happened - and `cs_seize_token`'s liveness guard would be satisfied by a
+    // node whose liveness was simply not modelled rather than by one that
+    // fail-stopped.
+    &&& c.ray.nodes == c.own.nodes
 }
 
 /// Any Raymond step that does not move the token: request routing *and*
@@ -202,6 +209,7 @@ pub open spec fn composed_init(c: Composed) -> bool {
     &&& init(c.own)
     &&& (exists|root: NodeId| ray_init(c.ray, root))
     &&& c.own.actors.contains_key(c.actor)
+    &&& c.ray.nodes == c.own.nodes
 }
 
 /// `tr` is a finite execution of the composed machine.

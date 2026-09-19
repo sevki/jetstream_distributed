@@ -270,7 +270,7 @@ pub proof fn routing_phase_token_hops(r7: Raymond, a: NodeId, b: NodeId, c: Node
     ensures
         ray_inv(r),
         has_token(r, d),
-        r.nodes.contains(b),
+        r.nodes == r7.nodes,
         r.queue[d].len() == 1 && r.queue[d][0] == d,
         !r.using[d],
         r.requests.contains((d, b)),
@@ -316,7 +316,22 @@ pub proof fn routing_phase_delivery(r10: Raymond, b: NodeId, d: NodeId) -> (r: R
         ray_inv(r),
         has_token(r, d),
         r.using[d],
+        r.nodes == r10.nodes,
         forall|m: NodeId| #[trigger] has_token(r, m) ==> m == d,
+        // The delayed redelivery itself, as a step out of a state in which `D`
+        // already holds the token and is inside its critical section, and in
+        // which `D`'s original request to `B` is still outstanding. Exporting
+        // only the endpoint would be satisfied by any `ray_inv` state with `D`
+        // as sole root - including a singleton with no routing history at all.
+        exists|p: Raymond|
+            {
+                &&& #[trigger] ray_step(p, r, RayStep::ReceiveRequest { at: b, from: d })
+                &&& ray_inv(p)
+                &&& has_token(p, d)
+                &&& p.using[d]
+                &&& p.requests.contains((d, b))
+                &&& p.nodes == r10.nodes
+            },
 {
     // 11. D, at the head of its own queue, enters the critical section.
     let r11 = Raymond {
@@ -350,9 +365,17 @@ pub proof fn routing_phase_delivery(r10: Raymond, b: NodeId, d: NodeId) -> (r: R
 
     assert(has_token(r12, d));
     assert(r12.using[d]);
+    assert(r12.nodes == r10.nodes);
     assert forall|m: NodeId| #[trigger] has_token(r12, m) implies m == d by {
         theorem_ray_at_most_one_token(r12, m, d);
     }
+    // `r11` is the witness for the exported redelivery step.
+    assert(ray_step(r11, r12, RayStep::ReceiveRequest { at: b, from: d }));
+    assert(ray_inv(r11));
+    assert(has_token(r11, d));
+    assert(r11.using[d]);
+    assert(r11.requests.contains((d, b)));
+    assert(r11.nodes == r10.nodes);
     r12
 }
 
@@ -366,9 +389,21 @@ pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId,
         b != d,
         c != d,
     ensures
-        exists|r: Raymond|
+        // The endpoint *and* the step that reaches it, so that deleting the
+        // routing phases cannot leave this verifying: a singleton Raymond with
+        // `D` as sole root satisfies the endpoint clauses on their own.
+        exists|p: Raymond, r: Raymond|
             {
-                &&& #[trigger] ray_inv(r)
+                &&& #[trigger] ray_step(p, r, RayStep::ReceiveRequest { at: b, from: d })
+                &&& ray_inv(p)
+                &&& ray_inv(r)
+                &&& p.nodes.contains(a)
+                &&& p.nodes.contains(b)
+                &&& p.nodes.contains(c)
+                &&& p.nodes.contains(d)
+                &&& p.requests.contains((d, b))
+                &&& has_token(p, d)
+                &&& p.using[d]
                 &&& has_token(r, d)
                 &&& r.using[d]
                 &&& forall|m: NodeId| has_token(r, m) ==> m == d
@@ -380,6 +415,19 @@ pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId,
     assert(ray_inv(fin));
     assert(has_token(fin, d));
     assert(fin.using[d]);
+    let p = choose|p: Raymond| {
+        &&& ray_step(p, fin, RayStep::ReceiveRequest { at: b, from: d })
+        &&& ray_inv(p)
+        &&& has_token(p, d)
+        &&& p.using[d]
+        &&& p.requests.contains((d, b))
+        &&& p.nodes == after_hops.nodes
+    };
+    assert(after_hops.nodes == after_requests.nodes);
+    assert(p.nodes.contains(a));
+    assert(p.nodes.contains(b));
+    assert(p.nodes.contains(c));
+    assert(p.nodes.contains(d));
 }
 
 } // verus!

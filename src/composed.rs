@@ -18,6 +18,9 @@
 //!   authority over this actor, and [`ComposedStep::Route`] carries any request
 //!   routing, which never moves the token at all.
 //!
+//! (The two carried-step fields are named apart because Verus only generates the
+//! `->field` accessor when a field has one type across all variants.)
+//!
 //! `couples` is then an *invariant* of this machine rather than a side condition,
 //! which is what makes "token transfer preserves ownership safety" a statement
 //! about the system instead of a hypothetical.
@@ -96,16 +99,16 @@ pub open spec fn cs_acquire_under_token(pre: Composed, post: Composed, n: NodeId
 
 /// The labelled transitions of the composed machine.
 pub enum ComposedStep {
-    Route { step: RayStep },
-    Own { step: Step },
+    Route { ray_step: RayStep },
+    Own { own_step: Step },
     PassToken { node: NodeId, head: NodeId },
     AcquireUnderToken { node: NodeId },
 }
 
 pub open spec fn composed_step(pre: Composed, post: Composed, s: ComposedStep) -> bool {
     match s {
-        ComposedStep::Route { step } => cs_route(pre, post, step),
-        ComposedStep::Own { step } => cs_own(pre, post, step),
+        ComposedStep::Route { ray_step } => cs_route(pre, post, ray_step),
+        ComposedStep::Own { own_step } => cs_own(pre, post, own_step),
         ComposedStep::PassToken { node, head } => cs_pass_token(pre, post, node, head),
         ComposedStep::AcquireUnderToken { node } => cs_acquire_under_token(pre, post, node),
     }

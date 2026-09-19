@@ -125,11 +125,11 @@ pub proof fn theorem_composed_step_preserves_inv(pre: Composed, post: Composed, 
         composed_inv(post),
 {
     match s {
-        ComposedStep::Route { step } => {
-            lemma_composed_route_preserves_inv(pre, post, step);
+        ComposedStep::Route { ray_step } => {
+            lemma_composed_route_preserves_inv(pre, post, ray_step);
         },
-        ComposedStep::Own { step } => {
-            lemma_composed_own_preserves_inv(pre, post, step);
+        ComposedStep::Own { own_step } => {
+            lemma_composed_own_preserves_inv(pre, post, own_step);
         },
         ComposedStep::PassToken { node, head } => {
             lemma_composed_pass_token_preserves_inv(pre, post, node, head);

@@ -51,7 +51,7 @@ impl RaymondState {
     pub fn enqueue_request(&mut self, actor_id: ActorId, request: TokenRequest) {
         self.request_queue
             .entry(actor_id)
-            .or_insert_with(VecDeque::new)
+            .or_default()
             .push_back(request);
     }
 

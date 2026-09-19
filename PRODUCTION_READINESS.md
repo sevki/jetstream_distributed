@@ -37,14 +37,16 @@ The protocol correctly models distributed ownership semantics and handles:
 **Required for Production**:
 ```rust
 // Currently missing:
-- Network layer (gRPC, TCP, QUIC)
-- Message serialization (protobuf, bincode)
+- Jetstream wire format implementation (required for all networking)
+- Message serialization using jetstream wire format
 - State machine replication (Raft, Paxos, or similar)
 - Actor scheduler and runtime
 - Request routing and delivery guarantees
 ```
 
-**Effort**: Large (weeks to months depending on scope)
+**Critical Constraint**: Must use **jetstream wire format** for all message serialization and protocol encoding. This is not optional—all networking must comply with the jetstream specification.
+
+**Effort**: Large (weeks to months depending on scope, depends heavily on jetstream wire format complexity)
 
 ---
 

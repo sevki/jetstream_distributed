@@ -11,11 +11,13 @@
 
 Currently, we have a state machine that is **correct** (safety proven) but **not distributed** (no network, no concurrency, no message passing). Phase 1 bridges this gap by:
 
-1. Adding network transport (gRPC)
-2. Implementing request/response messaging
+1. Implementing jetstream wire format messages (mandatory for production)
+2. Adding network transport using jetstream wire protocol
 3. Building the actual Raymond token routing algorithm
 4. Coordinating transfers across nodes
 5. Handling concurrent requests and failures
+
+**Critical Constraint**: All message serialization MUST use the jetstream wire format. This is a hard requirement, not an implementation detail.
 
 ---
 
@@ -72,105 +74,104 @@ Currently, we have a state machine that is **correct** (safety proven) but **not
 
 ## Work Breakdown
 
-### 1. Define Network Protocol (Proto)
+### 1. Implement Jetstream Wire Format Messages
 
-Create `proto/ownership.proto`:
+**Critical**: All messages MUST use the jetstream wire format. This is not a choice—it's a mandatory constraint for production deployment.
 
-```protobuf
-syntax = "proto3";
+Create `src/wire/mod.rs` to define ownership messages using jetstream wire format:
 
-package distributed_ownership;
-
-// RPC service for ownership coordination
-service OwnershipService {
-  // Request ownership transfer from current owner to requester
-  rpc RequestTransfer(TransferRequest) returns (TransferResponse);
-  
-  // Notify node of ownership transfer completion
-  rpc NotifyTransferred(TransferNotification) returns (TransferAck);
-  
-  // Heartbeat to detect failures
-  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+```rust
+// Messages encoded/decoded using jetstream wire format
+pub struct TransferRequest {
+    pub actor_id: ActorId,
+    pub requester_node_id: NodeId,
+    pub current_epoch: Epoch,
 }
 
-// Messages
-message TransferRequest {
-  uint64 actor_id = 1;
-  uint64 requester_node_id = 2;
-  uint64 current_epoch = 3;
+pub struct TransferResponse {
+    pub accepted: bool,
+    pub new_epoch: Epoch,
+    pub reason: Option<String>,
 }
 
-message TransferResponse {
-  bool accepted = 1;
-  uint64 new_epoch = 2;
-  string reason = 3;  // If rejected
+pub struct TransferNotification {
+    pub actor_id: ActorId,
+    pub from_node_id: NodeId,
+    pub to_node_id: NodeId,
+    pub new_epoch: Epoch,
 }
 
-message TransferNotification {
-  uint64 actor_id = 1;
-  uint64 from_node_id = 2;
-  uint64 to_node_id = 3;
-  uint64 new_epoch = 4;
+pub struct TransferAck {
+    pub acknowledged: bool,
+    pub actor_id: ActorId,
 }
 
-message TransferAck {
-  bool acknowledged = 1;
-  uint64 actor_id = 2;
+// Implement jetstream wire format serialization/deserialization
+impl JetstreamSerializable for TransferRequest {
+    fn to_bytes(&self) -> Result<Vec<u8>> { /* ... */ }
+    fn from_bytes(data: &[u8]) -> Result<Self> { /* ... */ }
 }
-
-message HeartbeatRequest {
-  uint64 node_id = 1;
-}
-
-message HeartbeatResponse {
-  bool alive = 1;
-}
+// ... similar for other message types
 ```
 
-**Effort**: 1 day
-**Key Decision**: gRPC vs plain HTTP? → gRPC for typed messages and streaming
+**Effort**: 2-3 days (depends on jetstream wire format complexity and existing codec availability)
+**Key Decision**: Understand jetstream wire format spec before starting. Codec must be 100% compatible for interop.
 
 ---
 
-### 2. Implement Transport Layer
+### 2. Implement Transport Layer (Jetstream Wire Protocol)
 
-Create `src/transport/mod.rs`:
+Create `src/transport/mod.rs` using jetstream wire format for message serialization:
 
 ```rust
 pub trait OwnershipTransport {
+    async fn send_message(
+        &self,
+        target: NodeId,
+        message: JetstreamMessage,
+    ) -> Result<(), TransportError>;
+    
+    async fn receive_message(
+        &self,
+    ) -> Result<JetstreamMessage, TransportError>;
+}
+
+pub struct JetstreamTransport {
+    node_id: NodeId,
+    connections: HashMap<NodeId, JetstreamConnection>,
+    server_handle: ServerHandle,
+}
+
+impl JetstreamTransport {
+    pub async fn new(
+        node_id: NodeId,
+        listen_addr: String,
+    ) -> Result<Self> {
+        // Start jetstream wire protocol server
+        // Create connection pool using jetstream wire format codec
+        // All message serialization uses jetstream format
+    }
+    
     async fn request_transfer(
         &self,
         target: NodeId,
-        actor_id: ActorId,
-        current_epoch: Epoch,
-    ) -> Result<Epoch, TransportError>;
-    
-    async fn notify_transfer(
-        &self,
-        target: NodeId,
-        notification: TransferNotification,
-    ) -> Result<(), TransportError>;
-}
-
-pub struct GrpcTransport {
-    clients: HashMap<NodeId, OwnershipServiceClient>,
-    server_addr: String,
-}
-
-impl GrpcTransport {
-    pub async fn new(node_id: NodeId, listen_addr: String) -> Result<Self> {
-        // Start gRPC server
-        // Create client pool for outbound connections
+        req: TransferRequest,
+    ) -> Result<TransferResponse, TransportError> {
+        let wire_msg = req.to_jetstream_bytes()?;
+        self.send_message(target, wire_msg).await?;
+        // Receive response, deserialize using jetstream codec
     }
 }
 ```
 
 **Effort**: 3-4 days
 **Key Decisions**:
+- Use jetstream wire format codec (NOT gRPC/HTTP)
 - Async/await with Tokio
-- Connection pooling for client connections
+- Connection pooling using jetstream connections
 - Timeouts for RPC calls (default: 5s)
 - Retry strategy for transient failures
+- **MUST be compatible with existing jetstream ecosystem**
 
 ---
 
@@ -354,25 +355,26 @@ async fn test_concurrent_transfer_requests() {
 
 ## Implementation Order
 
-1. **Week 1**: Protocol definition + Transport layer
-   - Proto file and code generation
-   - gRPC server/client implementation
-   - Basic message passing
+1. **Week 1**: Jetstream Wire Format + Transport Layer
+   - Understand and implement jetstream wire format codec
+   - Create message types compatible with jetstream wire protocol
+   - Build jetstream transport layer (connections, serialization, error handling)
+   - **BLOCKER**: Must have 100% correct jetstream wire format implementation
 
 2. **Week 2**: Ownership Manager
-   - State machine integration
-   - Transfer request handling
+   - State machine integration with jetstream transport
+   - Transfer request handling with wire format serialization
    - Concurrent request coordination
 
 3. **Week 3**: Routing Algorithm
-   - Token routing implementation
+   - Token routing implementation using jetstream messages
    - Request queue management
    - Tree topology management
 
 4. **Week 4**: Failure handling + Integration tests
    - Failure detection
    - Recovery procedures
-   - End-to-end testing
+   - End-to-end testing with jetstream wire format validation
 
 ---
 
@@ -412,19 +414,20 @@ Key metrics:
 
 ## Key Design Decisions
 
-### 1. Async/Await with Tokio
+### 1. Jetstream Wire Format (MANDATORY)
 
-**Decision**: Use async Tokio runtime
+**Decision**: Use jetstream wire format for all message serialization
+- **Pros**: Mandatory for production interoperability with jetstream ecosystem
+- **Cons**: Requires learning jetstream wire format specification
+- **No Alternatives**: This is a hard requirement, not optional
+- **Risk**: Wire format implementation bugs break interop—must be thoroughly tested
+
+### 2. Async/Await with Tokio
+
+**Decision**: Use async Tokio runtime with jetstream wire protocol
 - **Pros**: Efficient concurrent I/O, standard Rust ecosystem
 - **Cons**: More complex than sync code
 - **Alternative**: Sync with thread pool (simpler but less scalable)
-
-### 2. gRPC for Transport
-
-**Decision**: Use gRPC over HTTP/2
-- **Pros**: Type-safe messages, streaming, connection reuse
-- **Cons**: More setup than plain HTTP
-- **Alternative**: Plain HTTP with JSON (simpler but error-prone)
 
 ### 3. Soft State with Timeouts
 

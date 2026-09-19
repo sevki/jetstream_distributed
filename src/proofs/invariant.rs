@@ -1,7 +1,7 @@
 //! Inductive invariant: `init ==> inv`, `inv /\ next ==> inv`, and therefore
 //! `reachable ==> inv`.
 //!
-//! The individual cases are factored into three small, reusable lemmas:
+//! The individual cases are factored into four small, reusable lemmas:
 //!
 //! * [`lemma_inv_frame`]           - steps that touch neither actors nor tokens;
 //! * [`lemma_inv_epoch_bump`]      - steps that strictly advance an epoch;

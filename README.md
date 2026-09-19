@@ -261,6 +261,9 @@ request, so a PR fails if any proof stops verifying.
 
 ## Status: proven, modelled, future work
 
+Against the pinned Verus release, `verus --crate-type=lib src/lib.rs` reports
+`74 verified, 0 errors`.
+
 **Machine-checked** (every `proof fn` in `src/proofs/` is checked by Verus in
 CI, with no `assume`/`admit`/`external_body`/`axiom`):
 

@@ -184,9 +184,19 @@ pub proof fn lemma_ray_frame_inv(pre: Raymond, post: Raymond)
     let root = choose|n: NodeId| has_token(pre, n);
     assert(has_token(post, root));
     assert(ray_token_exists(post));
+    // Split exactly as `ray_maps_total` / `ray_holder_closed` are split. An
+    // `assert forall` introduces a quantified fact with the trigger written
+    // here, so proving both halves in one block would reintroduce the matching
+    // loop locally: the conclusion `post.nodes.contains(post.holder[m])` would
+    // match this block's own `post.nodes.contains(m)` trigger at `post.holder[m]`.
     assert forall|m: NodeId| #[trigger] post.nodes.contains(m) implies post.holder.contains_key(m)
-        && post.queue.contains_key(m) && post.asked.contains_key(m) && post.using.contains_key(m)
-        && post.nodes.contains(post.holder[m]) by {
+        && post.queue.contains_key(m) && post.asked.contains_key(m)
+        && post.using.contains_key(m) by {
+        assert(pre.nodes.contains(m));
+    }
+    assert forall|m: NodeId| post.nodes.contains(m) implies post.nodes.contains(
+        #[trigger] post.holder[m],
+    ) by {
         assert(pre.nodes.contains(m));
     }
     assert forall|m: NodeId| #[trigger] post.nodes.contains(m) && post.using[m] implies has_token(

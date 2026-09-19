@@ -3,11 +3,13 @@
 A formally verified distributed ownership protocol for actor runtimes, implemented in Rust with comprehensive test coverage.
 
 **Status**: Active formalization in progress. Core safety invariants are verified through:
-- **Verus formal proofs** (verus/): Proof specifications written in Verus (⚠️ not yet verified against Verus prover)
-- **Comprehensive Rust tests** (src/): 33 unit and scenario tests covering all state transitions and edge cases
+- **Verus formal proofs** (verus/): Proof specifications written in Verus (⚠️ syntax validated, proofs not yet verified against SMT solver)
+- **Comprehensive Rust tests** (src/): 33 hand-written unit and scenario tests covering all state transitions and edge cases
 - **Proof sketches** (proofs/): Detailed mathematical proofs documenting the formal reasoning
 
-⚠️ **Important**: See [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) for honest assessment of gaps (no network protocol, liveness unproven, no persistence layer)
+⚠️ **Important**: 
+- Rust tests are hand-written scenarios, NOT property-based or exhaustive state generation
+- See [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) for honest assessment of gaps (no network protocol, liveness unproven, no persistence layer, Verus not yet verified)
 
 ## High-Level Design
 
@@ -353,18 +355,20 @@ The workflow `.github/workflows/verify.yml` automatically:
 
 Tests must pass for CI to succeed.
 
-## Proof Inventory
+## Test Coverage
 
-| Claim | Module | Test(s) | Status |
-|-------|--------|---------|--------|
-| Exclusive mutable ownership | `ownership` | `exclusivity_tests` | ✅ Verified |
-| Unique current epoch | `fencing` | `test_current_epoch_extraction`, `test_epoch_monotonicity_in_transition` | ✅ Verified |
-| Stale-owner fencing | `fencing` | `test_stale_owner_cannot_mutate`, `test_transfer_with_epoch_advance` | ✅ Verified |
-| Transfer safety | `transfer` | `transfer_tests` (8 tests) | ✅ Verified |
-| Epoch monotonicity | `transfer` | `test_transition_rejects_epoch_decrease` | ✅ Verified |
-| Token uniqueness | `raymond` | `test_token_initialization`, `test_token_uniqueness` | ✅ Verified |
-| Raymond routing | `raymond` | `test_request_hop_by_hop_routing` | ✅ Verified |
-| Stale token fencing | `fencing` + `transfer` | `test_stale_token_fencing` | ✅ Verified |
+| Claim | Module | Test(s) | Evidence |
+|-------|--------|---------|----------|
+| Exclusive mutable ownership | `ownership` | `exclusivity_tests` (4 tests) | ✅ Tested via scenarios |
+| Unique current epoch | `fencing` | `test_current_epoch_extraction`, `test_epoch_monotonicity_in_transition` | ✅ Tested via scenarios |
+| Stale-owner fencing | `fencing` | `test_stale_owner_cannot_mutate`, `test_transfer_with_epoch_advance` | ✅ Tested via scenarios |
+| Transfer safety | `transfer` | `transfer_tests` (8 tests) | ✅ Tested via scenarios |
+| Epoch monotonicity | `transfer` | `test_transition_rejects_epoch_decrease` | ✅ Tested via scenarios |
+| Token uniqueness | `raymond` | `test_token_initialization`, `test_token_uniqueness` | ✅ Tested via scenarios |
+| Raymond routing | `raymond` | `test_request_hop_by_hop_routing` | ✅ Tested via scenarios |
+| Stale token fencing | `fencing` + `transfer` | `test_stale_token_fencing` | ✅ Tested via scenarios |
+
+**Note**: These tests provide good coverage of critical cases but are not exhaustive. Formal verification via Verus (Phase 0) is required for machine-checked proofs.
 
 ## Engineering Decisions
 
@@ -402,15 +406,19 @@ Each phase:
 
 ### Unit and Scenario Tests for Verification
 
-Each test sets up a specific scenario and verifies a critical property. This approach:
-- Covers important state combinations and transitions
-- Uses assertion-based reasoning (equivalent to a `lemma` in proof assistants)
+Each test is a hand-written scenario that exercises a specific property. This approach:
+- Covers important state combinations and transitions (not exhaustive)
+- Uses assertion-based reasoning to verify specific cases
 - Tests both positive cases (valid transitions) and negative cases (rejection of invalid transitions)
 
-Example: `test_stale_owner_cannot_mutate` verifies:
+**Important**: These are targeted scenarios, NOT property-based tests or exhaustive state generation. They provide confidence through coverage, but do not constitute a formal proof.
+
+Example: `test_stale_owner_cannot_mutate` tests:
 ```
-Property: ∀ state, node, epoch.
-    is_stale_epoch(state, epoch) → ¬may_mutate(state, node, epoch)
+Scenario: If state advances to a new epoch, the old owner cannot mutate
+  Initial state: Owned { owner: 1, epoch: 41 }
+  After transition: Owned { owner: 2, epoch: 42 }
+  Check: may_mutate(new_state, 1, 41) == false
 ```
 
 ### Why Allow Stale Tokens?

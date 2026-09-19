@@ -1,0 +1,230 @@
+//! Raymond's distributed mutual-exclusion algorithm, as a *routing* layer.
+//!
+//! This module is deliberately independent of [`crate::ownership`]: Raymond
+//! decides **where the token is and how requests find it**, not **who is
+//! allowed to mutate**. The two are glued together by the `couples` predicate
+//! at the bottom of this file, and the glue is what makes it impossible for a
+//! routing decision to manufacture authority.
+//!
+//! State per node:
+//!
+//! * `holder[n]` - the next hop towards the token. `holder[n] == n` means `n`
+//!   currently possesses the token.
+//! * `queue[n]`  - the request queue: nodes (or `n` itself) waiting behind `n`.
+//! * `asked[n]`  - whether `n` has an outstanding request towards `holder[n]`.
+//! * `using[n]`  - whether `n` is inside the critical section.
+//!
+//! Requests travel hop-by-hop towards the token and the token travels back
+//! along the reverse of the request path:
+//!
+//! ```text
+//! request:  D -> B -> A -> C[token]
+//! token:    C -> A -> B -> D
+//! ```
+//!
+//! Only **safety** is modelled. Raymond's liveness (every request is eventually
+//! served) requires FIFO, reliable links and no crashes, none of which this
+//! model assumes; see `README.md`.
+#![allow(unused_imports)]
+
+use vstd::prelude::*;
+
+use crate::fencing::*;
+use crate::model::*;
+use crate::ownership::*;
+
+verus! {
+
+/// The routing state of the whole cluster.
+pub struct Raymond {
+    pub nodes: Set<NodeId>,
+    pub holder: Map<NodeId, NodeId>,
+    pub queue: Map<NodeId, Seq<NodeId>>,
+    pub asked: Map<NodeId, bool>,
+    pub using: Map<NodeId, bool>,
+}
+
+/// `n` currently possesses the token.
+pub open spec fn has_token(r: Raymond, n: NodeId) -> bool {
+    r.nodes.contains(n) && r.holder.contains_key(n) && r.holder[n] == n
+}
+
+/// Every node has an entry in every map, and every holder pointer points at a
+/// real node.
+pub open spec fn ray_wf(r: Raymond) -> bool {
+    forall|n: NodeId|
+        #[trigger] r.nodes.contains(n) ==> r.holder.contains_key(n) && r.queue.contains_key(n)
+            && r.asked.contains_key(n) && r.using.contains_key(n) && r.nodes.contains(r.holder[n])
+}
+
+/// **At most one valid token.**
+pub open spec fn ray_unique_token(r: Raymond) -> bool {
+    forall|n: NodeId, m: NodeId|
+        #![trigger has_token(r, n), has_token(r, m)]
+        has_token(r, n) && has_token(r, m) ==> n == m
+}
+
+/// Only the token holder can be inside the critical section.
+pub open spec fn ray_using_implies_token(r: Raymond) -> bool {
+    forall|n: NodeId| #[trigger] r.nodes.contains(n) && r.using[n] ==> has_token(r, n)
+}
+
+/// The Raymond safety invariant.
+pub open spec fn ray_inv(r: Raymond) -> bool {
+    &&& ray_wf(r)
+    &&& ray_unique_token(r)
+    &&& ray_using_implies_token(r)
+}
+
+// ---------------------------------------------------------------------------
+// Transitions
+// ---------------------------------------------------------------------------
+
+/// `n` wants the token: it appends itself to its own queue.
+pub open spec fn ray_request_cs(pre: Raymond, post: Raymond, n: NodeId) -> bool {
+    &&& pre.nodes.contains(n)
+    &&& post.queue == pre.queue.insert(n, pre.queue[n].push(n))
+    &&& post.holder == pre.holder
+    &&& post.asked == pre.asked
+    &&& post.using == pre.using
+    &&& post.nodes == pre.nodes
+}
+
+/// `n` forwards a request one hop towards the token.
+pub open spec fn ray_make_request(pre: Raymond, post: Raymond, n: NodeId) -> bool {
+    &&& pre.nodes.contains(n)
+    &&& pre.holder[n] != n
+    &&& pre.queue[n].len() > 0
+    &&& !pre.asked[n]
+    &&& post.asked == pre.asked.insert(n, true)
+    &&& post.holder == pre.holder
+    &&& post.queue == pre.queue
+    &&& post.using == pre.using
+    &&& post.nodes == pre.nodes
+}
+
+/// `at` receives a request that `from` routed to it.
+///
+/// The guard checks only the routing topology (`from`'s next hop is `at`), so
+/// **duplicated and reordered requests are explicitly permitted**: this step may
+/// fire any number of times for the same `(at, from)` pair, in any order. All
+/// that happens is that `at`'s queue picks up extra entries, which costs
+/// fairness, not safety.
+pub open spec fn ray_receive_request(pre: Raymond, post: Raymond, at: NodeId, from: NodeId) -> bool {
+    &&& pre.nodes.contains(at)
+    &&& pre.nodes.contains(from)
+    &&& pre.holder[from] == at
+    &&& pre.asked[from]
+    &&& post.queue == pre.queue.insert(at, pre.queue[at].push(from))
+    &&& post.holder == pre.holder
+    &&& post.asked == pre.asked
+    &&& post.using == pre.using
+    &&& post.nodes == pre.nodes
+}
+
+/// The token holder hands the token to the head of its queue.
+///
+/// This is the only transition that moves the token. It flips exactly two
+/// holder pointers: `holder[n] := head` and `holder[head] := head`.
+pub open spec fn ray_assign_privilege(
+    pre: Raymond,
+    post: Raymond,
+    n: NodeId,
+    head: NodeId,
+) -> bool {
+    &&& has_token(pre, n)
+    &&& !pre.using[n]
+    &&& pre.queue[n].len() > 0
+    &&& pre.queue[n][0] == head
+    &&& head != n
+    &&& pre.nodes.contains(head)
+    &&& post.holder == pre.holder.insert(n, head).insert(head, head)
+    &&& post.queue == pre.queue.insert(n, pre.queue[n].drop_first())
+    &&& post.asked == pre.asked.insert(n, false)
+    &&& post.using == pre.using
+    &&& post.nodes == pre.nodes
+}
+
+/// The token holder is itself at the head of its queue, so it enters the
+/// critical section.
+pub open spec fn ray_enter_cs(pre: Raymond, post: Raymond, n: NodeId) -> bool {
+    &&& has_token(pre, n)
+    &&& !pre.using[n]
+    &&& pre.queue[n].len() > 0
+    &&& pre.queue[n][0] == n
+    &&& post.using == pre.using.insert(n, true)
+    &&& post.queue == pre.queue.insert(n, pre.queue[n].drop_first())
+    &&& post.holder == pre.holder
+    &&& post.asked == pre.asked
+    &&& post.nodes == pre.nodes
+}
+
+/// Leaving the critical section.
+pub open spec fn ray_exit_cs(pre: Raymond, post: Raymond, n: NodeId) -> bool {
+    &&& pre.nodes.contains(n)
+    &&& post.using == pre.using.insert(n, false)
+    &&& post.holder == pre.holder
+    &&& post.queue == pre.queue
+    &&& post.asked == pre.asked
+    &&& post.nodes == pre.nodes
+}
+
+/// The labelled Raymond transitions.
+pub enum RayStep {
+    RequestCs { node: NodeId },
+    MakeRequest { node: NodeId },
+    ReceiveRequest { at: NodeId, from: NodeId },
+    AssignPrivilege { node: NodeId, head: NodeId },
+    EnterCs { node: NodeId },
+    ExitCs { node: NodeId },
+}
+
+pub open spec fn ray_step(pre: Raymond, post: Raymond, s: RayStep) -> bool {
+    match s {
+        RayStep::RequestCs { node } => ray_request_cs(pre, post, node),
+        RayStep::MakeRequest { node } => ray_make_request(pre, post, node),
+        RayStep::ReceiveRequest { at, from } => ray_receive_request(pre, post, at, from),
+        RayStep::AssignPrivilege { node, head } => ray_assign_privilege(pre, post, node, head),
+        RayStep::EnterCs { node } => ray_enter_cs(pre, post, node),
+        RayStep::ExitCs { node } => ray_exit_cs(pre, post, node),
+    }
+}
+
+/// A step that only moves requests around, never the token.
+pub open spec fn is_routing_step(s: RayStep) -> bool {
+    match s {
+        RayStep::RequestCs { node: _ } => true,
+        RayStep::MakeRequest { node: _ } => true,
+        RayStep::ReceiveRequest { at: _, from: _ } => true,
+        RayStep::AssignPrivilege { node: _, head: _ } => false,
+        RayStep::EnterCs { node: _ } => true,
+        RayStep::ExitCs { node: _ } => false,
+    }
+}
+
+/// Initial routing state: exactly one node holds the token, no requests are
+/// outstanding, nobody is in the critical section.
+pub open spec fn ray_init(r: Raymond, root: NodeId) -> bool {
+    &&& ray_wf(r)
+    &&& r.nodes.contains(root)
+    &&& r.holder[root] == root
+    &&& (forall|n: NodeId| #[trigger] r.nodes.contains(n) && n != root ==> r.holder[n] != n)
+    &&& (forall|n: NodeId|
+        #[trigger] r.nodes.contains(n) ==> r.queue[n].len() == 0 && !r.asked[n] && !r.using[n])
+}
+
+// ---------------------------------------------------------------------------
+// Coupling to the ownership layer
+// ---------------------------------------------------------------------------
+
+/// The glue between the two layers: **anybody with mutable authority over the
+/// actor must be the node that currently possesses the Raymond token.**
+///
+/// Note the direction. The routing layer does not *grant* authority; it only
+/// constrains who could possibly have it. Authority still comes exclusively
+/// from the ownership state and its epoch.
+pub open spec fn couples(r: Raymond, s: OwnershipState) -> bool {
+    forall|n: NodeId, e: Epoch| #[trigger] may_mutate(s, n, e) ==> has_token(r, n)
+}
+
+} // verus!

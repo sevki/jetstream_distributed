@@ -1,0 +1,19 @@
+[package]
+name = "distributed-ownership"
+version = "0.1.0"
+edition = "2021"
+description = "A formally verified (Verus) model of distributed exclusive ownership with epoch fencing"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+name = "distributed_ownership"
+path = "src/lib.rs"
+
+# `vstd` is the Verus standard library. This is the version that ships with
+# Verus release 0.2026.09.13.671956e (per the cargo-verus toolchain manifest).
+# It is only used when driving verification through `cargo verus`; the primary
+# CI entry point (`verus --crate-type=lib src/lib.rs`) uses the prebuilt vstd
+# inside the Verus release archive instead.
+[dependencies]
+vstd = "=0.0.0-2026-09-06-0133"

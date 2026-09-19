@@ -1,0 +1,53 @@
+name: verify
+
+on:
+  push:
+  pull_request:
+
+# A PR fails if any proof in this repository stops verifying.
+jobs:
+  verus:
+    name: Verus proof check
+    runs-on: ubuntu-24.04
+    env:
+      # Pinned Verus release. The Rust toolchain below must be the one this
+      # release was built against (see rust-toolchain.toml).
+      VERUS_VERSION: 0.2026.09.13.671956e
+      VERUS_TOOLCHAIN: 1.98.1-x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Rust toolchain Verus was built against
+        run: |
+          rustup toolchain install "$VERUS_TOOLCHAIN" \
+            --component rustc-dev,llvm-tools,rust-std,cargo,rustfmt
+          rustup component list --toolchain "$VERUS_TOOLCHAIN" --installed
+
+      - name: Cache the Verus release archive
+        id: verus-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/verus
+          key: verus-${{ env.VERUS_VERSION }}-x86-linux
+
+      - name: Download Verus
+        if: steps.verus-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euxo pipefail
+          url="https://github.com/verus-lang/verus/releases/download/release%2F${VERUS_VERSION}/verus-${VERUS_VERSION}-x86-linux.zip"
+          curl --fail --location --silent --show-error -o /tmp/verus.zip "$url"
+          unzip -q /tmp/verus.zip -d /tmp/verus-unpacked
+          mv /tmp/verus-unpacked/verus-x86-linux "$HOME/verus"
+          chmod +x "$HOME/verus/verus" "$HOME/verus/rust_verify" "$HOME/verus/z3" "$HOME/verus/cargo-verus"
+
+      - name: Put Verus on PATH
+        run: echo "$HOME/verus" >> "$GITHUB_PATH"
+
+      - name: Report Verus version
+        run: verus --version
+
+      - name: Verify all modules
+        run: verus --crate-type=lib src/lib.rs
+
+      - name: Verify with per-function results
+        run: verus --crate-type=lib src/lib.rs --triggers-silent --time

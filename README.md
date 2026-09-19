@@ -430,12 +430,22 @@ would not have been an escape hatch — it is a solver budget and cannot admit a
 unproven fact — but a proof that needs a raised ceiling is usually a proof that
 wants splitting.)
 
-The pattern that did the most work is `routing_one_hop`: chaining three
-`AssignPrivilege` steps inline left the solver unfolding `has_token` through six
-nested `Map::insert`s while `ray_wf` and `ray_unique_token` quantified over
-every node. Proving one hop against an *abstract* state, and exporting only the
-queue facts the next hop needs, keeps the holder map out of the caller
-entirely.
+Splitting also surfaced a genuine defect in the specification. Reduced to a
+single `AssignPrivilege` step, `routing_one_hop` *still* exceeded the solver's
+limit — a cost that scaled with nothing in the proof. `verus --profile` named
+the cause: `ray_wf` was a **matching loop**. Under the trigger
+`r.nodes.contains(n)`, its conclusion `r.nodes.contains(r.holder[n])` matched
+that same trigger at `r.holder[n]`, and so on without bound — 171,941
+instantiations of one quantifier, 40% of 419,801 in a single proof.
+
+`ray_wf` is now `ray_maps_total` (entries exist, triggered on
+`r.nodes.contains(n)`) and `ray_holder_closed` (pointers stay in the cluster,
+triggered on `r.holder[n]`). The second trigger fires only for holder pointers
+some term already mentions, and its conclusion creates no new `holder[_]` term,
+so nothing regenerates it. This mattered beyond speed: a matching loop makes
+proofs pass or fail according to how many instantiations the solver burns before
+it stumbles on the argument, which is precisely the kind of fragility a proof
+suite should not have.
 
 CI greps `src/` for the real escape hatches and fails the build if any appear.
 Everything the proofs rely on that is not derived is a modelled transition or an

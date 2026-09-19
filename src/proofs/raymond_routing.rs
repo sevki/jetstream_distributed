@@ -199,12 +199,16 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
 
 /// One hop of the token, packaged so that callers never see the holder map.
 ///
-/// This is the lever that makes the routing scenario cheap. `AssignPrivilege`
-/// rewrites two holder pointers, so chaining three of them inline leaves the
-/// solver unfolding `has_token` through six nested `Map::insert`s while
-/// `ray_wf` and `ray_unique_token` quantify over every node. Proving the hop
-/// once, against an *abstract* `r`, and exporting only what the next hop needs
-/// keeps `holder` out of the caller entirely.
+/// `AssignPrivilege` rewrites two holder pointers, so chaining three of them
+/// inline leaves the solver unfolding `has_token` through six nested
+/// `Map::insert`s. Proving the hop once, against an *abstract* `r`, and
+/// exporting only the queue facts the next hop needs keeps `holder` out of the
+/// caller entirely.
+///
+/// This function is also what exposed the matching loop documented on
+/// [`crate::raymond::ray_holder_closed`]: reduced to a single transition, it
+/// still exceeded the solver's resource limit, which is how a cost that scales
+/// with nothing in the proof became visible.
 pub proof fn routing_one_hop(r: Raymond, n: NodeId, head: NodeId) -> (r2: Raymond)
     requires
         ray_inv(r),

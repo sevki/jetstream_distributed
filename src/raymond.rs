@@ -65,12 +65,37 @@ pub open spec fn has_token(r: Raymond, n: NodeId) -> bool {
     r.nodes.contains(n) && r.holder.contains_key(n) && r.holder[n] == n
 }
 
+/// Every node has an entry in every per-node map.
+pub open spec fn ray_maps_total(r: Raymond) -> bool {
+    forall|n: NodeId|
+        #[trigger] r.nodes.contains(n) ==> r.holder.contains_key(n) && r.queue.contains_key(n)
+            && r.asked.contains_key(n) && r.using.contains_key(n)
+}
+
+/// Every holder pointer points at a real node.
+///
+/// This clause used to sit inside `ray_maps_total`, under the same
+/// `r.nodes.contains(n)` trigger, and that combination was a **matching loop**:
+/// instantiating the quantifier at `n` produced the term
+/// `r.nodes.contains(r.holder[n])`, which matched the trigger again at
+/// `r.holder[n]`, producing `r.nodes.contains(r.holder[r.holder[n]])`, without
+/// bound. `verus --profile` measured 171,941 instantiations of that one
+/// quantifier - 40% of 419,801 in a single proof - which is what pushed
+/// `routing_one_hop` past the solver's resource limit.
+///
+/// Triggering on `r.holder[n]` instead breaks the loop: the quantifier fires
+/// only for holder pointers that some term already mentions, and its conclusion
+/// is a `nodes.contains` fact, which creates no new `holder[_]` term to fire it
+/// again.
+pub open spec fn ray_holder_closed(r: Raymond) -> bool {
+    forall|n: NodeId| r.nodes.contains(n) ==> r.nodes.contains(#[trigger] r.holder[n])
+}
+
 /// Every node has an entry in every map, and every holder pointer points at a
 /// real node.
 pub open spec fn ray_wf(r: Raymond) -> bool {
-    forall|n: NodeId|
-        #[trigger] r.nodes.contains(n) ==> r.holder.contains_key(n) && r.queue.contains_key(n)
-            && r.asked.contains_key(n) && r.using.contains_key(n) && r.nodes.contains(r.holder[n])
+    &&& ray_maps_total(r)
+    &&& ray_holder_closed(r)
 }
 
 /// **At most one valid token.**

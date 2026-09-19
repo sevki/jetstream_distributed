@@ -256,8 +256,13 @@ pub proof fn lemma_assign_wf(pre: Raymond, post: Raymond, n: NodeId, head: NodeI
 {
     lemma_assign_holder_pointers(pre, post, n, head);
     assert forall|m: NodeId| #[trigger] post.nodes.contains(m) implies post.holder.contains_key(m)
-        && post.queue.contains_key(m) && post.asked.contains_key(m) && post.using.contains_key(m)
-        && post.nodes.contains(post.holder[m]) by {
+        && post.queue.contains_key(m) && post.asked.contains_key(m)
+        && post.using.contains_key(m) by {
+        assert(pre.nodes.contains(m));
+    }
+    assert forall|m: NodeId| post.nodes.contains(m) implies post.nodes.contains(
+        #[trigger] post.holder[m],
+    ) by {
         assert(pre.nodes.contains(m));
         if m == head || m == n {
             assert(post.holder[m] == head);

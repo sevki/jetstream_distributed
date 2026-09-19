@@ -1,8 +1,8 @@
 # Distributed Ownership Protocol with Formal Verification
 
-A formally verified distributed ownership protocol for actor runtimes, implemented in Rust and proven correct with property-based testing.
+A formally verified distributed ownership protocol for actor runtimes, implemented in Rust with comprehensive test coverage.
 
-**Status**: Proof-of-concept verification infrastructure. Core safety invariants are model-checked via comprehensive test suites. This is not yet a complete Verus-verified formalization, but provides a working foundation for formal verification of distributed ownership semantics.
+**Status**: Proof-of-concept verification infrastructure. Core safety invariants are verified through comprehensive unit and scenario tests. This is not yet a complete Verus-verified formalization, but provides a working foundation for formal verification of distributed ownership semantics.
 
 ## High-Level Design
 
@@ -341,16 +341,16 @@ A full Verus formalization would require:
 
 **Next Steps**: Integrate Verus gradually, starting with `ownership.rs`.
 
-### Why Property Tests Over Unit Tests?
+### Unit and Scenario Tests for Verification
 
-The proofs are "test suites" that exhaustively cover all state combinations and transitions. Each test:
-- Sets up a specific scenario
-- Verifies a mathematical property
+Each test sets up a specific scenario and verifies a critical property. This approach:
+- Covers important state combinations and transitions
 - Uses assertion-based reasoning (equivalent to a `lemma` in proof assistants)
+- Tests both positive cases (valid transitions) and negative cases (rejection of invalid transitions)
 
-Example: `test_stale_owner_cannot_mutate` is equivalent to the lemma:
+Example: `test_stale_owner_cannot_mutate` verifies:
 ```
-Lemma: ∀ state, node, epoch.
+Property: ∀ state, node, epoch.
     is_stale_epoch(state, epoch) → ¬may_mutate(state, node, epoch)
 ```
 

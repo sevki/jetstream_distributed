@@ -62,11 +62,9 @@ jobs:
 
       - name: Check formatting
         run: cargo fmt -- --check
-        continue-on-error: true
 
       - name: Run clippy lints
         run: cargo clippy -- -D warnings
-        continue-on-error: true
 
   docs:
     name: Check Documentation
@@ -81,4 +79,3 @@ jobs:
         run: cargo doc --no-deps --document-private-items
         env:
           RUSTDOCFLAGS: -D warnings
-        continue-on-error: true

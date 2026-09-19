@@ -17,7 +17,7 @@ pub struct TokenRequest {
 
 #[derive(Clone)]
 pub struct RaymondState {
-    pub token: Option<RaymondToken>,
+    pub tokens: HashMap<ActorId, RaymondToken>,
     pub request_queue: HashMap<ActorId, VecDeque<TokenRequest>>,
     pub holder: HashMap<ActorId, NodeId>,
     pub asked: HashMap<ActorId, bool>,
@@ -27,7 +27,7 @@ pub struct RaymondState {
 impl RaymondState {
     pub fn new() -> Self {
         RaymondState {
-            token: None,
+            tokens: HashMap::new(),
             request_queue: HashMap::new(),
             holder: HashMap::new(),
             asked: HashMap::new(),
@@ -36,11 +36,15 @@ impl RaymondState {
     }
 
     pub fn initialize_token(&mut self, actor_id: ActorId, initial_holder: NodeId, epoch: Epoch) {
-        self.token = Some(RaymondToken {
+        if initial_holder == 0 || epoch == 0 {
+            return;
+        }
+        let token = RaymondToken {
             holder: initial_holder,
             epoch,
             actor_id,
-        });
+        };
+        self.tokens.insert(actor_id, token);
         self.holder.insert(actor_id, initial_holder);
     }
 
@@ -73,8 +77,11 @@ impl RaymondState {
     }
 
     pub fn transfer_token(&mut self, actor_id: ActorId, new_holder: NodeId, new_epoch: Epoch) {
-        if let Some(token) = &mut self.token {
-            if token.actor_id == actor_id {
+        if new_holder == 0 || new_epoch == 0 {
+            return;
+        }
+        if let Some(token) = self.tokens.get_mut(&actor_id) {
+            if new_epoch > token.epoch {
                 token.holder = new_holder;
                 token.epoch = new_epoch;
                 self.holder.insert(actor_id, new_holder);
@@ -86,20 +93,20 @@ impl RaymondState {
         self.outstanding_requests.insert(actor_id, requests);
     }
 
-    pub fn token_exists(&self) -> bool {
-        self.token.is_some()
+    pub fn token_exists(&self, actor_id: ActorId) -> bool {
+        self.tokens.contains_key(&actor_id)
     }
 
-    pub fn is_valid_single_token(&self) -> bool {
-        match &self.token {
+    pub fn is_valid_single_token(&self, actor_id: ActorId) -> bool {
+        match self.tokens.get(&actor_id) {
             Some(token) => {
                 let holder_is_consistent = self
                     .holder
-                    .get(&token.actor_id)
-                    .map(|h| *h == token.holder)
+                    .get(&actor_id)
+                    .map(|h| *h == token.holder && token.holder != 0)
                     .unwrap_or(false);
 
-                holder_is_consistent
+                holder_is_consistent && token.epoch > 0
             }
             None => false,
         }
@@ -116,16 +123,12 @@ pub fn request_routing_preserves_token_uniqueness(
     state: &RaymondState,
     actor_id: ActorId,
 ) -> bool {
-    if !state.is_valid_single_token() {
+    if !state.is_valid_single_token(actor_id) {
         return false;
     }
 
-    match &state.token {
-        Some(token) => {
-            if token.actor_id != actor_id {
-                return true;
-            }
-
+    match state.tokens.get(&actor_id) {
+        Some(_token) => {
             let holder = state.holder.get(&actor_id);
             holder.is_some()
         }
@@ -140,21 +143,19 @@ pub fn token_transfer_safety(
     new_holder: NodeId,
     new_epoch: Epoch,
 ) -> bool {
-    if !state_before.is_valid_single_token() || !state_after.is_valid_single_token() {
+    if !state_before.is_valid_single_token(actor_id) || !state_after.is_valid_single_token(actor_id) {
         return false;
     }
 
-    let before_holder = state_before.holder.get(&actor_id);
-    let after_holder = state_after.holder.get(&actor_id);
+    let before_token = state_before.tokens.get(&actor_id);
+    let after_token = state_after.tokens.get(&actor_id);
 
-    match (before_holder, after_holder) {
-        (Some(_), Some(&new_h)) => {
-            new_h == new_holder
-                && state_after
-                    .token
-                    .as_ref()
-                    .map(|t| t.holder == new_h && t.epoch == new_epoch && t.actor_id == actor_id)
-                    .unwrap_or(false)
+    match (before_token, after_token) {
+        (Some(before_t), Some(after_t)) => {
+            new_epoch > before_t.epoch
+                && after_t.holder == new_holder
+                && after_t.epoch == new_epoch
+                && after_t.actor_id == actor_id
         }
         _ => false,
     }
@@ -167,24 +168,32 @@ mod raymond_tests {
     #[test]
     fn test_token_initialization() {
         let mut state = RaymondState::new();
+        state.initialize_token(1, 2, 1);
+
+        assert!(state.token_exists(1));
+        assert!(state.is_valid_single_token(1));
+        assert_eq!(state.holder.get(&1), Some(&2));
+    }
+
+    #[test]
+    fn test_token_initialization_rejects_invalid_holder() {
+        let mut state = RaymondState::new();
         state.initialize_token(1, 0, 1);
 
-        assert!(state.token_exists());
-        assert!(state.is_valid_single_token());
-        assert_eq!(state.holder.get(&1), Some(&0));
+        assert!(!state.token_exists(1));
     }
 
     #[test]
     fn test_token_uniqueness() {
         let mut state = RaymondState::new();
-        state.initialize_token(1, 0, 1);
+        state.initialize_token(1, 2, 1);
         assert!(request_routing_preserves_token_uniqueness(&state, 1));
     }
 
     #[test]
     fn test_request_queue() {
         let mut state = RaymondState::new();
-        state.initialize_token(1, 0, 1);
+        state.initialize_token(1, 2, 1);
 
         let req1 = TokenRequest {
             requester: 1,
@@ -214,30 +223,40 @@ mod raymond_tests {
     #[test]
     fn test_token_transfer() {
         let mut state = RaymondState::new();
-        state.initialize_token(1, 0, 1);
+        state.initialize_token(1, 2, 1);
 
-        state.transfer_token(1, 1, 2);
+        state.transfer_token(1, 3, 2);
 
-        assert_eq!(state.holder.get(&1), Some(&1));
-        assert_eq!(state.token.as_ref().unwrap().holder, 1);
-        assert_eq!(state.token.as_ref().unwrap().epoch, 2);
+        assert_eq!(state.holder.get(&1), Some(&3));
+        assert_eq!(state.tokens.get(&1).map(|t| t.holder), Some(3));
+        assert_eq!(state.tokens.get(&1).map(|t| t.epoch), Some(2));
+    }
+
+    #[test]
+    fn test_token_transfer_rejects_non_increasing_epoch() {
+        let mut state = RaymondState::new();
+        state.initialize_token(1, 2, 5);
+
+        state.transfer_token(1, 3, 4);
+
+        assert_eq!(state.tokens.get(&1).map(|t| t.epoch), Some(5));
     }
 
     #[test]
     fn test_token_transfer_safety() {
         let mut state_before = RaymondState::new();
-        state_before.initialize_token(1, 0, 1);
+        state_before.initialize_token(1, 2, 1);
 
         let mut state_after = state_before.clone();
-        state_after.transfer_token(1, 1, 2);
+        state_after.transfer_token(1, 3, 2);
 
-        assert!(token_transfer_safety(&state_before, &state_after, 1, 1, 2));
+        assert!(token_transfer_safety(&state_before, &state_after, 1, 3, 2));
     }
 
     #[test]
     fn test_asked_flag() {
         let mut state = RaymondState::new();
-        state.initialize_token(1, 0, 1);
+        state.initialize_token(1, 2, 1);
 
         assert!(!state.is_asked(1));
         state.set_asked(1, true);
@@ -247,7 +266,7 @@ mod raymond_tests {
     #[test]
     fn test_outstanding_requests() {
         let mut state = RaymondState::new();
-        state.initialize_token(1, 0, 1);
+        state.initialize_token(1, 2, 1);
 
         let req = TokenRequest {
             requester: 1,
@@ -288,18 +307,19 @@ mod raymond_tests {
     #[test]
     fn test_multiple_actors_separate_tokens() {
         let mut state = RaymondState::new();
-        state.initialize_token(1, 0, 1);
+        state.initialize_token(1, 2, 1);
+        state.initialize_token(2, 5, 1);
 
-        state.holder.insert(2, 5);
-
-        assert_eq!(state.holder.get(&1), Some(&0));
+        assert_eq!(state.holder.get(&1), Some(&2));
         assert_eq!(state.holder.get(&2), Some(&5));
+        assert!(state.token_exists(1));
+        assert!(state.token_exists(2));
     }
 
     #[test]
     fn test_duplicate_requests_do_not_create_second_token() {
         let mut state = RaymondState::new();
-        state.initialize_token(1, 0, 1);
+        state.initialize_token(1, 2, 1);
 
         let req = TokenRequest {
             requester: 1,
@@ -311,6 +331,6 @@ mod raymond_tests {
         state.enqueue_request(1, req.clone());
 
         assert!(request_routing_preserves_token_uniqueness(&state, 1));
-        assert!(state.token_exists());
+        assert!(state.token_exists(1));
     }
 }

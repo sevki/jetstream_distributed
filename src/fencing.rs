@@ -3,13 +3,9 @@ use crate::ownership::may_mutate;
 
 pub fn valid_fence(state: &OwnershipState, epoch: Epoch) -> bool {
     match state {
-        OwnershipState::Owned { epoch: e, .. } => epoch <= *e,
-        OwnershipState::Transferring {
-            old_epoch,
-            new_epoch,
-            ..
-        } => epoch <= *new_epoch && epoch != *old_epoch,
-        OwnershipState::Unowned { epoch: e, .. } => epoch <= *e,
+        OwnershipState::Owned { epoch: e, .. } => epoch == *e,
+        OwnershipState::Transferring { new_epoch, .. } => epoch == *new_epoch,
+        OwnershipState::Unowned { epoch: e, .. } => epoch == *e,
     }
 }
 
@@ -68,8 +64,8 @@ mod fencing_tests {
             epoch: 42,
         };
 
-        assert!(valid_fence(&state, 0));
-        assert!(valid_fence(&state, 21));
+        assert!(!valid_fence(&state, 0));
+        assert!(!valid_fence(&state, 21));
         assert!(valid_fence(&state, 42));
         assert!(!valid_fence(&state, 43));
     }
@@ -83,9 +79,9 @@ mod fencing_tests {
             new_epoch: 42,
         };
 
-        assert!(valid_fence(&state, 0));
-        assert!(valid_fence(&state, 40));
-        assert!(!valid_fence(&state, 41)); // old_epoch excluded
+        assert!(!valid_fence(&state, 0));
+        assert!(!valid_fence(&state, 40));
+        assert!(!valid_fence(&state, 41));
         assert!(valid_fence(&state, 42));
         assert!(!valid_fence(&state, 43));
     }

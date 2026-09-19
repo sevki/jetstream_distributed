@@ -138,10 +138,31 @@ pub fn apply_transition(
     }
 
     if let Some(current_state) = system.get_actor_state(actor_id) {
-        let current_epoch = current_epoch(current_state);
+        let curr_epoch = current_epoch(current_state);
         let new_epoch = new_state.current_epoch();
-        if new_epoch < current_epoch {
+
+        if new_epoch < curr_epoch {
             return Err(TransitionError::EpochNotIncreasing);
+        }
+
+        let is_legal_transition = match (current_state, &new_state) {
+            (OwnershipState::Owned { owner: from, epoch: _ }, OwnershipState::Transferring { from: tf, old_epoch, new_epoch: ne, .. }) => {
+                *from == *tf && curr_epoch == *old_epoch && *ne > *old_epoch
+            }
+            (OwnershipState::Transferring { from: _, to, old_epoch: _, new_epoch: ne }, OwnershipState::Unowned { epoch: ue, intended_owner }) => {
+                *ue == *ne && *intended_owner == *to
+            }
+            (OwnershipState::Unowned { epoch: ue, intended_owner }, OwnershipState::Owned { owner, epoch: oe }) => {
+                *owner == *intended_owner && *oe == *ue
+            }
+            (OwnershipState::Owned { owner: old_o, epoch: old_e }, OwnershipState::Owned { owner: new_o, epoch: new_e }) => {
+                *old_o != *new_o && *new_e > *old_e
+            }
+            _ => false,
+        };
+
+        if !is_legal_transition {
+            return Err(TransitionError::InvalidSourceState);
         }
     }
 

@@ -419,6 +419,7 @@ pub proof fn theorem_composed_admits_critical_section(pre: Composed, post: Compo
         ray_enter_cs(pre.ray, post.ray, n),
         post.own == pre.own,
         post.actor == pre.actor,
+        post.seized == pre.seized,
     ensures
         composed_step(pre, post, ComposedStep::Ray { ray_step: RayStep::EnterCs { node: n } }),
         composed_inv(post),
@@ -438,6 +439,7 @@ pub proof fn theorem_composed_admits_critical_section_exit(
         ray_exit_cs(pre.ray, post.ray, n),
         post.own == pre.own,
         post.actor == pre.actor,
+        post.seized == pre.seized,
     ensures
         composed_step(pre, post, ComposedStep::Ray { ray_step: RayStep::ExitCs { node: n } }),
         composed_inv(post),

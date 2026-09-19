@@ -61,7 +61,12 @@ impl ActorSystem {
         }
     }
 
-    pub fn create_actor(&mut self, actor_id: ActorId, initial_owner: NodeId, epoch: Epoch) -> Result<(), &'static str> {
+    pub fn create_actor(
+        &mut self,
+        actor_id: ActorId,
+        initial_owner: NodeId,
+        epoch: Epoch,
+    ) -> Result<(), &'static str> {
         if self.actors.contains_key(&actor_id) {
             return Err("actor already exists");
         }

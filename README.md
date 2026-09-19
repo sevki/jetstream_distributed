@@ -146,6 +146,17 @@ verifying, the build fails.
 | 6b | Stale physical tokens confer no authority | `proofs::tokens::theorem_stale_token_has_no_authority` | none |
 | 6c | No token is ever minted for a future epoch | `proofs::tokens::theorem_no_future_tokens` | reachability |
 | E | The runtime `u64` fence check returns exactly the model's verdict, and rejects any superseded epoch | `exec::FenceGuard::accepts`, `exec::FenceGuard::rejects_stale` | the guard is the node's own record of one actor; it is query-only, so nothing here can change who owns what |
+| P1 | **Issued tokens never disappear** — no crash, partition or recovery retracts a capability, which is why stale tokens must be fenced rather than revoked | `proofs::properties::theorem_issued_monotone` | none |
+| P2 | **Sent messages never disappear** — the fact that makes duplication, reordering and unbounded delay free in the model | `proofs::properties::theorem_network_monotone` | none |
+| P3 | **The actor population is constant** — no transition creates or destroys an actor | `proofs::properties::theorem_actor_domain_constant` | none |
+| P4 | **An epoch advances by at most one per transition** — with claim 5, the epoch sequence is non-decreasing and never skips a generation | `proofs::properties::theorem_epoch_increases_by_at_most_one` | none |
+| P5 | **Ownership at a given epoch is final** — once owned by `n` at `e`, every later state still at `e` is still owned by `n` at `e`; a handover *must* burn the epoch | `proofs::properties::theorem_ownership_at_an_epoch_is_final` | valid execution |
+| P6 | **An epoch determines its owner** — any two points of an execution owned at the same epoch have the same owner | `proofs::properties::theorem_epoch_determines_owner` | valid execution |
+| P7 | **Staleness is permanent** — a fenced-out node can never be fenced back in by waiting | `proofs::properties::theorem_stale_stays_stale` | valid execution |
+| P8 | **No authority without a capability** — a node that may mutate provably holds an issued token for exactly that `(actor, epoch)` | `proofs::properties::theorem_no_authority_without_token` | reachability |
+| P9 | **Epoch monotonicity survives composition** | `proofs::properties::theorem_composed_epoch_monotone` | none |
+| R9 | **Exactly one token** — `ray_inv` gives at most one; with `ray_token_exists` (preserved by every step, so the token is never lost) there is exactly one | `proofs::raymond::theorem_ray_exactly_one_token`, `lemma_ray_token_exists_init`, `lemma_ray_token_exists_step` | Raymond invariant |
+| R10 | **Raymond critical sections are exclusive** — at most one node is inside at a time | `proofs::raymond::theorem_ray_critical_section_is_exclusive` | Raymond invariant |
 | I | The inductive invariant holds in every reachable state (`init ==> inv`, `inv /\ next ==> inv`) | `proofs::invariant::theorem_reachable_inv` | the model's transition relation |
 | S | **The headline scenario**: `A` owns X@41, a transfer and a crash/recovery occur, `B` owns X@42, `A` returns still holding its epoch-41 token - and cannot perform an authoritative mutation | `proofs::adversarial::scenario_stale_owner_returns` | `A != B` |
 | S1 | A stale `Grant` cannot resurrect a superseded epoch | `proofs::adversarial::theorem_stale_grant_cannot_be_used` | none |
@@ -269,6 +280,7 @@ distributed-ownership/
 │   └── proofs/
 │       ├── mod.rs
 │       ├── invariant.rs    init ==> inv, inv /\ next ==> inv, reachable ==> inv
+│       ├── properties.rs   structural, temporal and capability properties
 │       ├── exclusivity.rs  claim 1
 │       ├── fencing.rs      claims 2, 3, 5
 │       ├── transfer.rs     claim 4

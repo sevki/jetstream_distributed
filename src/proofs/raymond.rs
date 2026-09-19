@@ -409,6 +409,81 @@ pub proof fn theorem_ray_at_most_one_token(r: Raymond, n: NodeId, m: NodeId)
 {
 }
 
+/// The token exists somewhere.
+///
+/// `ray_inv` only says there is *at most* one token. Together with this, the
+/// Raymond layer has *exactly* one: the token is never lost, only moved.
+pub open spec fn ray_token_exists(r: Raymond) -> bool {
+    exists|n: NodeId| #[trigger] has_token(r, n)
+}
+
+/// The initial routing state has the token.
+pub proof fn lemma_ray_token_exists_init(r: Raymond, root: NodeId)
+    requires
+        ray_init(r, root),
+    ensures
+        ray_token_exists(r),
+{
+    assert(has_token(r, root));
+}
+
+/// **The token is never lost.** Every Raymond transition keeps a token in the
+/// system: the token-preserving steps leave possession alone, and the transfer
+/// hands it to `head` in the same step that takes it from `n`.
+pub proof fn lemma_ray_token_exists_step(pre: Raymond, post: Raymond, s: RayStep)
+    requires
+        ray_inv(pre),
+        ray_token_exists(pre),
+        ray_step(pre, post, s),
+    ensures
+        ray_token_exists(post),
+{
+    match s {
+        RayStep::AssignPrivilege { node, head } => {
+            lemma_assign_token_moves(pre, post, node, head);
+            assert(has_token(post, head));
+        },
+        _ => {
+            lemma_token_preserving_steps_keep_holder(pre, post, s);
+            let n = choose|n: NodeId| has_token(pre, n);
+            assert(has_token(post, n));
+        },
+    }
+}
+
+/// **Exactly one token.** In any state satisfying both invariants there is a
+/// token, and it is unique.
+pub proof fn theorem_ray_exactly_one_token(r: Raymond)
+    requires
+        ray_inv(r),
+        ray_token_exists(r),
+    ensures
+        exists|n: NodeId| #[trigger] has_token(r, n),
+        forall|n: NodeId, m: NodeId| has_token(r, n) && has_token(r, m) ==> n == m,
+{
+    assert forall|n: NodeId, m: NodeId| has_token(r, n) && has_token(r, m) implies n == m by {
+        theorem_ray_at_most_one_token(r, n, m);
+    }
+}
+
+/// **Only the token holder can be in the critical section.** Exposed as a
+/// theorem in its own right, since it is the Raymond-layer counterpart of
+/// ownership exclusivity.
+pub proof fn theorem_ray_critical_section_is_exclusive(r: Raymond, n: NodeId, m: NodeId)
+    requires
+        ray_inv(r),
+        r.nodes.contains(n),
+        r.nodes.contains(m),
+        r.using[n],
+        r.using[m],
+    ensures
+        n == m,
+{
+    assert(has_token(r, n));
+    assert(has_token(r, m));
+    theorem_ray_at_most_one_token(r, n, m);
+}
+
 /// **Token transfer preserves ownership safety.**
 ///
 /// The token may only be passed on while the ownership layer is *not* `Owned` -

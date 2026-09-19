@@ -296,7 +296,13 @@ pub open spec fn ray_init(r: Raymond, root: NodeId) -> bool {
     &&& ray_wf(r)
     &&& r.nodes.contains(root)
     &&& r.holder[root] == root
-    &&& (forall|n: NodeId| #[trigger] r.nodes.contains(n) && n != root ==> r.holder[n] != n)
+    // Triggered on `r.holder[n]`, not on `r.nodes.contains(n)`. Under the
+    // latter, this clause and `ray_holder_closed` regenerate each other: this
+    // one introduces `r.holder[n]`, `ray_holder_closed` turns that into
+    // `r.nodes.contains(r.holder[n])`, which matches this trigger again at
+    // `r.holder[n]` and introduces `r.holder[r.holder[n]]`. Same loop as the one
+    // documented on `ray_holder_closed`, spread across two quantifiers.
+    &&& (forall|n: NodeId| r.nodes.contains(n) && n != root ==> #[trigger] r.holder[n] != n)
     &&& (forall|n: NodeId|
         #[trigger] r.nodes.contains(n) ==> r.queue[n].len() == 0 && !r.asked[n] && !r.using[n])
     &&& (forall|m: (NodeId, NodeId)| !(#[trigger] r.requests.contains(m)))

@@ -196,8 +196,11 @@ pub proof fn lemma_composed_reachable_step(pre: Composed, post: Composed, s: Com
     let tr2 = tr.push(post);
     assert(tr2.len() == tr.len() + 1);
     assert(tr2[0] == tr[0]);
-    assert forall|i: int| 0 <= i < tr2.len() - 1 implies composed_next(#[trigger] tr2[i], tr2[i + 1])
-        by {
+    // Same multi-trigger as `composed_valid_execution` itself; see
+    // `crate::proofs::invariant::lemma_reachable_step`.
+    assert forall|i: int|
+        #![trigger tr2[i], tr2[i + 1]]
+        0 <= i < tr2.len() - 1 implies composed_next(tr2[i], tr2[i + 1]) by {
         if i < tr.len() - 1 {
             assert(tr2[i] == tr[i]);
             assert(tr2[i + 1] == tr[i + 1]);

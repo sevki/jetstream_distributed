@@ -391,7 +391,15 @@ pub open spec fn init(sys: System) -> bool {
 pub open spec fn valid_execution(tr: Seq<System>) -> bool {
     &&& tr.len() > 0
     &&& init(tr[0])
-    &&& (forall|i: int| 0 <= i < tr.len() - 1 ==> next(#[trigger] tr[i], tr[i + 1]))
+    // A multi-trigger on *both* adjacent states. With `tr[i]` alone, the
+    // conclusion introduces `tr[i + 1]`, which matches the trigger again at
+    // `i + 1` and walks off the end of the sequence: the `0 <= i < tr.len() - 1`
+    // antecedent is checked after instantiation, so it does not stop e-matching.
+    // Requiring both terms means producing `tr[i + 1]` cannot fire the
+    // quantifier unless `tr[i + 2]` is already in play.
+    &&& (forall|i: int|
+        #![trigger tr[i], tr[i + 1]]
+        0 <= i < tr.len() - 1 ==> next(tr[i], tr[i + 1]))
 }
 
 /// `sys` is reachable if some finite execution ends in it.

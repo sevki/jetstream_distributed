@@ -143,7 +143,11 @@ pub open spec fn composed_init(c: Composed) -> bool {
 pub open spec fn composed_valid_execution(tr: Seq<Composed>) -> bool {
     &&& tr.len() > 0
     &&& composed_init(tr[0])
-    &&& (forall|i: int| 0 <= i < tr.len() - 1 ==> composed_next(#[trigger] tr[i], tr[i + 1]))
+    // Multi-trigger on both adjacent states, for the reason documented on
+    // `crate::model::valid_execution`.
+    &&& (forall|i: int|
+        #![trigger tr[i], tr[i + 1]]
+        0 <= i < tr.len() - 1 ==> composed_next(tr[i], tr[i + 1]))
 }
 
 /// `c` is reachable in the composed machine.

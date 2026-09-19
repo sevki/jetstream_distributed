@@ -458,6 +458,18 @@ proofs pass or fail according to how many instantiations the solver burns before
 it stumbles on the argument, which is precisely the kind of fragility a proof
 suite should not have.
 
+Every quantifier in `src/` has since been audited for the same defect, and three
+more were found and fixed: `ray_init`'s non-root clause and `ray_holder_closed`
+regenerated each other across two quantifiers, and `valid_execution` /
+`composed_valid_execution` walked off the end of a sequence (`tr[i]` introduces
+`tr[i + 1]`, which matches the trigger at `i + 1`; the `i < tr.len() - 1`
+antecedent is checked *after* instantiation, so it does not stop e-matching).
+Both now use multi-triggers naming the terms that must already exist.
+
+The same care applies to `assert forall`, which carries whatever trigger is
+written at the assertion site — `lemma_ray_frame_inv` and `lemma_reachable_step`
+had each rebuilt a loop locally that the specification no longer contained.
+
 CI greps `src/` for the real escape hatches and fails the build if any appear.
 Everything the proofs rely on that is not derived is a modelled transition or an
 explicitly documented entry in the failure-model table above.

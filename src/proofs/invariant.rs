@@ -347,7 +347,12 @@ pub proof fn lemma_reachable_step(pre: System, post: System, s: Step)
     let tr2 = tr.push(post);
     assert(tr2.len() == tr.len() + 1);
     assert(tr2[0] == tr[0]);
-    assert forall|i: int| 0 <= i < tr2.len() - 1 implies next(#[trigger] tr2[i], tr2[i + 1]) by {
+    // Same multi-trigger as `valid_execution` itself: an `assert forall` carries
+    // the trigger written here, so `#[trigger] tr2[i]` alone would rebuild the
+    // sequence-walking loop in local context.
+    assert forall|i: int|
+        #![trigger tr2[i], tr2[i + 1]]
+        0 <= i < tr2.len() - 1 implies next(tr2[i], tr2[i + 1]) by {
         if i < tr.len() - 1 {
             assert(tr2[i] == tr[i]);
             assert(tr2[i + 1] == tr[i + 1]);

@@ -67,10 +67,8 @@ jobs:
       - name: Verify all proofs
         run: |
           set -o pipefail
-          # Verify in parallel: several of the concrete scenarios are individually
-          # expensive, and the default single-threaded run makes the job drag.
           verus --crate-type=lib src/lib.rs --triggers-mode silent \
-            --num-threads "$(nproc)" | tee /tmp/verus-output.txt
+            | tee /tmp/verus-output.txt
           grep -E '^verification results' /tmp/verus-output.txt >> "$GITHUB_STEP_SUMMARY"
 
       # The README claims the proofs use no escape hatches. Enforce that claim.
@@ -126,5 +124,15 @@ jobs:
       - name: Put Verus on PATH
         run: echo "$HOME/verus" >> "$GITHUB_PATH"
 
+      # `cargo verus verify` exits 0 after merely building the crate if it does
+      # not actually run the verifier, which makes this a false-green check.
+      # Require the verification summary to appear in its output.
       - name: Verify through cargo-verus
-        run: cargo verus verify
+        run: |
+          set -o pipefail
+          cargo verus verify 2>&1 | tee /tmp/cargo-verus.txt
+          if ! grep -qE 'verification results' /tmp/cargo-verus.txt; then
+            echo "::error::cargo verus produced no verification summary - it built but did not verify"
+            exit 1
+          fi
+          grep -E 'verification results' /tmp/cargo-verus.txt

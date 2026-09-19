@@ -442,12 +442,14 @@ pub proof fn theorem_ownership_at_an_epoch_is_final(
 {
     if i == j {
     } else {
-        assert(next(tr[i], tr[i + 1]));
-        let s = choose|s: Step| step(tr[i], tr[i + 1], s);
-        lemma_step_epoch_monotone(tr[i], tr[i + 1], s, a);
+        let cur = tr[i];
+        let nxt = tr[i + 1];
+        assert(next(cur, nxt));
+        let s = choose|s: Step| step(cur, nxt, s);
+        lemma_step_epoch_monotone(cur, nxt, s, a);
         theorem_epoch_monotone_execution(tr, i + 1, j, a);
         assert(current_epoch(tr[i + 1].actors[a]) == e);
-        lemma_owned_epoch_frozen(tr[i], tr[i + 1], s, a, n, e);
+        lemma_owned_epoch_frozen(cur, nxt, s, a, n, e);
         theorem_ownership_at_an_epoch_is_final(tr, i + 1, j, a, n, e);
     }
 }
@@ -565,9 +567,11 @@ pub proof fn lemma_authority_backed_execution(tr: Seq<System>, i: int)
         lemma_authority_backed_init(tr[0]);
     } else {
         lemma_authority_backed_execution(tr, i - 1);
-        assert(next(tr[i - 1], tr[i]));
-        let s = choose|s: Step| step(tr[i - 1], tr[i], s);
-        lemma_authority_backed_step(tr[i - 1], tr[i], s);
+        let prev = tr[i - 1];
+        let cur = tr[i];
+        assert(next(prev, cur));
+        let s = choose|s: Step| step(prev, cur, s);
+        lemma_authority_backed_step(prev, cur, s);
     }
 }
 

@@ -49,7 +49,7 @@ impl OwnershipState {
 }
 
 pub struct ActorSystem {
-    pub actors: HashMap<ActorId, OwnershipState>,
+    actors: HashMap<ActorId, OwnershipState>,
 }
 
 impl ActorSystem {
@@ -71,7 +71,7 @@ impl ActorSystem {
         self.actors.get(&actor_id)
     }
 
-    pub fn update_actor_state(&mut self, actor_id: ActorId, new_state: OwnershipState) {
+    pub(crate) fn update_actor_state(&mut self, actor_id: ActorId, new_state: OwnershipState) {
         self.actors.insert(actor_id, new_state);
     }
 

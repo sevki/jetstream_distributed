@@ -349,6 +349,130 @@ pub proof fn theorem_crash_recovery_cannot_change_ownership(pre: System, post: S
     }
 }
 
+/// **An interrupted transfer really happens.**
+///
+/// The step property below says what an `AbortTransfer` does *if* one occurs.
+/// This says one occurs: it builds the execution
+///
+/// ```text
+/// init                    X: Unowned(41, A)
+/// IssueGrant(X)           network += Grant(X, A, 41)
+/// Acquire(X, A)           X: Owned(A, 41)              issued += Token(X, 41, A)
+/// BeginTransfer(X, A, B)  X: Transferring(A, B, 41, 42)
+/// AbortTransfer(X)        X: Unowned(43, A)            network += Grant(X, A, 43)
+/// ```
+///
+/// and exports the abort as a named step between reachable states. Without it,
+/// the step property remains provable even if `AbortTransfer` were changed to
+/// be always false - a conditional lemma about an unreachable transition.
+pub proof fn scenario_interrupted_transfer(x: ActorId, a: NodeId, b: NodeId)
+    requires
+        a != b,
+    ensures
+        exists|p: System, q: System|
+            {
+                &&& #[trigger] step(p, q, Step::AbortTransfer { actor: x })
+                &&& reachable(p)
+                &&& reachable(q)
+                &&& p.actors[x] == (OwnershipState::Transferring {
+                    from: a,
+                    to: b,
+                    old_epoch: 41,
+                    new_epoch: 42,
+                })
+                &&& q.actors[x] == (OwnershipState::Unowned { epoch: 43, intended_owner: a })
+                &&& !can_mutate(q, x, a, 41)
+                &&& !can_mutate(q, x, b, 42)
+                &&& q.issued.contains(Token { actor: x, epoch: 41, holder: a })
+            },
+{
+    let nodes = Set::<NodeId>::empty().insert(a).insert(b);
+    let stale = Token { actor: x, epoch: 41, holder: a };
+    let grant_41 = Message::Grant { actor: x, to: a, epoch: 41 };
+
+    let s0 = System {
+        actors: Map::<ActorId, OwnershipState>::empty().insert(
+            x,
+            OwnershipState::Unowned { epoch: 41, intended_owner: a },
+        ),
+        nodes: nodes,
+        live: nodes,
+        issued: Set::<Token>::empty(),
+        network: Set::<Message>::empty(),
+    };
+    assert(s0.actors.contains_key(x));
+    assert(init(s0));
+    lemma_reachable_init(s0);
+
+    // 1. The coordinator offers X to A at epoch 41.
+    let s1 = System {
+        actors: s0.actors,
+        nodes: s0.nodes,
+        live: s0.live,
+        issued: s0.issued,
+        network: s0.network.insert(grant_41),
+    };
+    assert(step(s0, s1, Step::IssueGrant { actor: x }));
+    lemma_reachable_step(s0, s1, Step::IssueGrant { actor: x });
+
+    // 2. A takes ownership at 41.
+    let s2 = System {
+        actors: s1.actors.insert(x, OwnershipState::Owned { owner: a, epoch: 41 }),
+        nodes: s1.nodes,
+        live: s1.live,
+        issued: s1.issued.insert(stale),
+        network: s1.network,
+    };
+    assert(s1.live.contains(a));
+    assert(s1.network.contains(grant_41));
+    assert(step(s1, s2, Step::Acquire { actor: x, node: a }));
+    lemma_reachable_step(s1, s2, Step::Acquire { actor: x, node: a });
+
+    // 3. A begins handing X to B. The epoch is burned immediately.
+    let revoke = Message::Revoke { actor: x, target: a, old_epoch: 41, new_epoch: 42 };
+    let s3 = System {
+        actors: s2.actors.insert(
+            x,
+            OwnershipState::Transferring { from: a, to: b, old_epoch: 41, new_epoch: 42 },
+        ),
+        nodes: s2.nodes,
+        live: s2.live,
+        issued: s2.issued,
+        network: s2.network.insert(revoke),
+    };
+    assert(s2.nodes.contains(b));
+    assert(s2.actors[x] == (OwnershipState::Owned { owner: a, epoch: 41 }));
+    assert(step(s2, s3, Step::BeginTransfer { actor: x, from: a, to: b }));
+    lemma_reachable_step(s2, s3, Step::BeginTransfer { actor: x, from: a, to: b });
+
+    // 4. The handover is interrupted. Recovery burns *another* epoch, so the
+    //    epoch-42 grant that may still be in flight is stale on arrival.
+    let s4 = System {
+        actors: s3.actors.insert(x, OwnershipState::Unowned { epoch: 43, intended_owner: a }),
+        nodes: s3.nodes,
+        live: s3.live,
+        issued: s3.issued,
+        network: s3.network.insert(Message::Grant { actor: x, to: a, epoch: 43 }),
+    };
+    assert(s3.actors[x] == (OwnershipState::Transferring {
+        from: a,
+        to: b,
+        old_epoch: 41,
+        new_epoch: 42,
+    }));
+    assert(step(s3, s4, Step::AbortTransfer { actor: x }));
+    lemma_reachable_step(s3, s4, Step::AbortTransfer { actor: x });
+
+    assert(reachable(s3));
+    assert(reachable(s4));
+    assert(s4.actors[x] == (OwnershipState::Unowned { epoch: 43, intended_owner: a }));
+    assert(!may_mutate(s4.actors[x], a, 41));
+    assert(!may_mutate(s4.actors[x], b, 42));
+    assert(!can_mutate(s4, x, a, 41));
+    assert(!can_mutate(s4, x, b, 42));
+    assert(s4.issued.contains(stale));
+}
+
 /// An interrupted transfer leaves nobody with authority, and burns the epoch
 /// that the interrupted handover had allocated.
 ///

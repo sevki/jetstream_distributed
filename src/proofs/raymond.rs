@@ -52,7 +52,6 @@ pub proof fn lemma_routing_preserves_holder(pre: Raymond, post: Raymond, s: RayS
         RayStep::RequestCs { node } => {},
         RayStep::MakeRequest { node } => {},
         RayStep::ReceiveRequest { at, from } => {},
-        RayStep::EnterCs { node } => {},
         _ => {
             assert(false);
         },

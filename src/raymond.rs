@@ -190,14 +190,17 @@ pub open spec fn ray_step(pre: Raymond, post: Raymond, s: RayStep) -> bool {
     }
 }
 
-/// A step that only moves requests around, never the token.
+/// A step that only moves *requests* around: it queues, forwards or receives a
+/// request and never touches `holder`. `AssignPrivilege` is excluded because it
+/// moves the token; `EnterCs` and `ExitCs` are excluded because they are
+/// critical-section bookkeeping rather than routing.
 pub open spec fn is_routing_step(s: RayStep) -> bool {
     match s {
         RayStep::RequestCs { node: _ } => true,
         RayStep::MakeRequest { node: _ } => true,
         RayStep::ReceiveRequest { at: _, from: _ } => true,
         RayStep::AssignPrivilege { node: _, head: _ } => false,
-        RayStep::EnterCs { node: _ } => true,
+        RayStep::EnterCs { node: _ } => false,
         RayStep::ExitCs { node: _ } => false,
     }
 }

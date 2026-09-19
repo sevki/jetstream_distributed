@@ -67,10 +67,13 @@ jobs:
       - name: Report Verus version
         run: verus --version
 
+      # `--profile` is a diagnostic, not a behaviour change: it only reports on
+      # functions that exceed the solver's resource limit, naming the quantifiers
+      # being instantiated. It costs nothing when everything verifies.
       - name: Verify all proofs
         run: |
           set -o pipefail
-          verus --crate-type=lib src/lib.rs --triggers-mode silent \
+          verus --crate-type=lib src/lib.rs --triggers-mode silent --profile \
             | tee /tmp/verus-output.txt
           grep -E '^verification results' /tmp/verus-output.txt >> "$GITHUB_STEP_SUMMARY"
 

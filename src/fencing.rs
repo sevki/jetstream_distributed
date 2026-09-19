@@ -23,11 +23,7 @@ pub fn stale_epoch_prevents_mutation(
     node: NodeId,
     supplied_epoch: Epoch,
 ) -> bool {
-    if is_stale_epoch(state, supplied_epoch) {
-        !may_mutate(state, node, supplied_epoch)
-    } else {
-        true
-    }
+    is_stale_epoch(state, supplied_epoch) && !may_mutate(state, node, supplied_epoch)
 }
 
 #[cfg(test)]

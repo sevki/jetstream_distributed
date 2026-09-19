@@ -70,12 +70,31 @@ jobs:
       # `--profile` is a diagnostic, not a behaviour change: it only reports on
       # functions that exceed the solver's resource limit, naming the quantifiers
       # being instantiated. It costs nothing when everything verifies.
+      #
+      # `set -euo pipefail` is written out rather than left to the runner's
+      # default `bash -e`: the exit status of the verifier is the whole point of
+      # this step, and it should not depend on an implicit property of the
+      # environment. The explicit check on the summary is defence in depth on
+      # top of that - a verifier that ever reported errors while exiting 0 would
+      # otherwise pass silently.
       - name: Verify all proofs
         run: |
-          set -o pipefail
+          set -euo pipefail
           verus --crate-type=lib src/lib.rs --triggers-mode silent --profile \
             | tee /tmp/verus-output.txt
-          grep -E '^verification results' /tmp/verus-output.txt >> "$GITHUB_STEP_SUMMARY"
+
+          summary=$(grep -E '^verification results' /tmp/verus-output.txt || true)
+          if [ -z "$summary" ]; then
+            echo "::error::verus produced no verification summary"
+            exit 1
+          fi
+          echo "$summary" >> "$GITHUB_STEP_SUMMARY"
+
+          # `[^0-9]0 errors` so that "10 errors" cannot satisfy "0 errors".
+          if ! printf '%s\n' "$summary" | grep -qE '(^|[^0-9])0 errors'; then
+            echo "::error::verification summary reports errors: $summary"
+            exit 1
+          fi
 
       # The README claims the proofs use no escape hatches. Enforce that claim.
       # `axiom` is matched as a whole word because Verus really does have a
@@ -143,7 +162,7 @@ jobs:
       # emitted before that point and cannot satisfy it.
       - name: Verify through cargo-verus
         run: |
-          set -o pipefail
+          set -euo pipefail
           cargo verus verify 2>&1 | tee /tmp/cargo-verus.txt
 
           if grep -q 'did not find any crates that opted into verification' /tmp/cargo-verus.txt; then
@@ -151,13 +170,22 @@ jobs:
             exit 1
           fi
 
-          start=$(grep -n 'Checking distributed-ownership' /tmp/cargo-verus.txt | tail -1 | cut -d: -f1)
+          # `|| true` so that a missing line reaches the diagnostic below rather
+          # than aborting the step under `set -e` with no explanation.
+          start=$(grep -n 'Checking distributed-ownership' /tmp/cargo-verus.txt | tail -1 | cut -d: -f1 || true)
           if [ -z "$start" ]; then
             echo "::error::cargo verus never compiled this crate, so it cannot have verified it"
             exit 1
           fi
-          if ! awk -v n="$start" 'NR > n && /verification results/ { found = 1 } END { exit !found }' /tmp/cargo-verus.txt; then
+
+          summary=$(awk -v n="$start" 'NR > n && /verification results/' /tmp/cargo-verus.txt)
+          if [ -z "$summary" ]; then
             echo "::error::no verification summary for this crate - cargo verus built it without verifying it"
             exit 1
           fi
-          awk -v n="$start" 'NR > n && /verification results/' /tmp/cargo-verus.txt | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "$summary" >> "$GITHUB_STEP_SUMMARY"
+
+          if ! printf '%s\n' "$summary" | grep -qE '(^|[^0-9])0 errors'; then
+            echo "::error::this crate's verification summary reports errors: $summary"
+            exit 1
+          fi

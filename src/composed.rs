@@ -282,6 +282,28 @@ pub open spec fn composed_valid_execution(tr: Seq<Composed>) -> bool {
         0 <= i < tr.len() - 1 ==> composed_next(tr[i], tr[i + 1]))
 }
 
+/// A finite run of the composed machine that need **not** start at
+/// `composed_init`.
+///
+/// `composed_reachable` says a state is reachable from initialisation, which is
+/// what safety theorems want. Scenarios want something else: that one state
+/// leads to another. Exporting a step and an endpoint as *independent*
+/// existentials says nothing about whether the endpoint came from that step -
+/// an unrelated execution can supply it - so a scenario built that way keeps
+/// verifying even when the interesting continuation becomes impossible.
+pub open spec fn composed_segment(tr: Seq<Composed>) -> bool {
+    &&& tr.len() > 0
+    &&& (forall|i: int|
+        #![trigger tr[i], tr[i + 1]]
+        0 <= i < tr.len() - 1 ==> composed_next(tr[i], tr[i + 1]))
+}
+
+/// `d` is reachable **from** `c` by a finite run of the composed machine.
+pub open spec fn composed_reachable_from(c: Composed, d: Composed) -> bool {
+    exists|tr: Seq<Composed>|
+        #[trigger] composed_segment(tr) && tr[0] == c && tr[tr.len() - 1] == d
+}
+
 /// `c` is reachable in the composed machine.
 pub open spec fn composed_reachable(c: Composed) -> bool {
     exists|tr: Seq<Composed>| composed_valid_execution(tr) && tr[tr.len() - 1] == c

@@ -36,6 +36,34 @@ use crate::raymond::*;
 
 verus! {
 
+/// The routing tree the scenario starts from:
+/// `A -> C`, `B -> A`, `C -> C` (token), `D -> B`.
+///
+/// Named rather than built inline so every phase can refer to *the same* start
+/// state, and so the scenario's postcondition can say the final state is
+/// reachable **from** it. Without that anchor the exported endpoint is just a
+/// state satisfying `ray_inv`, which a directly constructed four-node state
+/// meets without any of the hops having happened.
+pub open spec fn routing_init_state(a: NodeId, b: NodeId, c: NodeId, d: NodeId) -> Raymond {
+    Raymond {
+        nodes: Set::<NodeId>::empty().insert(a).insert(b).insert(c).insert(d),
+        holder: Map::<NodeId, NodeId>::empty().insert(a, c).insert(b, a).insert(c, c).insert(d, b),
+        queue: Map::<NodeId, Seq<NodeId>>::empty().insert(a, Seq::<NodeId>::empty()).insert(
+            b,
+            Seq::<NodeId>::empty(),
+        ).insert(c, Seq::<NodeId>::empty()).insert(d, Seq::<NodeId>::empty()),
+        asked: Map::<NodeId, bool>::empty().insert(a, false).insert(b, false).insert(
+            c,
+            false,
+        ).insert(d, false),
+        using: Map::<NodeId, bool>::empty().insert(a, false).insert(b, false).insert(
+            c,
+            false,
+        ).insert(d, false),
+        requests: Set::<(NodeId, NodeId)>::empty(),
+    }
+}
+
 /// Phase one: the request travels `D -> B -> A -> C`.
 ///
 /// The end state is handed back through an *abstract* characterisation rather
@@ -53,6 +81,9 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
     ensures
         ray_inv(r),
         has_token(r, c),
+        ray_init(routing_init_state(a, b, c, d), c),
+        ray_reachable_from(routing_init_state(a, b, c, d), r),
+        r.nodes == routing_init_state(a, b, c, d).nodes,
         r.nodes.contains(a),
         r.nodes.contains(b),
         r.nodes.contains(c),
@@ -67,31 +98,8 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
         !r.using[d],
         r.requests.contains((d, b)),
 {
-    let nodes = Set::<NodeId>::empty().insert(a).insert(b).insert(c).insert(d);
-    let empty_q = Seq::<NodeId>::empty();
-
-    // holder: A -> C, B -> A, C -> C (token), D -> B
-    let holder0 = Map::<NodeId, NodeId>::empty().insert(a, c).insert(b, a).insert(c, c).insert(
-        d,
-        b,
-    );
-    let queue0 = Map::<NodeId, Seq<NodeId>>::empty().insert(a, empty_q).insert(b, empty_q).insert(
-        c,
-        empty_q,
-    ).insert(d, empty_q);
-    let flags0 = Map::<NodeId, bool>::empty().insert(a, false).insert(b, false).insert(
-        c,
-        false,
-    ).insert(d, false);
-
-    let r0 = Raymond {
-        nodes: nodes,
-        holder: holder0,
-        queue: queue0,
-        asked: flags0,
-        using: flags0,
-        requests: Set::<(NodeId, NodeId)>::empty(),
-    };
+    let r0 = routing_init_state(a, b, c, d);
+    lemma_ray_reachable_from_refl(r0);
     assert(r0.holder[a] == c);
     assert(r0.holder[b] == a);
     assert(r0.holder[c] == c);
@@ -111,6 +119,7 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
     };
     assert(ray_step(r0, r1, RayStep::RequestCs { node: d }));
     lemma_ray_step_preserves_inv(r0, r1, RayStep::RequestCs { node: d });
+    lemma_ray_reachable_from_step(r0, r0, r1, RayStep::RequestCs { node: d });
 
     // 2. D forwards the request to its next hop, B.
     let r2 = Raymond {
@@ -124,6 +133,7 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
     assert(r1.queue[d].len() == 1);
     assert(ray_step(r1, r2, RayStep::MakeRequest { node: d }));
     lemma_ray_step_preserves_inv(r1, r2, RayStep::MakeRequest { node: d });
+    lemma_ray_reachable_from_step(r0, r1, r2, RayStep::MakeRequest { node: d });
 
     // 3. B receives D's request.
     let r3 = Raymond {
@@ -137,6 +147,7 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
     assert(r2.requests.contains((d, b)));
     assert(ray_step(r2, r3, RayStep::ReceiveRequest { at: b, from: d }));
     lemma_ray_step_preserves_inv(r2, r3, RayStep::ReceiveRequest { at: b, from: d });
+    lemma_ray_reachable_from_step(r0, r2, r3, RayStep::ReceiveRequest { at: b, from: d });
 
     // 4. B forwards the request to its next hop, A.
     let r4 = Raymond {
@@ -151,6 +162,7 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
     assert(!r3.asked[b]);
     assert(ray_step(r3, r4, RayStep::MakeRequest { node: b }));
     lemma_ray_step_preserves_inv(r3, r4, RayStep::MakeRequest { node: b });
+    lemma_ray_reachable_from_step(r0, r3, r4, RayStep::MakeRequest { node: b });
 
     // 5. A receives B's request.
     let r5 = Raymond {
@@ -164,6 +176,7 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
     assert(r4.requests.contains((b, a)));
     assert(ray_step(r4, r5, RayStep::ReceiveRequest { at: a, from: b }));
     lemma_ray_step_preserves_inv(r4, r5, RayStep::ReceiveRequest { at: a, from: b });
+    lemma_ray_reachable_from_step(r0, r4, r5, RayStep::ReceiveRequest { at: a, from: b });
 
     // 6. A forwards the request to its next hop, C - the token holder.
     let r6 = Raymond {
@@ -178,6 +191,7 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
     assert(!r5.asked[a]);
     assert(ray_step(r5, r6, RayStep::MakeRequest { node: a }));
     lemma_ray_step_preserves_inv(r5, r6, RayStep::MakeRequest { node: a });
+    lemma_ray_reachable_from_step(r0, r5, r6, RayStep::MakeRequest { node: a });
 
     // 7. C receives A's request. The path D -> B -> A -> C is complete.
     let r7 = Raymond {
@@ -191,6 +205,7 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
     assert(r6.requests.contains((a, c)));
     assert(ray_step(r6, r7, RayStep::ReceiveRequest { at: c, from: a }));
     lemma_ray_step_preserves_inv(r6, r7, RayStep::ReceiveRequest { at: c, from: a });
+    lemma_ray_reachable_from_step(r0, r6, r7, RayStep::ReceiveRequest { at: c, from: a });
     assert(has_token(r7, c));
     assert(r7.requests.contains((d, b)));
     r7
@@ -235,6 +250,7 @@ pub proof fn routing_one_hop(r: Raymond, n: NodeId, head: NodeId) -> (r2: Raymon
         requests: r.requests,
     };
     assert(ray_assign_privilege(r, r2, n, head));
+    assert(ray_step(r, r2, RayStep::AssignPrivilege { node: n, head: head }));
     lemma_assign_privilege_preserves_unique_token(r, r2, n, head);
     r2
 }
@@ -243,9 +259,16 @@ pub proof fn routing_one_hop(r: Raymond, n: NodeId, head: NodeId) -> (r2: Raymon
 ///
 /// Three hops, each delegated to [`routing_one_hop`], so this function only
 /// ever reasons about queues.
-pub proof fn routing_phase_token_hops(r7: Raymond, a: NodeId, b: NodeId, c: NodeId, d: NodeId) -> (r:
-    Raymond)
+pub proof fn routing_phase_token_hops(
+    init: Raymond,
+    r7: Raymond,
+    a: NodeId,
+    b: NodeId,
+    c: NodeId,
+    d: NodeId,
+) -> (r: Raymond)
     requires
+        ray_reachable_from(init, r7),
         a != b,
         a != c,
         a != d,
@@ -270,6 +293,7 @@ pub proof fn routing_phase_token_hops(r7: Raymond, a: NodeId, b: NodeId, c: Node
     ensures
         ray_inv(r),
         has_token(r, d),
+        ray_reachable_from(init, r),
         r.nodes == r7.nodes,
         r.queue[d].len() == 1 && r.queue[d][0] == d,
         !r.using[d],
@@ -277,17 +301,20 @@ pub proof fn routing_phase_token_hops(r7: Raymond, a: NodeId, b: NodeId, c: Node
 {
     // 8. C hands the token to A.
     let r8 = routing_one_hop(r7, c, a);
+    lemma_ray_reachable_from_step(init, r7, r8, RayStep::AssignPrivilege { node: c, head: a });
     assert(r8.queue[a] == r7.queue[a]);
     assert(r8.queue[b] == r7.queue[b]);
     assert(r8.queue[d] == r7.queue[d]);
 
     // 9. A hands the token to B.
     let r9 = routing_one_hop(r8, a, b);
+    lemma_ray_reachable_from_step(init, r8, r9, RayStep::AssignPrivilege { node: a, head: b });
     assert(r9.queue[b] == r8.queue[b]);
     assert(r9.queue[d] == r8.queue[d]);
 
     // 10. B hands the token to D. The path C -> A -> B -> D is complete.
     let r10 = routing_one_hop(r9, b, d);
+    lemma_ray_reachable_from_step(init, r9, r10, RayStep::AssignPrivilege { node: b, head: d });
     assert(r10.queue[d] == r9.queue[d]);
 
     // `requests` is untouched by every hop, so D's request to B - sent back at
@@ -303,8 +330,14 @@ pub proof fn routing_phase_token_hops(r7: Raymond, a: NodeId, b: NodeId, c: Node
 /// Note how little this phase needs to know: the whole eleven-hop history is
 /// compressed into six preconditions. That is the point of splitting - the
 /// solver never sees the `Map`/`Set` nest the earlier phases built.
-pub proof fn routing_phase_delivery(r10: Raymond, b: NodeId, d: NodeId) -> (r: Raymond)
+pub proof fn routing_phase_delivery(
+    init: Raymond,
+    r10: Raymond,
+    b: NodeId,
+    d: NodeId,
+) -> (r: Raymond)
     requires
+        ray_reachable_from(init, r10),
         b != d,
         ray_inv(r10),
         has_token(r10, d),
@@ -326,6 +359,7 @@ pub proof fn routing_phase_delivery(r10: Raymond, b: NodeId, d: NodeId) -> (r: R
         exists|p: Raymond|
             {
                 &&& #[trigger] ray_step(p, r, RayStep::ReceiveRequest { at: b, from: d })
+                &&& #[trigger] ray_reachable_from(init, p)
                 &&& ray_inv(p)
                 &&& has_token(p, d)
                 &&& p.using[d]
@@ -344,6 +378,7 @@ pub proof fn routing_phase_delivery(r10: Raymond, b: NodeId, d: NodeId) -> (r: R
     };
     assert(ray_step(r10, r11, RayStep::EnterCs { node: d }));
     lemma_ray_step_preserves_inv(r10, r11, RayStep::EnterCs { node: d });
+    lemma_ray_reachable_from_step(init, r10, r11, RayStep::EnterCs { node: d });
     assert(has_token(r11, d));
 
     // 12. The adversarial tail: D's original request to B, sent back at step 2,
@@ -362,6 +397,7 @@ pub proof fn routing_phase_delivery(r10: Raymond, b: NodeId, d: NodeId) -> (r: R
     };
     assert(ray_step(r11, r12, RayStep::ReceiveRequest { at: b, from: d }));
     theorem_delayed_request_delivery_is_safe(r11, r12, b, d);
+    lemma_ray_reachable_from_step(init, r11, r12, RayStep::ReceiveRequest { at: b, from: d });
 
     assert(has_token(r12, d));
     assert(r12.using[d]);
@@ -376,6 +412,8 @@ pub proof fn routing_phase_delivery(r10: Raymond, b: NodeId, d: NodeId) -> (r: R
     assert(r11.using[d]);
     assert(r11.requests.contains((d, b)));
     assert(r11.nodes == r10.nodes);
+    assert(ray_reachable_from(init, r11));
+    assert(ray_reachable_from(init, r12));
     r12
 }
 
@@ -392,15 +430,25 @@ pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId,
         // The endpoint *and* the step that reaches it, so that deleting the
         // routing phases cannot leave this verifying: a singleton Raymond with
         // `D` as sole root satisfies the endpoint clauses on their own.
-        exists|p: Raymond, r: Raymond|
+        // Anchored at the start state and linked by reachability. `ray_init(r0, c)`
+        // pins where the run began - four nodes, the token at `C` - and
+        // `ray_reachable_from(r0, p)` pins that `p` was *reached* from there
+        // rather than constructed. Without both, a directly built four-node
+        // state with `D` already root, already in its critical section and with
+        // `(d, b)` already in `requests` satisfies everything after a single
+        // `ReceiveRequest`, and `A` and `C` need never participate.
+        exists|r0: Raymond, p: Raymond, r: Raymond|
             {
                 &&& #[trigger] ray_step(p, r, RayStep::ReceiveRequest { at: b, from: d })
+                &&& #[trigger] ray_reachable_from(r0, p)
+                &&& ray_init(r0, c)
+                &&& has_token(r0, c)
+                &&& r0.nodes.contains(a)
+                &&& r0.nodes.contains(b)
+                &&& r0.nodes.contains(c)
+                &&& r0.nodes.contains(d)
                 &&& ray_inv(p)
                 &&& ray_inv(r)
-                &&& p.nodes.contains(a)
-                &&& p.nodes.contains(b)
-                &&& p.nodes.contains(c)
-                &&& p.nodes.contains(d)
                 &&& p.requests.contains((d, b))
                 &&& has_token(p, d)
                 &&& p.using[d]
@@ -409,25 +457,26 @@ pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId,
                 &&& forall|m: NodeId| has_token(r, m) ==> m == d
             },
 {
+    let r0 = routing_init_state(a, b, c, d);
     let after_requests = routing_phase_requests(a, b, c, d);
-    let after_hops = routing_phase_token_hops(after_requests, a, b, c, d);
-    let fin = routing_phase_delivery(after_hops, b, d);
+    let after_hops = routing_phase_token_hops(r0, after_requests, a, b, c, d);
+    let fin = routing_phase_delivery(r0, after_hops, b, d);
     assert(ray_inv(fin));
     assert(has_token(fin, d));
     assert(fin.using[d]);
+    assert(ray_init(r0, c));
+    assert(has_token(r0, c));
+    assert(r0.nodes == after_requests.nodes);
     let p = choose|p: Raymond| {
         &&& ray_step(p, fin, RayStep::ReceiveRequest { at: b, from: d })
+        &&& ray_reachable_from(r0, p)
         &&& ray_inv(p)
         &&& has_token(p, d)
         &&& p.using[d]
         &&& p.requests.contains((d, b))
         &&& p.nodes == after_hops.nodes
     };
-    assert(after_hops.nodes == after_requests.nodes);
-    assert(p.nodes.contains(a));
-    assert(p.nodes.contains(b));
-    assert(p.nodes.contains(c));
-    assert(p.nodes.contains(d));
+    assert(ray_reachable_from(r0, p));
 }
 
 } // verus!

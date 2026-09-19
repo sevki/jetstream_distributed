@@ -514,6 +514,27 @@ invariant preservation):
   protocol. Verifying the protocol says nothing about whether an implementation
   follows it.
 
+### Scenarios export runs, not endpoints
+
+The recurring defect on this PR was a scenario whose postcondition described the
+world afterwards but never how it got there — and "how it got there" is the
+entire content of a scenario. Exporting a *step* was the first fix; it was not
+enough, because a step and an endpoint exported as independent existentials can
+come from different executions.
+
+So both layers now carry a reachability-**from** relation —
+`composed_reachable_from` and `ray_reachable_from` — and the scenarios export
+runs:
+
+* `scenario_composed_crash_takeover` exports the `SeizeToken` step *and*
+  `composed_reachable_from(q, fin)`, so the `B`-owned outcome is reachable from
+  the seizure post-state rather than merely reachable; likewise `Reconcile`
+  linked to `A` being back and running.
+* `scenario_request_and_token_routing` exports `ray_init(r0, c)` and
+  `ray_reachable_from(r0, p)`, pinning where the run began — four nodes, token
+  at `C` — so a directly built state with `D` already root cannot satisfy it and
+  `A` and `C` must participate.
+
 ## No escape hatches
 
 The proofs use no `assume`, `admit`, `external_body`, `axiom`, or any other way

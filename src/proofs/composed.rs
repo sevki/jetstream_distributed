@@ -343,6 +343,54 @@ pub proof fn lemma_composed_reachable_init(c: Composed)
 }
 
 /// Composed reachability is closed under taking a step.
+/// Every state reaches itself.
+pub proof fn lemma_composed_reachable_from_refl(c: Composed)
+    ensures
+        composed_reachable_from(c, c),
+{
+    let tr = seq![c];
+    assert(tr.len() == 1);
+    assert(tr[0] == c);
+    assert(tr[tr.len() - 1] == c);
+    assert(composed_segment(tr));
+}
+
+/// Reachability-from extends by one step, exactly as reachability does.
+pub proof fn lemma_composed_reachable_from_step(
+    c: Composed,
+    d: Composed,
+    e: Composed,
+    s: ComposedStep,
+)
+    requires
+        composed_reachable_from(c, d),
+        composed_step(d, e, s),
+    ensures
+        composed_reachable_from(c, e),
+{
+    let tr = choose|tr: Seq<Composed>|
+        composed_segment(tr) && tr[0] == c && tr[tr.len() - 1] == d;
+    let tr2 = tr.push(e);
+    assert(tr2.len() == tr.len() + 1);
+    assert(tr2[0] == tr[0]);
+    assert forall|i: int|
+        #![trigger tr2[i], tr2[i + 1]]
+        0 <= i < tr2.len() - 1 implies composed_next(tr2[i], tr2[i + 1]) by {
+        if i < tr.len() - 1 {
+            assert(tr2[i] == tr[i]);
+            assert(tr2[i + 1] == tr[i + 1]);
+            assert(composed_next(tr[i], tr[i + 1]));
+        } else {
+            assert(i == tr.len() - 1);
+            assert(tr2[i] == tr[i]);
+            assert(tr2[i + 1] == e);
+            assert(composed_step(d, e, s));
+        }
+    }
+    assert(composed_segment(tr2));
+    assert(tr2[tr2.len() - 1] == e);
+}
+
 pub proof fn lemma_composed_reachable_step(pre: Composed, post: Composed, s: ComposedStep)
     requires
         composed_reachable(pre),

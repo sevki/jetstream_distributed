@@ -347,6 +347,32 @@ pub open spec fn ray_seize(pre: Raymond, post: Raymond, from: NodeId, to: NodeId
     &&& post.requests == pre.requests
 }
 
+/// Some Raymond transition takes `pre` to `post`.
+pub open spec fn ray_next(pre: Raymond, post: Raymond) -> bool {
+    exists|s: RayStep| #[trigger] ray_step(pre, post, s)
+}
+
+/// A finite run of the routing layer.
+///
+/// Raymond has no `init`-based reachability of its own - the algorithm is a
+/// transition relation, not a system with a designated start - so what a
+/// scenario needs is "this state leads to that one". Exporting a step and an
+/// endpoint as independent existentials says nothing about whether the
+/// endpoint came from that step, which is how a twelve-hop construction ends
+/// up provable by a directly built state that did none of the hops.
+pub open spec fn ray_segment(tr: Seq<Raymond>) -> bool {
+    &&& tr.len() > 0
+    &&& (forall|i: int|
+        #![trigger tr[i], tr[i + 1]]
+        0 <= i < tr.len() - 1 ==> ray_next(tr[i], tr[i + 1]))
+}
+
+/// `post` is reachable **from** `pre` by a finite run of the routing layer.
+pub open spec fn ray_reachable_from(pre: Raymond, post: Raymond) -> bool {
+    exists|tr: Seq<Raymond>|
+        #[trigger] ray_segment(tr) && tr[0] == pre && tr[tr.len() - 1] == post
+}
+
 // ---------------------------------------------------------------------------
 // Coupling to the ownership layer
 // ---------------------------------------------------------------------------

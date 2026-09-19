@@ -636,31 +636,44 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
                 &&& has_token(p.ray, a)
                 &&& has_token(q.ray, b)
             },
-        // The outcome, stated against `x` rather than against `c.actor`.
-        exists|c: Composed|
+        // The takeover, **linked to the seizure**. `composed_reachable_from(q, fin)`
+        // is what ties them: exported as two independent existentials, the
+        // endpoint could come from any other execution - an ordinary voluntary
+        // handover supplies one - and the theorem would keep verifying even if
+        // acquiring after a seizure became impossible.
+        exists|p: Composed, q: Composed, fin: Composed|
             {
-                &&& #[trigger] composed_reachable(c)
-                &&& c.actor == x
-                &&& !c.own.live.contains(a)
-                &&& may_mutate(c.own.actors[x], b, 42)
-                &&& has_token(c.ray, b)
-                &&& c.own.issued.contains(Token { actor: x, epoch: 41, holder: a })
-                &&& !may_mutate(c.own.actors[x], a, 41)
+                &&& #[trigger] composed_step(p, q, ComposedStep::SeizeToken { from: a, to: b })
+                &&& #[trigger] composed_reachable_from(q, fin)
+                &&& composed_reachable(p)
+                &&& !p.own.live.contains(a)
+                &&& has_token(p.ray, a)
+                &&& has_token(q.ray, b)
+                &&& fin.actor == x
+                &&& !fin.own.live.contains(a)
+                &&& may_mutate(fin.own.actors[x], b, 42)
+                &&& has_token(fin.ray, b)
+                &&& fin.own.issued.contains(Token { actor: x, epoch: 41, holder: a })
+                &&& !may_mutate(fin.own.actors[x], a, 41)
             },
-        // Reconciliation is not a dead end: `A` can be told what happened and
-        // then rejoin, holding no token and no authority. Without this clause
-        // `cs_reconcile` could be unsatisfiable and the recovery guard would be
-        // an unreachable restriction rather than a discipline.
-        exists|c: Composed|
+        // Reconciliation is not a dead end, and this too is linked: `A` is told
+        // what happened, and the state in which it is back and running is
+        // reachable *from that reconciliation*, not merely reachable.
+        exists|p: Composed, q: Composed, fin: Composed|
             {
-                &&& #[trigger] composed_reachable(c)
-                &&& c.actor == x
-                &&& c.own.live.contains(a)
-                &&& !c.seized.contains(a)
-                &&& !has_token(c.ray, a)
-                &&& has_token(c.ray, b)
-                &&& c.own.issued.contains(Token { actor: x, epoch: 41, holder: a })
-                &&& !may_mutate(c.own.actors[x], a, 41)
+                &&& #[trigger] composed_step(p, q, ComposedStep::Reconcile { node: a })
+                &&& #[trigger] composed_reachable_from(q, fin)
+                &&& composed_reachable(p)
+                &&& p.seized.contains(a)
+                &&& !p.own.live.contains(a)
+                &&& !q.seized.contains(a)
+                &&& fin.actor == x
+                &&& fin.own.live.contains(a)
+                &&& !fin.seized.contains(a)
+                &&& !has_token(fin.ray, a)
+                &&& has_token(fin.ray, b)
+                &&& fin.own.issued.contains(Token { actor: x, epoch: 41, holder: a })
+                &&& !may_mutate(fin.own.actors[x], a, 41)
             },
 {
     let nodes = Set::<NodeId>::empty().insert(a).insert(b);
@@ -883,6 +896,20 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
     assert(has_token(c8.ray, b));
     assert(c8.own.issued.contains(stale));
     assert(!may_mutate(c8.own.actors[x], a, 41));
+
+    // Link the seizure to the takeover: c5 -> c6 is a run of the machine, so
+    // the B-owned outcome is reachable *from the seizure post-state* rather
+    // than merely reachable.
+    lemma_composed_reachable_from_refl(c5);
+    lemma_composed_reachable_from_step(c5, c5, c6, s6);
+    assert(composed_reachable_from(c5, c6));
+    assert(composed_step(c4, c5, s5));
+
+    // And link the reconciliation to A being back and running: c7 -> c8.
+    lemma_composed_reachable_from_refl(c7);
+    lemma_composed_reachable_from_step(c7, c7, c8, s8);
+    assert(composed_reachable_from(c7, c8));
+    assert(composed_step(c6, c7, s7));
 }
 
 } // verus!

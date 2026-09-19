@@ -21,7 +21,9 @@
 //!
 //! Every hop below is proved to be a legal Raymond transition, and the Raymond
 //! invariant (in particular: at most one token) is carried through all eleven
-//! steps.
+//! steps - plus a twelfth, adversarial one: `D`'s original request to `B` is
+//! redelivered after the token has finished travelling, when the holder pointers
+//! it was routed against are long gone.
 #![allow(unused_imports)]
 
 use vstd::prelude::*;
@@ -69,6 +71,7 @@ pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId,
         queue: queue0,
         asked: flags0,
         using: flags0,
+        requests: Set::<(NodeId, NodeId)>::empty(),
     };
     assert(r0.holder[a] == c);
     assert(r0.holder[b] == a);
@@ -85,6 +88,7 @@ pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId,
         queue: r0.queue.insert(d, r0.queue[d].push(d)),
         asked: r0.asked,
         using: r0.using,
+        requests: r0.requests,
     };
     assert(ray_step(r0, r1, RayStep::RequestCs { node: d }));
     lemma_ray_step_preserves_inv(r0, r1, RayStep::RequestCs { node: d });
@@ -96,6 +100,7 @@ pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId,
         queue: r1.queue,
         asked: r1.asked.insert(d, true),
         using: r1.using,
+        requests: r1.requests.insert((d, r1.holder[d])),
     };
     assert(r1.queue[d].len() == 1);
     assert(ray_step(r1, r2, RayStep::MakeRequest { node: d }));
@@ -108,9 +113,9 @@ pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId,
         queue: r2.queue.insert(b, r2.queue[b].push(d)),
         asked: r2.asked,
         using: r2.using,
+        requests: r2.requests,
     };
-    assert(r2.holder[d] == b);
-    assert(r2.asked[d]);
+    assert(r2.requests.contains((d, b)));
     assert(ray_step(r2, r3, RayStep::ReceiveRequest { at: b, from: d }));
     lemma_ray_step_preserves_inv(r2, r3, RayStep::ReceiveRequest { at: b, from: d });
 
@@ -121,6 +126,7 @@ pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId,
         queue: r3.queue,
         asked: r3.asked.insert(b, true),
         using: r3.using,
+        requests: r3.requests.insert((b, r3.holder[b])),
     };
     assert(r3.queue[b].len() == 1);
     assert(!r3.asked[b]);
@@ -134,9 +140,9 @@ pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId,
         queue: r4.queue.insert(a, r4.queue[a].push(b)),
         asked: r4.asked,
         using: r4.using,
+        requests: r4.requests,
     };
-    assert(r4.holder[b] == a);
-    assert(r4.asked[b]);
+    assert(r4.requests.contains((b, a)));
     assert(ray_step(r4, r5, RayStep::ReceiveRequest { at: a, from: b }));
     lemma_ray_step_preserves_inv(r4, r5, RayStep::ReceiveRequest { at: a, from: b });
 
@@ -147,6 +153,7 @@ pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId,
         queue: r5.queue,
         asked: r5.asked.insert(a, true),
         using: r5.using,
+        requests: r5.requests.insert((a, r5.holder[a])),
     };
     assert(r5.queue[a].len() == 1);
     assert(!r5.asked[a]);
@@ -160,9 +167,9 @@ pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId,
         queue: r6.queue.insert(c, r6.queue[c].push(a)),
         asked: r6.asked,
         using: r6.using,
+        requests: r6.requests,
     };
-    assert(r6.holder[a] == c);
-    assert(r6.asked[a]);
+    assert(r6.requests.contains((a, c)));
     assert(ray_step(r6, r7, RayStep::ReceiveRequest { at: c, from: a }));
     lemma_ray_step_preserves_inv(r6, r7, RayStep::ReceiveRequest { at: c, from: a });
     assert(has_token(r7, c));
@@ -174,6 +181,7 @@ pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId,
         queue: r7.queue.insert(c, r7.queue[c].drop_first()),
         asked: r7.asked.insert(c, false),
         using: r7.using,
+        requests: r7.requests,
     };
     assert(r7.queue[c].len() == 1);
     assert(r7.queue[c][0] == a);
@@ -191,6 +199,7 @@ pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId,
         queue: r8.queue.insert(a, r8.queue[a].drop_first()),
         asked: r8.asked.insert(a, false),
         using: r8.using,
+        requests: r8.requests,
     };
     assert(r8.queue[a].len() == 1);
     assert(r8.queue[a][0] == b);
@@ -208,6 +217,7 @@ pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId,
         queue: r9.queue.insert(b, r9.queue[b].drop_first()),
         asked: r9.asked.insert(b, false),
         using: r9.using,
+        requests: r9.requests,
     };
     assert(r9.queue[b].len() == 1);
     assert(r9.queue[b][0] == d);
@@ -225,6 +235,7 @@ pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId,
         queue: r10.queue.insert(d, r10.queue[d].drop_first()),
         asked: r10.asked,
         using: r10.using.insert(d, true),
+        requests: r10.requests,
     };
     assert(r10.queue[d].len() == 1);
     assert(r10.queue[d][0] == d);
@@ -238,6 +249,31 @@ pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId,
     assert(ray_unique_token(r11));
     assert forall|m: NodeId| has_token(r11, m) implies m == d by {
         theorem_ray_at_most_one_token(r11, m, d);
+    }
+
+    // 12. The adversarial tail: D's *original* request to B, sent back at step
+    // 2, is redelivered now - after the token has travelled the whole path and
+    // `holder[d]` has become `d`, so the topology it was routed against is long
+    // gone. It is still deliverable, because `requests` records what was sent
+    // rather than what the holder pointers currently say.
+    assert(r11.holder[d] == d);
+    assert(r11.requests.contains((d, b)));
+    theorem_delayed_request_survives_token_move(r9, r10, b, d, b, d);
+    let r12 = Raymond {
+        nodes: r11.nodes,
+        holder: r11.holder,
+        queue: r11.queue.insert(b, r11.queue[b].push(d)),
+        asked: r11.asked,
+        using: r11.using,
+        requests: r11.requests,
+    };
+    assert(ray_step(r11, r12, RayStep::ReceiveRequest { at: b, from: d }));
+    theorem_delayed_request_delivery_is_safe(r11, r12, b, d);
+
+    // Delivering it changed nothing about who holds the token.
+    assert(has_token(r12, d));
+    assert forall|m: NodeId| has_token(r12, m) implies m == d by {
+        theorem_ray_at_most_one_token(r12, m, d);
     }
 }
 

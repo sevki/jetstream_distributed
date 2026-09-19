@@ -107,7 +107,7 @@ not hidden side conditions.
 
 | Assumption | How it is modelled |
 | --- | --- |
-| The network may duplicate, reorder, delay and lose messages arbitrarily | `System::network` is a set that only grows, and delivery does not consume. A message is therefore deliverable zero, one or many times, in any order, at any later point. `Step::Replay` additionally makes duplication an explicit transition. |
+| The network may duplicate, reorder, delay and lose messages arbitrarily | `System::network` is a set that only grows, and delivery does not consume. A message is therefore deliverable zero, one or many times, in any order, at any later point. `Step::Replay` additionally makes duplication an explicit transition. The Raymond layer models its requests the same way, via `Raymond::requests`. |
 | Nodes may crash at any time | `Step::Crash` removes a node from `live`. It does **not** remove that node's tokens from `issued`. |
 | Crashed nodes may come back with stale beliefs | `Step::Recover` puts the node back in `live`. It regains nothing else - in particular it still holds only its old, superseded tokens. |
 | Failure detection is unreliable | `Step::RevokeOwner` may fire against a node that is perfectly healthy. Safety must come from the epoch bump, not from the detector being right. |
@@ -157,7 +157,9 @@ verifying, the build fails.
 | R3 | **Raymond: duplicate/reordered requests cannot create a second owner** | `proofs::raymond::theorem_duplicate_requests_are_safe` | Raymond invariant |
 | R4 | **Raymond: token transfer preserves ownership safety** | `proofs::raymond::theorem_token_transfer_preserves_ownership_safety` | the actor is not `Owned` when the token moves |
 | R5 | Composed exclusivity: under the coupling, the only node that can mutate is the token holder | `proofs::raymond::theorem_coupled_exclusivity` | Raymond invariant, coupling |
-| R6 | A concrete routing execution: request `D → B → A → C[token]`, token `C → A → B → D`, with the unique-token invariant carried through all eleven hops | `proofs::raymond_routing::scenario_request_and_token_routing` | four distinct nodes |
+| R6 | A concrete routing execution: request `D → B → A → C[token]`, token `C → A → B → D`, with the unique-token invariant carried through all eleven hops, then a twelfth step redelivering `D`'s original request after the token has finished moving | `proofs::raymond_routing::scenario_request_and_token_routing` | four distinct nodes |
+| R7 | A request outlives the topology it was routed against: after the token moves it is still in `requests` and still deliverable | `proofs::raymond::theorem_delayed_request_survives_token_move` | none |
+| R8 | Delivering an arbitrarily delayed request preserves the Raymond invariant and leaves token possession completely unchanged | `proofs::raymond::theorem_delayed_request_delivery_is_safe` | Raymond invariant |
 
 "Reachability" means the hypothesis `reachable(sys)`, i.e. some finite execution
 starting from an `init` state ends in `sys`. It is discharged once and for all by
@@ -170,6 +172,14 @@ starting from an `init` state ends in `sys`. It is discharged once and for all b
 tracks a `holder` pointer (the next hop towards the token), a request `queue`,
 an `asked` flag (outstanding request) and `using` (token possession / critical
 section).
+
+Requests in flight are explicit state: `Raymond::requests` records every request
+ever sent as `(originator, destination)`, never shrinks, and is not consumed by
+delivery — the same modelling choice the ownership layer makes for `network`. The
+destination is resolved at *send* time, which is what lets a request be delivered
+after the token has moved and the holder pointers it was routed against are gone.
+A guard phrased against the live `holder[from]` would instead drop such a request
+silently, so "arbitrary delay" would have been claimed but not modelled.
 
 Requests travel hop-by-hop towards the token and the token travels back along
 the reverse of the request path:

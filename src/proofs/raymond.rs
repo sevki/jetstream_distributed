@@ -84,9 +84,9 @@ pub proof fn theorem_routing_cannot_manufacture_ownership(
 /// **Duplicate and reordered requests cannot create a second owner.**
 ///
 /// `ray_receive_request` has no sequence number and no duplicate suppression:
-/// it can fire arbitrarily often, for arbitrary `(at, from)` pairs whose
-/// routing topology matches, in any order. It still cannot produce a second
-/// token holder, because it does not touch `holder` at all.
+/// it can fire arbitrarily often, for any `(at, from)` pair whose request was
+/// ever sent, in any order. It still cannot produce a second token holder,
+/// because it does not touch `holder` at all.
 pub proof fn theorem_duplicate_requests_are_safe(
     pre: Raymond,
     mid: Raymond,
@@ -260,6 +260,53 @@ pub proof fn lemma_assign_using(pre: Raymond, post: Raymond, n: NodeId, head: No
         assert(!pre.using[n]);
         assert(false);
     }
+}
+
+/// **A request outlives the topology it was routed against.**
+///
+/// After the token moves, `from`'s holder pointer no longer points at `at` and
+/// `from`'s `asked` flag may have been cleared - but the request itself is still
+/// in `requests`, so it is still deliverable. This is the adversarial case a
+/// model that guarded on the live holder pointer could not express at all.
+pub proof fn theorem_delayed_request_survives_token_move(
+    pre: Raymond,
+    mid: Raymond,
+    n: NodeId,
+    head: NodeId,
+    at: NodeId,
+    from: NodeId,
+)
+    requires
+        ray_assign_privilege(pre, mid, n, head),
+        pre.nodes.contains(at),
+        pre.nodes.contains(from),
+        pre.requests.contains((from, at)),
+    ensures
+        mid.nodes.contains(at),
+        mid.nodes.contains(from),
+        mid.requests.contains((from, at)),
+{
+}
+
+/// **Delivering an arbitrarily delayed request is safe.**
+///
+/// Whenever such a request is delivered - however late, however many times - the
+/// Raymond invariant survives and token possession is completely unchanged.
+pub proof fn theorem_delayed_request_delivery_is_safe(
+    pre: Raymond,
+    post: Raymond,
+    at: NodeId,
+    from: NodeId,
+)
+    requires
+        ray_inv(pre),
+        ray_receive_request(pre, post, at, from),
+    ensures
+        ray_inv(post),
+        forall|m: NodeId| #[trigger] has_token(post, m) <==> has_token(pre, m),
+{
+    lemma_ray_step_preserves_inv(pre, post, RayStep::ReceiveRequest { at: at, from: from });
+    lemma_routing_preserves_holder(pre, post, RayStep::ReceiveRequest { at: at, from: from });
 }
 
 /// Passing the token preserves the "exactly one token" invariant: the old

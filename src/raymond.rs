@@ -22,6 +22,12 @@
 //! token:    C -> A -> B -> D
 //! ```
 //!
+//! Requests in flight are explicit state: `Raymond::requests` records every
+//! request ever sent, never shrinks, and is not consumed by delivery. A request
+//! is therefore deliverable zero, one or many times, in any order, and at any
+//! later point - including after the token has moved and the holder pointers it
+//! was routed against are gone.
+//!
 //! Only **safety** is modelled. Raymond's liveness (every request is eventually
 //! served) requires FIFO, reliable links and no crashes, none of which this
 //! model assumes; see `README.md`.
@@ -42,6 +48,16 @@ pub struct Raymond {
     pub queue: Map<NodeId, Seq<NodeId>>,
     pub asked: Map<NodeId, bool>,
     pub using: Map<NodeId, bool>,
+    /// Every request ever sent, as `(originator, destination)`.
+    ///
+    /// Like `System::network` in the ownership layer this set never shrinks and
+    /// delivery does not consume, so a request stays deliverable for ever, any
+    /// number of times, in any order - **including long after the holder
+    /// pointers it was routed against have changed**. Recording the destination
+    /// at send time is what makes that last case expressible: a guard phrased
+    /// against the *current* `holder[from]` would silently drop an in-flight
+    /// request the moment the token moved.
+    pub requests: Set<(NodeId, NodeId)>,
 }
 
 /// `n` currently possesses the token.
@@ -88,38 +104,45 @@ pub open spec fn ray_request_cs(pre: Raymond, post: Raymond, n: NodeId) -> bool 
     &&& post.asked == pre.asked
     &&& post.using == pre.using
     &&& post.nodes == pre.nodes
+    &&& post.requests == pre.requests
 }
 
 /// `n` forwards a request one hop towards the token.
+///
+/// The destination is resolved *here*, at send time, and recorded in
+/// `requests`. Everything after this point is the network's business.
 pub open spec fn ray_make_request(pre: Raymond, post: Raymond, n: NodeId) -> bool {
     &&& pre.nodes.contains(n)
     &&& pre.holder[n] != n
     &&& pre.queue[n].len() > 0
     &&& !pre.asked[n]
     &&& post.asked == pre.asked.insert(n, true)
+    &&& post.requests == pre.requests.insert((n, pre.holder[n]))
     &&& post.holder == pre.holder
     &&& post.queue == pre.queue
     &&& post.using == pre.using
     &&& post.nodes == pre.nodes
 }
 
-/// `at` receives a request that `from` routed to it.
+/// `at` receives a request that `from` sent to it at some earlier point.
 ///
-/// The guard checks only the routing topology (`from`'s next hop is `at`), so
-/// **duplicated and reordered requests are explicitly permitted**: this step may
-/// fire any number of times for the same `(at, from)` pair, in any order. All
-/// that happens is that `at`'s queue picks up extra entries, which costs
-/// fairness, not safety.
+/// The guard is the *sent message*, not the live routing topology, so
+/// **duplicated, reordered and arbitrarily delayed requests are all permitted**:
+/// this step may fire any number of times for the same `(at, from)` pair, in any
+/// order, and - crucially - at any later point, including after the token has
+/// moved and `from`'s holder pointer no longer points at `at`. All that happens
+/// is that `at`'s queue picks up extra entries, which costs fairness, not
+/// safety.
 pub open spec fn ray_receive_request(pre: Raymond, post: Raymond, at: NodeId, from: NodeId) -> bool {
     &&& pre.nodes.contains(at)
     &&& pre.nodes.contains(from)
-    &&& pre.holder[from] == at
-    &&& pre.asked[from]
+    &&& pre.requests.contains((from, at))
     &&& post.queue == pre.queue.insert(at, pre.queue[at].push(from))
     &&& post.holder == pre.holder
     &&& post.asked == pre.asked
     &&& post.using == pre.using
     &&& post.nodes == pre.nodes
+    &&& post.requests == pre.requests
 }
 
 /// The token holder hands the token to the head of its queue.
@@ -143,6 +166,7 @@ pub open spec fn ray_assign_privilege(
     &&& post.asked == pre.asked.insert(n, false)
     &&& post.using == pre.using
     &&& post.nodes == pre.nodes
+    &&& post.requests == pre.requests
 }
 
 /// The token holder is itself at the head of its queue, so it enters the
@@ -157,6 +181,7 @@ pub open spec fn ray_enter_cs(pre: Raymond, post: Raymond, n: NodeId) -> bool {
     &&& post.holder == pre.holder
     &&& post.asked == pre.asked
     &&& post.nodes == pre.nodes
+    &&& post.requests == pre.requests
 }
 
 /// Leaving the critical section.
@@ -167,6 +192,7 @@ pub open spec fn ray_exit_cs(pre: Raymond, post: Raymond, n: NodeId) -> bool {
     &&& post.queue == pre.queue
     &&& post.asked == pre.asked
     &&& post.nodes == pre.nodes
+    &&& post.requests == pre.requests
 }
 
 /// The labelled Raymond transitions.
@@ -214,6 +240,7 @@ pub open spec fn ray_init(r: Raymond, root: NodeId) -> bool {
     &&& (forall|n: NodeId| #[trigger] r.nodes.contains(n) && n != root ==> r.holder[n] != n)
     &&& (forall|n: NodeId|
         #[trigger] r.nodes.contains(n) ==> r.queue[n].len() == 0 && !r.asked[n] && !r.using[n])
+    &&& (forall|m: (NodeId, NodeId)| !(#[trigger] r.requests.contains(m)))
 }
 
 // ---------------------------------------------------------------------------

@@ -443,6 +443,13 @@ pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId,
             {
                 &&& #[trigger] ray_step(p, r, RayStep::ReceiveRequest { at: b, from: d })
                 &&& #[trigger] ray_reachable_from(r0, p)
+                // `ray_init` alone constrains only the root and the empty
+                // queues, not the holder *tree*: an initial `D -> B -> C`,
+                // `A -> C` satisfies it, and the run could then go
+                // `D -> B -> C` and back with `A` never participating. Pinning
+                // `r0` to the named state is what protects the advertised
+                // `D -> B -> A -> C` path.
+                &&& r0 == routing_init_state(a, b, c, d)
                 &&& ray_init(r0, c)
                 &&& has_token(r0, c)
                 &&& r0.nodes.contains(a)
@@ -479,6 +486,7 @@ pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId,
         &&& p.nodes == after_hops.nodes
     };
     assert(ray_reachable_from(r0, p));
+    assert(r0 == routing_init_state(a, b, c, d));
 }
 
 } // verus!

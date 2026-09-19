@@ -21,8 +21,11 @@
 //! * [`raymond`]   - Raymond's mutual-exclusion routing layer, kept strictly
 //!                   separate from ownership semantics.
 //! * [`proofs`]    - the theorems. Everything claimed in `README.md` lives here.
+//! * [`exec`]      - the only executable code: the `u64` fence check, proved to
+//!                   agree with the model.
 #![allow(unused_imports)]
 
+pub mod exec;
 pub mod fencing;
 pub mod model;
 pub mod ownership;

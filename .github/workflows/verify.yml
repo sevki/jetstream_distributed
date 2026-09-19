@@ -55,7 +55,10 @@ jobs:
         run: verus --version
 
       - name: Verify all proofs
-        run: verus --crate-type=lib src/lib.rs --time
+        run: |
+          set -o pipefail
+          verus --crate-type=lib src/lib.rs --triggers-mode silent | tee /tmp/verus-output.txt
+          grep -E '^verification results' /tmp/verus-output.txt >> "$GITHUB_STEP_SUMMARY"
 
       # The README claims the proofs use no escape hatches. Enforce that claim.
       - name: Reject verification escape hatches

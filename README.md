@@ -145,6 +145,7 @@ verifying, the build fails.
 | 6a | **Token uniqueness (physical)** - at most one token is ever *issued* per `(ActorId, Epoch)` | `proofs::tokens::theorem_issued_token_unique_per_actor_epoch` | reachability |
 | 6b | Stale physical tokens confer no authority | `proofs::tokens::theorem_stale_token_has_no_authority` | none |
 | 6c | No token is ever minted for a future epoch | `proofs::tokens::theorem_no_future_tokens` | reachability |
+| E | The runtime `u64` fence check returns exactly the model's verdict, and rejects any superseded epoch | `exec::FenceGuard::accepts`, `exec::FenceGuard::rejects_stale` | epoch fits in `u64`; the guard is the node's own view of the actor |
 | I | The inductive invariant holds in every reachable state (`init ==> inv`, `inv /\ next ==> inv`) | `proofs::invariant::theorem_reachable_inv` | the model's transition relation |
 | S | **The headline scenario**: `A` owns X@41, a transfer and a crash/recovery occur, `B` owns X@42, `A` returns still holding its epoch-41 token - and cannot perform an authoritative mutation | `proofs::adversarial::scenario_stale_owner_returns` | `A != B` |
 | S1 | A stale `Grant` cannot resurrect a superseded epoch | `proofs::adversarial::theorem_stale_grant_cannot_be_used` | none |
@@ -156,6 +157,7 @@ verifying, the build fails.
 | R3 | **Raymond: duplicate/reordered requests cannot create a second owner** | `proofs::raymond::theorem_duplicate_requests_are_safe` | Raymond invariant |
 | R4 | **Raymond: token transfer preserves ownership safety** | `proofs::raymond::theorem_token_transfer_preserves_ownership_safety` | the actor is not `Owned` when the token moves |
 | R5 | Composed exclusivity: under the coupling, the only node that can mutate is the token holder | `proofs::raymond::theorem_coupled_exclusivity` | Raymond invariant, coupling |
+| R6 | A concrete routing execution: request `D → B → A → C[token]`, token `C → A → B → D`, with the unique-token invariant carried through all eleven hops | `proofs::raymond_routing::scenario_request_and_token_routing` | four distinct nodes |
 
 "Reachability" means the hypothesis `reachable(sys)`, i.e. some finite execution
 starting from an `init` state ends in `sys`. It is discharged once and for all by
@@ -209,6 +211,7 @@ distributed-ownership/
 │   ├── fencing.rs      current_epoch, valid_fence, staleness
 │   ├── transfer.rs     the multi-step handover and its lemmas
 │   ├── raymond.rs      Raymond routing layer + the coupling predicate
+│   ├── exec.rs         the only executable code: the u64 fence check
 │   └── proofs/
 │       ├── mod.rs
 │       ├── invariant.rs    init ==> inv, inv /\ next ==> inv, reachable ==> inv
@@ -217,7 +220,8 @@ distributed-ownership/
 │       ├── transfer.rs     claim 4
 │       ├── tokens.rs       claim 6
 │       ├── adversarial.rs  concrete adversarial executions
-│       └── raymond.rs      claim 7
+│       ├── raymond.rs      claim 7
+│       └── raymond_routing.rs  the D → B → A → C routing execution
 └── .github/workflows/verify.yml
 ```
 
@@ -225,6 +229,10 @@ This differs from a plain `proofs/` directory at the repository root: Verus
 verifies a *crate*, so every proof file has to be a module of that crate. Keeping
 them under `src/proofs/` is the ordinary Rust way to express that; a top-level
 `proofs/` would need `#[path = "../proofs/..."]` attributes for no benefit.
+
+Executable code is confined to `src/exec.rs`, which holds the `u64`-valued
+fence check a node actually runs, proved to return exactly the model's verdict.
+Everything else in the crate is specification or proof.
 
 Specification and proof code are kept apart from the model: `src/model.rs`
 defines only the state space and the transition relation and does not import the
@@ -250,6 +258,48 @@ verus --crate-type=lib src/lib.rs
 
 CI (`.github/workflows/verify.yml`) runs exactly this on every push and pull
 request, so a PR fails if any proof stops verifying.
+
+## Status: proven, modelled, future work
+
+**Machine-checked** (every `proof fn` in `src/proofs/` is checked by Verus in
+CI, with no `assume`/`admit`/`external_body`/`axiom`):
+
+* exclusive mutable ownership, in every reachable state;
+* unique authoritative epoch (existence and uniqueness);
+* stale-owner fencing, including the headline `A@41 / B@42 / A returns` scenario
+  as a concrete eleven-state reachable execution;
+* epoch monotonicity, per step, per `next`, and along whole executions;
+* transfer safety - the inductive invariant is preserved by every transition,
+  and no stage of a handover admits two owners;
+* token uniqueness, both "at most one token confers authority per
+  `(ActorId, Epoch)`" and the stronger "at most one token is ever issued per
+  `(ActorId, Epoch)`";
+* stale tokens surviving crash, partition and recovery confer no authority;
+* Raymond: at most one token, routing cannot manufacture ownership, duplicate
+  and reordered requests are safe, and token transfer preserves the coupling to
+  the ownership layer.
+
+**Modelled but not proven** (present in the state machine, no theorem beyond
+invariant preservation):
+
+* the specific message shapes (`Revoke` / `Released` / `Grant`) - safety does
+  not depend on them, which is itself the point, but no separate theorem says
+  the message flow is the *only* way to make progress;
+* Raymond's holder pointers are proven to have a unique root, but the model does
+  not prove the pointers always form an acyclic tree. Safety here does not need
+  it; routing termination would.
+
+**Future work** (deliberately out of scope):
+
+* **liveness** of either layer - progress, fairness, termination of a handover,
+  and Raymond's "every request is eventually served". These need assumptions
+  (reliable FIFO links, eventual failure detection) that this model does not
+  make.
+* a refinement from the `nat`-valued model to an executable `u64` implementation,
+  with the epoch-exhaustion case handled;
+* the actual actor runtime: networking, persistence, and the code that obeys the
+  protocol. Verifying the protocol says nothing about whether an implementation
+  follows it.
 
 ## No escape hatches
 

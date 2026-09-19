@@ -391,6 +391,17 @@ invariant preservation):
   not prove the pointers always form an acyclic tree. Safety here does not need
   it; routing termination would.
 
+**Not modelled at all** (a gap, stated rather than papered over):
+
+* **the Raymond layer has no crash model.** The ownership layer models crash,
+  recovery and unreliable failure detection; the routing layer does not. If the
+  token holder crashes, the token is simply lost, and the model cannot express
+  that state — `ray_token_exists` is an invariant, so a Raymond in which nobody
+  holds the token is not a state the machine can reach. This does not weaken any
+  safety claim (a lost token cannot create a second owner; if anything it is the
+  safe direction) but it does mean the Raymond layer's failure model is strictly
+  weaker than the ownership layer's, and the two are not symmetric.
+
 **Future work** (deliberately out of scope):
 
 * **liveness** of either layer - progress, fairness, termination of a handover,

@@ -1,8 +1,18 @@
 name: verify
 
 on:
+  # Pull requests cover branch work; restricting `push` to the default branch
+  # avoids running the whole suite twice for every commit on a PR branch.
   push:
+    branches: [main]
   pull_request:
+
+# Supersede in-flight runs for the same ref rather than letting them compete
+# for runners: the proof check is long enough that stacked runs were being
+# reclaimed mid-verification.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 # A PR fails if any proof in this repository stops verifying.
 jobs:

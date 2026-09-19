@@ -39,7 +39,9 @@ impl OwnershipState {
                 to,
                 old_epoch,
                 new_epoch,
-            } => *from != 0 && *to != 0 && *from != *to && *old_epoch < *new_epoch && *new_epoch > 0,
+            } => {
+                *from != 0 && *to != 0 && *from != *to && *old_epoch < *new_epoch && *new_epoch > 0
+            }
             OwnershipState::Unowned {
                 epoch,
                 intended_owner,

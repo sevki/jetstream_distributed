@@ -1,4 +1,4 @@
-use crate::model::{OwnershipState, Epoch, NodeId};
+use crate::model::{Epoch, NodeId, OwnershipState};
 use crate::ownership::may_mutate;
 
 pub fn valid_fence(state: &OwnershipState, epoch: Epoch) -> bool {
@@ -94,7 +94,7 @@ mod fencing_tests {
         };
 
         assert!(!is_stale_epoch(&state, 42)); // current epoch, not stale
-        assert!(is_stale_epoch(&state, 41));  // past epoch, is stale
+        assert!(is_stale_epoch(&state, 41)); // past epoch, is stale
         assert!(!is_stale_epoch(&state, 43)); // future epoch, not stale
     }
 

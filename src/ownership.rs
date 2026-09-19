@@ -1,4 +1,4 @@
-use crate::model::{OwnershipState, Epoch, NodeId, ActorId};
+use crate::model::{ActorId, Epoch, NodeId, OwnershipState};
 
 pub fn may_mutate(state: &OwnershipState, node: NodeId, epoch: Epoch) -> bool {
     match state {

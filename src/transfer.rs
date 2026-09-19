@@ -1,6 +1,6 @@
-use crate::model::{OwnershipState, Epoch, NodeId, ActorId, ActorSystem};
-use crate::ownership::may_mutate;
 use crate::fencing::{current_epoch, is_stale_epoch};
+use crate::model::{ActorId, ActorSystem, Epoch, NodeId, OwnershipState};
+use crate::ownership::may_mutate;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TransitionError {
@@ -116,9 +116,7 @@ pub fn stale_token_cannot_authorize_mutation(
                     owner: o2,
                     epoch: e2,
                 },
-            ) => {
-                o1 != o2 && e1 < e2 && *o1 == stale_owner && stale_epoch == *e1
-            }
+            ) => o1 != o2 && e1 < e2 && *o1 == stale_owner && stale_epoch == *e1,
             _ => false,
         }
     };
@@ -146,18 +144,47 @@ pub fn apply_transition(
         }
 
         let is_legal_transition = match (current_state, &new_state) {
-            (OwnershipState::Owned { owner: from, epoch: _ }, OwnershipState::Transferring { from: tf, old_epoch, new_epoch: ne, .. }) => {
-                *from == *tf && curr_epoch == *old_epoch && *ne > *old_epoch
-            }
-            (OwnershipState::Transferring { from: _, to, old_epoch: _, new_epoch: ne }, OwnershipState::Unowned { epoch: ue, intended_owner }) => {
-                *ue == *ne && *intended_owner == *to
-            }
-            (OwnershipState::Unowned { epoch: ue, intended_owner }, OwnershipState::Owned { owner, epoch: oe }) => {
-                *owner == *intended_owner && *oe == *ue
-            }
-            (OwnershipState::Owned { owner: old_o, epoch: old_e }, OwnershipState::Owned { owner: new_o, epoch: new_e }) => {
-                *old_o != *new_o && *new_e > *old_e
-            }
+            (
+                OwnershipState::Owned {
+                    owner: from,
+                    epoch: _,
+                },
+                OwnershipState::Transferring {
+                    from: tf,
+                    old_epoch,
+                    new_epoch: ne,
+                    ..
+                },
+            ) => *from == *tf && curr_epoch == *old_epoch && *ne > *old_epoch,
+            (
+                OwnershipState::Transferring {
+                    from: _,
+                    to,
+                    old_epoch: _,
+                    new_epoch: ne,
+                },
+                OwnershipState::Unowned {
+                    epoch: ue,
+                    intended_owner,
+                },
+            ) => *ue == *ne && *intended_owner == *to,
+            (
+                OwnershipState::Unowned {
+                    epoch: ue,
+                    intended_owner,
+                },
+                OwnershipState::Owned { owner, epoch: oe },
+            ) => *owner == *intended_owner && *oe == *ue,
+            (
+                OwnershipState::Owned {
+                    owner: old_o,
+                    epoch: old_e,
+                },
+                OwnershipState::Owned {
+                    owner: new_o,
+                    epoch: new_e,
+                },
+            ) => *old_o != *new_o && *new_e > *old_e,
             _ => false,
         };
 
@@ -266,7 +293,12 @@ mod transfer_tests {
             epoch: 42,
         };
 
-        assert!(stale_token_cannot_authorize_mutation(&state_before, &state_after, 1, 41));
+        assert!(stale_token_cannot_authorize_mutation(
+            &state_before,
+            &state_after,
+            1,
+            41
+        ));
     }
 
     #[test]
@@ -274,10 +306,7 @@ mod transfer_tests {
         let mut system = ActorSystem::new();
         let actor = 100u64;
 
-        let initial_state = OwnershipState::Owned {
-            owner: 1,
-            epoch: 1,
-        };
+        let initial_state = OwnershipState::Owned { owner: 1, epoch: 1 };
         system.update_actor_state(actor, initial_state.clone());
 
         let transferring_state = transition_owned_to_transferring(1, 2, 1, 2).unwrap();
@@ -304,10 +333,7 @@ mod transfer_tests {
         };
         system.update_actor_state(actor, initial_state);
 
-        let bad_state = OwnershipState::Owned {
-            owner: 2,
-            epoch: 5,
-        };
+        let bad_state = OwnershipState::Owned { owner: 2, epoch: 5 };
         let result = apply_transition(&mut system, actor, bad_state);
         assert_eq!(result, Err(TransitionError::EpochNotIncreasing));
     }

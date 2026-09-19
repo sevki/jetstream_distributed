@@ -1,5 +1,5 @@
+use crate::model::{ActorId, Epoch, NodeId};
 use std::collections::{HashMap, VecDeque};
-use crate::model::{ActorId, NodeId, Epoch};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RaymondToken {
@@ -119,10 +119,7 @@ impl Default for RaymondState {
     }
 }
 
-pub fn request_routing_preserves_token_uniqueness(
-    state: &RaymondState,
-    actor_id: ActorId,
-) -> bool {
+pub fn request_routing_preserves_token_uniqueness(state: &RaymondState, actor_id: ActorId) -> bool {
     if !state.is_valid_single_token(actor_id) {
         return false;
     }
@@ -143,7 +140,8 @@ pub fn token_transfer_safety(
     new_holder: NodeId,
     new_epoch: Epoch,
 ) -> bool {
-    if !state_before.is_valid_single_token(actor_id) || !state_after.is_valid_single_token(actor_id) {
+    if !state_before.is_valid_single_token(actor_id) || !state_after.is_valid_single_token(actor_id)
+    {
         return false;
     }
 

@@ -1,13 +1,13 @@
 #![allow(unused_imports)]
 
+mod fencing;
 mod model;
 mod ownership;
-mod transfer;
-mod fencing;
 mod raymond;
+mod transfer;
 
+pub use fencing::*;
 pub use model::*;
 pub use ownership::*;
-pub use transfer::*;
-pub use fencing::*;
 pub use raymond::*;
+pub use transfer::*;

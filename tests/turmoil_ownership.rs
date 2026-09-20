@@ -786,6 +786,50 @@ fn oracles_reject_two_writers_at_one_epoch() {
     println!("oracles rejected the shared epoch: {message}");
 }
 
+/// One node writing twice at one epoch is fine.
+///
+/// The paired accept for claim 1, and the reason it is worth writing down: the
+/// rejection above differs from this log in exactly one field. Without it,
+/// nothing distinguishes "two writers at one epoch" from "two writes at one
+/// epoch", and an oracle that had drifted to the second would still pass its
+/// own witness while forbidding the ordinary case.
+#[test]
+fn oracles_accept_one_node_writing_twice_at_one_epoch() {
+    let log = vec![
+        Event::Acquired { node: 0, epoch: 41 },
+        Event::Wrote { node: 0, epoch: 41, seq: 1 },
+        Event::Wrote { node: 0, epoch: 41, seq: 2 },
+    ];
+
+    assert!(
+        check_invariants(&log).is_ok(),
+        "an owner writing more than once at its own epoch is the ordinary case \
+         and must be accepted: {log:?}"
+    );
+}
+
+/// An epoch that moves to a different node *with* a burn is fine.
+///
+/// The paired accept for the forward half of claim 5, and it differs from that
+/// witness by the burn alone — same two acquires, same two epochs, same two
+/// nodes. What the oracle objects to is an epoch that moved without being
+/// burned, and this is what says so.
+#[test]
+fn oracles_accept_a_handover_to_another_node_across_a_burn() {
+    let log = vec![
+        Event::Acquired { node: 0, epoch: 41 },
+        Event::EpochBurned { from_epoch: 41, to_epoch: 42, next: 1, forced: true },
+        Event::Acquired { node: 1, epoch: 42 },
+        Event::Wrote { node: 1, epoch: 42, seq: 1 },
+    ];
+
+    assert!(
+        check_invariants(&log).is_ok(),
+        "a forced revoke handing the actor to another node is the headline \
+         path and must be accepted: {log:?}"
+    );
+}
+
 /// A write with no acquire behind it is rejected — P8, with a witness.
 ///
 /// P8 checks that an acquire for this exact `(node, epoch)` came earlier. It
@@ -794,6 +838,11 @@ fn oracles_reject_two_writers_at_one_epoch() {
 /// epoch is below the burn high-water mark. So P8 is narrower than its name
 /// suggests and is not wrong, and this is the log that shows it does its own
 /// half.
+///
+/// Its paired accept is `oracles_accept_the_same_log_without_the_reassignment`,
+/// which is this log with the acquire restored. That one test is the accept
+/// side of two rejections, which is fine — what matters is that some accepted
+/// log differs from the rejected one only in the thing being claimed.
 #[test]
 fn oracles_reject_a_write_with_no_capability() {
     let log = vec![Event::Wrote { node: 0, epoch: 41, seq: 1 }];

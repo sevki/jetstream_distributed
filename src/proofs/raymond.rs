@@ -8,7 +8,6 @@
 //! Liveness is *not* claimed. See `README.md`.
 #![allow(unused_imports)]
 
-use vstd::assert_maps_equal;
 use vstd::prelude::*;
 
 use crate::fencing::*;
@@ -722,9 +721,7 @@ pub proof fn lemma_reconcile_preserves_inv(pre: Raymond, post: Raymond, n: NodeI
 
     // `holder.insert(n, priv)` and `holder.insert(n, priv).insert(priv, priv)`
     // agree, because the holder already believes.
-    assert_maps_equal!(
-        post.holder == pre.holder.insert(n, priv_node).insert(priv_node, priv_node)
-    );
+    assert(post.holder =~= pre.holder.insert(n, priv_node).insert(priv_node, priv_node));
     lemma_repoint_acyclic(pre, post, n, priv_node);
 }
 

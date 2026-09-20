@@ -166,6 +166,7 @@ fn scenarios_hold_their_invariants() {
             totals.writes_sent += a.writes_sent;
             totals.writes_timed_out += a.writes_timed_out;
             totals.writes_failed += a.writes_failed;
+            totals.writes_disconnected += a.writes_disconnected;
         }
     }
 
@@ -215,9 +216,20 @@ fn scenarios_hold_their_invariants() {
     // that second number is persistently zero, the deadline is covering a case
     // this search does not reach, and whoever next touches `RPC_TIMEOUT` should
     // know that rather than infer it.
+    //
+    // `writes_disconnected` is printed for the same reason and watched for the
+    // opposite one. It counts connections that ended before any reply, which
+    // until it was given its own counter were reported as *successes* — the
+    // node saw `Ok("")` and carried on. A number that is not small here would
+    // mean the simulated network is severing established connections often
+    // enough that the runs are about that rather than about the protocol.
     println!(
-        "nodes sent {} writes: {} unanswered at the deadline, {} with no route",
-        totals.writes_sent, totals.writes_timed_out, totals.writes_failed
+        "nodes sent {} writes: {} unanswered at the deadline, {} with no route, \
+         {} cut off before a reply",
+        totals.writes_sent,
+        totals.writes_timed_out,
+        totals.writes_failed,
+        totals.writes_disconnected
     );
 
     // A rate is a claim about a population, and below a certain size there is

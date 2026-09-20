@@ -616,6 +616,19 @@ pub struct Attempts {
     /// would let "the request was swallowed" be satisfied by a connection that
     /// failed instantly and locally.
     pub writes_failed: u64,
+    /// Writes whose connection ended before any reply arrived.
+    ///
+    /// A third case rather than a reuse of either, because it is
+    /// epistemically distinct from both and this file has been wrong once
+    /// already about lumping two network outcomes together. `writes_failed`
+    /// means the sender was told there is no route, so the write certainly did
+    /// not land. A disconnect says nothing of the kind: the request may have
+    /// arrived and been applied, and the connection died before the answer
+    /// came back. That is the same standing as a timeout — the node does not
+    /// know — but it is a different event and is worth seeing separately,
+    /// because a run full of them would mean the simulated network is severing
+    /// established connections rather than exercising the protocol.
+    pub writes_disconnected: u64,
 }
 
 /// One request/response round trip. A fresh connection per request, which is
@@ -639,7 +652,20 @@ async fn rpc_inner(req: String) -> io::Result<String> {
     stream.write_all(b"\n").await?;
     stream.flush().await?;
     let mut reply = String::new();
-    BufReader::new(&mut stream).read_line(&mut reply).await?;
+    let n = BufReader::new(&mut stream).read_line(&mut reply).await?;
+    // `read_line` reports a clean EOF as `Ok(0)`, and a line that ended
+    // without a newline as `Ok(n)` with no `\n` in the buffer. Neither is a
+    // reply, and returning `Ok("")` for the first made the caller count the
+    // request as answered: `run_cmd` matches `Ok(_) => {}`, so a write whose
+    // connection ended before the coordinator said anything was neither
+    // timed out nor failed. A story asserting the request was answered before
+    // the deadline would have been satisfied by silence.
+    if n == 0 || !reply.ends_with('\n') {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "the connection ended before the coordinator replied",
+        ));
+    }
     Ok(reply.trim().to_string())
 }
 
@@ -1459,8 +1485,18 @@ fn run_with_log(
                 tokio::spawn(async move {
                     let mut reader = BufReader::new(stream);
                     let mut line = String::new();
-                    if reader.read_line(&mut line).await.is_err() {
-                        return;
+                    // Same defect as `rpc_inner`, and with more to lose. A
+                    // clean EOF is `Ok(0)`, which is not an error, so an empty
+                    // `line` went on to be handled as a request: `handle("")`
+                    // answers `ERR` harmlessly, but the same block calls
+                    // `take_slow_reply`, which is one-shot. A severed
+                    // connection could therefore burn the flag that
+                    // `Action::SlowReply` had armed, and the story about a
+                    // reply arriving after its caller gave up would quietly
+                    // get a prompt one instead.
+                    match reader.read_line(&mut line).await {
+                        Ok(n) if n > 0 && line.ends_with('\n') => {}
+                        _ => return,
                     }
                     // The verdict and the decision to answer late are taken
                     // together, under the one lock, and the wait happens after
@@ -1688,6 +1724,9 @@ async fn run_cmd(node: u64, cmd: NodeCmd, state: &mut NodeState) -> io::Result<(
                     Ok(_) => {}
                     Err(e) if e.kind() == io::ErrorKind::TimedOut => {
                         state.attempts.writes_timed_out += 1;
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                        state.attempts.writes_disconnected += 1;
                     }
                     Err(_) => state.attempts.writes_failed += 1,
                 }

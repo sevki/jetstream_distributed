@@ -372,6 +372,11 @@ fn an_isolated_owner_is_met_with_silence_not_refusal() {
          once here, so a timeout in this story would mean something other than \
          the partition happened: {attempts:?}"
     );
+    assert_eq!(
+        attempts[0].writes_disconnected, 0,
+        "nor cut off mid-reply: this story is about a route that was never \
+         there, not one that vanished under an open connection: {attempts:?}"
+    );
 
     assert_eq!(
         accepted(&log),
@@ -434,6 +439,11 @@ fn a_held_request_expires_and_the_node_carries_on() {
         attempts[0].writes_failed, 0,
         "and nothing may have failed outright: the route was never removed, \
          only stalled: {attempts:?}"
+    );
+    assert_eq!(
+        attempts[0].writes_disconnected, 0,
+        "and nothing was cut off before a reply — a hold delays the message, \
+         it does not sever the connection: {attempts:?}"
     );
 
     // Deliberately not pinned to a count. Whether the held request reaches the
@@ -500,6 +510,13 @@ fn a_delayed_write_arrives_at_a_registry_that_moved_on() {
          registry, and a timeout here would mean it was never delivered: \
          {attempts:?}"
     );
+    assert_eq!(
+        attempts[0].writes_disconnected, 0,
+        "and it must have been answered rather than merely not timing out. \
+         Until a disconnect was given its own counter it was reported as \
+         success, so the assertion above could have been satisfied by a \
+         connection that ended in silence: {attempts:?}"
+    );
     assert!(
         fenced(&log).contains(&(0, 41)),
         "the delayed write must have been refused on arrival, at an epoch \
@@ -539,6 +556,11 @@ fn a_timeout_is_not_evidence_the_write_did_not_land() {
     assert_eq!(
         attempts[0].writes_timed_out, 1,
         "the node must have given up on the first write: {attempts:?}"
+    );
+    assert_eq!(
+        attempts[0].writes_disconnected, 0,
+        "it gave up on its own deadline, not because the connection ended: \
+         the distinction is the whole subject of this story: {attempts:?}"
     );
     assert_eq!(
         accepted(&log),
@@ -1940,4 +1962,39 @@ fn the_registry_refuses_a_release_from_a_node_outside_the_transfer() {
         "OK",
         "the outgoing owner's own release must still complete the transfer"
     );
+}
+
+/// An empty request line is refused and changes nothing.
+///
+/// The degenerate member of the malformed-line family, and it is here as a
+/// second line of defence rather than as the fix. The fix is that the
+/// coordinator no longer *calls* `handle` on a phantom line: a clean EOF is
+/// `Ok(0)` from `read_line`, not an error, so an empty `line` used to be
+/// handled as though a request had arrived. That mattered less for the reply —
+/// `ERR`, harmlessly — than for what shares the block with it, since
+/// `take_slow_reply` is one-shot and a severed connection could burn the flag
+/// `Action::SlowReply` had armed, quietly turning the late-reply story into a
+/// prompt-reply story.
+///
+/// That socket-level behaviour needs the simulated network and is checked in
+/// CI. What is pinned here is the weaker half: if the early return is ever
+/// removed, an empty line must still be refused without touching the registry.
+#[test]
+fn the_registry_refuses_an_empty_line() {
+    let mut coord = Coord::new(Fence::Checked);
+    assert_eq!(coord.handle("POLL 0", Peer::Node(0)), format!("GRANT {INITIAL_EPOCH}"));
+    assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}"), Peer::Node(0)), "OK");
+
+    assert_eq!(coord.handle("", Peer::Node(0)), "ERR");
+    assert_eq!(coord.handle("   ", Peer::Node(0)), "ERR");
+    assert_eq!(
+        coord.handle("", Peer::Control),
+        "ERR",
+        "and the control connection gets no more out of an empty line than a \
+         node does"
+    );
+
+    // The registry is untouched by all three: node 0 still owns it at the same
+    // epoch, so nothing above was silently treated as a request.
+    assert_eq!(coord.handle(&format!("WRITE 0 {INITIAL_EPOCH}"), Peer::Node(0)), "OK 1");
 }

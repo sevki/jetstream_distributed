@@ -203,14 +203,28 @@ jobs:
     name: Turmoil scenarios
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      # The same Rust toolchain the proof jobs install. Verus itself is not
+      # needed here, but the compiler is still pinned: a simulation built by a
+      # different rustc is not evidence about the code the proofs are checked
+      # against.
+      VERUS_TOOLCHAIN: 1.98.1-x86_64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v4
 
-      # rust-toolchain.toml pins the version Verus was built against, and Cargo
-      # honours it here too, so the simulation is built by the same compiler as
-      # everything else in this repository.
-      - name: Install the pinned Rust toolchain
-        run: rustup show active-toolchain || rustup toolchain install
+      # Named explicitly rather than left to rust-toolchain.toml. Cargo does
+      # honour that file, and the cache step's log confirms this job has been
+      # building with 1.98.1 all along — so this is not a fix for a job that
+      # was using the wrong compiler. It is a fix for a step that could not say
+      # which compiler it meant: `rustup show active-toolchain || rustup
+      # toolchain install` names no version, so reading it tells you nothing
+      # about what will be installed, and its fallback takes no argument. The
+      # other two jobs state the toolchain; this one now states the same one,
+      # from the same variable.
+      - name: Install the Rust toolchain the proofs are built with
+        run: |
+          rustup toolchain install "$VERUS_TOOLCHAIN" \
+            --component rustc-dev,llvm-tools,rust-std,cargo,rustfmt
 
       - uses: Swatinem/rust-cache@v2
         with:

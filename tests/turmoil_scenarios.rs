@@ -116,6 +116,53 @@ fn a_window_bound_that_is_not_utf8_stops_the_search() {
     window_bound("X", Err(std::env::VarError::NotUnicode(bytes)), 256);
 }
 
+/// The end of the window, or a failure if there isn't one.
+///
+/// This was `start.saturating_add(seeds)`, which is the arithmetic version of
+/// the `Err(_)` above: it turns a request the program cannot honour into a
+/// quietly different request it can. At the `u64` boundary the clamp shortens
+/// the window — at `u64::MAX` it empties it — and a window under
+/// `FLOOR_WINDOW` skips the coverage floor entirely. So a job asking for 256
+/// seeds would run none of them, apply no floor, and report success.
+///
+/// The doc comment on `env_u64` already states the rule this broke: a search
+/// that silently runs the wrong window is worse than one that stops, because
+/// it keeps reporting success. Saturating is silently running the wrong
+/// window.
+fn window_end(start: u64, seeds: u64) -> u64 {
+    start.checked_add(seeds).unwrap_or_else(|| {
+        panic!(
+            "a window of {seeds} seeds starting at {start} runs past u64::MAX. \
+             Refusing to search a truncated one: the shortened window would \
+             fall under the coverage floor and be exempted from it, so the \
+             run would report success having searched almost nothing."
+        )
+    })
+}
+
+#[test]
+fn an_ordinary_window_has_an_end() {
+    assert_eq!(window_end(0, 256), 256);
+    assert_eq!(window_end(1_000, 256), 1_256);
+    // The largest window that does fit is still fine: the check is on
+    // overflow, not on proximity to it.
+    assert_eq!(window_end(u64::MAX - 256, 256), u64::MAX);
+}
+
+#[test]
+#[should_panic(expected = "runs past u64::MAX")]
+fn a_window_that_overflows_stops_the_search() {
+    // Clamped, this was `end == start`: zero seeds searched, a window of zero
+    // exempted from the floor, and a green result.
+    window_end(u64::MAX, 256);
+}
+
+#[test]
+#[should_panic(expected = "runs past u64::MAX")]
+fn a_window_that_overflows_by_one_stops_the_search() {
+    window_end(u64::MAX - 255, 257);
+}
+
 /// The search. Each seed is an independent story; a failure names the seed,
 /// and `run_scenario(Scenario::from_seed(n))` replays it exactly.
 #[test]
@@ -133,7 +180,7 @@ fn scenarios_hold_their_invariants() {
     // deterministic band, which is what a pull request wants: the same 256
     // scenarios on every push, so a red result means the change did it.
     let start = env_u64("JETSTREAM_SCENARIO_START", 0);
-    let end = start.saturating_add(seeds);
+    let end = window_end(start, seeds);
 
     // Every seed that has ever failed, replayed first: a fixed bug stays
     // fixed, and one that is not yet fixed keeps this red until it is. The

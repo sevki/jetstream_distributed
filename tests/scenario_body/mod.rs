@@ -665,53 +665,66 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
         }
     }
 
-    // Claim 5 — epoch monotonicity. The registry's epoch never goes backwards,
+    // Claim 5 — epoch monotonicity. The registry's epoch moves only by a burn,
     // and a burn strictly increases it.
     //
-    // Read across every event that exposes where the registry *was*, not just
-    // across burns. The burns-only version had the same flaw as the first
-    // P5/P6 check, one level along: it trusted that every epoch change came
-    // with a correct burn record, so `Acquired(0, 41), EpochBurned(41, 42),
-    // Acquired(0, 41)` passed the whole suite — the repeated owner satisfies
-    // the ownership check, and with no writes the rest have nothing to say —
-    // while the registry sat back down below an epoch it had already burned.
+    // Stated as exact accounting rather than as "never goes backwards", which
+    // is what it said first and which sees only half of the failure. A
+    // monotonic reading catches `Acquired(0, 41), EpochBurned(41, 42),
+    // Acquired(0, 41)` — the registry sitting back down below an epoch it
+    // burned — but says nothing about `Acquired(0, 41), Acquired(1, 42)`, where
+    // it jumps forward with no burn recorded at all. Both are a registry whose
+    // epoch moved by something other than a burn, and in the model there is no
+    // such step: every transition that changes the epoch burns it.
     //
-    // `Fenced` is the one event deliberately left out, and leaving it in would
-    // invert the oracle: a refusal names the *request's* epoch, and a stale
-    // request is precisely one whose epoch is below where the registry has got
-    // to. Reading it here would reject exactly the thing being refused.
-    let mut epoch = 0u64;
+    // Two kinds of event are deliberately not read as saying where the registry
+    // was.
+    //
+    // `Fenced` names the *request's* epoch. A stale request is by definition
+    // one below where the registry has got to, so reading it here would reject
+    // precisely the thing being refused.
+    //
+    // `Wrote` names the registry's epoch only if the fence works, and the fence
+    // working is the thing under test — `run_scenario_unfenced` exists to
+    // produce logs where it does not. Reading an accepted write as authoritative
+    // would let this oracle pre-empt the two that are supposed to catch that,
+    // and an oracle that fires first on someone else's failure is worse than
+    // one that stays silent: the message would name the wrong claim.
+    let mut epoch: Option<u64> = None;
     for ev in log {
-        if let Event::EpochBurned { from_epoch, to_epoch, .. } = ev {
-            if *to_epoch <= *from_epoch {
-                return Err(format!(
-                    "claim 5 (monotonicity): epoch went {from_epoch} -> {to_epoch}"
-                ));
-            }
-        }
-
-        // Where this event says the registry was, in the order it was there.
-        let (first, second) = match ev {
-            // The registry was `Unowned` at this epoch and became `Owned`.
-            Event::Acquired { epoch, .. } => (Some(*epoch), None),
-            // A write is accepted only against `Owned` at exactly this epoch.
-            Event::Wrote { epoch, .. } => (Some(*epoch), None),
-            // The actor became `Unowned` here.
-            Event::Released { new_epoch, .. } => (Some(*new_epoch), None),
+        match ev {
             Event::EpochBurned { from_epoch, to_epoch, .. } => {
-                (Some(*from_epoch), Some(*to_epoch))
+                if to_epoch <= from_epoch {
+                    return Err(format!(
+                        "claim 5 (monotonicity): epoch went {from_epoch} -> {to_epoch}"
+                    ));
+                }
+                match epoch {
+                    Some(at) if at != *from_epoch => {
+                        return Err(format!(
+                            "claim 5 (monotonicity): a burn from epoch {from_epoch} \
+                             while the registry was at {at} ({ev:?})"
+                        ));
+                    }
+                    _ => {}
+                }
+                epoch = Some(*to_epoch);
             }
-            Event::Fenced { .. } => (None, None),
-        };
-
-        for exposed in [first, second].into_iter().flatten() {
-            if exposed < epoch {
-                return Err(format!(
-                    "claim 5 (monotonicity): the registry was at epoch {epoch} \
-                     and is now at {exposed} ({ev:?})"
-                ));
+            // Both of these say the registry was `Unowned` or `Owned` at this
+            // exact epoch when the event was recorded.
+            Event::Acquired { epoch: at, .. } | Event::Released { new_epoch: at, .. } => {
+                match epoch {
+                    Some(was) if was != *at => {
+                        return Err(format!(
+                            "claim 5 (monotonicity): the registry was at epoch \
+                             {was} and is now at {at}, with no burn between \
+                             ({ev:?})"
+                        ));
+                    }
+                    _ => epoch = Some(*at),
+                }
             }
-            epoch = exposed;
+            Event::Wrote { .. } | Event::Fenced { .. } => {}
         }
     }
 

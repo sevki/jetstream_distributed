@@ -705,6 +705,36 @@ fn oracles_reject_a_registry_that_goes_backwards() {
     println!("oracles rejected the regressing registry: {message}");
 }
 
+/// A registry that jumps forward with no burn recorded is rejected too.
+///
+/// The other half of the same failure, and the half a "never goes backwards"
+/// reading cannot see. Nothing here regresses — 41 then 42 is monotone — but
+/// the epoch moved without a burn, and in the model there is no such step:
+/// every transition that changes the epoch burns it.
+///
+/// Found by turning the previous finding around rather than by being told, so
+/// it gets a test for the same reason that one did.
+#[test]
+fn oracles_reject_an_epoch_that_moves_without_a_burn() {
+    let log = vec![
+        Event::Acquired { node: 0, epoch: 41 },
+        Event::Acquired { node: 1, epoch: 42 },
+        Event::Wrote { node: 1, epoch: 42, seq: 1 },
+    ];
+
+    let Err(message) = check_invariants(&log) else {
+        panic!(
+            "the oracles accepted a registry moving from epoch 41 to 42 with no \
+             burn recorded, so the epoch is not being accounted for: {log:?}"
+        );
+    };
+    assert!(
+        message.contains("claim 5"),
+        "expected the monotonicity oracle to be the one that fired, got: {message}"
+    );
+    println!("oracles rejected the unaccounted epoch: {message}");
+}
+
 /// The same shape going forwards is fine.
 ///
 /// Paired with the test above so that it is rejecting the regression rather

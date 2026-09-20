@@ -120,8 +120,13 @@ fn scenarios_hold_their_invariants() {
     //
     // The model is pessimistic here on purpose — it treats a held link as
     // blocking for the rest of the scenario, where the real drain releases and
-    // waits — so the real count should sit at or above it. Twice now it has
-    // matched the real run for its window to the write.
+    // waits — so the real count should sit at or above it, and it does: the
+    // first run under this alphabet accepted 68 where the model said 65.
+    //
+    // Before holds existed the model was exact, twice, to the write. It is not
+    // any more and is not meant to be. A bound that is known to be low is worth
+    // more here than a figure that looks precise, because the floor is the only
+    // thing anything depends on and a low bound is the safe side of it.
     //
     // What this floor is *not* is evidence that the oracles can fail. Nothing
     // proportional could be: it says the runner ran. That the oracles have

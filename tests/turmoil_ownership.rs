@@ -258,6 +258,16 @@ fn a_late_release_cannot_resurrect_a_superseded_transfer() {
 /// — nothing has revoked it — and a node that treated its own timeout as a
 /// refusal, or as permission to stand down, would be inventing a decision
 /// nobody made.
+///
+/// The write after the repair is what stops this story asserting nothing. The
+/// two claims below — one acceptance before the partition, no refusals — are
+/// both satisfied by a node that simply never tried, and the coordinator's log
+/// cannot tell the difference, because not seeing a request is exactly what
+/// being partitioned from one looks like. So the story ends by healing the
+/// network and writing again: that write is accepted at the *same* epoch, which
+/// says the node still held its guard and was still willing to use it through
+/// the whole isolation. The silence in the middle was the network's, not the
+/// node's.
 #[test]
 fn an_isolated_owner_is_met_with_silence_not_refusal() {
     let log: Vec<Event> = run_scenario_logged(story(vec![
@@ -271,13 +281,21 @@ fn an_isolated_owner_is_met_with_silence_not_refusal() {
         Action::Write { node: 0 },
         wait(),
         wait(),
+        // Both of those have given up by now — two deadlines have passed — so
+        // the write below is a fresh request rather than one of them arriving
+        // late.
+        Action::Rejoin { node: 0 },
+        Action::Write { node: 0 },
+        wait(),
     ]))
     .expect("the isolation story must hold its invariants");
 
     assert_eq!(
         accepted(&log),
-        vec![(0, 41)],
-        "only the write sent before the partition can have landed: {log:?}"
+        vec![(0, 41), (0, 41)],
+        "one write before the partition and one after it heals, both at the \
+         epoch this node never stopped owning; the two in between reached \
+         nobody: {log:?}"
     );
     assert!(
         fenced(&log).is_empty(),

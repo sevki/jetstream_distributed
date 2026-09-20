@@ -48,9 +48,14 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 [dev-dependencies]
 # A deterministic, simulated network: seeded schedule, simulated clock, and
 # `partition`/`repair` as ordinary calls. That determinism is what lets a
-# failure be reported as a seed rather than as a story about a flaky afternoon.
-turmoil = "0.7.2"
+# failure be reported as a seed rather than as a story about a flaky afternoon —
+# and it is a claim about the whole dependency graph, not just this crate. A
+# caret requirement lets the simulator drift within 0.7, which would silently
+# reinterpret every committed seed without a change in this repository, so both
+# simulation dependencies are pinned exactly and `Cargo.lock` is committed to
+# pin what they in turn pull in.
+turmoil = "=0.7.2"
 # The features the simulation actually uses, rather than `full`: `rt` because
 # the coordinator spawns a task per connection, `time` because every wait in
 # here is on turmoil's simulated clock, and `io-util` for the line protocol.
-tokio = { version = "1.47.1", features = ["io-util", "rt", "time"] }
+tokio = { version = "=1.47.1", features = ["io-util", "rt", "time"] }

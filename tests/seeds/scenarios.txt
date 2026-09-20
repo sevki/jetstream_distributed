@@ -19,3 +19,10 @@
 # change to `Action::from_pair` or to the action alphabet retires this file
 # rather than reinterpreting it. That has happened once already, when `BEGIN`
 # moved from the driver to the owner's host and `Handover` grew a `from` field.
+#
+# It names one only against the simulator too. A different `turmoil` release is
+# a different network schedule for the same seed, which would reinterpret every
+# line here with nothing in this repository having changed — so the simulation
+# dependencies are pinned exactly and `Cargo.lock` is committed. Both were
+# caret requirements with the lockfile ignored until it was pointed out, which
+# made "replays a failure exactly" a claim about a graph nobody had fixed.

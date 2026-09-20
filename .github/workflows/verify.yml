@@ -223,6 +223,16 @@ jobs:
       - name: Build the scenarios
         run: cargo test --no-run --tests
 
+      # The regression corpus claims a seed reproduces a failure exactly. That
+      # is a claim about the whole dependency graph, not only about this crate:
+      # a different `turmoil` patch release is a different simulator, and would
+      # reinterpret every committed seed without a change here. The direct
+      # dependencies are pinned exactly and `Cargo.lock` is committed; printing
+      # the resolved graph makes any drift visible in the log rather than only
+      # in a diff nobody reads.
+      - name: Show the resolved dependency graph
+        run: cat Cargo.lock
+
       # The named stories first: each one asserts what it was supposed to
       # reach, so a failure here names the property rather than a seed. That
       # includes `oracles_catch_an_unfenced_coordinator`, which is what makes a

@@ -90,14 +90,40 @@ fn node_host(n: u64) -> String {
     format!("node-{n}")
 }
 
-/// Which node a connection came from, or `None` for anyone else.
+/// The host the driver runs on, which stands in for the registry's own control
+/// path — the failure detector that decides to revoke an owner.
+const CONTROL_HOST: &str = "driver";
+
+/// Who a connection is, as far as the registry can tell.
 ///
 /// The addresses are turmoil's, assigned per host, so this is the simulation's
 /// stand-in for an authenticated peer identity. A real deployment would get it
 /// from mTLS or a signed token; what matters is that it comes from the
 /// connection rather than from the request body.
-fn node_of(ip: IpAddr) -> Option<u64> {
-    (0..NODES).find(|n| turmoil::lookup(node_host(*n)) == ip)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Peer {
+    /// One of the nodes.
+    Node(u64),
+    /// The registry's own control path.
+    Control,
+    /// Somebody else.
+    ///
+    /// This variant exists because the first version of this check had no
+    /// place for it: it asked `peer.is_none()` and treated that as "the
+    /// control path", which is authorisation by exclusion. `None` meant
+    /// *unknown*, so any host that was not one of the three nodes could burn
+    /// an epoch — which is most of them.
+    Unknown,
+}
+
+fn peer_of(ip: IpAddr) -> Peer {
+    if let Some(n) = (0..NODES).find(|n| turmoil::lookup(node_host(*n)) == ip) {
+        return Peer::Node(n);
+    }
+    if turmoil::lookup(CONTROL_HOST) == ip {
+        return Peer::Control;
+    }
+    Peer::Unknown
 }
 
 // ---------------------------------------------------------------------------
@@ -219,7 +245,7 @@ impl Coord {
     /// which. Keeping them in step is the whole point: a transition the
     /// implementation has that the model does not is exactly the kind of thing
     /// this suite exists to find.
-    pub fn handle(&mut self, line: &str, peer: Option<u64>) -> String {
+    pub fn handle(&mut self, line: &str, peer: Peer) -> String {
         let mut parts = line.split_whitespace();
         let verb = parts.next().unwrap_or("");
         // Every field parses or the line is malformed. `filter_map` quietly
@@ -253,7 +279,7 @@ impl Coord {
         // reachable may. Left open, a node could sit in a loop revoking
         // whoever legitimately held the actor. The driver stands in for the
         // registry here, so `FORCE` requires a connection that is not a node's.
-        if verb == "FORCE" && peer.is_some() {
+        if verb == "FORCE" && peer != Peer::Control {
             return "NO".to_string();
         }
 
@@ -266,7 +292,7 @@ impl Coord {
             _ => None,
         };
         if let Some(node) = claimed {
-            if peer != Some(node) {
+            if peer != Peer::Node(node) {
                 return "NO".to_string();
             }
         }
@@ -1301,7 +1327,7 @@ fn run_with_log(
                 TcpListener::bind((IpAddr::from(Ipv4Addr::UNSPECIFIED), PORT)).await?;
             loop {
                 let (stream, peer) = listener.accept().await?;
-                let peer_node = node_of(peer.ip());
+                let peer_id = peer_of(peer.ip());
                 let coord = coord.clone();
                 tokio::spawn(async move {
                     let mut reader = BufReader::new(stream);
@@ -1318,7 +1344,7 @@ fn run_with_log(
                     // does not know it.
                     let (reply, answer_late) = {
                         let mut guard = coord.lock().unwrap();
-                        let reply = guard.handle(line.trim(), peer_node);
+                        let reply = guard.handle(line.trim(), peer_id);
                         (reply, guard.take_slow_reply())
                     };
                     if answer_late {
@@ -1386,7 +1412,7 @@ fn run_with_log(
 
     let coord_for_client = coord.clone();
     let queues_for_client = queues.clone();
-    sim.client("driver", async move {
+    sim.client(CONTROL_HOST, async move {
         for action in scenario.actions {
             match action {
                 Action::Poll { node } => push(&queues_for_client, node, NodeCmd::Poll),

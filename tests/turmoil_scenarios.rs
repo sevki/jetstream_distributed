@@ -36,13 +36,30 @@ fn committed_seeds() -> Vec<u64> {
         .collect()
 }
 
-/// Read a `u64` from the environment, or fall back.
+/// Read a `u64` from the environment, or fall back if it is not set.
 ///
-/// A malformed value falls back silently on purpose: this runs inside a test,
-/// and a nightly job that dies on a typo in its own workflow finds nothing at
-/// all.
+/// A value that is present and unparsable is a failure, not a fallback. The
+/// comment here used to argue the opposite — that a nightly job dying on a typo
+/// in its own workflow finds nothing at all — which is true and beside the
+/// point: falling back to zero *also* finds nothing, and does it while
+/// reporting success. A typo in `JETSTREAM_SCENARIO_START` would re-run the
+/// default window every night, green forever, discovering exactly what the
+/// previous night discovered.
+///
+/// Absent is different from wrong. Absent means "no preference" and takes the
+/// default; wrong means somebody tried to say something and it did not arrive.
 fn env_u64(name: &str, fallback: u64) -> u64 {
-    std::env::var(name).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(fallback)
+    match std::env::var(name) {
+        Err(_) => fallback,
+        Ok(raw) => raw.trim().parse().unwrap_or_else(|_| {
+            panic!(
+                "{name} is set to `{raw}`, which is not a u64. Refusing to fall \
+                 back to {fallback}: a search that silently runs the wrong \
+                 window is worse than one that stops, because it keeps \
+                 reporting success."
+            )
+        }),
+    }
 }
 
 /// The search. Each seed is an independent story; a failure names the seed,

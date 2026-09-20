@@ -156,6 +156,15 @@ pub open spec fn tr_acquire(pre: System, post: System, a: ActorId, n: NodeId) ->
 ///
 /// This allocates the next epoch immediately, which fences the outgoing owner
 /// straight away: from this moment on nobody has mutable authority.
+///
+/// **The owner must be participating.** "Agrees to hand over" is an action by
+/// `from`, so this is guarded like every other transition a node takes: see
+/// `System::live`. Without it, `Acquire(A) -> Crash(A) -> BeginTransfer(A, B)`
+/// was accepted, and a crashed node could volunteer - which would make the
+/// forcible path redundant in the model, since `RevokeOwner` and
+/// `crate::composed::cs_seize_token` exist precisely for the case where the
+/// owner *cannot* cooperate. A model in which the dead cooperate does not need
+/// them.
 pub open spec fn tr_begin_transfer(
     pre: System,
     post: System,
@@ -165,6 +174,7 @@ pub open spec fn tr_begin_transfer(
 ) -> bool {
     &&& pre.actors.contains_key(a)
     &&& pre.nodes.contains(to)
+    &&& pre.live.contains(from)
     &&& from != to
     &&& match pre.actors[a] {
         OwnershipState::Owned { owner, epoch } =>

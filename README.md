@@ -383,6 +383,29 @@ review found, on the *receiving* side:
 * `cs_seize_token` guards `to` for the same reason: the coordinator hands it the
   privilege and it records that, so it is acting.
 
+The rule covers the **ownership** layer too, and enumerating it there found the
+last gap: `tr_begin_transfer` is documented as "the current owner agrees to hand
+`actor` over", which is an action by `from`, and it had no liveness guard. So
+`Acquire(A) → Crash(A) → BeginTransfer(A, B)` was accepted — a crashed node
+volunteering. That one matters beyond tidiness: `RevokeOwner` and `SeizeToken`
+exist precisely for the case where the owner *cannot* cooperate, and a model in
+which the dead cooperate does not need them.
+
+The full audit, by who acts:
+
+| transition | acting node | guard |
+| --- | --- | --- |
+| `Acquire` | the acquiring node | `live(n)` |
+| `BeginTransfer` | the outgoing owner | `live(from)` — **added** |
+| `HandleRevoke` | the revoked node | `live(target)` |
+| `Crash` / `Recover` | the node | `live` / `!live`, being the boundary itself |
+| `IssueGrant`, `CompleteRelease`, `AbortTransfer`, `RevokeOwner` | none — the coordinator | correctly unguarded |
+| `Replay` | none — the network | correctly unguarded |
+
+`RevokeOwner` being unguarded is the design, not an oversight: it is the step
+that fires *without* the owner's cooperation, against a node that may be
+perfectly healthy.
+
 `cs_ray` guards whichever node the Raymond step makes act
 (`ray_step_actor`), which is the carrier that has most of them. Without it a
 crashed node could queue requests, forward them, and — the serious case — enter

@@ -92,11 +92,13 @@ fn scenarios_hold_their_invariants() {
     //
     // The rate it is set against was measured rather than guessed. A model of
     // the generator over several 256-seed windows accepts between 60 and 108
-    // writes per window, so one per sixteen seeds sits a factor of four below
-    // the leanest window seen while staying far above zero — room for the
-    // attrition the model does not account for, where a node's queue backs up
-    // behind a request a partition is swallowing and its later actions land
-    // out of step with the rest.
+    // writes per window, and the first real run of seeds 0..256 accepted 93 —
+    // the model's figure for that window, to the write. Nothing was lost to the
+    // network, which says the settle window in the runner is wide enough that a
+    // step ordinarily finishes before the next is queued. One accepted write
+    // per sixteen seeds sits a factor of four below the leanest window the
+    // model found, which leaves room for a window leaner than any sampled
+    // without leaving room for a runner that has stopped delivering.
     //
     // What this floor is *not* is evidence that the oracles can fail. Nothing
     // proportional could be: it says the runner ran. That the oracles have

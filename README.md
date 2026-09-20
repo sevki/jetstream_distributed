@@ -768,10 +768,19 @@ route, so the node's deadline had never once fired and the scenarios contained
 no request that was accepted for delivery and then ignored. Since "duplicate,
 reordered and arbitrarily delayed requests are safe" is one of the claims in the
 table above, a search that could not produce a delayed request was not reaching
-it. `Stall` and `Resume` use turmoil's `hold`/`release` to do exactly that, and
-`a_held_request_expires_and_the_node_carries_on` pins the case: the node gives
-up, and goes on working, and draws no conclusion — a timeout says nothing about
-whether the write was applied, and the held request may still land. It costs
+it. `Stall` and `Resume` use turmoil's `hold`/`release` to do exactly that.
+
+Three stories then split the case apart, because one story could not carry it.
+`a_held_request_expires_and_the_node_carries_on` shows the node giving up and
+going on working. That alone is satisfied by a run in which nothing is ever
+delivered late, so
+`a_delayed_write_arrives_at_a_registry_that_moved_on` releases the hold while
+the node is still waiting: the write is delivered into a registry that burned
+its epoch meanwhile, and is fenced on arrival, which is the claim itself. And
+`a_timeout_is_not_evidence_the_write_did_not_land` covers the direction no
+network behaviour produces — the registry applies the write and answers after
+the caller has given up, so a node that read its own timeout as a verdict would
+be wrong about a write that had already landed. It costs
 nothing here only because nothing in the protocol reads them: a node that
 distinguished "no route" from "no reply" would hold information a real one does
 not, and treating either as a decision about ownership is exactly the mistake

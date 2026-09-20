@@ -117,6 +117,13 @@ struct Coord {
     /// self-test that proves these oracles can fail — see
     /// [`run_scenario_unfenced`].
     fencing: bool,
+    /// Delay the next reply past the caller's deadline, once.
+    ///
+    /// The network can delay a *request*; only the coordinator can accept one
+    /// and then answer too late. The two are different failures and the second
+    /// is the one a node's doc comment claims not to over-read: a timeout says
+    /// no answer arrived, never that the write was not applied.
+    slow_next_reply: bool,
 }
 
 /// The actor's ownership state. The three-case enum of `model::OwnershipState`,
@@ -147,7 +154,18 @@ impl Coord {
             log: Vec::new(),
             writes: 0,
             fencing,
+            slow_next_reply: false,
         }
+    }
+
+    /// Make the next reply arrive after the caller has given up on it.
+    fn arm_slow_reply(&mut self) {
+        self.slow_next_reply = true;
+    }
+
+    /// Consume that arming, if it is set.
+    fn take_slow_reply(&mut self) -> bool {
+        core::mem::take(&mut self.slow_next_reply)
     }
 
     /// Handle one request line, returning the reply line.
@@ -492,6 +510,16 @@ pub enum Action {
     Resume { node: u8 },
     /// Let time pass, so in-flight requests land.
     Sleep { millis: u8 },
+    /// Make the coordinator answer its next request after the caller's
+    /// deadline, having already applied it.
+    ///
+    /// The one action the generator never produces, because it is not something
+    /// a network does: `Stall` delays a request, which turmoil can do, and this
+    /// delays a *reply the registry has already acted on*, which needs the
+    /// coordinator's cooperation to arrange deterministically. It is here so
+    /// that "a timeout is not evidence the write did not happen" is a checked
+    /// assertion rather than a sentence in a doc comment.
+    SlowReply,
 }
 
 impl Action {
@@ -845,10 +873,21 @@ fn run_with_log(
                     if reader.read_line(&mut line).await.is_err() {
                         return;
                     }
-                    let reply = {
+                    // The verdict and the decision to answer late are taken
+                    // together, under the one lock, and the wait happens after
+                    // it is released — both because holding a `std` mutex
+                    // across an await is a deadlock waiting to happen, and
+                    // because the registry really has moved by then. That is
+                    // the whole point: the effect has landed and the caller
+                    // does not know it.
+                    let (reply, answer_late) = {
                         let mut guard = coord.lock().unwrap();
-                        guard.handle(line.trim())
+                        let reply = guard.handle(line.trim());
+                        (reply, guard.take_slow_reply())
                     };
+                    if answer_late {
+                        tokio::time::sleep(RPC_TIMEOUT * 2).await;
+                    }
                     let mut stream = reader.into_inner();
                     let _ = stream.write_all(reply.as_bytes()).await;
                     let _ = stream.write_all(b"\n").await;
@@ -941,6 +980,7 @@ fn run_with_log(
                 Action::Sleep { millis } => {
                     tokio::time::sleep(Duration::from_millis(millis as u64 + 1)).await;
                 }
+                Action::SlowReply => coord_for_client.lock().unwrap().arm_slow_reply(),
             }
             // Give whatever was just queued a chance to reach the wire and be
             // answered. Without this the driver would run to the end before any

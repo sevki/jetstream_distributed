@@ -441,12 +441,105 @@ fn a_held_request_expires_and_the_node_carries_on() {
     // survives a sender that has already abandoned the connection — a property
     // of the simulator, not of this protocol. What must hold either way is that
     // nothing was accepted from anyone else, at any other epoch.
+    //
+    // Which means this story alone cannot show that a delayed request is ever
+    // delivered late at all: everything it asserts is satisfied by the ordinary
+    // write after `Resume`. That gap is covered deliberately rather than left
+    // open — `a_delayed_write_arrives_at_a_registry_that_moved_on` releases the
+    // hold while the node is still waiting, so the delivery is observable, and
+    // `a_timeout_is_not_evidence_the_write_did_not_land` covers the case where
+    // the request lands and the *answer* is what goes missing.
     let writes = accepted(&log);
     assert!(
         !writes.is_empty() && writes.iter().all(|w| *w == (0, 41)),
         "every accepted write must be node 0 at epoch 41, the epoch it never \
          stopped owning, and there must be at least the one sent after the \
          hold was released: {log:?}"
+    );
+}
+
+/// A request that sits in the network arrives at a registry that has moved on,
+/// and is fenced.
+///
+/// This is the claim the seed walk could not reach and the held-request story
+/// above does not make: *arbitrarily delayed requests are safe*. The write is
+/// held on the wire — not dropped, not refused — while the coordinator burns
+/// the epoch underneath it, and it is delivered afterwards. Nothing about the
+/// request has changed; the world it arrives in has.
+///
+/// The hold is released well inside the node's deadline on purpose, so the
+/// request is delivered to a coordinator the node is still waiting on. That is
+/// what makes the refusal observable: had the node given up first, the write
+/// would have been fenced with nobody listening, and the assertion below could
+/// not tell that from a request that was never delivered at all.
+#[test]
+fn a_delayed_write_arrives_at_a_registry_that_moved_on() {
+    let (log, attempts) = run_scenario_probed(story(vec![
+        Action::Poll { node: 0 },
+        Action::Acquire { node: 0 },
+        Action::Write { node: 0 },
+        // The route stays up; this write stops on the wire.
+        Action::Stall { node: 0 },
+        Action::Write { node: 0 },
+        // ... and while it is sitting there, the registry moves on without it.
+        Action::Force { next: 1 },
+        // Delivered now, into a world that has changed.
+        Action::Resume { node: 0 },
+        wait(),
+    ]))
+    .expect("the delayed-write story must hold its invariants");
+
+    assert_eq!(
+        attempts[0].writes_sent, 2,
+        "both writes must have been sent: {attempts:?}"
+    );
+    assert_eq!(
+        attempts[0].writes_timed_out, 0,
+        "the held write must have been answered before the node gave up — the          point of this story is a delivered request meeting a changed registry,          and a timeout here would mean it was never delivered: {attempts:?}"
+    );
+    assert!(
+        fenced(&log).contains(&(0, 41)),
+        "the delayed write must have been refused on arrival, at an epoch the          registry had already burned past: {log:?}"
+    );
+    assert_eq!(
+        accepted(&log),
+        vec![(0, 41)],
+        "only the write made before the epoch moved: {log:?}"
+    );
+}
+
+/// A write can land and the node still not know it.
+///
+/// The other direction, and the one no amount of network behaviour produces:
+/// the coordinator applies the write and answers after the caller has given up.
+/// `rpc`'s doc comment says a node that read "no reply" as "not applied" would
+/// be the bug this whole model is about; this is that sentence as an assertion.
+///
+/// Both writes are accepted, including the one the node counts as timed out.
+#[test]
+fn a_timeout_is_not_evidence_the_write_did_not_land() {
+    let (log, attempts) = run_scenario_probed(story(vec![
+        Action::Poll { node: 0 },
+        Action::Acquire { node: 0 },
+        // The registry will apply the next request and answer far too late.
+        Action::SlowReply,
+        Action::Write { node: 0 },
+        wait(),
+        wait(),
+        // The node has given up on that one, and carries on.
+        Action::Write { node: 0 },
+        wait(),
+    ]))
+    .expect("the late-reply story must hold its invariants");
+
+    assert_eq!(
+        attempts[0].writes_timed_out, 1,
+        "the node must have given up on the first write: {attempts:?}"
+    );
+    assert_eq!(
+        accepted(&log),
+        vec![(0, 41), (0, 41)],
+        "and both must have been accepted — the one it gave up on landed, which          is precisely why a node may not read its own timeout as a verdict:          {log:?}"
     );
 }
 

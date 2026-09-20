@@ -207,11 +207,23 @@ impl Coord {
 
             // `tr_begin_transfer`: the owner agrees to hand over. The epoch is
             // burned immediately, which fences the outgoing owner from here on.
-            ("BEGIN", [to]) => match self.state {
-                Owned::Owned { owner, epoch } if owner != *to => {
+            //
+            // The request names its own sender, and the registry checks it, so
+            // that only the owner can agree on the owner's behalf. The model
+            // additionally requires `pre.live.contains(from)` — "agrees to hand
+            // over" is an action *by* `from` — and the simulation's counterpart
+            // of that guard is that the request has to arrive: an isolated
+            // owner's `BEGIN` is swallowed by the partition and the transfer
+            // never starts. That only works because the request originates at
+            // the owner's host; issued from anywhere else it would let a node
+            // nobody can reach volunteer, which is exactly the hole the
+            // liveness guard on `tr_begin_transfer` was added to close.
+            ("BEGIN", [from, to]) => match self.state {
+                Owned::Owned { owner, epoch } if owner == *from && owner != *to => {
                     self.state = Owned::Transferring {
                         from: owner,
                         to: *to,
+                        // (`owner == *from` here, checked by the guard above.)
                         old_epoch: epoch,
                         new_epoch: epoch + 1,
                     };
@@ -240,11 +252,18 @@ impl Coord {
                 _ => "NO".to_string(),
             },
 
-            // `tr_revoke_owner`: the coordinator burns the epoch *without* the
-            // owner's cooperation. Fires against a healthy owner on purpose —
-            // unreliable failure detection is modelled, not assumed away.
+            // The coordinator forcing progress on its own. Which transition
+            // that is depends on the state, and the three are not
+            // interchangeable — in particular the model gives the coordinator
+            // *no* way to redirect an interrupted transfer to a node of its
+            // choosing, and an implementation that offered one would be
+            // exercising histories the proofs say nothing about.
             ("FORCE", [next]) => match self.state {
-                Owned::Owned { epoch, .. } | Owned::Unowned { epoch, .. } => {
+                // `tr_revoke_owner`: burn the epoch without the owner's
+                // cooperation and offer the actor to `next`. Fires against a
+                // healthy owner on purpose — unreliable failure detection is
+                // modelled, not assumed away.
+                Owned::Owned { epoch, .. } => {
                     self.state = Owned::Unowned { epoch: epoch + 1, intended: *next };
                     self.log.push(Event::EpochBurned {
                         from_epoch: epoch,
@@ -254,12 +273,35 @@ impl Coord {
                     });
                     "OK".to_string()
                 }
-                Owned::Transferring { new_epoch, .. } => {
-                    self.state = Owned::Unowned { epoch: new_epoch + 1, intended: *next };
+                // `tr_reassign_unowned`: the intended owner never picked the
+                // actor up. Burn and offer it to somebody else.
+                Owned::Unowned { epoch, .. } => {
+                    self.state = Owned::Unowned { epoch: epoch + 1, intended: *next };
+                    self.log.push(Event::EpochBurned {
+                        from_epoch: epoch,
+                        to_epoch: epoch + 1,
+                        next: *next,
+                        forced: true,
+                    });
+                    "OK".to_string()
+                }
+                // `tr_abort_transfer`: a transfer was interrupted. Burn
+                // *another* epoch, so a `Grant` for `new_epoch` still in flight
+                // is stale on arrival, and offer the actor back to the node it
+                // was being taken from.
+                //
+                // `next` is deliberately ignored here. `tr_revoke_owner` only
+                // matches `Owned`, and the model's one recovery from
+                // `Transferring` returns the actor to `from` — so a coordinator
+                // that sent it anywhere else would be taking a step outside the
+                // transition relation, and every oracle it then satisfied would
+                // be evidence about nothing.
+                Owned::Transferring { from, new_epoch, .. } => {
+                    self.state = Owned::Unowned { epoch: new_epoch + 1, intended: from };
                     self.log.push(Event::EpochBurned {
                         from_epoch: new_epoch,
                         to_epoch: new_epoch + 1,
-                        next: *next,
+                        next: from,
                         forced: true,
                     });
                     "OK".to_string()
@@ -289,6 +331,9 @@ enum NodeCmd {
     Write,
     /// Acknowledge a revoke this node has seen.
     Release,
+    /// Agree to hand the actor to another node. Sent by the node itself,
+    /// because in the model agreeing is an action *by* the owner.
+    Handover { to: u64 },
 }
 
 /// A node's local state: the last generation it observed.
@@ -301,6 +346,12 @@ enum NodeCmd {
 /// coordinator asks the registry, and the oracles watch what the registry did.
 #[derive(Default)]
 struct NodeState {
+    /// What this node tried to do, counted here rather than at the
+    /// coordinator. The coordinator's log cannot distinguish a request that a
+    /// partition swallowed from one that was never sent — not seeing a request
+    /// is exactly what being cut off from one looks like — so a story that
+    /// wants to claim the first has to observe the node.
+    attempts: Attempts,
     /// The epoch this node believes is current, if it has ever been offered
     /// one. Survives a "crash", which is what makes a returning owner
     /// dangerous — `tr_recover` says a node comes back still holding what it
@@ -337,6 +388,19 @@ impl NodeState {
 /// problem and exactly this answer. The clock is simulated, so the wait costs
 /// ordering and nothing else.
 const RPC_TIMEOUT: Duration = Duration::from_millis(250);
+
+/// What a node put on the wire, and what came back.
+///
+/// Deliberately not derived from the audit log: everything here is invisible
+/// to the coordinator by construction, which is the whole reason it is
+/// counted.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Attempts {
+    /// Writes this node sent, whatever became of them.
+    pub writes_sent: u64,
+    /// Writes that got no answer before the deadline.
+    pub writes_timed_out: u64,
+}
 
 /// One request/response round trip. A fresh connection per request, which is
 /// slower than a long-lived lane and much easier to reason about: a partition
@@ -383,8 +447,12 @@ pub enum Action {
     Write { node: u8 },
     /// A revoked node acknowledges.
     Release { node: u8 },
-    /// The owner agrees to hand over. `tr_begin_transfer`.
-    Handover { to: u8 },
+    /// A node agrees to hand the actor over. `tr_begin_transfer`.
+    ///
+    /// `from` is who sends it, because the model makes agreeing an action by
+    /// the owner — and because a request routed around the sender would arrive
+    /// even while that sender is partitioned away.
+    Handover { from: u8, to: u8 },
     /// The coordinator burns the epoch without asking. `tr_revoke_owner`.
     Force { next: u8 },
     /// Cut a node off — indistinguishable, from outside, from a crash.
@@ -414,7 +482,14 @@ impl Action {
             2..=3 => Action::Acquire { node },
             4..=6 => Action::Write { node },
             7 => Action::Release { node },
-            8 => Action::Handover { to: node },
+            8 => {
+                // `to` is offset from `from` so the two always differ, which
+                // `tr_begin_transfer` requires. With three nodes the offset is
+                // 1 or 2 and either lands somewhere else.
+                let from = param % NODES;
+                let to = (from + 1 + (param / NODES) % (NODES - 1)) % NODES;
+                Action::Handover { from: from as u8, to: to as u8 }
+            }
             9 => Action::Force { next: node },
             10 => {
                 if param % 2 == 0 {
@@ -547,6 +622,13 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
     // P5 / P6 — ownership at an epoch is final, and an epoch determines its
     // owner. Accepted writes never regress to an epoch that has already been
     // superseded by a later accepted write.
+    //
+    // Checked before the fencing oracle below, which would otherwise subsume
+    // it: reaching a higher epoch takes a burn, so every log this one rejects
+    // the other rejects too. Running it first is what keeps it a live check
+    // rather than unreachable prose — `oracles_catch_an_unfenced_coordinator`
+    // pins this one and `oracles_catch_a_write_at_a_burned_epoch` the other,
+    // and each names the oracle it expects.
     let mut high = 0u64;
     for ev in log {
         if let Event::Wrote { epoch, node, seq } = ev {
@@ -557,6 +639,37 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
                 ));
             }
             high = *epoch;
+        }
+    }
+
+    // Claims 2 and 3 — stale-owner fencing. Once the registry has burned
+    // forward to an epoch, no write below it may ever be accepted again.
+    //
+    // This is the oracle the headline scenario is about, and the first version
+    // of this function did not have it. It had only the write-against-write
+    // check above, which sees a stale write only when the *replacement* owner
+    // happens to write first: `Acquire(0)@41, Force->42, Write(0)@41` has one
+    // writer per epoch, a strictly increasing burn and an acquire behind every
+    // write, so every check passed while the exact failure this model exists
+    // to rule out went by unremarked. A burn is the event that makes an epoch
+    // stale, so a burn is what the high-water mark has to follow.
+    let mut burned_to = 0u64;
+    for ev in log {
+        match ev {
+            Event::EpochBurned { to_epoch, .. } => {
+                // `max` rather than assignment, so this oracle stands on its
+                // own: if burns ever did go backwards, the monotonicity check
+                // above is what should say so, not a confused reading here.
+                burned_to = burned_to.max(*to_epoch);
+            }
+            Event::Wrote { node, epoch, seq } if *epoch < burned_to => {
+                return Err(format!(
+                    "claims 2/3 (fencing): node {node} wrote at epoch {epoch} \
+                     (seq {seq}) after the registry had already burned forward \
+                     to {burned_to}"
+                ));
+            }
+            _ => {}
         }
     }
 
@@ -602,12 +715,26 @@ pub fn run_scenario(scenario: Scenario) -> turmoil::Result<usize> {
 /// while doing nothing at all. The invariants are still checked here, so a
 /// story gets both: the general claim and its own.
 pub fn run_scenario_logged(scenario: Scenario) -> turmoil::Result<Vec<Event>> {
+    Ok(run_scenario_probed(scenario)?.0)
+}
+
+/// The same run again, handing back what each node *tried* to do alongside
+/// what the coordinator accepted.
+///
+/// The two are different observations and the difference is load-bearing. The
+/// audit log is what the registry decided; it is silent about a request that
+/// never arrived, and silent in exactly the same way about one that was never
+/// sent. A story claiming a partition swallowed something has to look at the
+/// node to tell those apart.
+pub fn run_scenario_probed(
+    scenario: Scenario,
+) -> turmoil::Result<(Vec<Event>, Vec<Attempts>)> {
     let log = Arc::new(Mutex::new(Vec::new()));
     let captured = log.clone();
-    run_with_log(scenario, true, captured)?;
+    let attempts = run_with_log(scenario, true, captured)?;
     let out = log.lock().unwrap().clone();
     check_invariants(&out)?;
-    Ok(out)
+    Ok((out, attempts))
 }
 
 /// The same scenario with the coordinator's fence check disabled.
@@ -621,7 +748,7 @@ pub fn run_scenario_logged(scenario: Scenario) -> turmoil::Result<Vec<Event>> {
 pub fn run_scenario_unfenced(scenario: Scenario) -> turmoil::Result<Vec<Event>> {
     let log = Arc::new(Mutex::new(Vec::new()));
     let captured = log.clone();
-    run_with_log(scenario, false, captured)?;
+    let _ = run_with_log(scenario, false, captured)?;
     let out = log.lock().unwrap().clone();
     Ok(out)
 }
@@ -629,7 +756,7 @@ pub fn run_scenario_unfenced(scenario: Scenario) -> turmoil::Result<Vec<Event>> 
 fn run_inner(scenario: Scenario, fencing: bool) -> turmoil::Result<usize> {
     let log = Arc::new(Mutex::new(Vec::new()));
     let captured = log.clone();
-    run_with_log(scenario, fencing, captured)?;
+    let _ = run_with_log(scenario, fencing, captured)?;
     let log = log.lock().unwrap();
     // `?` converts the `String` through `From`, which both of the boxed error
     // types turmoil's `Result` alias could be built on implement. Naming the
@@ -638,11 +765,13 @@ fn run_inner(scenario: Scenario, fencing: bool) -> turmoil::Result<usize> {
     Ok(log.iter().filter(|e| matches!(e, Event::Wrote { .. })).count())
 }
 
+/// Run the simulation, leaving the coordinator's log in `out` and returning
+/// each node's own tally of what it attempted.
 fn run_with_log(
     scenario: Scenario,
     fencing: bool,
     out: Arc<Mutex<Vec<Event>>>,
-) -> turmoil::Result<()> {
+) -> turmoil::Result<Vec<Attempts>> {
     let mut sim = Builder::new()
         .rng_seed(scenario.seed)
         // Latency is bounded well below the settle window below, on purpose.
@@ -704,10 +833,17 @@ fn run_with_log(
     let queues: Vec<Arc<Mutex<VecDeque<NodeCmd>>>> =
         (0..NODES).map(|_| Arc::new(Mutex::new(VecDeque::new()))).collect();
 
+    // A mirror of each node's own counters, kept outside the simulation so a
+    // caller can read them once it has finished.
+    let stats: Vec<Arc<Mutex<Attempts>>> =
+        (0..NODES).map(|_| Arc::new(Mutex::new(Attempts::default()))).collect();
+
     for n in 0..NODES {
         let queue = queues[n as usize].clone();
+        let stat = stats[n as usize].clone();
         sim.host(node_host(n), move || {
             let queue = queue.clone();
+            let stat = stat.clone();
             async move {
                 // Local state survives isolation, which is what `tr_recover`
                 // says: a node comes back still holding what it had.
@@ -726,6 +862,7 @@ fn run_with_log(
                             // coordinator accepted, and a lost request is one
                             // it never saw.
                             let _ = run_cmd(n, cmd, &mut state).await;
+                            *stat.lock().unwrap() = state.attempts;
                         }
                     }
                 }
@@ -744,9 +881,11 @@ fn run_with_log(
                 Action::Acquire { node } => push(&queues_for_client, node, NodeCmd::Acquire),
                 Action::Write { node } => push(&queues_for_client, node, NodeCmd::Write),
                 Action::Release { node } => push(&queues_for_client, node, NodeCmd::Release),
-                Action::Handover { to } => {
-                    let _ = rpc(format!("BEGIN {}", to as u64 % NODES)).await;
-                }
+                Action::Handover { from, to } => push(
+                    &queues_for_client,
+                    from,
+                    NodeCmd::Handover { to: to as u64 % NODES },
+                ),
                 Action::Force { next } => {
                     let _ = rpc(format!("FORCE {}", next as u64 % NODES)).await;
                 }
@@ -798,7 +937,8 @@ fn run_with_log(
         Ok(())
     });
 
-    sim.run()
+    sim.run()?;
+    Ok(stats.iter().map(|s| *s.lock().unwrap()).collect())
 }
 
 fn push(queues: &[Arc<Mutex<VecDeque<NodeCmd>>>], node: u8, cmd: NodeCmd) {
@@ -858,11 +998,26 @@ async fn run_cmd(node: u64, cmd: NodeCmd, state: &mut NodeState) -> io::Result<(
         NodeCmd::Write => {
             // The node asks its own guard first, exactly as a real one would.
             // A stale guard says yes; the coordinator is what says no. That
-            // gap is the point, and it is why the reply is ignored: whether
+            // gap is the point, and it is why the verdict is ignored: whether
             // the write landed is the oracle's business, not the node's.
+            //
+            // A timeout is counted, not propagated. The node does not know
+            // whether the coordinator saw the request, so it carries on — and
+            // a node that stopped working because one write went unanswered
+            // would be treating silence as a decision.
             if let Some((_, epoch)) = state.would_write(node) {
-                let _ = rpc(format!("WRITE {node} {epoch}")).await?;
+                state.attempts.writes_sent += 1;
+                if rpc(format!("WRITE {node} {epoch}")).await.is_err() {
+                    state.attempts.writes_timed_out += 1;
+                }
             }
+        }
+        NodeCmd::Handover { to } => {
+            // Sent unconditionally, without consulting what this node believes
+            // it owns: the registry is what decides whether this node is in a
+            // position to agree, and a `BEGIN` from a node that is not the
+            // owner is a request worth seeing refused.
+            let _ = rpc(format!("BEGIN {node} {to}")).await?;
         }
         NodeCmd::Release => {
             if state.pending_revoke.is_some() {

@@ -14,3 +14,8 @@
 # It is not a claim that none can.
 #
 # One decimal u64 per line. `#` comments and blank lines are ignored.
+#
+# A seed names a scenario only against the generator that produced it, so a
+# change to `Action::from_pair` or to the action alphabet retires this file
+# rather than reinterpreting it. That has happened once already, when `BEGIN`
+# moved from the driver to the owner's host and `Handover` grew a `from` field.

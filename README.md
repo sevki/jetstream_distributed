@@ -693,6 +693,7 @@ runtime oracles over the coordinator's audit log:
 | two accepted writes at the same epoch came from the same node | claim 1, exclusive mutable ownership |
 | every burn strictly increases the epoch, and never below the high-water mark | claim 5, epoch monotonicity |
 | accepted writes never regress to a superseded epoch | P5 / P6, ownership at an epoch is final |
+| no write below a burned epoch is ever accepted | claims 2 / 3, stale-owner fencing |
 | every accepted write is backed by an earlier acquire of that exact `(node, epoch)` | P8, no authority without a capability |
 
 Two searches reach them. `turmoil_ownership.rs` holds named stories, each of
@@ -719,6 +720,16 @@ twice with a single bit changed — the coordinator stops checking writes agains
 the registry — and requires the oracles to *reject* the second run. Same
 actions, same seed, same network, same oracles; what separates them is exactly
 the check `src/exec.rs` says has to happen where the effect lands.
+`oracles_catch_a_write_at_a_burned_epoch` does the same for the fencing oracle,
+on the case the others cannot see: a stale write with nothing written after it.
+
+That second one exists because the first version of `check_invariants` did not
+catch it. Comparing writes against writes notices a stale write only once the
+replacement owner has written too, so `Acquire(0)@41, Force→42, Write(0)@41`
+had one writer per epoch, a strictly increasing burn and an acquire behind
+every write — and sailed past every check, which is precisely the failure the
+epoch exists to prevent. A burn is what makes an epoch stale, so a burn is what
+the high-water mark has to follow.
 
 **Where the executable code lives, and why.** Entirely in `tests/`. CI greps
 `src/` for `verifier::external`, so unverified protocol code there would need
@@ -726,6 +737,23 @@ that attribute and would fail the build by design. The one piece of `src/` the
 simulation uses is `FenceGuard`, because it is the node-local check a real node
 performs — and watching a stale guard say yes while the coordinator says no is
 precisely the asymmetry `src/exec.rs` documents.
+
+Where the model makes a node act, the simulation makes that node send the
+request. `tr_begin_transfer` carries `pre.live.contains(from)` — agreeing to
+hand over is an action *by* the owner — so `BEGIN` originates at the owner's
+host and names itself, and the registry checks the sender. A partitioned
+owner's agreement is swallowed by the partition, which is what that liveness
+guard means here. Routing it through the driver instead would let a node nobody
+can reach volunteer, reopening in the simulation the exact hole the guard was
+added to the model to close.
+
+For the same reason, the three ways the coordinator forces progress are kept
+distinct rather than merged: `tr_revoke_owner` from `Owned`,
+`tr_reassign_unowned` from `Unowned`, and `tr_abort_transfer` from
+`Transferring`. Only the first two take a successor from the caller; an aborted
+transfer returns the actor to the node it was being taken from, and a
+coordinator that redirected it anywhere else would be stepping outside the
+transition relation.
 
 Two places where the simulation is deliberately coarser than what was proved,
 stated rather than glossed:

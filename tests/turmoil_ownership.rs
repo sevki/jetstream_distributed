@@ -18,7 +18,10 @@
 #[path = "scenario_body/mod.rs"]
 mod body;
 
-use body::{check_invariants, run_scenario_logged, run_scenario_unfenced, Action, Event, Scenario};
+use body::{
+    check_invariants, run_scenario_logged, run_scenario_probed, run_scenario_unfenced, Action,
+    Event, Scenario,
+};
 
 /// Every story runs on the same network schedule, because the story is in the
 /// actions and pinning the seed keeps the two independent. A story that only
@@ -142,8 +145,9 @@ fn a_cooperative_handover_fences_before_the_release() {
         Action::Poll { node: 0 },
         Action::Acquire { node: 0 },
         Action::Write { node: 0 },
-        // `tr_begin_transfer`. The epoch is burned here.
-        Action::Handover { to: 1 },
+        // `tr_begin_transfer`. A is the one agreeing, so A is the one sending
+        // it, and the epoch is burned here.
+        Action::Handover { from: 0, to: 1 },
         // ... and this write is inside the gap: A has agreed but has not yet
         // said it has stopped, and its guard is still (0, 41).
         Action::Write { node: 0 },
@@ -184,35 +188,40 @@ fn a_cooperative_handover_fences_before_the_release() {
     );
 }
 
-/// A release that arrives after the coordinator has already given up on it
-/// changes nothing.
+/// An interrupted transfer goes back where it came from, and a late release
+/// cannot resurrect it.
 ///
 /// A handover starts, the coordinator loses patience and forces the epoch
-/// forward anyway, and *then* the outgoing owner's acknowledgement lands. The
-/// registry has moved on: the release is refused, no `Released` is recorded,
-/// and the node that the interrupted handover was aimed at never gets the
-/// actor. Node 2, the one the forced revoke named, does.
+/// forward anyway, and *then* the outgoing owner's acknowledgement lands. Two
+/// things have to hold. The release is refused, because the registry has moved
+/// on. And the actor comes back to A — not to node 2, which is what the
+/// `FORCE` names.
 ///
-/// This is the only story that reaches the forced-revoke-from-`Transferring`
-/// branch, which is the one place the implementation burns an epoch that was
-/// itself already a burn target.
+/// That second one is the whole reason this story exists. `tr_revoke_owner`
+/// matches `Owned` only; the model's sole recovery from `Transferring` is
+/// `tr_abort_transfer`, which burns another epoch and offers the actor back to
+/// `from`. A coordinator that instead honoured the caller's choice of
+/// successor here would be taking a step the transition relation does not
+/// contain, and every oracle it satisfied afterwards would be evidence about a
+/// machine nobody proved anything about. So the `next: 2` below is passed and
+/// deliberately ignored, and this asserts that it was.
 #[test]
-fn a_late_release_cannot_resurrect_a_superseded_transfer() {
+fn an_interrupted_transfer_returns_to_the_node_it_came_from() {
     let log: Vec<Event> = run_scenario_logged(story(vec![
         Action::Poll { node: 0 },
         Action::Acquire { node: 0 },
         Action::Write { node: 0 },
-        Action::Handover { to: 1 },
+        Action::Handover { from: 0, to: 1 },
         // A learns it is revoked, but does not acknowledge yet.
         Action::Poll { node: 0 },
-        // The coordinator gives up on the handover and burns again.
+        // The coordinator gives up on the handover. `tr_abort_transfer`, and
+        // `next` has no say in where the actor lands.
         Action::Force { next: 2 },
         // A's acknowledgement, too late to mean anything.
         Action::Release { node: 0 },
-        Action::Poll { node: 2 },
-        Action::Acquire { node: 2 },
-        Action::Write { node: 2 },
-        // A gave the actor up, so it has no guard and sends nothing.
+        // A takes the actor back at the epoch the abort offered it.
+        Action::Poll { node: 0 },
+        Action::Acquire { node: 0 },
         Action::Write { node: 0 },
         wait(),
     ]))
@@ -229,8 +238,10 @@ fn a_late_release_cannot_resurrect_a_superseded_transfer() {
         .collect();
     assert_eq!(
         burns,
-        vec![(41, 42, 1, false), (42, 43, 2, true)],
-        "the cooperative burn, then the forced one on top of it: {log:?}"
+        vec![(41, 42, 1, false), (42, 43, 0, true)],
+        "the cooperative burn, then the abort on top of it — and the abort \
+         offers the actor back to node 0, whatever the caller asked for: \
+         {log:?}"
     );
     assert!(
         !log.iter().any(|e| matches!(e, Event::Released { .. })),
@@ -239,9 +250,44 @@ fn a_late_release_cannot_resurrect_a_superseded_transfer() {
     );
     assert_eq!(
         accepted(&log),
-        vec![(0, 41), (2, 43)],
-        "node 1 was named by a transfer that never completed and must never \
-         have written; epoch 42 belongs to nobody: {log:?}"
+        vec![(0, 41), (0, 43)],
+        "node 1 was named by a transfer that never completed and node 2 by an \
+         abort that does not honour it, so neither may ever have written; \
+         epoch 42 belongs to nobody: {log:?}"
+    );
+}
+
+/// Only the owner can agree to hand the actor over.
+///
+/// `tr_begin_transfer` is an action by `from`, and the registry checks the
+/// sender, so a `BEGIN` from a node that does not hold the actor changes
+/// nothing. Without that check the coordinator would accept an agreement on
+/// behalf of a node that never gave one — and since the request is sent by the
+/// node rather than around it, a partitioned owner cannot agree either, which
+/// is the simulation's counterpart of the liveness guard the model carries.
+#[test]
+fn a_non_owner_cannot_agree_to_hand_over() {
+    let log: Vec<Event> = run_scenario_logged(story(vec![
+        Action::Poll { node: 0 },
+        Action::Acquire { node: 0 },
+        Action::Write { node: 0 },
+        // Node 1 does not hold the actor and says so anyway.
+        Action::Handover { from: 1, to: 2 },
+        // Node 0 is untouched: still the owner, still at 41.
+        Action::Write { node: 0 },
+        wait(),
+    ]))
+    .expect("the impostor-handover story must hold its invariants");
+
+    assert!(
+        !log.iter().any(|e| matches!(e, Event::EpochBurned { .. })),
+        "a `BEGIN` from a node that is not the owner must not burn anything: \
+         {log:?}"
+    );
+    assert_eq!(
+        accepted(&log),
+        vec![(0, 41), (0, 41)],
+        "the real owner keeps writing at its own epoch throughout: {log:?}"
     );
 }
 
@@ -259,18 +305,20 @@ fn a_late_release_cannot_resurrect_a_superseded_transfer() {
 /// refusal, or as permission to stand down, would be inventing a decision
 /// nobody made.
 ///
-/// The write after the repair is what stops this story asserting nothing. The
-/// two claims below — one acceptance before the partition, no refusals — are
-/// both satisfied by a node that simply never tried, and the coordinator's log
-/// cannot tell the difference, because not seeing a request is exactly what
-/// being partitioned from one looks like. So the story ends by healing the
-/// network and writing again: that write is accepted at the *same* epoch, which
-/// says the node still held its guard and was still willing to use it through
-/// the whole isolation. The silence in the middle was the network's, not the
-/// node's.
+/// Two things stop this story asserting nothing. The claims below — one
+/// acceptance before the partition, no refusals — are both satisfied by a node
+/// that simply never tried, and the coordinator's log cannot tell the
+/// difference, because not seeing a request is exactly what being partitioned
+/// from one looks like.
+///
+/// So the node is asked directly: four writes sent, two of them unanswered.
+/// That is the claim, stated where it is observable. And the story ends by
+/// healing the network and writing once more at the *same* epoch, which says
+/// the node still held its guard and was still the owner throughout. The
+/// silence in the middle was the network's, not the node's.
 #[test]
 fn an_isolated_owner_is_met_with_silence_not_refusal() {
-    let log: Vec<Event> = run_scenario_logged(story(vec![
+    let (log, attempts) = run_scenario_probed(story(vec![
         Action::Poll { node: 0 },
         Action::Acquire { node: 0 },
         Action::Write { node: 0 },
@@ -289,6 +337,19 @@ fn an_isolated_owner_is_met_with_silence_not_refusal() {
         wait(),
     ]))
     .expect("the isolation story must hold its invariants");
+
+    assert_eq!(
+        attempts[0].writes_sent, 4,
+        "the node must have sent all four writes — one before the partition, \
+         two into it and one after the repair. Fewer means the assertions \
+         below are about a node that stopped trying, not about a network that \
+         stopped delivering: {attempts:?}"
+    );
+    assert_eq!(
+        attempts[0].writes_timed_out, 2,
+        "exactly the two writes sent while isolated must have gone unanswered: \
+         {attempts:?}"
+    );
 
     assert_eq!(
         accepted(&log),
@@ -366,6 +427,71 @@ fn a_forced_revoke_fences_a_healthy_owner() {
         accepted(&log),
         vec![(0, 41), (1, 42)],
         "the stale write must not have been accepted: {log:?}"
+    );
+}
+
+/// A stale write with nothing after it, which is what the first version of the
+/// oracles could not see.
+fn burned_epoch_story() -> Scenario {
+    story(vec![
+        Action::Poll { node: 0 },
+        Action::Acquire { node: 0 },
+        Action::Write { node: 0 },
+        // The epoch is burned. Node 1 is offered the actor and never takes it,
+        // so no later write exists to compare node 0's next one against.
+        Action::Force { next: 1 },
+        Action::Write { node: 0 },
+        wait(),
+    ])
+}
+
+/// The oracles catch a stale write even when nobody writes after it.
+///
+/// This is the case the fencing oracle was added for. Comparing writes against
+/// writes only notices a stale one once the replacement owner has written too;
+/// here nobody does, so `Wrote(0, 41)` after a burn to 42 has one writer per
+/// epoch, a strictly increasing burn and an acquire behind it. Every check the
+/// first version of `check_invariants` made passed on this log.
+#[test]
+fn oracles_catch_a_write_at_a_burned_epoch() {
+    let log: Vec<Event> = run_scenario_unfenced(burned_epoch_story())
+        .expect("the unfenced run is still a run; it must complete");
+
+    assert_eq!(
+        accepted(&log),
+        vec![(0, 41), (0, 41)],
+        "without the fence the write at the burned epoch must have been \
+         accepted, and nothing may follow it: {log:?}"
+    );
+
+    let Err(message) = check_invariants(&log) else {
+        panic!(
+            "the oracles accepted a write at an epoch the registry had already \
+             burned past, which is the failure this whole model exists to rule \
+             out: {log:?}"
+        );
+    };
+    assert!(
+        message.contains("claims 2/3"),
+        "expected the fencing oracle to be the one that fired, got: {message}"
+    );
+    println!("oracles rejected the burned-epoch run: {message}");
+}
+
+/// And with the fence in place, the same story is refused rather than accepted.
+#[test]
+fn a_write_at_a_burned_epoch_is_refused() {
+    let log: Vec<Event> = run_scenario_logged(burned_epoch_story())
+        .expect("the burned-epoch story must hold its invariants");
+
+    assert!(
+        fenced(&log).contains(&(0, 41)),
+        "the write at the burned epoch must have been refused: {log:?}"
+    );
+    assert_eq!(
+        accepted(&log),
+        vec![(0, 41)],
+        "only the write made while node 0 really owned epoch 41: {log:?}"
     );
 }
 

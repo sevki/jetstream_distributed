@@ -38,7 +38,6 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    io,
     net::{IpAddr, Ipv4Addr},
     sync::{Arc, Mutex},
     time::Duration,
@@ -607,52 +606,97 @@ pub struct Attempts {
     /// Writes that spent the whole deadline without an answer — which is what
     /// a partition looks like from inside a node.
     pub writes_timed_out: u64,
-    /// Writes that failed some other way: refused, reset, cut off mid-reply.
+    /// Writes that were never sent, because the connection was never made.
     ///
-    /// Kept apart from the count above rather than lumped in with it, because
-    /// the two mean opposite things. A refusal is the network answering; a
-    /// deadline is the network saying nothing at all, and only the second is
-    /// what a story about silence is entitled to claim. Counting them together
-    /// would let "the request was swallowed" be satisfied by a connection that
-    /// failed instantly and locally.
+    /// `RpcFailure::NoRoute` and nothing else. This is the only counter here
+    /// whose entries are writes the node may soundly conclude did not happen,
+    /// which is why it has to mean exactly one thing.
+    ///
+    /// It said "refused, reset, cut off mid-reply" and counted every
+    /// non-timeout error, while the seed walk printed it as "with no route".
+    /// So a request that went out in full and lost only its reply was reported
+    /// as one the network never carried — the resiliency diagnostics claiming
+    /// the strongest of the three readings for the weakest evidence.
+    ///
+    /// Kept apart from the deadline count rather than lumped in with it,
+    /// because those two mean opposite things. No route is the network
+    /// answering; a deadline is the network saying nothing at all, and only
+    /// the second is what a story about silence is entitled to claim.
     pub writes_failed: u64,
-    /// Writes whose connection ended before any reply arrived.
+    /// Writes that went out, wholly or partly, and got no reply back.
     ///
-    /// A third case rather than a reuse of either, because it is
-    /// epistemically distinct from both and this file has been wrong once
-    /// already about lumping two network outcomes together. `writes_failed`
-    /// means the sender was told there is no route, so the write certainly did
-    /// not land. A disconnect says nothing of the kind: the request may have
-    /// arrived and been applied, and the connection died before the answer
-    /// came back. That is the same standing as a timeout — the node does not
-    /// know — but it is a different event and is worth seeing separately,
-    /// because a run full of them would mean the simulated network is severing
-    /// established connections rather than exercising the protocol.
+    /// `RpcFailure::Disconnected` and `RpcFailure::Cut` together: the
+    /// connection ended before a reply, or the send itself failed partway. The
+    /// two are one counter because they leave the node in the same position —
+    /// the coordinator may have the request, and there is no way to find out.
+    /// That is the same standing as a timeout, and it is separate from the
+    /// timeout count only because the events differ: a run full of these would
+    /// mean the simulated network is severing established connections rather
+    /// than exercising the protocol.
     pub writes_disconnected: u64,
+}
+
+/// Why a round trip produced no reply.
+///
+/// Classified by *where in the exchange* it stopped, rather than by the
+/// `io::ErrorKind` that came back, because where it stopped is the only thing
+/// the node genuinely knows and the kind is the simulator's opinion. Reading
+/// the kind is what produced two earlier mistakes here: the claim that a
+/// partitioned connect hangs, and the counting of every non-timeout error as
+/// a no-route failure.
+///
+/// The distinction that matters is not how the failure looked but whether the
+/// request can have been applied. `NoRoute` is the only variant that answers
+/// no.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RpcFailure {
+    /// The connection was never established, so nothing was sent and nothing
+    /// can have landed. This is how turmoil reports a partition to a sender,
+    /// and it is the one case where a node could soundly conclude its write
+    /// did not happen.
+    NoRoute,
+    /// Established, then failed while the request was still going out. The
+    /// coordinator may have read part of a line or all of it, so this says
+    /// nothing about whether the write landed — which is why it is not
+    /// `NoRoute`, though it used to be counted as one.
+    Cut,
+    /// The request went out and the connection ended before any reply.
+    Disconnected,
+    /// The request went out and nothing came back before the deadline.
+    TimedOut,
 }
 
 /// One request/response round trip. A fresh connection per request, which is
 /// slower than a long-lived lane and much easier to reason about: a partition
 /// stops the next request rather than half-killing an established one.
 ///
-/// A timeout is reported as an error, which is the honest answer: the node does
-/// not know whether the coordinator saw the request. Nothing here retries, and
-/// nothing here treats a timeout as a refusal — a node that assumed "no reply"
-/// meant "not applied" would be the bug this whole model is about.
-async fn rpc(req: String) -> io::Result<String> {
+/// A failure is reported as an error, which is the honest answer: except for
+/// `NoRoute`, the node does not know whether the coordinator saw the request.
+/// Nothing here retries, and nothing here treats a timeout as a refusal — a
+/// node that assumed "no reply" meant "not applied" would be the bug this
+/// whole model is about.
+async fn rpc(req: String) -> Result<String, RpcFailure> {
     match tokio::time::timeout(RPC_TIMEOUT, rpc_inner(req)).await {
         Ok(result) => result,
-        Err(_) => Err(io::Error::new(io::ErrorKind::TimedOut, "coordinator unreachable")),
+        Err(_) => Err(RpcFailure::TimedOut),
     }
 }
 
-async fn rpc_inner(req: String) -> io::Result<String> {
-    let mut stream = TcpStream::connect(("coord", PORT)).await?;
-    stream.write_all(req.as_bytes()).await?;
-    stream.write_all(b"\n").await?;
-    stream.flush().await?;
+async fn rpc_inner(req: String) -> Result<String, RpcFailure> {
+    // Each `?` below is tagged with the phase it is in, so the caller never
+    // has to infer the phase from the error. Only this first one means the
+    // request was never sent.
+    let mut stream = TcpStream::connect(("coord", PORT))
+        .await
+        .map_err(|_| RpcFailure::NoRoute)?;
+    stream.write_all(req.as_bytes()).await.map_err(|_| RpcFailure::Cut)?;
+    stream.write_all(b"\n").await.map_err(|_| RpcFailure::Cut)?;
+    stream.flush().await.map_err(|_| RpcFailure::Cut)?;
     let mut reply = String::new();
-    let n = BufReader::new(&mut stream).read_line(&mut reply).await?;
+    let n = BufReader::new(&mut stream)
+        .read_line(&mut reply)
+        .await
+        .map_err(|_| RpcFailure::Disconnected)?;
     // `read_line` reports a clean EOF as `Ok(0)`, and a line that ended
     // without a newline as `Ok(n)` with no `\n` in the buffer. Neither is a
     // reply, and returning `Ok("")` for the first made the caller count the
@@ -661,10 +705,7 @@ async fn rpc_inner(req: String) -> io::Result<String> {
     // timed out nor failed. A story asserting the request was answered before
     // the deadline would have been satisfied by silence.
     if n == 0 || !reply.ends_with('\n') {
-        return Err(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "the connection ended before the coordinator replied",
-        ));
+        return Err(RpcFailure::Disconnected);
     }
     Ok(reply.trim().to_string())
 }
@@ -1666,7 +1707,7 @@ fn push(queues: &[Arc<Mutex<VecDeque<NodeCmd>>>], node: u8, cmd: NodeCmd) {
 /// been superseded is not told so by a poll — it is simply no longer the
 /// intended owner — and if polling quietly cleared the guard, the scenario this
 /// whole suite is about could never arise.
-async fn poll(node: u64, state: &mut NodeState) -> io::Result<()> {
+async fn poll(node: u64, state: &mut NodeState) -> Result<(), RpcFailure> {
     let reply = rpc(format!("POLL {node}")).await?;
     let mut parts = reply.split_whitespace();
     match (parts.next(), parts.next().and_then(|e| e.parse::<u64>().ok())) {
@@ -1687,7 +1728,11 @@ async fn poll(node: u64, state: &mut NodeState) -> io::Result<()> {
 }
 
 /// Execute one node command over the network.
-async fn run_cmd(node: u64, cmd: NodeCmd, state: &mut NodeState) -> io::Result<()> {
+async fn run_cmd(
+    node: u64,
+    cmd: NodeCmd,
+    state: &mut NodeState,
+) -> Result<(), RpcFailure> {
     match cmd {
         NodeCmd::Poll => poll(node, state).await?,
         NodeCmd::Acquire => {
@@ -1722,13 +1767,17 @@ async fn run_cmd(node: u64, cmd: NodeCmd, state: &mut NodeState) -> io::Result<(
                 state.attempts.writes_sent += 1;
                 match rpc(format!("WRITE {node} {epoch}")).await {
                     Ok(_) => {}
-                    Err(e) if e.kind() == io::ErrorKind::TimedOut => {
-                        state.attempts.writes_timed_out += 1;
-                    }
-                    Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                    Err(RpcFailure::TimedOut) => state.attempts.writes_timed_out += 1,
+                    Err(RpcFailure::Disconnected) => {
                         state.attempts.writes_disconnected += 1;
                     }
-                    Err(_) => state.attempts.writes_failed += 1,
+                    Err(RpcFailure::NoRoute) => state.attempts.writes_failed += 1,
+                    // Counted with the disconnects rather than with the
+                    // no-route failures, which is where it used to land. A
+                    // send that fails partway leaves the same question open as
+                    // a reply that never arrives: the coordinator may have the
+                    // request. Only `NoRoute` settles it.
+                    Err(RpcFailure::Cut) => state.attempts.writes_disconnected += 1,
                 }
             }
         }

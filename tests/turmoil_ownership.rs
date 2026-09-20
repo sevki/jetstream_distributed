@@ -1506,7 +1506,7 @@ fn oracles_reject_a_write_with_no_capability() {
         message.contains("P8"),
         "expected the capability oracle to be the one that fired, got: {message}"
     );
-    println!("oracles rejected the uncapable write: {message}");
+    println!("oracles rejected the write with no capability: {message}");
 }
 
 /// A registry that sits back down below an epoch it burned is rejected.

@@ -723,6 +723,18 @@ the check `src/exec.rs` says has to happen where the effect lands.
 `oracles_catch_a_write_at_a_burned_epoch` does the same for the fencing oracle,
 on the case the others cannot see: a stale write with nothing written after it.
 
+Beyond those two, **every oracle in the table has a witness**: a hand-built log
+that it, and not one of its neighbours, rejects — paired where it matters with
+a nearly identical log it accepts, so a check cannot pass by rejecting
+everything. The logs are hand-built on purpose. Several are ones this
+coordinator cannot produce, and that is the point: an oracle which is sound
+only because the thing it audits is correct is not auditing anything. Three of
+the six were found to be checking something weaker than the theorem they named,
+and one of those was checking the wrong thing entirely — the P5/P6 oracle read
+write epochs, which is a *consequence* of "an epoch determines its owner"
+rather than the claim, and accepted an epoch changing hands with nothing burned
+between.
+
 That second one exists because the first version of `check_invariants` did not
 catch it. Comparing writes against writes notices a stale write only once the
 replacement owner has written too, so `Acquire(0)@41, Force→42, Write(0)@41`

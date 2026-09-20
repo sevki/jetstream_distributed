@@ -673,6 +673,56 @@ fn a_write_at_a_burned_epoch_is_refused() {
     );
 }
 
+/// Two nodes writing at one epoch is rejected — claim 1, with a witness.
+///
+/// The last of the audit. Claim 1 reads *writes* where the theorem it names is
+/// about *ownership*, which is the shape of the P5/P6 bug, and the argument
+/// that the acquire check covers the ownership half is the same kind of
+/// argument that failed twice in this file's history. So it gets a witness
+/// instead of an argument: a log this oracle, specifically, rejects.
+#[test]
+fn oracles_reject_two_writers_at_one_epoch() {
+    let log = vec![
+        Event::Acquired { node: 0, epoch: 41 },
+        Event::Wrote { node: 0, epoch: 41, seq: 1 },
+        Event::Wrote { node: 1, epoch: 41, seq: 2 },
+    ];
+
+    let Err(message) = check_invariants(&log) else {
+        panic!("the oracles accepted two nodes writing at one epoch: {log:?}");
+    };
+    assert!(
+        message.contains("claim 1"),
+        "expected the exclusivity oracle to be the one that fired, got: {message}"
+    );
+    println!("oracles rejected the shared epoch: {message}");
+}
+
+/// A write with no acquire behind it is rejected — P8, with a witness.
+///
+/// P8 checks that an acquire for this exact `(node, epoch)` came earlier. It
+/// does not check that the acquire was still current, which sounds like a gap
+/// until you notice the fencing oracle owns that case: a write at a superseded
+/// epoch is below the burn high-water mark. So P8 is narrower than its name
+/// suggests and is not wrong, and this is the log that shows it does its own
+/// half.
+#[test]
+fn oracles_reject_a_write_with_no_capability() {
+    let log = vec![Event::Wrote { node: 0, epoch: 41, seq: 1 }];
+
+    let Err(message) = check_invariants(&log) else {
+        panic!(
+            "the oracles accepted a write from a node that never acquired \
+             anything: {log:?}"
+        );
+    };
+    assert!(
+        message.contains("P8"),
+        "expected the capability oracle to be the one that fired, got: {message}"
+    );
+    println!("oracles rejected the uncapable write: {message}");
+}
+
 /// A registry that sits back down below an epoch it burned is rejected.
 ///
 /// Hand-built for the same reason as the story below it: this coordinator

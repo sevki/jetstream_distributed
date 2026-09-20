@@ -107,14 +107,21 @@ fn scenarios_hold_their_invariants() {
     // window" the moment someone shortened it.
     //
     // The rate it is set against was measured rather than guessed. A model of
-    // the generator over four 256-seed windows accepts between 82 and 111
-    // writes per window, and an earlier real run of seeds 0..256 matched that
-    // model's figure for its window to the write — so nothing is lost to the
-    // network, and the settle window in the runner is wide enough that a step
-    // ordinarily finishes before the next is queued. One accepted write per
-    // sixteen seeds sits a factor of five below the leanest window the model
-    // found, which leaves room for a window leaner than any sampled without
-    // leaving room for a runner that has stopped delivering.
+    // the generator over four 256-seed windows accepts between 44 and 65 writes
+    // per window, and one accepted write per sixteen seeds sits comfortably
+    // under the leanest of those — room for a window leaner than any sampled,
+    // without room for a runner that has stopped delivering.
+    //
+    // That range is lower than the 82-111 measured before `Stall` joined the
+    // alphabet, which is the cost of holding messages rather than only dropping
+    // them, and it is the right trade: a held request is the only way the
+    // search reaches a request that was accepted for delivery and never
+    // answered.
+    //
+    // The model is pessimistic here on purpose — it treats a held link as
+    // blocking for the rest of the scenario, where the real drain releases and
+    // waits — so the real count should sit at or above it. Twice now it has
+    // matched the real run for its window to the write.
     //
     // What this floor is *not* is evidence that the oracles can fail. Nothing
     // proportional could be: it says the runner ran. That the oracles have

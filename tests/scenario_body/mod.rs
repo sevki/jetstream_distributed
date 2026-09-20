@@ -478,6 +478,18 @@ pub enum Action {
     /// Let it back in. The node returns still holding its old guard, which is
     /// the headline scenario.
     Rejoin { node: u8 },
+    /// Hold this node's messages instead of dropping them: the network accepts
+    /// them for delivery and delivers nothing.
+    ///
+    /// Distinct from `Isolate`, and the distinction is the whole reason this
+    /// exists. A partition in turmoil is reported to the sender at once, so it
+    /// never produces a request that was taken and left unanswered — the shape
+    /// a node's deadline is for. A hold does. The model's claim that
+    /// arbitrarily delayed requests are safe is about this case, not the other
+    /// one.
+    Stall { node: u8 },
+    /// Deliver everything that was held, all at once.
+    Resume { node: u8 },
     /// Let time pass, so in-flight requests land.
     Sleep { millis: u8 },
 }
@@ -495,7 +507,7 @@ impl Action {
     /// rather than this protocol.
     fn from_pair(choice: u64, param: u64) -> Self {
         let node = (param % NODES) as u8;
-        match choice % 12 {
+        match choice % 14 {
             0..=1 => Action::Poll { node },
             2..=3 => Action::Acquire { node },
             4..=6 => Action::Write { node },
@@ -514,6 +526,13 @@ impl Action {
                     Action::Isolate { node }
                 } else {
                     Action::Rejoin { node }
+                }
+            }
+            11 => {
+                if param % 2 == 0 {
+                    Action::Stall { node }
+                } else {
+                    Action::Resume { node }
                 }
             }
             _ => Action::Sleep { millis: (param % 60) as u8 },
@@ -913,6 +932,12 @@ fn run_with_log(
                 Action::Rejoin { node } => {
                     turmoil::repair(node_host(node as u64 % NODES), "coord");
                 }
+                Action::Stall { node } => {
+                    turmoil::hold(node_host(node as u64 % NODES), "coord");
+                }
+                Action::Resume { node } => {
+                    turmoil::release(node_host(node as u64 % NODES), "coord");
+                }
                 Action::Sleep { millis } => {
                     tokio::time::sleep(Duration::from_millis(millis as u64 + 1)).await;
                 }
@@ -939,6 +964,11 @@ fn run_with_log(
         // a hang instead of a failure.
         for n in 0..NODES {
             turmoil::repair(node_host(n), "coord");
+            // A held link is not a repaired one: `repair` restores the route,
+            // `release` delivers what was held on it. A drain that did only the
+            // first would wait out its bound on a node whose request is still
+            // sitting in the network.
+            turmoil::release(node_host(n), "coord");
         }
         for _ in 0..200 {
             let outstanding: usize =

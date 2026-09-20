@@ -760,7 +760,18 @@ whether a route exists, so a request made across a partition that is already in
 place fails immediately at the sender. A real partition drops the packet and
 the sender learns nothing until its own deadline expires. The node-side counters
 keep the two apart — `writes_failed` against `writes_timed_out` — and the seed
-walk prints both, so the difference is visible rather than assumed. It costs
+walk prints both, so the difference is visible rather than assumed.
+
+Printing them is how the gap was found. A run reported 284 writes sent across
+256 seeds with **zero** unanswered at the deadline: every failure was a removed
+route, so the node's deadline had never once fired and the scenarios contained
+no request that was accepted for delivery and then ignored. Since "duplicate,
+reordered and arbitrarily delayed requests are safe" is one of the claims in the
+table above, a search that could not produce a delayed request was not reaching
+it. `Stall` and `Resume` use turmoil's `hold`/`release` to do exactly that, and
+`a_held_request_expires_and_the_node_carries_on` pins the case: the node gives
+up, and goes on working, and draws no conclusion — a timeout says nothing about
+whether the write was applied, and the held request may still land. It costs
 nothing here only because nothing in the protocol reads them: a node that
 distinguished "no route" from "no reply" would hold information a real one does
 not, and treating either as a decision about ownership is exactly the mistake

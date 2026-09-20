@@ -387,6 +387,69 @@ fn an_isolated_owner_is_met_with_silence_not_refusal() {
     );
 }
 
+/// A held request expires on the node's deadline, and the node carries on.
+///
+/// The other half of what a network can do to a request, and the half the
+/// partition stories cannot reach. `Isolate` removes the route, which turmoil
+/// reports to the sender at once; `Stall` holds the messages, so the request is
+/// accepted for delivery and simply never answered. That second shape is what
+/// `RPC_TIMEOUT` exists for, and until this story existed nothing exercised it
+/// — the seed walk reported 284 writes sent across 256 seeds with *zero*
+/// unanswered at the deadline, which is a deadline that had never once fired.
+///
+/// What the node may not do is conclude anything. A timeout says the node got
+/// no answer; it does not say the write was not applied, and the held request
+/// may well land later. So the assertion here is about the node giving up and
+/// then continuing to work, not about what the registry did with the request it
+/// was still holding.
+#[test]
+fn a_held_request_expires_and_the_node_carries_on() {
+    let (log, attempts) = run_scenario_probed(story(vec![
+        Action::Poll { node: 0 },
+        Action::Acquire { node: 0 },
+        // The route stays up. The messages just stop moving.
+        Action::Stall { node: 0 },
+        Action::Write { node: 0 },
+        // Two deadlines' worth, so the node has certainly given up.
+        wait(),
+        wait(),
+        Action::Resume { node: 0 },
+        // ... and it is still working: this one goes through normally.
+        Action::Write { node: 0 },
+        wait(),
+    ]))
+    .expect("the held-request story must hold its invariants");
+
+    assert_eq!(
+        attempts[0].writes_sent, 2,
+        "both writes must have been sent — the node does not stop trying \
+         because one went unanswered: {attempts:?}"
+    );
+    assert_eq!(
+        attempts[0].writes_timed_out, 1,
+        "the held write must have spent its whole deadline unanswered, which \
+         is the case `Isolate` cannot produce: {attempts:?}"
+    );
+    assert_eq!(
+        attempts[0].writes_failed, 0,
+        "and nothing may have failed outright: the route was never removed, \
+         only stalled: {attempts:?}"
+    );
+
+    // Deliberately not pinned to a count. Whether the held request reaches the
+    // coordinator once the hold is released depends on whether the payload
+    // survives a sender that has already abandoned the connection — a property
+    // of the simulator, not of this protocol. What must hold either way is that
+    // nothing was accepted from anyone else, at any other epoch.
+    let writes = accepted(&log);
+    assert!(
+        !writes.is_empty() && writes.iter().all(|w| *w == (0, 41)),
+        "every accepted write must be node 0 at epoch 41, the epoch it never \
+         stopped owning, and there must be at least the one sent after the \
+         hold was released: {log:?}"
+    );
+}
+
 /// A node with no grant never asks for anything.
 ///
 /// The executable side of P8 — no authority without a capability. Node 1 is

@@ -19,8 +19,8 @@
 mod body;
 
 use body::{
-    check_invariants, run_scenario_logged, run_scenario_probed, run_scenario_unfenced, Action,
-    Coord, Event, Peer, Scenario, INITIAL_EPOCH,
+    check_invariants, run_scenario_logged, run_scenario_overfenced, run_scenario_probed,
+    run_scenario_unfenced, Action, Coord, Event, Fence, Peer, Scenario, INITIAL_EPOCH,
 };
 
 /// Every story runs on the same network schedule, because the story is in the
@@ -696,7 +696,7 @@ fn a_write_at_a_burned_epoch_is_refused() {
 /// cannot express a malformed request.
 #[test]
 fn the_registry_refuses_a_successor_that_is_not_a_node() {
-    let mut coord = Coord::new(true);
+    let mut coord = Coord::new(Fence::Checked);
     assert_eq!(coord.handle("POLL 0", Peer::Node(0)), format!("GRANT {INITIAL_EPOCH}"));
     assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}"), Peer::Node(0)), "OK");
 
@@ -726,7 +726,7 @@ fn the_registry_refuses_a_successor_that_is_not_a_node() {
 /// had already built the means and not used it.
 #[test]
 fn the_registry_refuses_an_acquire_quoting_the_wrong_epoch() {
-    let mut coord = Coord::new(true);
+    let mut coord = Coord::new(Fence::Checked);
     assert_eq!(coord.handle("POLL 0", Peer::Node(0)), format!("GRANT {INITIAL_EPOCH}"));
 
     assert_eq!(
@@ -754,7 +754,7 @@ fn the_registry_refuses_an_acquire_quoting_the_wrong_epoch() {
 /// ahead of the review instead of one behind.
 #[test]
 fn the_registry_does_not_offer_the_actor_to_a_bystander() {
-    let mut coord = Coord::new(true);
+    let mut coord = Coord::new(Fence::Checked);
 
     // The actor starts offered to node 0 and to nobody else.
     assert_eq!(
@@ -791,7 +791,7 @@ fn the_registry_does_not_offer_the_actor_to_a_bystander() {
 /// is not nested in.
 #[test]
 fn the_registry_does_not_tell_a_bystander_to_stand_down() {
-    let mut coord = Coord::new(true);
+    let mut coord = Coord::new(Fence::Checked);
     assert_eq!(coord.handle("POLL 0", Peer::Node(0)), format!("GRANT {INITIAL_EPOCH}"));
     assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}"), Peer::Node(0)), "OK");
     assert_eq!(coord.handle("BEGIN 0 1", Peer::Node(0)), "OK");
@@ -827,7 +827,7 @@ fn the_registry_does_not_tell_a_bystander_to_stand_down() {
 /// `tr_revoke_owner` makes no node act, so there is no sender to authenticate.
 #[test]
 fn the_registry_believes_the_connection_not_the_request() {
-    let mut coord = Coord::new(true);
+    let mut coord = Coord::new(Fence::Checked);
     assert_eq!(coord.handle("POLL 0", Peer::Node(0)), format!("GRANT {INITIAL_EPOCH}"));
     assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}"), Peer::Node(0)), "OK");
 
@@ -868,7 +868,7 @@ fn the_registry_believes_the_connection_not_the_request() {
 /// handler.
 #[test]
 fn the_registry_refuses_an_acquire_it_never_offered() {
-    let mut coord = Coord::new(true);
+    let mut coord = Coord::new(Fence::Checked);
 
     assert_eq!(
         coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}"), Peer::Node(0)),
@@ -891,7 +891,7 @@ fn the_registry_refuses_an_acquire_it_never_offered() {
 /// could sit in a loop revoking whoever legitimately held the actor.
 #[test]
 fn the_registry_refuses_a_forced_revoke_sent_by_a_node() {
-    let mut coord = Coord::new(true);
+    let mut coord = Coord::new(Fence::Checked);
     assert_eq!(coord.handle("POLL 0", Peer::Node(0)), format!("GRANT {INITIAL_EPOCH}"));
     assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}"), Peer::Node(0)), "OK");
 
@@ -927,7 +927,7 @@ fn the_registry_refuses_a_forced_revoke_sent_by_a_node() {
 /// conjunct.
 #[test]
 fn the_registry_does_not_offer_an_actor_that_is_held() {
-    let mut coord = Coord::new(true);
+    let mut coord = Coord::new(Fence::Checked);
     assert_eq!(coord.handle("POLL 0", Peer::Node(0)), format!("GRANT {INITIAL_EPOCH}"));
     assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}"), Peer::Node(0)), "OK");
 
@@ -947,7 +947,7 @@ fn the_registry_does_not_offer_an_actor_that_is_held() {
 /// sanitising its input on the way in.
 #[test]
 fn the_registry_refuses_a_line_with_an_unparseable_field() {
-    let mut coord = Coord::new(true);
+    let mut coord = Coord::new(Fence::Checked);
 
     assert_eq!(
         coord.handle("POLL junk 0", Peer::Node(0)),
@@ -982,7 +982,7 @@ fn the_registry_refuses_a_line_with_an_unparseable_field() {
 /// something the network may always do.
 #[test]
 fn a_release_for_an_earlier_transfer_does_not_complete_a_later_one() {
-    let mut coord = Coord::new(true);
+    let mut coord = Coord::new(Fence::Checked);
     let first = INITIAL_EPOCH;
 
     // Node 0 takes the actor and agrees to hand it to node 1.
@@ -1674,4 +1674,132 @@ fn oracles_catch_an_unfenced_coordinator() {
          is a fencing failure, whatever else also notices it — got: {message}"
     );
     println!("oracles rejected the unfenced run: {message}");
+}
+
+/// A registry that fences the node currently holding the actor is rejected.
+///
+/// Every other oracle in `check_invariants` bounds what was *accepted*. That
+/// leaves a hole with a definite shape: a coordinator whose `WRITE` arm always
+/// answered `FENCED` would satisfy all seven, because each of them is a claim
+/// about writes that got through and there would not be any. The seed walk's
+/// write floor catches that in its fully degenerate form — no accepted writes
+/// at all across 256 seeds — but a registry that fenced only node 2, or only
+/// every third request, clears a floor asking for one write per sixteen seeds
+/// without difficulty.
+///
+/// `may_mutate` is a biconditional as far as the handler is concerned: `WRITE`
+/// accepts exactly when the actor is `Owned { owner: node, epoch }` for the
+/// pair the request names. So this log — node 0 holds epoch 41, and is fenced
+/// writing at epoch 41 — is a refusal the model has no state for.
+#[test]
+fn oracles_reject_a_fence_against_the_current_owner() {
+    let log = vec![
+        Event::Granted { node: 0, epoch: 41 },
+        Event::Acquired { node: 0, epoch: 41 },
+        // Nothing has burned. Node 0 still holds the actor at 41, and is
+        // refused writing at exactly that.
+        Event::Fenced { node: 0, epoch: 41 },
+    ];
+
+    let Err(message) = check_invariants(&log) else {
+        panic!("the oracles accepted a fence against the current owner: {log:?}");
+    };
+    assert!(
+        message.contains("may_mutate (refusals)"),
+        "expected the refusal oracle to be the one that fired, got: {message}"
+    );
+    println!("oracles rejected the unwarranted fence: {message}");
+}
+
+/// The same fence, after the epoch it named was burned, is correct.
+///
+/// The paired accept, and it differs from the rejection above in one event:
+/// the burn. That is what makes node 0's epoch stale and the refusal right —
+/// this is the ordinary returning-owner path, and fencing it is the entire
+/// point of the protocol. An oracle that could not tell these two logs apart
+/// would be rejecting the behaviour it exists to require.
+#[test]
+fn oracles_accept_a_fence_against_a_superseded_owner() {
+    let log = vec![
+        Event::Granted { node: 0, epoch: 41 },
+        Event::Acquired { node: 0, epoch: 41 },
+        Event::EpochBurned { from_epoch: 41, to_epoch: 42, next: 1, forced: true },
+        Event::Fenced { node: 0, epoch: 41 },
+    ];
+
+    assert!(
+        check_invariants(&log).is_ok(),
+        "fencing a returning owner whose epoch has been burned is the protocol \
+         working, not a violation: {log:?}"
+    );
+}
+
+/// A fence against a node that never held the actor is not this oracle's
+/// business.
+///
+/// Worth pinning, because the obvious over-reach when writing the check above
+/// is to demand that every `Fenced` name a node that once held something. A
+/// node with a stale guard from an epoch it never acquired — or no guard at
+/// all — getting refused is the registry doing its job, and there is nothing
+/// in the model that makes it a violation.
+#[test]
+fn oracles_accept_a_fence_against_a_node_that_never_held_the_actor() {
+    let log = vec![
+        Event::Granted { node: 0, epoch: 41 },
+        Event::Acquired { node: 0, epoch: 41 },
+        Event::Fenced { node: 2, epoch: 41 },
+    ];
+
+    assert!(
+        check_invariants(&log).is_ok(),
+        "refusing a node that never acquired the epoch is the fence working: {log:?}"
+    );
+}
+
+/// The mirror of `oracles_catch_an_unfenced_coordinator`, for the failure that
+/// is invisible to every oracle the proofs gave us.
+///
+/// The three tests above drive `check_invariants` with hand-built logs, which
+/// proves the oracle rejects a string of events. This proves it rejects a
+/// *registry*: the same story, the same seed, the same network, with the
+/// coordinator's `WRITE` arm answering `FENCED` to everything.
+///
+/// The asymmetry is the whole reason the oracle exists. Turning the fence off
+/// breaks claims 2/3, and the run above catches it. Jamming the fence on
+/// breaks none of the first seven — it accepts no stale write because it
+/// accepts no write at all — and before `may_mutate (refusals)` this registry
+/// passed the entire suite while doing nothing a client could use. The seed
+/// walk's write floor would have caught this particular total version, but a
+/// registry that fenced one node, or one request in three, clears that floor
+/// comfortably.
+#[test]
+fn oracles_catch_an_overfencing_coordinator() {
+    let log: Vec<Event> = run_scenario_overfenced(stale_owner_story())
+        .expect("the over-fenced run is still a run; it must complete");
+
+    // Sanity first, as above: the run has to have reached the state in
+    // question, or the rejection below is about something else.
+    assert!(
+        accepted(&log).is_empty(),
+        "with the fence jammed on nothing may be accepted: {log:?}"
+    );
+    assert!(
+        fenced(&log).contains(&(0, 41)),
+        "node 0's first write, made while it held epoch 41, must have been \
+         refused — that refusal is what the oracle is for: {log:?}"
+    );
+
+    let Err(message) = check_invariants(&log) else {
+        panic!(
+            "the oracles accepted a registry that refuses its own current \
+             owner, which is a suite seven of whose eight checks are satisfied \
+             by a coordinator that does nothing: {log:?}"
+        );
+    };
+    assert!(
+        message.contains("may_mutate (refusals)"),
+        "expected the refusal oracle to be the one that fired — no other \
+         oracle has an opinion about a refusal — got: {message}"
+    );
+    println!("oracles rejected the over-fenced run: {message}");
 }

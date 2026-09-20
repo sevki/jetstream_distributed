@@ -175,10 +175,10 @@ pub struct Coord {
     log: Vec<Event>,
     /// Writes accepted so far, used to give each one a sequence number.
     writes: u64,
-    /// When false the coordinator skips its fence check. Used only by the
-    /// self-test that proves these oracles can fail — see
-    /// [`run_scenario_unfenced`].
-    fencing: bool,
+    /// How the coordinator's `WRITE` arm decides. Anything but
+    /// [`Fence::Checked`] is a deliberately broken registry, used only by the
+    /// self-tests that prove these oracles can fail.
+    fence: Fence,
     /// The grants this registry has issued, as `(node, epoch)`.
     ///
     /// `tr_acquire` wants `pre.network.contains(Message::Grant { to: n, epoch })`,
@@ -194,6 +194,27 @@ pub struct Coord {
     /// is the one a node's doc comment claims not to over-read: a timeout says
     /// no answer arrived, never that the write was not applied.
     slow_next_reply: bool,
+}
+
+/// What the coordinator does with a `WRITE`.
+///
+/// A bool would do for two of these, and did until there were three. The
+/// third exists because the oracles are not symmetric on their own: seven of
+/// them bound what was *accepted*, so a registry that refused everything
+/// satisfied all seven. Disabling the fence and jamming it on are the two
+/// ways to be wrong about the same check, and each has an oracle that should
+/// catch it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fence {
+    /// The fence as specified: accept exactly when the actor is `Owned` by
+    /// this node at this epoch. Every real run uses this.
+    Checked,
+    /// Accept everything. Breaks claims 2/3 — see `run_scenario_unfenced`.
+    Never,
+    /// Refuse everything, including the current owner writing at its own
+    /// epoch. Breaks nothing among the first seven oracles, which is the
+    /// point — see `run_scenario_overfenced`.
+    Always,
 }
 
 /// The actor's ownership state. The three-case enum of `model::OwnershipState`,
@@ -216,14 +237,14 @@ impl Owned {
 }
 
 impl Coord {
-    pub fn new(fencing: bool) -> Self {
+    pub fn new(fence: Fence) -> Self {
         Coord {
             // The same start state the scenarios in `src/proofs` use: offered
             // to node 0 at the initial epoch, held by nobody.
             state: Owned::Unowned { epoch: INITIAL_EPOCH, intended: INITIAL_OWNER },
             log: Vec::new(),
             writes: 0,
-            fencing,
+            fence,
             issued: Vec::new(),
             slow_next_reply: false,
         }
@@ -345,7 +366,12 @@ impl Coord {
                     self.state,
                     Owned::Owned { owner, epoch: e } if owner == *node && e == *epoch
                 );
-                if permitted || !self.fencing {
+                let accepted = match self.fence {
+                    Fence::Checked => permitted,
+                    Fence::Never => true,
+                    Fence::Always => false,
+                };
+                if accepted {
                     self.writes += 1;
                     let seq = self.writes;
                     self.log.push(Event::Wrote { node: *node, epoch: *epoch, seq });
@@ -912,6 +938,14 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
                     ));
                 }
             }
+            // `Revoked` also names the registry's current epoch exactly — a
+            // stand-down order is written while the actor is `Transferring`,
+            // and that phase begins with the burn to `new_epoch`. It is left
+            // out because claim 4 already pins it harder than this loop could:
+            // a revoke must name the transfer in flight, and that transfer's
+            // epoch came from an `EpochBurned` this loop has already checked.
+            // Adding it here would be redundant rather than wrong, and a
+            // redundant check reads like a second opinion when it is an echo.
             Event::Wrote { .. } | Event::Fenced { .. } | Event::Revoked { .. } => {}
         }
     }
@@ -1220,6 +1254,54 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
         }
     }
 
+    // `may_mutate`, in the direction nothing above checks: the registry must
+    // not refuse a write it was obliged to accept.
+    //
+    // Every oracle above bounds what was *accepted*. None bounds what was
+    // refused, and that asymmetry is a hole with a shape: a coordinator whose
+    // `WRITE` arm returned `FENCED` unconditionally satisfies all seven. It
+    // accepts no two writers at an epoch, burns nothing out of order, hands
+    // the actor over correctly and never lets a stale write through, because
+    // it never lets any write through. The write floor in `turmoil_scenarios`
+    // catches the *fully* degenerate version of that by counting accepted
+    // writes across the window — but a registry that fenced only node 2, or
+    // only every third request, would sail past a floor that asks for one
+    // write per sixteen seeds.
+    //
+    // `may_mutate` is a biconditional where the handler is concerned:
+    // `WRITE` accepts exactly when the actor is `Owned { owner: node, epoch }`
+    // for the pair the request names. So a `Fenced` logged while the log says
+    // that node holds that epoch is the registry refusing its own current
+    // owner, and there is no state in the model where that is correct.
+    //
+    // This is the one oracle here that does not come from a theorem, and it
+    // should not be dressed up as one. The Verus proofs are all of the form
+    // "this cannot happen"; none of them says any write is ever accepted, and
+    // none could — liveness is not what they are about. This checks the
+    // definition of `may_mutate` rather than a consequence of it, which is
+    // weaker provenance than every row above it and is recorded as such in the
+    // README.
+    //
+    // Runs last so it cannot pre-empt an oracle that does come from a theorem.
+    // `held` is `Some` only between an acquire and the next burn: a
+    // cooperative burn moves the actor to `Transferring` and a forced one to
+    // `Unowned`, and neither is a state where a write is permitted.
+    let mut held: Option<(u64, u64)> = None;
+    for ev in log {
+        match ev {
+            Event::Acquired { node, epoch } => held = Some((*node, *epoch)),
+            Event::EpochBurned { .. } | Event::Released { .. } => held = None,
+            Event::Fenced { node, epoch } => {
+                if held == Some((*node, *epoch)) {
+                    return Err(format!(
+                        "may_mutate (refusals): node {node} was fenced at epoch                          {epoch} while the registry still held the actor for it                          — a refusal the model has no state for"
+                    ));
+                }
+            }
+            Event::Wrote { .. } | Event::Granted { .. } | Event::Revoked { .. } => {}
+        }
+    }
+
     Ok(())
 }
 
@@ -1233,7 +1315,7 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
 /// Returns the number of *accepted* writes, so a caller can tell a scenario
 /// that exercised something from one that did not.
 pub fn run_scenario(scenario: Scenario) -> turmoil::Result<usize> {
-    run_inner(scenario, true)
+    run_inner(scenario, Fence::Checked)
 }
 
 /// The same run, handing back the coordinator's audit log.
@@ -1260,7 +1342,7 @@ pub fn run_scenario_probed(
 ) -> turmoil::Result<(Vec<Event>, Vec<Attempts>)> {
     let log = Arc::new(Mutex::new(Vec::new()));
     let captured = log.clone();
-    let attempts = run_with_log(scenario, true, captured)?;
+    let attempts = run_with_log(scenario, Fence::Checked, captured)?;
     let out = log.lock().unwrap().clone();
     check_invariants(&out)?;
     Ok((out, attempts))
@@ -1277,15 +1359,35 @@ pub fn run_scenario_probed(
 pub fn run_scenario_unfenced(scenario: Scenario) -> turmoil::Result<Vec<Event>> {
     let log = Arc::new(Mutex::new(Vec::new()));
     let captured = log.clone();
-    let _ = run_with_log(scenario, false, captured)?;
+    let _ = run_with_log(scenario, Fence::Never, captured)?;
     let out = log.lock().unwrap().clone();
     Ok(out)
 }
 
-fn run_inner(scenario: Scenario, fencing: bool) -> turmoil::Result<usize> {
+/// The same scenario with the coordinator's fence jammed on: every write is
+/// refused, including the current owner's at its own epoch.
+///
+/// The mirror of [`run_scenario_unfenced`], and it exists because the two
+/// failures are not symmetric in the oracles. Disabling the fence breaks
+/// claims 2/3, which seven oracles are watching for. Jamming it on breaks none
+/// of them — it accepts no bad write because it accepts no write — so until
+/// `may_mutate (refusals)` was written, this registry passed the entire suite.
+///
+/// That is the same standard `run_scenario_unfenced` was written to meet: a
+/// hand-built log proves an oracle rejects a string of events, and this proves
+/// it rejects a *registry*.
+pub fn run_scenario_overfenced(scenario: Scenario) -> turmoil::Result<Vec<Event>> {
     let log = Arc::new(Mutex::new(Vec::new()));
     let captured = log.clone();
-    let _ = run_with_log(scenario, fencing, captured)?;
+    let _ = run_with_log(scenario, Fence::Always, captured)?;
+    let out = log.lock().unwrap().clone();
+    Ok(out)
+}
+
+fn run_inner(scenario: Scenario, fence: Fence) -> turmoil::Result<usize> {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let captured = log.clone();
+    let _ = run_with_log(scenario, fence, captured)?;
     let log = log.lock().unwrap();
     // `?` converts the `String` through `From`, which both of the boxed error
     // types turmoil's `Result` alias could be built on implement. Naming the
@@ -1298,7 +1400,7 @@ fn run_inner(scenario: Scenario, fencing: bool) -> turmoil::Result<usize> {
 /// each node's own tally of what it attempted.
 fn run_with_log(
     scenario: Scenario,
-    fencing: bool,
+    fence: Fence,
     out: Arc<Mutex<Vec<Event>>>,
 ) -> turmoil::Result<Vec<Attempts>> {
     let mut sim = Builder::new()
@@ -1321,7 +1423,7 @@ fn run_with_log(
     // records are updated atomically. A deployment buys that from consensus or
     // a compare-and-swap store; here it is a `Mutex`, and saying so is the
     // point: the assumption is visible rather than smuggled in.
-    let coord = Arc::new(Mutex::new(Coord::new(fencing)));
+    let coord = Arc::new(Mutex::new(Coord::new(fence)));
     let coord_for_host = coord.clone();
     sim.host("coord", move || {
         let coord = coord_for_host.clone();

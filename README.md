@@ -697,6 +697,21 @@ runtime oracles over the coordinator's audit log:
 | no write below a burned epoch is ever accepted | claims 2 / 3, stale-owner fencing |
 | every acquire is by the node the registry offered the actor to, at an epoch it was actually offered | P8 at the grant, no authority without a capability |
 | every accepted write is backed by an earlier acquire of that exact `(node, epoch)` | P8 at the token, no authority without a capability |
+| no write is *refused* while the registry's own log says that node holds that epoch | the definition of `may_mutate` — **not a theorem**, see below |
+
+The last row is different in kind from the seven above it and is listed
+separately for that reason. Every theorem in this repository has the form
+"this cannot happen": none of them says a write is ever *accepted*, and none
+could — that is liveness, and it is not what the proofs are about. The
+consequence is a hole with a definite shape. A coordinator whose `WRITE` arm
+answered `FENCED` unconditionally satisfies all seven oracles above, because
+each is a claim about writes that got through and there would not be any. So
+the eighth checks the other direction of `may_mutate`'s definition — the
+registry accepts exactly when the actor is `Owned` by that node at that epoch,
+so a refusal aimed at the current owner is a state the model does not have.
+It is derived from a definition rather than from a proof, which is weaker
+provenance than the rest of the table, and it is the reason the table has a
+row the "claim it comes from" column cannot fill honestly.
 
 Two searches reach them. `turmoil_ownership.rs` holds named stories, each of
 which asserts what it was supposed to *reach* — the headline one is A owning
@@ -724,15 +739,23 @@ actions, same seed, same network, same oracles; what separates them is exactly
 the check `src/exec.rs` says has to happen where the effect lands.
 `oracles_catch_a_write_at_a_burned_epoch` does the same for the fencing oracle,
 on the case the others cannot see: a stale write with nothing written after it.
+`oracles_catch_an_overfencing_coordinator` is the mirror of the first: the same
+story again with the fence jammed *on* rather than off, which is the failure
+none of the seven proof-derived oracles can see, and which the eighth exists
+for. The write floor in the seed walk catches the totally degenerate version of
+it by counting accepted writes across the window, but a registry that fenced
+only one node, or one request in three, clears that floor comfortably.
 
 Beyond those two, **every oracle in the table has a witness**: a hand-built log
 that it, and not one of its neighbours, rejects — paired where it matters with
 a nearly identical log it accepts, so a check cannot pass by rejecting
 everything. The logs are hand-built on purpose. Several are ones this
 coordinator cannot produce, and that is the point: an oracle which is sound
-only because the thing it audits is correct is not auditing anything. Three of
-the six were found to be checking something weaker than the theorem they named,
-and one of those was checking the wrong thing entirely — the P5/P6 oracle read
+only because the thing it audits is correct is not auditing anything. Writing
+those witnesses is what found most of the defects in this table: of the six
+oracles that existed when the audit started, three were checking something
+weaker than the theorem they named, and one of those was checking the wrong
+thing entirely — the P5/P6 oracle read
 write epochs, which is a *consequence* of "an epoch determines its owner"
 rather than the claim, and accepted an epoch changing hands with nothing burned
 between.

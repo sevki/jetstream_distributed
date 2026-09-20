@@ -73,6 +73,13 @@ const PORT: u16 = 9_440;
 /// see a first event that is already wrong.
 pub const INITIAL_EPOCH: u64 = 41;
 
+/// The node the actor is offered to before anyone has taken it.
+///
+/// Named for the same reason as the epoch: an oracle that checks who may
+/// acquire needs somewhere to start, and taking that from the first event in
+/// the log it is auditing would make the first acquire unconditionally valid.
+pub const INITIAL_OWNER: u64 = 0;
+
 /// How long the driver waits after queueing an action.
 ///
 /// Comfortably more than a round trip, so that consecutive actions read as
@@ -157,7 +164,7 @@ impl Coord {
         Coord {
             // The same start state the scenarios in `src/proofs` use: offered
             // to node 0 at the initial epoch, held by nobody.
-            state: Owned::Unowned { epoch: INITIAL_EPOCH, intended: 0 },
+            state: Owned::Unowned { epoch: INITIAL_EPOCH, intended: INITIAL_OWNER },
             log: Vec::new(),
             writes: 0,
             fencing,
@@ -812,6 +819,40 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
     // apart, and worth leaving written down: an oracle kept alive by its
     // position in the list is not a check, it is a label.
 
+    // P8, at the grant — a node acquires only what it was offered.
+    //
+    // `tr_acquire` requires two things of the acquiring node: that it is the
+    // `intended_owner`, and that a matching `Grant` is in flight. The grant is
+    // the capability, so this is the same principle as the write-side check
+    // below, one step earlier in the protocol.
+    //
+    // Until this existed, nothing correlated who acquired with who was offered.
+    // `Acquired(0,41), EpochBurned(41→42, next=1), Acquired(2,42), Wrote(2,42)`
+    // passed every oracle: one writer per epoch, a well-formed burn from where
+    // the registry was, distinct epochs per owner, no write below the burn, and
+    // node 2 really had acquired. Deleting the coordinator's `intended == node`
+    // guard would have left the whole suite green, which is the plainest
+    // possible statement that the suite was not checking it.
+    //
+    // The intended owner is read off the burns. Every path that leaves the
+    // actor `Unowned` records the node it is offered to as that burn's `next`:
+    // a forced revoke and a reassignment name their successor, an aborted
+    // transfer names the node it came from, and a cooperative handover names
+    // its target, which is still the intended owner once the release lands.
+    let mut intended = INITIAL_OWNER;
+    for ev in log {
+        match ev {
+            Event::EpochBurned { next, .. } => intended = *next,
+            Event::Acquired { node, epoch } if *node != intended => {
+                return Err(format!(
+                    "P8 (grant): node {node} acquired epoch {epoch}, which was \
+                     offered to node {intended}"
+                ));
+            }
+            _ => {}
+        }
+    }
+
     // Claims 2 and 3 — stale-owner fencing. Once the registry has burned
     // forward to an epoch, no write below it may ever be accepted again.
     //
@@ -852,8 +893,8 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
             Event::Wrote { node, epoch, seq } => {
                 if !acquired.contains(&(*node, *epoch)) {
                     return Err(format!(
-                        "P8: node {node} wrote at epoch {epoch} (seq {seq}) without \
-                         ever having acquired it"
+                        "P8 (token): node {node} wrote at epoch {epoch} (seq {seq}) \
+                         without ever having acquired it"
                     ));
                 }
             }

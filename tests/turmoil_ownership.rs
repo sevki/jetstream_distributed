@@ -830,6 +830,63 @@ fn oracles_accept_a_handover_to_another_node_across_a_burn() {
     );
 }
 
+/// A node acquiring an epoch it was not offered is rejected.
+///
+/// `tr_acquire` requires the acquiring node to be the `intended_owner` and a
+/// matching `Grant` to be in flight — the grant is the capability. Nothing in
+/// the suite correlated the two until this check existed, and the consequence
+/// was as blunt as it gets: **deleting the coordinator's `intended == node`
+/// guard would have left every test green.** An oracle suite that cannot see a
+/// deleted guard is not auditing the thing the guard protects.
+#[test]
+fn oracles_reject_an_acquire_by_a_node_that_was_not_offered() {
+    let log = vec![
+        Event::Acquired { node: 0, epoch: 41 },
+        Event::EpochBurned { from_epoch: 41, to_epoch: 42, next: 1, forced: true },
+        // The actor was offered to node 1. Node 2 takes it.
+        Event::Acquired { node: 2, epoch: 42 },
+        Event::Wrote { node: 2, epoch: 42, seq: 1 },
+    ];
+
+    let Err(message) = check_invariants(&log) else {
+        panic!(
+            "the oracles accepted an acquire by a node the actor was never \
+             offered to: {log:?}"
+        );
+    };
+    assert!(
+        message.contains("P8 (grant)"),
+        "expected the grant oracle to be the one that fired, got: {message}"
+    );
+    println!("oracles rejected the uninvited acquire: {message}");
+}
+
+/// The same log with the offered node taking it is fine.
+///
+/// The paired accept, differing from the rejection in the acquiring node
+/// alone — `oracles_accept_a_handover_to_another_node_across_a_burn` is
+/// literally this log with node 1 in node 2's place, which is why that test
+/// serves as this one's pair rather than a third being added.
+///
+/// A node acquiring at the *initial* epoch is the other case worth pinning,
+/// because the oracle has to start from somewhere and taking that from the log
+/// would make the first acquire valid by whoever happened to make it.
+#[test]
+fn oracles_reject_a_first_acquire_by_a_node_that_was_not_offered() {
+    let log = vec![Event::Acquired { node: 2, epoch: 41 }];
+
+    let Err(message) = check_invariants(&log) else {
+        panic!(
+            "the oracles accepted a first acquire by a node the actor was not \
+             initially offered to: {log:?}"
+        );
+    };
+    assert!(
+        message.contains("P8 (grant)"),
+        "expected the grant oracle to be the one that fired, got: {message}"
+    );
+}
+
 /// A write with no acquire behind it is rejected — P8, with a witness.
 ///
 /// P8 checks that an acquire for this exact `(node, epoch)` came earlier. It

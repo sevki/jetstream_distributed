@@ -110,6 +110,12 @@ pub enum Event {
     /// flight, and an acquire cannot be checked against a grant nobody wrote
     /// down — the audit log had no record of what was ever offered.
     Granted { node: u64, epoch: u64 },
+    /// The registry told this node to stop, ahead of the new epoch.
+    ///
+    /// `Message::Revoke`, whose `target` the model binds to the transfer's
+    /// outgoing owner. Logged for the same reason as `Granted`: `POLL` guards
+    /// who may be told, and a guard nothing records is a guard nothing checks.
+    Revoked { node: u64, new_epoch: u64 },
     /// A node took ownership at this epoch.
     Acquired { node: u64, epoch: u64 },
     /// A write was accepted: at this instant the registry said
@@ -209,6 +215,7 @@ impl Coord {
                 }
                 Owned::Transferring { from, new_epoch, .. } if from == *node => {
                     // `tr_handle_revoke`: the outgoing owner is told to stop.
+                    self.log.push(Event::Revoked { node: *node, new_epoch });
                     format!("REVOKE {new_epoch}")
                 }
                 _ => "NONE".to_string(),
@@ -681,6 +688,19 @@ impl Lcg {
 // The oracles
 // ---------------------------------------------------------------------------
 
+/// One guard this audit found and deliberately did not close.
+///
+/// `ACQUIRE` requires the epoch the node quotes to be the one the registry is
+/// at. Deleting that check is invisible here, and adding a witness for it would
+/// take logging the epoch the *request* named alongside the epoch it acquired —
+/// at which point the oracle is restating the guard rather than checking a
+/// property. Every other check in this function corresponds to something the
+/// model says about the resulting state; that one is about the request.
+///
+/// It is written down rather than quietly left out, because the point of the
+/// audit was that a guard nothing records is a guard nothing checks, and the
+/// same is true of a guard nobody mentions.
+///
 /// Check the model's theorems against what the coordinator actually did.
 ///
 /// Each one names the claim it comes from. A failure here means the
@@ -767,7 +787,10 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
                     ));
                 }
             }
-            Event::Wrote { .. } | Event::Fenced { .. } | Event::Granted { .. } => {}
+            Event::Wrote { .. }
+            | Event::Fenced { .. }
+            | Event::Granted { .. }
+            | Event::Revoked { .. } => {}
         }
     }
 
@@ -929,6 +952,18 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
                 pending = Some((outgoing, *to_epoch));
             }
             Event::EpochBurned { .. } => pending = None,
+            // A revoke names the node the actor is being taken from, and the
+            // epoch it is being taken to. It does not complete anything, so it
+            // leaves the transfer in flight.
+            Event::Revoked { node, new_epoch } => {
+                if pending != Some((*node, *new_epoch)) {
+                    return Err(format!(
+                        "claim 4 (transfer): node {node} was told to stand down \
+                         at epoch {new_epoch}, but the transfer in flight is \
+                         {pending:?}"
+                    ));
+                }
+            }
             Event::Released { node, new_epoch } => {
                 if pending != Some((*node, *new_epoch)) {
                     return Err(format!(

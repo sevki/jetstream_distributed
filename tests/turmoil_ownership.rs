@@ -981,6 +981,32 @@ fn oracles_reject_a_node_handing_the_actor_to_itself() {
     println!("oracles rejected the self-handover: {message}");
 }
 
+/// A stand-down order aimed at a node outside the transfer is rejected.
+///
+/// `Message::Revoke` binds its `target` to the transfer's outgoing owner, and
+/// `POLL` guards that with `from == node` on the `Transferring` branch. Until
+/// revokes were logged that guard was invisible: the registry could tell any
+/// node to stand down and no test would know. This was one of the two guards I
+/// listed as still unwitnessed; the other is below.
+#[test]
+fn oracles_reject_a_stand_down_aimed_outside_the_transfer() {
+    let log = vec![
+        Event::Granted { node: 0, epoch: 41 },
+        Event::Acquired { node: 0, epoch: 41 },
+        Event::EpochBurned { from_epoch: 41, to_epoch: 42, next: 1, forced: false },
+        // The actor is being taken from node 0. Node 2 is told to stand down.
+        Event::Revoked { node: 2, new_epoch: 42 },
+    ];
+
+    let Err(message) = check_invariants(&log) else {
+        panic!("the oracles accepted a revoke aimed at a bystander: {log:?}");
+    };
+    assert!(
+        message.contains("claim 4"),
+        "expected the transfer oracle to be the one that fired, got: {message}"
+    );
+}
+
 /// A release from a node that was not handing the actor over is rejected.
 ///
 /// `tr_complete_release` binds `from` from the current `Transferring`, so the
@@ -1015,6 +1041,7 @@ fn oracles_accept_a_handover_released_by_its_outgoing_owner() {
         Event::Granted { node: 0, epoch: 41 },
         Event::Acquired { node: 0, epoch: 41 },
         Event::EpochBurned { from_epoch: 41, to_epoch: 42, next: 1, forced: false },
+        Event::Revoked { node: 0, new_epoch: 42 },
         Event::Released { node: 0, new_epoch: 42 },
         Event::Granted { node: 1, epoch: 42 },
         Event::Acquired { node: 1, epoch: 42 },

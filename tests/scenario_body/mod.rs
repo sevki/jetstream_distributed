@@ -90,6 +90,16 @@ fn node_host(n: u64) -> String {
     format!("node-{n}")
 }
 
+/// Which node a connection came from, or `None` for anyone else.
+///
+/// The addresses are turmoil's, assigned per host, so this is the simulation's
+/// stand-in for an authenticated peer identity. A real deployment would get it
+/// from mTLS or a signed token; what matters is that it comes from the
+/// connection rather than from the request body.
+fn node_of(ip: IpAddr) -> Option<u64> {
+    (0..NODES).find(|n| turmoil::lookup(node_host(*n)) == ip)
+}
+
 // ---------------------------------------------------------------------------
 // The audit log: what the coordinator did, in order
 // ---------------------------------------------------------------------------
@@ -143,6 +153,14 @@ pub struct Coord {
     /// self-test that proves these oracles can fail — see
     /// [`run_scenario_unfenced`].
     fencing: bool,
+    /// The grants this registry has issued, as `(node, epoch)`.
+    ///
+    /// `tr_acquire` wants `pre.network.contains(Message::Grant { to: n, epoch })`,
+    /// so an acquire needs an offer that was actually made. The oracle was
+    /// taught to check this and the registry was not, which meant a fresh
+    /// `ACQUIRE 0 41` succeeded with no `POLL` before it — outside the model,
+    /// and invisible because the generated `Acquire` action polls first.
+    issued: Vec<(u64, u64)>,
     /// Delay the next reply past the caller's deadline, once.
     ///
     /// The network can delay a *request*; only the coordinator can accept one
@@ -180,6 +198,7 @@ impl Coord {
             log: Vec::new(),
             writes: 0,
             fencing,
+            issued: Vec::new(),
             slow_next_reply: false,
         }
     }
@@ -200,16 +219,48 @@ impl Coord {
     /// which. Keeping them in step is the whole point: a transition the
     /// implementation has that the model does not is exactly the kind of thing
     /// this suite exists to find.
-    pub fn handle(&mut self, line: &str) -> String {
+    pub fn handle(&mut self, line: &str, peer: Option<u64>) -> String {
         let mut parts = line.split_whitespace();
         let verb = parts.next().unwrap_or("");
         let args: Vec<u64> = parts.filter_map(|p| p.parse().ok()).collect();
+
+        // Who a request claims to be from is a field in the line. Who it is
+        // actually from is the connection it arrived on, and the registry has
+        // to believe the second.
+        //
+        // The model binds every node-authored transition to a node that is
+        // `live`, and the simulation's counterpart of `live` is `reachable`.
+        // That only means something if a partition can stop the request — and
+        // it cannot stop one somebody else sends. Routing the generated
+        // commands through the owner's host, which is how an earlier round
+        // closed this, protects the *driver*; it does nothing at the line
+        // protocol, where any reachable client could send `BEGIN 0 2` while
+        // node 0 was partitioned away and the partition would protect nothing.
+        //
+        // `FORCE` is deliberately exempt: `tr_revoke_owner` makes no node act,
+        // so there is no sender to authenticate. It is the registry's own
+        // decision about a node it has given up on, which is the whole point of
+        // the forcible path.
+        let claimed = match (verb, args.as_slice()) {
+            ("POLL", [node])
+            | ("ACQUIRE", [node, _])
+            | ("WRITE", [node, _])
+            | ("BEGIN", [node, _])
+            | ("RELEASE", [node, _]) => Some(*node),
+            _ => None,
+        };
+        if let Some(node) = claimed {
+            if peer != Some(node) {
+                return "NO".to_string();
+            }
+        }
 
         match (verb, args.as_slice()) {
             // What does this node currently have on offer? A node with no
             // grant has nothing to acquire with.
             ("POLL", [node]) => match self.state {
                 Owned::Unowned { epoch, intended } if intended == *node => {
+                    self.issued.push((*node, epoch));
                     self.log.push(Event::Granted { node: *node, epoch });
                     format!("GRANT {epoch}")
                 }
@@ -223,6 +274,15 @@ impl Coord {
 
             // `tr_acquire`. Only from `Unowned`, only by the intended owner,
             // only at exactly that epoch.
+            //
+            // The grant has to have been issued, not merely be due. This is the
+            // second conjunct of `tr_acquire`, and it was missing here for the
+            // same reason it was missing from the oracle: the generated
+            // `Acquire` action polls first, so nothing in the suite ever tried
+            // to acquire without asking.
+            ("ACQUIRE", [node, epoch]) if !self.issued.contains(&(*node, *epoch)) => {
+                "NO".to_string()
+            }
             ("ACQUIRE", [node, epoch]) => match self.state {
                 Owned::Unowned { epoch: e, intended } if intended == *node && e == *epoch => {
                     self.state = Owned::Owned { owner: *node, epoch: e };
@@ -1209,7 +1269,8 @@ fn run_with_log(
             let listener =
                 TcpListener::bind((IpAddr::from(Ipv4Addr::UNSPECIFIED), PORT)).await?;
             loop {
-                let (stream, _) = listener.accept().await?;
+                let (stream, peer) = listener.accept().await?;
+                let peer_node = node_of(peer.ip());
                 let coord = coord.clone();
                 tokio::spawn(async move {
                     let mut reader = BufReader::new(stream);
@@ -1226,7 +1287,7 @@ fn run_with_log(
                     // does not know it.
                     let (reply, answer_late) = {
                         let mut guard = coord.lock().unwrap();
-                        let reply = guard.handle(line.trim());
+                        let reply = guard.handle(line.trim(), peer_node);
                         (reply, guard.take_slow_reply())
                     };
                     if answer_late {

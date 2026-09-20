@@ -697,22 +697,22 @@ fn a_write_at_a_burned_epoch_is_refused() {
 #[test]
 fn the_registry_refuses_a_successor_that_is_not_a_node() {
     let mut coord = Coord::new(true);
-    assert_eq!(coord.handle("POLL 0"), format!("GRANT {INITIAL_EPOCH}"));
-    assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}")), "OK");
+    assert_eq!(coord.handle("POLL 0", Some(0)), format!("GRANT {INITIAL_EPOCH}"));
+    assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}"), Some(0)), "OK");
 
     assert_eq!(
-        coord.handle("BEGIN 0 99"),
+        coord.handle("BEGIN 0 99", Some(0)),
         "NO",
         "a handover to a node that does not exist must be refused"
     );
     assert_eq!(
-        coord.handle("FORCE 99"),
+        coord.handle("FORCE 99", None),
         "NO",
         "a forced revoke naming a node that does not exist must be refused"
     );
 
     // ... and the registry is untouched by either: node 0 still owns it.
-    assert_eq!(coord.handle(&format!("WRITE 0 {INITIAL_EPOCH}")), "OK 1");
+    assert_eq!(coord.handle(&format!("WRITE 0 {INITIAL_EPOCH}"), Some(0)), "OK 1");
 }
 
 /// The registry refuses an acquire that quotes the wrong epoch.
@@ -727,17 +727,17 @@ fn the_registry_refuses_a_successor_that_is_not_a_node() {
 #[test]
 fn the_registry_refuses_an_acquire_quoting_the_wrong_epoch() {
     let mut coord = Coord::new(true);
-    assert_eq!(coord.handle("POLL 0"), format!("GRANT {INITIAL_EPOCH}"));
+    assert_eq!(coord.handle("POLL 0", Some(0)), format!("GRANT {INITIAL_EPOCH}"));
 
     assert_eq!(
-        coord.handle("ACQUIRE 0 999"),
+        coord.handle("ACQUIRE 0 999", Some(0)),
         "NO",
         "an acquire must name the epoch it is being offered, not any epoch"
     );
 
     // The actor is untaken, so the right request still works — which is what
     // makes the refusal about the epoch rather than about the state.
-    assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}")), "OK");
+    assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}"), Some(0)), "OK");
 }
 
 /// The registry does not offer the actor to a node it is not holding it for.
@@ -758,27 +758,27 @@ fn the_registry_does_not_offer_the_actor_to_a_bystander() {
 
     // The actor starts offered to node 0 and to nobody else.
     assert_eq!(
-        coord.handle("POLL 1"),
+        coord.handle("POLL 1", Some(1)),
         "NONE",
         "the actor is held for node 0; node 1 must be offered nothing"
     );
     assert_eq!(
-        coord.handle("POLL 2"),
+        coord.handle("POLL 2", Some(2)),
         "NONE",
         "nor node 2"
     );
-    assert_eq!(coord.handle("POLL 0"), format!("GRANT {INITIAL_EPOCH}"));
+    assert_eq!(coord.handle("POLL 0", Some(0)), format!("GRANT {INITIAL_EPOCH}"));
 
     // And the same once it has moved on: a forced revoke to node 1 leaves the
     // others with nothing.
-    assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}")), "OK");
-    assert_eq!(coord.handle("FORCE 1"), "OK");
+    assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}"), Some(0)), "OK");
+    assert_eq!(coord.handle("FORCE 1", None), "OK");
     assert_eq!(
-        coord.handle("POLL 0"),
+        coord.handle("POLL 0", Some(0)),
         "NONE",
         "the node that just lost the actor is offered nothing"
     );
-    assert_eq!(coord.handle("POLL 1"), format!("GRANT {}", INITIAL_EPOCH + 1));
+    assert_eq!(coord.handle("POLL 1", Some(1)), format!("GRANT {}", INITIAL_EPOCH + 1));
 }
 
 /// The registry does not tell a bystander to stand down.
@@ -792,25 +792,93 @@ fn the_registry_does_not_offer_the_actor_to_a_bystander() {
 #[test]
 fn the_registry_does_not_tell_a_bystander_to_stand_down() {
     let mut coord = Coord::new(true);
-    assert_eq!(coord.handle("POLL 0"), format!("GRANT {INITIAL_EPOCH}"));
-    assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}")), "OK");
-    assert_eq!(coord.handle("BEGIN 0 1"), "OK");
+    assert_eq!(coord.handle("POLL 0", Some(0)), format!("GRANT {INITIAL_EPOCH}"));
+    assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}"), Some(0)), "OK");
+    assert_eq!(coord.handle("BEGIN 0 1", Some(0)), "OK");
 
     // The actor is being taken from node 0. Nobody else is standing down.
     assert_eq!(
-        coord.handle("POLL 2"),
+        coord.handle("POLL 2", Some(2)),
         "NONE",
         "a node outside the transfer must not be told to stand down"
     );
     assert_eq!(
-        coord.handle("POLL 1"),
+        coord.handle("POLL 1", Some(1)),
         "NONE",
         "nor must the node the actor is being handed to — it is offered the \
          actor once the release lands, not revoked"
     );
 
     // The outgoing owner is.
-    assert_eq!(coord.handle("POLL 0"), format!("REVOKE {}", INITIAL_EPOCH + 1));
+    assert_eq!(coord.handle("POLL 0", Some(0)), format!("REVOKE {}", INITIAL_EPOCH + 1));
+}
+
+/// The registry believes the connection, not the request body.
+///
+/// `tr_begin_transfer` requires `pre.live.contains(from)`, and the
+/// simulation's counterpart of `live` is `reachable` — which only means
+/// something if a partition can stop the request. It cannot stop one somebody
+/// else sends. Routing the generated commands through the owner's host, which
+/// is how an earlier round closed this, protects the driver and does nothing at
+/// the line protocol: any reachable client could send `BEGIN 0 2` while node 0
+/// was partitioned away, and the partition would protect nothing.
+///
+/// `FORCE` is exempt, and that is the model rather than an omission:
+/// `tr_revoke_owner` makes no node act, so there is no sender to authenticate.
+#[test]
+fn the_registry_believes_the_connection_not_the_request() {
+    let mut coord = Coord::new(true);
+    assert_eq!(coord.handle("POLL 0", Some(0)), format!("GRANT {INITIAL_EPOCH}"));
+    assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}"), Some(0)), "OK");
+
+    // Node 2, or anyone else who can reach the registry, claiming to be node 0.
+    assert_eq!(
+        coord.handle("BEGIN 0 2", Some(2)),
+        "NO",
+        "a handover must be agreed by the owner, not merely in the owner's name"
+    );
+    assert_eq!(
+        coord.handle(&format!("WRITE 0 {INITIAL_EPOCH}"), Some(2)),
+        "NO",
+        "nor may a write be made in another node's name"
+    );
+    assert_eq!(
+        coord.handle("POLL 0", Some(1)),
+        "NO",
+        "nor may an offer be collected on another node's behalf"
+    );
+
+    // The owner itself is unaffected, so the refusals are about the sender.
+    assert_eq!(coord.handle("BEGIN 0 1", Some(0)), "OK");
+
+    // And the registry's own decision needs no sender: `tr_revoke_owner` makes
+    // no node act.
+    assert_eq!(coord.handle("FORCE 2", None), "OK");
+}
+
+/// The registry refuses an acquire for a grant it never issued.
+///
+/// `tr_acquire` wants `pre.network.contains(Message::Grant { to: n, epoch })`.
+/// The oracle was taught to check that and the registry was not, so a fresh
+/// `ACQUIRE 0 41` succeeded with no offer behind it — outside the model, and
+/// invisible because the generated `Acquire` action polls first.
+///
+/// One of two findings from sweeping `Coord::handle` against the transitions
+/// its arms name, which is the sweep I had run on the oracles and not on the
+/// handler.
+#[test]
+fn the_registry_refuses_an_acquire_it_never_offered() {
+    let mut coord = Coord::new(true);
+
+    assert_eq!(
+        coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}"), Some(0)),
+        "NO",
+        "an acquire needs an offer that was actually made, not one that was due"
+    );
+
+    // The same request, once the offer exists.
+    assert_eq!(coord.handle("POLL 0", Some(0)), format!("GRANT {INITIAL_EPOCH}"));
+    assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}"), Some(0)), "OK");
 }
 
 /// A release is an acknowledgement of one transfer, not of whichever is current.
@@ -829,34 +897,34 @@ fn a_release_for_an_earlier_transfer_does_not_complete_a_later_one() {
     let first = INITIAL_EPOCH;
 
     // Node 0 takes the actor and agrees to hand it to node 1.
-    assert_eq!(coord.handle("POLL 0"), format!("GRANT {first}"));
-    assert_eq!(coord.handle(&format!("ACQUIRE 0 {first}")), "OK");
-    assert_eq!(coord.handle("BEGIN 0 1"), "OK");
-    assert_eq!(coord.handle("POLL 0"), format!("REVOKE {}", first + 1));
+    assert_eq!(coord.handle("POLL 0", Some(0)), format!("GRANT {first}"));
+    assert_eq!(coord.handle(&format!("ACQUIRE 0 {first}"), Some(0)), "OK");
+    assert_eq!(coord.handle("BEGIN 0 1", Some(0)), "OK");
+    assert_eq!(coord.handle("POLL 0", Some(0)), format!("REVOKE {}", first + 1));
 
     // It acknowledges, and the transfer completes.
-    assert_eq!(coord.handle(&format!("RELEASE 0 {}", first + 1)), "OK");
+    assert_eq!(coord.handle(&format!("RELEASE 0 {}", first + 1), Some(0)), "OK");
 
     // Node 0 gets the actor back later, and agrees to hand it on again. This
     // is a different transfer, at a different epoch.
-    assert_eq!(coord.handle("FORCE 0"), "OK");
+    assert_eq!(coord.handle("FORCE 0", None), "OK");
     let second = first + 2;
-    assert_eq!(coord.handle("POLL 0"), format!("GRANT {second}"));
-    assert_eq!(coord.handle(&format!("ACQUIRE 0 {second}")), "OK");
-    assert_eq!(coord.handle("BEGIN 0 2"), "OK");
+    assert_eq!(coord.handle("POLL 0", Some(0)), format!("GRANT {second}"));
+    assert_eq!(coord.handle(&format!("ACQUIRE 0 {second}"), Some(0)), "OK");
+    assert_eq!(coord.handle("BEGIN 0 2", Some(0)), "OK");
 
     // The old acknowledgement arrives again. It names the wrong epoch, and
     // completing the current transfer with it would hand node 2 the actor on
     // the strength of an agreement node 0 gave about node 1.
     assert_eq!(
-        coord.handle(&format!("RELEASE 0 {}", first + 1)),
+        coord.handle(&format!("RELEASE 0 {}", first + 1), Some(0)),
         "NO",
         "a replayed release naming an old epoch must not complete this transfer"
     );
 
     // The current one still works, which is what makes the refusal above about
     // the epoch rather than about the state.
-    assert_eq!(coord.handle(&format!("RELEASE 0 {}", second + 1)), "OK");
+    assert_eq!(coord.handle(&format!("RELEASE 0 {}", second + 1), Some(0)), "OK");
 }
 
 /// Two nodes writing at one epoch is rejected — claim 1, with a witness.

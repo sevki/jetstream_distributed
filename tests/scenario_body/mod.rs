@@ -728,8 +728,8 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
         }
     }
 
-    // P5 / P6, first half — an epoch determines its owner, and ownership at an
-    // epoch is final. Two acquires of the same epoch must name the same node.
+    // P5 / P6 — an epoch determines its owner, and ownership at an epoch is
+    // final. Two acquires of the same epoch must name the same node.
     //
     // This is the direct reading of those two theorems, and the version of this
     // function that shipped first did not have it: it read only write epochs,
@@ -743,7 +743,10 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
     // The coordinator cannot produce that log, because `ACQUIRE` requires the
     // registry to be `Unowned` at exactly that epoch. But an oracle that is
     // sound only because the thing it audits is correct is not an oracle, so
-    // `oracles_reject_an_epoch_that_changes_owner` feeds it in by hand.
+    // `oracles_reject_an_epoch_that_changes_owner` feeds it in by hand — and
+    // that witness is now the only thing keeping this check honest, which is
+    // as it should be. A check should be live because something exercises it,
+    // not because of where it sits in this function.
     let mut owner_at: HashMap<u64, u64> = HashMap::new();
     for ev in log {
         if let Event::Acquired { node, epoch } = ev {
@@ -762,27 +765,23 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
         }
     }
 
-    // P5 / P6, second half — accepted writes never regress to an epoch that has
-    // already been superseded by a later accepted write.
+    // There is no second half. "Accepted writes never regress to an epoch a
+    // later write already used" was one, and it was a misdiagnosis wearing a
+    // theorem's name.
     //
-    // Checked before the fencing oracle below, which would otherwise subsume
-    // it: reaching a higher epoch takes a burn, so every log this one rejects
-    // the other rejects too. Running it first is what keeps it a live check
-    // rather than unreachable prose — `oracles_catch_an_unfenced_coordinator`
-    // pins this one and `oracles_catch_a_write_at_a_burned_epoch` the other,
-    // and each names the oracle it expects.
-    let mut high = 0u64;
-    for ev in log {
-        if let Event::Wrote { epoch, node, seq } = ev {
-            if *epoch < high {
-                return Err(format!(
-                    "P5/P6: node {node} wrote at epoch {epoch} (seq {seq}) after a \
-                     write at epoch {high} had already been accepted"
-                ));
-            }
-            high = *epoch;
-        }
-    }
+    // Every log it rejected is rejected by the fencing oracle below, and the
+    // fencing oracle is the one that is *right* about them: the registry's
+    // ownership never changed hands at either epoch, so nothing about P5/P6
+    // was violated. What happened is that a write below the burned epoch was
+    // accepted. The comment here used to say that running it first "keeps it a
+    // live check rather than unreachable prose", which is exactly backwards —
+    // it was live only because it pre-empted the correct diagnosis, and
+    // `oracles_catch_an_unfenced_coordinator` was pinning the wrong claim in
+    // place.
+    //
+    // This is the same mistake as reading `Wrote` into claim 5, two commits
+    // apart, and worth leaving written down: an oracle kept alive by its
+    // position in the list is not a check, it is a label.
 
     // Claims 2 and 3 — stale-owner fencing. Once the registry has burned
     // forward to an epoch, no write below it may ever be accepted again.

@@ -630,6 +630,12 @@ fn burned_epoch_story() -> Scenario {
 /// here nobody does, so `Wrote(0, 41)` after a burn to 42 has one writer per
 /// epoch, a strictly increasing burn and an acquire behind it. Every check the
 /// first version of `check_invariants` made passed on this log.
+///
+/// It expects the same oracle as `oracles_catch_an_unfenced_coordinator`, and
+/// that is not a redundancy: both are fencing failures and both should say so.
+/// What differs is the run. There a replacement owner writes first, so the
+/// write-against-write comparison could see it; here nobody does, and only a
+/// burn-driven high-water mark can.
 #[test]
 fn oracles_catch_a_write_at_a_burned_epoch() {
     let log: Vec<Event> = run_scenario_unfenced(burned_epoch_story())
@@ -861,7 +867,7 @@ fn oracles_accept_the_same_log_without_the_reassignment() {
     );
 }
 
-/// Without it, the oracles catch it.
+/// Without it, the oracles catch it — and say the right thing about it.
 ///
 /// This is the question every oracle has to answer about itself: would it
 /// notice? A suite that cannot fail is indistinguishable from one that passes,
@@ -869,6 +875,15 @@ fn oracles_accept_the_same_log_without_the_reassignment() {
 /// evidence. So the *same* story runs again with one bit changed — the
 /// coordinator stops checking writes against the registry — and the oracles
 /// are required to reject the result.
+///
+/// It expects the *fencing* oracle, which it did not always. For a while
+/// `check_invariants` carried a second P5/P6 half reading "accepted writes
+/// never regress", that half ran first, and this test asserted on it — so the
+/// suite reported a stale write as a violation of ownership finality. Nothing
+/// about ownership was violated: the registry never changed hands at either
+/// epoch, and what happened is that a write below the burned epoch was
+/// accepted. The half was live only because it pre-empted the oracle that was
+/// right, and this test was what held that in place.
 ///
 /// The bit is the fence and nothing else: same actions, same seed, same
 /// network, same oracles. What separates the two runs is exactly the check
@@ -896,9 +911,9 @@ fn oracles_catch_an_unfenced_coordinator() {
         );
     };
     assert!(
-        message.contains("P5/P6"),
-        "expected the superseded-epoch oracle to be the one that fired, got: \
-         {message}"
+        message.contains("claims 2/3"),
+        "expected the fencing oracle to be the one that fired — a stale write \
+         is a fencing failure, whatever else also notices it — got: {message}"
     );
     println!("oracles rejected the unfenced run: {message}");
 }

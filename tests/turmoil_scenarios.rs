@@ -132,17 +132,10 @@ fn scenarios_hold_their_invariants() {
     // proportional could be: it says the runner ran. That the oracles have
     // teeth is shown exactly once, deterministically, by
     // `oracles_catch_an_unfenced_coordinator` in `turmoil_ownership.rs`.
-    let floor = (end - start) / 16;
     println!(
         "searched seeds {start}..{end}: {writes} writes accepted \
          ({corpus_writes} more from the committed corpus, not counted)"
     );
-    assert!(
-        writes as u64 > floor,
-        "the scenarios must actually reach the fence; saw {writes} accepted \
-         writes over seeds {start}..{end}, wanted more than {floor}",
-    );
-
     // Reported rather than asserted on, because it is a measurement of the
     // simulator rather than a property of the protocol. `writes_failed` is
     // turmoil telling a sender there is no route, which a real network does not
@@ -154,5 +147,33 @@ fn scenarios_hold_their_invariants() {
     println!(
         "nodes sent {} writes: {} unanswered at the deadline, {} with no route",
         totals.writes_sent, totals.writes_timed_out, totals.writes_failed
+    );
+
+    // A rate is a claim about a population, and below a certain size there is
+    // no population to make it about. At one seed the floor rounds to zero and
+    // the strict `>` then demands a write from a single scenario — but plenty
+    // of individual seeds legitimately never reach the fence, so
+    // `JETSTREAM_SCENARIO_START=10 JETSTREAM_SCENARIO_SEEDS=1`, which is the
+    // obvious way to re-run one reported seed, would fail on a run where every
+    // invariant held.
+    //
+    // So the floor applies only to a window big enough to have a rate. It is
+    // not a way to switch the check off: the default window is 256 and CI sets
+    // no environment at all, so the path CI takes always asserts.
+    const FLOOR_WINDOW: u64 = 32;
+    let window = end - start;
+    if window < FLOOR_WINDOW {
+        println!(
+            "window of {window} seeds is below {FLOOR_WINDOW}: too short for a \
+             rate to mean anything, so the coverage floor is not applied"
+        );
+        return;
+    }
+
+    let floor = window / 16;
+    assert!(
+        writes as u64 > floor,
+        "the scenarios must actually reach the fence; saw {writes} accepted \
+         writes over seeds {start}..{end}, wanted more than {floor}",
     );
 }

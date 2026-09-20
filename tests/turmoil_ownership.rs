@@ -673,6 +673,62 @@ fn a_write_at_a_burned_epoch_is_refused() {
     );
 }
 
+/// An epoch that changes hands without a burn is rejected.
+///
+/// The log here is hand-built rather than simulated, and that is the point.
+/// This coordinator cannot produce it — `ACQUIRE` requires the registry to be
+/// `Unowned` at exactly that epoch, so no ordering of real requests reaches it.
+/// But the oracles exist to audit the coordinator, and an oracle that is sound
+/// only because the thing it audits is correct is not auditing anything. It has
+/// to reject a log the coordinator should never produce, on its own terms.
+///
+/// The gap was real: before this check existed, `check_invariants` read only
+/// write epochs, which is a consequence of P5/P6 rather than the theorems
+/// themselves. This exact log passed every oracle in the suite — one writer per
+/// epoch for claim 1, no burn for claim 5 and for fencing, and node 1 really
+/// had acquired, for P8 — while an epoch changed owner with nothing burned
+/// between, which is precisely what "ownership at an epoch is final" and "an
+/// epoch determines its owner" forbid.
+#[test]
+fn oracles_reject_an_epoch_that_changes_owner() {
+    let log = vec![
+        Event::Acquired { node: 0, epoch: 41 },
+        Event::Acquired { node: 1, epoch: 41 },
+        Event::Wrote { node: 1, epoch: 41, seq: 1 },
+    ];
+
+    let Err(message) = check_invariants(&log) else {
+        panic!(
+            "the oracles accepted an epoch changing owner with no burn between, \
+             so nothing in the suite is checking P5/P6 at all: {log:?}"
+        );
+    };
+    assert!(
+        message.contains("P5/P6"),
+        "expected the ownership oracle to be the one that fired, got: {message}"
+    );
+    println!("oracles rejected the reassigned epoch: {message}");
+}
+
+/// And the same log with one acquire removed is fine, so the check above is
+/// rejecting the reassignment rather than the shape.
+///
+/// Worth its own test because the previous one would pass just as well against
+/// an oracle that rejected every log it was given.
+#[test]
+fn oracles_accept_the_same_log_without_the_reassignment() {
+    let log = vec![
+        Event::Acquired { node: 0, epoch: 41 },
+        Event::Wrote { node: 0, epoch: 41, seq: 1 },
+    ];
+
+    assert!(
+        check_invariants(&log).is_ok(),
+        "a node acquiring an epoch and writing at it is the ordinary case and \
+         must be accepted: {log:?}"
+    );
+}
+
 /// Without it, the oracles catch it.
 ///
 /// This is the question every oracle has to answer about itself: would it

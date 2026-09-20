@@ -684,9 +684,42 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
         }
     }
 
-    // P5 / P6 — ownership at an epoch is final, and an epoch determines its
-    // owner. Accepted writes never regress to an epoch that has already been
-    // superseded by a later accepted write.
+    // P5 / P6, first half — an epoch determines its owner, and ownership at an
+    // epoch is final. Two acquires of the same epoch must name the same node.
+    //
+    // This is the direct reading of those two theorems, and the version of this
+    // function that shipped first did not have it: it read only write epochs,
+    // which is a *consequence* of P5/P6 rather than the thing itself. So
+    // `Acquired(0, 41), Acquired(1, 41), Wrote(1, 41)` — an epoch changing
+    // hands with no burn between, which is exactly what those theorems forbid —
+    // passed the entire suite. One writer per epoch satisfied claim 1, no burn
+    // satisfied claim 5 and the fencing check, and node 1 really had acquired,
+    // so P8 was happy too.
+    //
+    // The coordinator cannot produce that log, because `ACQUIRE` requires the
+    // registry to be `Unowned` at exactly that epoch. But an oracle that is
+    // sound only because the thing it audits is correct is not an oracle, so
+    // `oracles_reject_an_epoch_that_changes_owner` feeds it in by hand.
+    let mut owner_at: HashMap<u64, u64> = HashMap::new();
+    for ev in log {
+        if let Event::Acquired { node, epoch } = ev {
+            match owner_at.get(epoch) {
+                Some(prev) if prev != node => {
+                    return Err(format!(
+                        "P5/P6: epoch {epoch} was acquired by node {prev} and then \
+                         by node {node}, with no burn in between — an epoch does \
+                         not determine its owner"
+                    ));
+                }
+                _ => {
+                    owner_at.insert(*epoch, *node);
+                }
+            }
+        }
+    }
+
+    // P5 / P6, second half — accepted writes never regress to an epoch that has
+    // already been superseded by a later accepted write.
     //
     // Checked before the fencing oracle below, which would otherwise subsume
     // it: reaching a higher epoch takes a burn, so every log this one rejects

@@ -223,6 +223,22 @@ fn scenarios_hold_their_invariants() {
     // node saw `Ok("")` and carried on. A number that is not small here would
     // mean the simulated network is severing established connections often
     // enough that the runs are about that rather than about the protocol.
+    //
+    // It reads zero over 0..256 on the run that introduced it, and what that
+    // means is genuinely open. Either a disconnect is rare in this simulation
+    // or it cannot happen in it at all — `partition` fails the connect rather
+    // than an established stream, `hold` delays delivery without closing
+    // anything, and the coordinator always writes a reply — in which case this
+    // is the `RPC_TIMEOUT` situation again: a path that exists for a case the
+    // search structurally cannot reach.
+    //
+    // Which of the two it is, is not recorded here because it is not known.
+    // Asserting "unreachable" from a zero would be the same mistake as the
+    // earlier claim that turmoil hangs on a partitioned connect, which was
+    // also reasoning about the simulator rather than measuring it. What can be
+    // said is that the bug the counter exists to expose — an EOF reported to
+    // the caller as a successful, answered request — did not occur in this
+    // window, and that before the fix it would have been invisible if it had.
     println!(
         "nodes sent {} writes: {} unanswered at the deadline, {} with no route, \
          {} cut off before a reply",

@@ -189,3 +189,49 @@ jobs:
             echo "::error::this crate's verification summary reports errors: $summary"
             exit 1
           fi
+
+  # The simulation. Separate from the two verification jobs on purpose: it is
+  # evidence of a different kind and it fails for different reasons. A proof
+  # that stops verifying means the model is wrong; a scenario that fails means
+  # the implementation and the model disagree, and which of them is wrong is
+  # then the interesting question.
+  #
+  # This job needs no Verus toolchain: `cargo test` builds the crate with
+  # ordinary rustc, where `verus!` erases its ghost code and leaves the one
+  # executable item - `FenceGuard` - behind.
+  simulation:
+    name: Turmoil scenarios
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml pins the version Verus was built against, and Cargo
+      # honours it here too, so the simulation is built by the same compiler as
+      # everything else in this repository.
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: simulation
+
+      # Built as its own step so that a compile failure is reported as one.
+      # `RUSTFLAGS: -D warnings` is deliberately *not* set: RUSTFLAGS reaches
+      # every dependency too, and a warning in `vstd` or `turmoil` would fail
+      # this job for something no change here could fix.
+      - name: Build the scenarios
+        run: cargo test --no-run --tests
+
+      # The named stories first: each one asserts what it was supposed to
+      # reach, so a failure here names the property rather than a seed. That
+      # includes `oracles_catch_an_unfenced_coordinator`, which is what makes a
+      # green run of the search below mean anything.
+      - name: Named ownership stories
+        run: cargo test --test turmoil_ownership -- --nocapture
+
+      # Then the blind search. The window is fixed on a pull request so that a
+      # red result means the change did it; `JETSTREAM_SCENARIO_START` moves it
+      # for anyone who wants to search further.
+      - name: Scenario search
+        run: cargo test --test turmoil_scenarios -- --nocapture

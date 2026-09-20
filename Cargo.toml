@@ -39,3 +39,18 @@ unexpected_cfgs = { level = "warn", check-cfg = [
   'cfg(verus_keep_ghost_body)',
   'cfg(verus_only)',
 ] }
+
+# Simulation only. Nothing in `src/` depends on these, and nothing here is
+# verified: `tests/` is where the executable protocol lives, for the reason
+# `tests/scenario_body/mod.rs` gives — CI rejects unverified code in `src/`, so
+# putting a coordinator there would need an escape hatch and fail the build by
+# design.
+[dev-dependencies]
+# A deterministic, simulated network: seeded schedule, simulated clock, and
+# `partition`/`repair` as ordinary calls. That determinism is what lets a
+# failure be reported as a seed rather than as a story about a flaky afternoon.
+turmoil = "0.7.2"
+# The features the simulation actually uses, rather than `full`: `rt` because
+# the coordinator spawns a task per connection, `time` because every wait in
+# here is on turmoil's simulated clock, and `io-util` for the line protocol.
+tokio = { version = "1.47.1", features = ["io-util", "rt", "time"] }

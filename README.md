@@ -607,6 +607,11 @@ distributed-ownership/
 │       ├── composed.rs     the coupling as a composed-machine invariant
 │       ├── composed_scenario.rs  an end-to-end handover across both layers
 │       └── raymond_routing.rs  the D → B → A → C routing execution
+├── tests/
+│   ├── scenario_body/mod.rs    the executable protocol + the runtime oracles
+│   ├── turmoil_ownership.rs    named stories, each with an expected ending
+│   ├── turmoil_scenarios.rs    the blind seed search + the regression replay
+│   └── seeds/scenarios.txt     seeds that once broke something
 └── .github/workflows/verify.yml
 ```
 
@@ -615,8 +620,11 @@ verifies a *crate*, so every proof file has to be a module of that crate. Keepin
 them under `src/proofs/` is the ordinary Rust way to express that; a top-level
 `proofs/` would need `#[path = "../proofs/..."]` attributes for no benefit.
 
-Executable code is confined to `src/exec.rs`, which holds the `u64`-valued
-fence check a node actually runs, proved to return exactly the model's verdict.
+Executable code *in the crate* is confined to `src/exec.rs`, which holds the
+`u64`-valued fence check a node actually runs, proved to return exactly the
+model's verdict. The one other piece of executable code in the repository lives
+under `tests/`, where it is simulation rather than library — see
+[Network resiliency](#network-resiliency-the-model-run-for-real).
 It offers **queries only**: a `FenceGuard` has private fields, a single
 constructor and no setter, so its ghost view is fixed at construction. Were it
 mutable — by a `bump` method or by assigning to a public field — its view could
@@ -666,6 +674,82 @@ line and exits 0. It is a false green that survives a naive grep for the
 summary, because a summary is present — just not this crate's. The CI step
 therefore requires a summary emitted *after* Cargo starts compiling this
 crate.
+
+## Network resiliency: the model, run for real
+
+Everything above is a claim about a transition relation. It says nothing about
+whether an implementation follows it, and the gap has always been listed under
+future work. `tests/` closes part of it by simulation rather than by proof.
+
+Under [turmoil](https://github.com/tokio-rs/turmoil) — a deterministic,
+seeded, simulated network with a simulated clock — an *executable* ownership
+protocol runs over real sockets: a coordinator holding the registry, and three
+nodes polling, acquiring, writing and releasing. Partitions, delays and
+reordering happen underneath it while the model's own theorems are checked as
+runtime oracles over the coordinator's audit log:
+
+| Oracle | The claim it comes from |
+| --- | --- |
+| two accepted writes at the same epoch came from the same node | claim 1, exclusive mutable ownership |
+| every burn strictly increases the epoch, and never below the high-water mark | claim 5, epoch monotonicity |
+| accepted writes never regress to a superseded epoch | P5 / P6, ownership at an epoch is final |
+| every accepted write is backed by an earlier acquire of that exact `(node, epoch)` | P8, no authority without a capability |
+
+Two searches reach them. `turmoil_ownership.rs` holds named stories, each of
+which asserts what it was supposed to *reach* — the headline one is A owning
+the actor at epoch 41, being cut off, the coordinator handing the actor to B at
+42, and A returning still holding a guard that says yes.
+`turmoil_scenarios.rs` counts seeds upwards, generating action sequences it has
+no opinion about, and replays every seed in `tests/seeds/scenarios.txt` first so
+a fixed bug stays fixed. Both drive the same runner and the same oracles.
+`Scenario::from_bytes` is the entry point a coverage-guided fuzzer would use to
+drive that same runner; no fuzz target is wired up yet.
+
+**What this is evidence of.** A divergence is one of two things: an
+implementation that does not follow the protocol, or a protocol whose proof
+rests on something the network does not give you. Both are findings. What it is
+*not* is a check on the proofs — those are static, and no simulation can
+contradict them. It is also not a substitute for the refinement listed under
+future work: the coordinator here is hand-written to match the model, and
+nothing machine-checks that it does.
+
+**Would the oracles notice?** A suite that cannot fail is indistinguishable
+from one that passes, so `oracles_catch_an_unfenced_coordinator` runs one story
+twice with a single bit changed — the coordinator stops checking writes against
+the registry — and requires the oracles to *reject* the second run. Same
+actions, same seed, same network, same oracles; what separates them is exactly
+the check `src/exec.rs` says has to happen where the effect lands.
+
+**Where the executable code lives, and why.** Entirely in `tests/`. CI greps
+`src/` for `verifier::external`, so unverified protocol code there would need
+that attribute and would fail the build by design. The one piece of `src/` the
+simulation uses is `FenceGuard`, because it is the node-local check a real node
+performs — and watching a stale guard say yes while the coordinator says no is
+precisely the asymmetry `src/exec.rs` documents.
+
+Two places where the simulation is deliberately coarser than what was proved,
+stated rather than glossed:
+
+* `tr_handle_revoke` and `tr_complete_release` are folded into one `RELEASE`
+  request, so the simulation never occupies the intermediate state the model
+  distinguishes;
+* the registry is a `Mutex`, which is the executable form of the model's
+  load-bearing assumption that ownership records are updated atomically. A
+  deployment buys that from consensus or a compare-and-swap store. Saying so is
+  the point: the assumption is visible rather than smuggled in.
+
+```bash
+cargo test --test turmoil_ownership -- --nocapture   # the named stories
+cargo test --test turmoil_scenarios -- --nocapture   # the seed search
+
+# search further: a moving, non-overlapping window
+JETSTREAM_SCENARIO_START=100000 JETSTREAM_SCENARIO_SEEDS=20000 \
+  cargo test --test turmoil_scenarios --release
+```
+
+A third CI job runs both on every pull request. It needs no Verus toolchain:
+ordinary `rustc` erases the ghost code in `verus!` and leaves `FenceGuard`
+behind.
 
 ## Status: proven, modelled, future work
 
@@ -748,7 +832,11 @@ invariant preservation):
   it - so that no executable API can perform a handover the model does not;
 * the actual actor runtime: networking, persistence, and the code that obeys the
   protocol. Verifying the protocol says nothing about whether an implementation
-  follows it.
+  follows it. `tests/` now exercises a hand-written one against the model's own
+  theorems on a simulated network (see
+  [Network resiliency](#network-resiliency-the-model-run-for-real)), which is
+  evidence rather than proof: nothing machine-checks that the coordinator in
+  `tests/` refines the transition relation in `src/`.
 
 ### The holder graph is a tree, and now says so
 

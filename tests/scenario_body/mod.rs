@@ -812,7 +812,15 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
     }
 
     // P5 / P6 — an epoch determines its owner, and ownership at an epoch is
-    // final. Two acquires of the same epoch must name the same node.
+    // final. An epoch is acquired once, full stop.
+    //
+    // This heading said "two acquires of the same epoch must name the same
+    // node" for one commit after the code stopped meaning it, which is the
+    // recurring mismatch of this file running the other way: usually the
+    // comment promises more than the code does, here it promised less. A reader
+    // trusting it would have thought a same-node repeat was allowed. Found by
+    // sweeping every check in this function against its own heading, which is
+    // the audit that mismatch earned.
     //
     // This is the direct reading of those two theorems, and the version of this
     // function that shipped first did not have it: it read only write epochs,

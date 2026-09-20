@@ -359,7 +359,11 @@ pub proof fn theorem_token_movement_is_partitioned(
             assert(has_token(pre.ray, from));
             theorem_ray_at_most_one_token(pre.ray, m, from);
             assert(from == m);
-            assert(post.seized == pre.seized.insert(from));
+            // The step both marks `from` and discharges `to`; `ray_seize`
+            // requires them to be different nodes, so the mark survives.
+            assert(to != from);
+            assert(post.seized == pre.seized.insert(from).remove(to));
+            assert(post.seized.contains(from));
         },
     }
 }

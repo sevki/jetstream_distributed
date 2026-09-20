@@ -8,7 +8,8 @@
 //! ## What is modelled
 //!
 //! * A fixed set of actors, each with an [`OwnershipState`].
-//! * A fixed set of nodes, of which a subset is `live` (not crashed).
+//! * A fixed set of nodes, of which a subset is `live` - participating in the
+//!   protocol rather than merely powered on; see `System::live`.
 //! * `issued`: every ownership [`Token`] that was ever physically handed out.
 //!   This set never shrinks: a crash does not erase the tokens a node was
 //!   holding, so stale physical tokens survive crashes and partitions.
@@ -98,7 +99,26 @@ pub struct System {
     pub actors: Map<ActorId, OwnershipState>,
     /// All nodes that exist.
     pub nodes: Set<NodeId>,
-    /// The nodes that are currently up.
+    /// The nodes **participating in the protocol**.
+    ///
+    /// Not quite the same as "powered on", and the difference matters in one
+    /// place. A node leaves this set when it crashes and rejoins it at
+    /// `Recover`, and every transition that makes a node *act* requires it to be
+    /// in here - `tr_handle_revoke`, `crate::composed::cs_ray`,
+    /// `crate::composed::cs_pass_token` and the rest.
+    ///
+    /// The exception is [`crate::composed::cs_reconcile`], which fires while the
+    /// node is outside this set, and it is not a hole in that discipline: it
+    /// models a step of the node's **recovery routine**, re-reading
+    /// authoritative routing state before rejoining. A node running its recovery
+    /// routine is executing but not yet participating, which is exactly the gap
+    /// between the two readings. The ordering `Reconcile` then `Recover` is what
+    /// encodes it, and `crate::composed::recovers_a_seized_node` is what enforces
+    /// it - so a node cannot come back and start taking protocol steps on a
+    /// belief it never corrected.
+    ///
+    /// Nothing else is permitted outside this set, so "not participating" never
+    /// licenses a crashed node to act.
     pub live: Set<NodeId>,
     /// Every token ever issued. Monotonically grows (see module docs).
     pub issued: Set<Token>,

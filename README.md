@@ -394,7 +394,8 @@ sent its request earlier and takes no part in the delivery.
 
 `cs_reconcile` guards nobody, and that is not an exception to the rule but a
 consequence of what `live` means here. `live` is *participating in the
-protocol*, not *powered on*. Reconciliation is the boundary step — the node
+protocol*, not *powered on* — the field's documentation said "currently up"
+until this was chased down, which was a second meaning hiding in one set. Reconciliation is the boundary step — the node
 re-reading authoritative state as part of coming back, before it resumes
 participating — which is why it may fire while `!live` and why `Recover` is a
 separate step that follows it. A node that was seized while live may also

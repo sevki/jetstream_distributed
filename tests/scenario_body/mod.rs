@@ -665,7 +665,21 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
         }
     }
 
-    // Claim 5 — epoch monotonicity. The registry's epoch never goes backwards.
+    // Claim 5 — epoch monotonicity. The registry's epoch never goes backwards,
+    // and a burn strictly increases it.
+    //
+    // Read across every event that exposes where the registry *was*, not just
+    // across burns. The burns-only version had the same flaw as the first
+    // P5/P6 check, one level along: it trusted that every epoch change came
+    // with a correct burn record, so `Acquired(0, 41), EpochBurned(41, 42),
+    // Acquired(0, 41)` passed the whole suite — the repeated owner satisfies
+    // the ownership check, and with no writes the rest have nothing to say —
+    // while the registry sat back down below an epoch it had already burned.
+    //
+    // `Fenced` is the one event deliberately left out, and leaving it in would
+    // invert the oracle: a refusal names the *request's* epoch, and a stale
+    // request is precisely one whose epoch is below where the registry has got
+    // to. Reading it here would reject exactly the thing being refused.
     let mut epoch = 0u64;
     for ev in log {
         if let Event::EpochBurned { from_epoch, to_epoch, .. } = ev {
@@ -674,13 +688,30 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
                     "claim 5 (monotonicity): epoch went {from_epoch} -> {to_epoch}"
                 ));
             }
-            if *from_epoch < epoch {
+        }
+
+        // Where this event says the registry was, in the order it was there.
+        let (first, second) = match ev {
+            // The registry was `Unowned` at this epoch and became `Owned`.
+            Event::Acquired { epoch, .. } => (Some(*epoch), None),
+            // A write is accepted only against `Owned` at exactly this epoch.
+            Event::Wrote { epoch, .. } => (Some(*epoch), None),
+            // The actor became `Unowned` here.
+            Event::Released { new_epoch, .. } => (Some(*new_epoch), None),
+            Event::EpochBurned { from_epoch, to_epoch, .. } => {
+                (Some(*from_epoch), Some(*to_epoch))
+            }
+            Event::Fenced { .. } => (None, None),
+        };
+
+        for exposed in [first, second].into_iter().flatten() {
+            if exposed < epoch {
                 return Err(format!(
-                    "claim 5 (monotonicity): epoch {from_epoch} is below the high \
-                     water mark {epoch}"
+                    "claim 5 (monotonicity): the registry was at epoch {epoch} \
+                     and is now at {exposed} ({ev:?})"
                 ));
             }
-            epoch = *to_epoch;
+            epoch = exposed;
         }
     }
 

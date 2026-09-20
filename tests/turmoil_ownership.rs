@@ -673,6 +673,58 @@ fn a_write_at_a_burned_epoch_is_refused() {
     );
 }
 
+/// A registry that sits back down below an epoch it burned is rejected.
+///
+/// Hand-built for the same reason as the story below it: this coordinator
+/// cannot produce it, because its epoch only ever increases, and an oracle
+/// that is sound only because of that is not checking anything.
+///
+/// The gap was real and was the burns-only reading of claim 5. This log passed
+/// the entire suite — the repeated owner satisfies the ownership check, and
+/// with no writes in it, nothing else had anything to say — while the actor
+/// returned to an epoch that had already been burned past.
+#[test]
+fn oracles_reject_a_registry_that_goes_backwards() {
+    let log = vec![
+        Event::Acquired { node: 0, epoch: 41 },
+        Event::EpochBurned { from_epoch: 41, to_epoch: 42, next: 0, forced: true },
+        Event::Acquired { node: 0, epoch: 41 },
+    ];
+
+    let Err(message) = check_invariants(&log) else {
+        panic!(
+            "the oracles accepted a registry dropping back below an epoch it \
+             had burned, so monotonicity is not being checked outside of burn \
+             records: {log:?}"
+        );
+    };
+    assert!(
+        message.contains("claim 5"),
+        "expected the monotonicity oracle to be the one that fired, got: {message}"
+    );
+    println!("oracles rejected the regressing registry: {message}");
+}
+
+/// The same shape going forwards is fine.
+///
+/// Paired with the test above so that it is rejecting the regression rather
+/// than the shape — an oracle that refused every log containing two acquires
+/// would pass that one just as well.
+#[test]
+fn oracles_accept_a_registry_that_moves_forward() {
+    let log = vec![
+        Event::Acquired { node: 0, epoch: 41 },
+        Event::EpochBurned { from_epoch: 41, to_epoch: 42, next: 0, forced: true },
+        Event::Acquired { node: 0, epoch: 42 },
+    ];
+
+    assert!(
+        check_invariants(&log).is_ok(),
+        "a burn followed by an acquire at the new epoch is the ordinary \
+         forced-revoke path and must be accepted: {log:?}"
+    );
+}
+
 /// An epoch that changes hands without a burn is rejected.
 ///
 /// The log here is hand-built rather than simulated, and that is the point.

@@ -20,7 +20,7 @@ mod body;
 
 use body::{
     check_invariants, run_scenario_logged, run_scenario_probed, run_scenario_unfenced, Action,
-    Event, Scenario,
+    Coord, Event, Scenario, INITIAL_EPOCH,
 };
 
 /// Every story runs on the same network schedule, because the story is in the
@@ -677,6 +677,88 @@ fn a_write_at_a_burned_epoch_is_refused() {
         vec![(0, 41)],
         "only the write made while node 0 really owned epoch 41: {log:?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The line protocol, checked against the model's preconditions
+// ---------------------------------------------------------------------------
+
+/// The registry refuses a successor that is not a node.
+///
+/// `tr_begin_transfer` and `tr_revoke_owner` both require
+/// `pre.nodes.contains(to)`. Nothing in the simulation sends an unknown
+/// successor — the driver takes its argument modulo `NODES` — and that is
+/// exactly why this is worth asserting at the registry rather than trusting the
+/// caller. A precondition the caller happens to satisfy is not a precondition
+/// the registry enforces, and the request arrives over a socket.
+///
+/// Driven against `Coord` directly, with raw lines, because the action alphabet
+/// cannot express a malformed request.
+#[test]
+fn the_registry_refuses_a_successor_that_is_not_a_node() {
+    let mut coord = Coord::new(true);
+    assert_eq!(coord.handle("POLL 0"), format!("GRANT {INITIAL_EPOCH}"));
+    assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}")), "OK");
+
+    assert_eq!(
+        coord.handle("BEGIN 0 99"),
+        "NO",
+        "a handover to a node that does not exist must be refused"
+    );
+    assert_eq!(
+        coord.handle("FORCE 99"),
+        "NO",
+        "a forced revoke naming a node that does not exist must be refused"
+    );
+
+    // ... and the registry is untouched by either: node 0 still owns it.
+    assert_eq!(coord.handle(&format!("WRITE 0 {INITIAL_EPOCH}")), "OK 1");
+}
+
+/// A release is an acknowledgement of one transfer, not of whichever is current.
+///
+/// `tr_complete_release` requires `Message::Released { from, new_epoch }` to
+/// name the transfer's *current* `new_epoch`. Without the epoch on the wire,
+/// a release that node 0 sent for an earlier handover — delayed, or replayed —
+/// completes a later one, because the only thing distinguishing them is the
+/// epoch.
+///
+/// The replay here is the request arriving twice, which the model treats as
+/// something the network may always do.
+#[test]
+fn a_release_for_an_earlier_transfer_does_not_complete_a_later_one() {
+    let mut coord = Coord::new(true);
+    let first = INITIAL_EPOCH;
+
+    // Node 0 takes the actor and agrees to hand it to node 1.
+    assert_eq!(coord.handle("POLL 0"), format!("GRANT {first}"));
+    assert_eq!(coord.handle(&format!("ACQUIRE 0 {first}")), "OK");
+    assert_eq!(coord.handle("BEGIN 0 1"), "OK");
+    assert_eq!(coord.handle("POLL 0"), format!("REVOKE {}", first + 1));
+
+    // It acknowledges, and the transfer completes.
+    assert_eq!(coord.handle(&format!("RELEASE 0 {}", first + 1)), "OK");
+
+    // Node 0 gets the actor back later, and agrees to hand it on again. This
+    // is a different transfer, at a different epoch.
+    assert_eq!(coord.handle("FORCE 0"), "OK");
+    let second = first + 2;
+    assert_eq!(coord.handle("POLL 0"), format!("GRANT {second}"));
+    assert_eq!(coord.handle(&format!("ACQUIRE 0 {second}")), "OK");
+    assert_eq!(coord.handle("BEGIN 0 2"), "OK");
+
+    // The old acknowledgement arrives again. It names the wrong epoch, and
+    // completing the current transfer with it would hand node 2 the actor on
+    // the strength of an agreement node 0 gave about node 1.
+    assert_eq!(
+        coord.handle(&format!("RELEASE 0 {}", first + 1)),
+        "NO",
+        "a replayed release naming an old epoch must not complete this transfer"
+    );
+
+    // The current one still works, which is what makes the refusal above about
+    // the epoch rather than about the state.
+    assert_eq!(coord.handle(&format!("RELEASE 0 {}", second + 1)), "OK");
 }
 
 /// Two nodes writing at one epoch is rejected — claim 1, with a witness.

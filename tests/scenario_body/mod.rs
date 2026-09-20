@@ -66,6 +66,13 @@ const NODES: u64 = 3;
 
 const PORT: u16 = 9_440;
 
+/// The epoch the registry starts at.
+///
+/// Named rather than written twice, because the oracles need it: a
+/// monotonicity check that starts from "whatever the first event said" cannot
+/// see a first event that is already wrong.
+pub const INITIAL_EPOCH: u64 = 41;
+
 /// How long the driver waits after queueing an action.
 ///
 /// Comfortably more than a round trip, so that consecutive actions read as
@@ -108,7 +115,7 @@ pub enum Event {
 ///
 /// `state` is the executable counterpart of the model's
 /// `actors: Map<ActorId, OwnershipState>`, narrowed to one actor and to `u64`.
-struct Coord {
+pub struct Coord {
     state: Owned,
     log: Vec<Event>,
     /// Writes accepted so far, used to give each one a sequence number.
@@ -146,11 +153,11 @@ impl Owned {
 }
 
 impl Coord {
-    fn new(fencing: bool) -> Self {
+    pub fn new(fencing: bool) -> Self {
         Coord {
             // The same start state the scenarios in `src/proofs` use: offered
-            // to node 0 at epoch 41, held by nobody.
-            state: Owned::Unowned { epoch: 41, intended: 0 },
+            // to node 0 at the initial epoch, held by nobody.
+            state: Owned::Unowned { epoch: INITIAL_EPOCH, intended: 0 },
             log: Vec::new(),
             writes: 0,
             fencing,
@@ -174,7 +181,7 @@ impl Coord {
     /// which. Keeping them in step is the whole point: a transition the
     /// implementation has that the model does not is exactly the kind of thing
     /// this suite exists to find.
-    fn handle(&mut self, line: &str) -> String {
+    pub fn handle(&mut self, line: &str) -> String {
         let mut parts = line.split_whitespace();
         let verb = parts.next().unwrap_or("");
         let args: Vec<u64> = parts.filter_map(|p| p.parse().ok()).collect();
@@ -236,6 +243,16 @@ impl Coord {
             // the owner's host; issued from anywhere else it would let a node
             // nobody can reach volunteer, which is exactly the hole the
             // liveness guard on `tr_begin_transfer` was added to close.
+            //
+            // `*to < NODES` is `pre.nodes.contains(to)`. The driver happens to
+            // take its successor modulo `NODES`, so nothing in this suite sends
+            // an unknown one — which is exactly why the check belongs here
+            // rather than there. A precondition enforced by the caller is a
+            // precondition the registry does not have.
+            ("BEGIN", [from, to]) if *to >= NODES => {
+                let _ = from;
+                "NO".to_string()
+            }
             ("BEGIN", [from, to]) => match self.state {
                 Owned::Owned { owner, epoch } if owner == *from && owner != *to => {
                     self.state = Owned::Transferring {
@@ -261,8 +278,18 @@ impl Coord {
             // the new epoch. Folding them is a simplification of the model,
             // and it is the one place this implementation is deliberately
             // coarser than what was proved — noted in README.
-            ("RELEASE", [node]) => match self.state {
-                Owned::Transferring { from, to, new_epoch, .. } if from == *node => {
+            // The epoch is part of the acknowledgement, not inferred from
+            // where the registry happens to be. `tr_complete_release` requires
+            // `Message::Released { from, new_epoch }` to name the transfer's
+            // *current* `new_epoch`, and without carrying it a release from an
+            // earlier handover — delayed on the wire, or replayed — would
+            // complete a later one by the same node. The line protocol is where
+            // that has to be checked, because by the time the handler sees it
+            // the only thing distinguishing the two is the epoch.
+            ("RELEASE", [node, epoch]) => match self.state {
+                Owned::Transferring { from, to, new_epoch, .. }
+                    if from == *node && new_epoch == *epoch =>
+                {
                     self.state = Owned::Unowned { epoch: new_epoch, intended: to };
                     self.log.push(Event::Released { node: *node, new_epoch });
                     "OK".to_string()
@@ -276,6 +303,7 @@ impl Coord {
             // *no* way to redirect an interrupted transfer to a node of its
             // choosing, and an implementation that offered one would be
             // exercising histories the proofs say nothing about.
+            ("FORCE", [next]) if *next >= NODES => "NO".to_string(),
             ("FORCE", [next]) => match self.state {
                 // `tr_revoke_owner`: burn the epoch without the owner's
                 // cooperation and offer the actor to `next`. Fires against a
@@ -690,7 +718,14 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
     // would let this oracle pre-empt the two that are supposed to catch that,
     // and an oracle that fires first on someone else's failure is worse than
     // one that stays silent: the message would name the wrong claim.
-    let mut epoch: Option<u64> = None;
+    // Seeded with where the registry actually starts, rather than with the
+    // first event that happens to name an epoch. Left as "whatever the first
+    // event said", `EpochBurned(42, 43)` followed by `Acquired(0, 43)` is
+    // self-consistent and passes — but `Coord::new` starts at 41 and no
+    // transition burns from 42, so the corruption is simply invisible before
+    // the first event. An oracle that takes its baseline from the thing it is
+    // auditing has no baseline.
+    let mut epoch = INITIAL_EPOCH;
     for ev in log {
         match ev {
             Event::EpochBurned { from_epoch, to_epoch, .. } => {
@@ -699,29 +734,23 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
                         "claim 5 (monotonicity): epoch went {from_epoch} -> {to_epoch}"
                     ));
                 }
-                match epoch {
-                    Some(at) if at != *from_epoch => {
-                        return Err(format!(
-                            "claim 5 (monotonicity): a burn from epoch {from_epoch} \
-                             while the registry was at {at} ({ev:?})"
-                        ));
-                    }
-                    _ => {}
+                if *from_epoch != epoch {
+                    return Err(format!(
+                        "claim 5 (monotonicity): a burn from epoch {from_epoch} \
+                         while the registry was at {epoch} ({ev:?})"
+                    ));
                 }
-                epoch = Some(*to_epoch);
+                epoch = *to_epoch;
             }
             // Both of these say the registry was `Unowned` or `Owned` at this
             // exact epoch when the event was recorded.
             Event::Acquired { epoch: at, .. } | Event::Released { new_epoch: at, .. } => {
-                match epoch {
-                    Some(was) if was != *at => {
-                        return Err(format!(
-                            "claim 5 (monotonicity): the registry was at epoch \
-                             {was} and is now at {at}, with no burn between \
-                             ({ev:?})"
-                        ));
-                    }
-                    _ => epoch = Some(*at),
+                if *at != epoch {
+                    return Err(format!(
+                        "claim 5 (monotonicity): the registry was at epoch \
+                         {epoch} and is now at {at}, with no burn between \
+                         ({ev:?})"
+                    ));
                 }
             }
             Event::Wrote { .. } | Event::Fenced { .. } => {}
@@ -1188,8 +1217,8 @@ async fn run_cmd(node: u64, cmd: NodeCmd, state: &mut NodeState) -> io::Result<(
             let _ = rpc(format!("BEGIN {node} {to}")).await?;
         }
         NodeCmd::Release => {
-            if state.pending_revoke.is_some() {
-                let _ = rpc(format!("RELEASE {node}")).await?;
+            if let Some(new_epoch) = state.pending_revoke {
+                let _ = rpc(format!("RELEASE {node} {new_epoch}")).await?;
                 state.pending_revoke = None;
                 // The node has given the actor up; its guard is no longer a
                 // claim to anything. Dropping it here is the honest thing: the

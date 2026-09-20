@@ -104,6 +104,12 @@ fn node_host(n: u64) -> String {
 /// one map and assumes it is updated atomically.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
+    /// The registry offered the actor to this node at this epoch.
+    ///
+    /// `Message::Grant`. Logged because `tr_acquire` requires one to be in
+    /// flight, and an acquire cannot be checked against a grant nobody wrote
+    /// down — the audit log had no record of what was ever offered.
+    Granted { node: u64, epoch: u64 },
     /// A node took ownership at this epoch.
     Acquired { node: u64, epoch: u64 },
     /// A write was accepted: at this instant the registry said
@@ -198,6 +204,7 @@ impl Coord {
             // grant has nothing to acquire with.
             ("POLL", [node]) => match self.state {
                 Owned::Unowned { epoch, intended } if intended == *node => {
+                    self.log.push(Event::Granted { node: *node, epoch });
                     format!("GRANT {epoch}")
                 }
                 Owned::Transferring { from, new_epoch, .. } if from == *node => {
@@ -760,7 +767,7 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
                     ));
                 }
             }
-            Event::Wrote { .. } | Event::Fenced { .. } => {}
+            Event::Wrote { .. } | Event::Fenced { .. } | Event::Granted { .. } => {}
         }
     }
 
@@ -840,14 +847,41 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
     // transfer names the node it came from, and a cooperative handover names
     // its target, which is still the intended owner once the release lands.
     let mut intended = INITIAL_OWNER;
+    let mut granted: Vec<(u64, u64)> = Vec::new();
     for ev in log {
         match ev {
             Event::EpochBurned { next, .. } => intended = *next,
-            Event::Acquired { node, epoch } if *node != intended => {
-                return Err(format!(
-                    "P8 (grant): node {node} acquired epoch {epoch}, which was \
-                     offered to node {intended}"
-                ));
+            // An offer goes to the node the registry is holding the actor for,
+            // and names the epoch the registry is at. Both halves matter: an
+            // offer to the wrong node is a `Grant` the model never issues, and
+            // the epoch is what the acquire has to quote back.
+            Event::Granted { node, epoch } => {
+                if *node != intended {
+                    return Err(format!(
+                        "P8 (grant): the registry offered epoch {epoch} to node \
+                         {node}, but the actor is held for node {intended}"
+                    ));
+                }
+                granted.push((*node, *epoch));
+            }
+            Event::Acquired { node, epoch } => {
+                if *node != intended {
+                    return Err(format!(
+                        "P8 (grant): node {node} acquired epoch {epoch}, which \
+                         was offered to node {intended}"
+                    ));
+                }
+                // The second conjunct of `tr_acquire`, and the one this suite
+                // was missing: `pre.network.contains(Message::Grant { to: n,
+                // epoch })`. Being the intended owner is not enough — the model
+                // wants the offer to have been made, and nothing here could
+                // check that until grants were written down.
+                if !granted.contains(&(*node, *epoch)) {
+                    return Err(format!(
+                        "P8 (grant): node {node} acquired epoch {epoch} without \
+                         ever having been offered it"
+                    ));
+                }
             }
             _ => {}
         }

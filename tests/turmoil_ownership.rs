@@ -771,6 +771,7 @@ fn a_release_for_an_earlier_transfer_does_not_complete_a_later_one() {
 #[test]
 fn oracles_reject_two_writers_at_one_epoch() {
     let log = vec![
+        Event::Granted { node: 0, epoch: 41 },
         Event::Acquired { node: 0, epoch: 41 },
         Event::Wrote { node: 0, epoch: 41, seq: 1 },
         Event::Wrote { node: 1, epoch: 41, seq: 2 },
@@ -796,6 +797,7 @@ fn oracles_reject_two_writers_at_one_epoch() {
 #[test]
 fn oracles_accept_one_node_writing_twice_at_one_epoch() {
     let log = vec![
+        Event::Granted { node: 0, epoch: 41 },
         Event::Acquired { node: 0, epoch: 41 },
         Event::Wrote { node: 0, epoch: 41, seq: 1 },
         Event::Wrote { node: 0, epoch: 41, seq: 2 },
@@ -817,8 +819,10 @@ fn oracles_accept_one_node_writing_twice_at_one_epoch() {
 #[test]
 fn oracles_accept_a_handover_to_another_node_across_a_burn() {
     let log = vec![
+        Event::Granted { node: 0, epoch: 41 },
         Event::Acquired { node: 0, epoch: 41 },
         Event::EpochBurned { from_epoch: 41, to_epoch: 42, next: 1, forced: true },
+        Event::Granted { node: 1, epoch: 42 },
         Event::Acquired { node: 1, epoch: 42 },
         Event::Wrote { node: 1, epoch: 42, seq: 1 },
     ];
@@ -841,6 +845,7 @@ fn oracles_accept_a_handover_to_another_node_across_a_burn() {
 #[test]
 fn oracles_reject_an_acquire_by_a_node_that_was_not_offered() {
     let log = vec![
+        Event::Granted { node: 0, epoch: 41 },
         Event::Acquired { node: 0, epoch: 41 },
         Event::EpochBurned { from_epoch: 41, to_epoch: 42, next: 1, forced: true },
         // The actor was offered to node 1. Node 2 takes it.
@@ -880,6 +885,72 @@ fn oracles_reject_a_first_acquire_by_a_node_that_was_not_offered() {
             "the oracles accepted a first acquire by a node the actor was not \
              initially offered to: {log:?}"
         );
+    };
+    assert!(
+        message.contains("P8 (grant)"),
+        "expected the grant oracle to be the one that fired, got: {message}"
+    );
+}
+
+/// An acquire with no offer behind it is rejected.
+///
+/// `tr_acquire` has two conjuncts and this suite only ever checked one. Being
+/// the `intended_owner` is necessary; the model also wants
+/// `pre.network.contains(Message::Grant { to: n, epoch })` — the offer must
+/// actually have been made. Nothing could check that while grants went
+/// unrecorded, so `POLL` now writes a `Granted` to the audit log and this is
+/// the other conjunct, checked.
+///
+/// The gap was mine rather than found: I wrote out both halves of `tr_acquire`
+/// in a review reply, implemented the first, and did not notice.
+#[test]
+fn oracles_reject_an_acquire_with_no_offer_behind_it() {
+    let log = vec![
+        // Node 0 is the intended owner at 41 and takes it, having never been
+        // told it was on offer.
+        Event::Acquired { node: 0, epoch: 41 },
+        Event::Wrote { node: 0, epoch: 41, seq: 1 },
+    ];
+
+    let Err(message) = check_invariants(&log) else {
+        panic!("the oracles accepted an acquire with no grant behind it: {log:?}");
+    };
+    assert!(
+        message.contains("P8 (grant)"),
+        "expected the grant oracle to be the one that fired, got: {message}"
+    );
+    println!("oracles rejected the ungranted acquire: {message}");
+}
+
+/// The same log with the offer recorded is fine.
+///
+/// The paired accept, differing by the `Granted` alone.
+#[test]
+fn oracles_accept_an_acquire_with_its_offer() {
+    let log = vec![
+        Event::Granted { node: 0, epoch: 41 },
+        Event::Acquired { node: 0, epoch: 41 },
+        Event::Wrote { node: 0, epoch: 41, seq: 1 },
+    ];
+
+    assert!(
+        check_invariants(&log).is_ok(),
+        "an offer, the offered node taking it, and a write at that epoch is the \
+         ordinary path and must be accepted: {log:?}"
+    );
+}
+
+/// An offer to a node the actor is not being held for is rejected.
+///
+/// The registry's side of the same conjunct. `POLL` guards this with
+/// `intended == node`, and until grants were logged, deleting that guard
+/// changed nothing any test could see.
+#[test]
+fn oracles_reject_an_offer_to_a_node_the_actor_is_not_held_for() {
+    let log = vec![Event::Granted { node: 2, epoch: 41 }];
+
+    let Err(message) = check_invariants(&log) else {
+        panic!("the oracles accepted an offer to a node with no claim: {log:?}");
     };
     assert!(
         message.contains("P8 (grant)"),
@@ -930,6 +1001,7 @@ fn oracles_reject_a_write_with_no_capability() {
 #[test]
 fn oracles_reject_a_registry_that_goes_backwards() {
     let log = vec![
+        Event::Granted { node: 0, epoch: 41 },
         Event::Acquired { node: 0, epoch: 41 },
         Event::EpochBurned { from_epoch: 41, to_epoch: 42, next: 0, forced: true },
         Event::Acquired { node: 0, epoch: 41 },
@@ -961,6 +1033,7 @@ fn oracles_reject_a_registry_that_goes_backwards() {
 #[test]
 fn oracles_reject_an_epoch_that_moves_without_a_burn() {
     let log = vec![
+        Event::Granted { node: 0, epoch: 41 },
         Event::Acquired { node: 0, epoch: 41 },
         Event::Acquired { node: 1, epoch: 42 },
         Event::Wrote { node: 1, epoch: 42, seq: 1 },
@@ -987,8 +1060,10 @@ fn oracles_reject_an_epoch_that_moves_without_a_burn() {
 #[test]
 fn oracles_accept_a_registry_that_moves_forward() {
     let log = vec![
+        Event::Granted { node: 0, epoch: 41 },
         Event::Acquired { node: 0, epoch: 41 },
         Event::EpochBurned { from_epoch: 41, to_epoch: 42, next: 0, forced: true },
+        Event::Granted { node: 0, epoch: 42 },
         Event::Acquired { node: 0, epoch: 42 },
     ];
 
@@ -1018,6 +1093,7 @@ fn oracles_accept_a_registry_that_moves_forward() {
 #[test]
 fn oracles_reject_an_epoch_that_changes_owner() {
     let log = vec![
+        Event::Granted { node: 0, epoch: 41 },
         Event::Acquired { node: 0, epoch: 41 },
         Event::Acquired { node: 1, epoch: 41 },
         Event::Wrote { node: 1, epoch: 41, seq: 1 },
@@ -1044,14 +1120,15 @@ fn oracles_reject_an_epoch_that_changes_owner() {
 #[test]
 fn oracles_accept_the_same_log_without_the_reassignment() {
     let log = vec![
+        Event::Granted { node: 0, epoch: 41 },
         Event::Acquired { node: 0, epoch: 41 },
         Event::Wrote { node: 0, epoch: 41, seq: 1 },
     ];
 
     assert!(
         check_invariants(&log).is_ok(),
-        "a node acquiring an epoch and writing at it is the ordinary case and \
-         must be accepted: {log:?}"
+        "a node acquiring an epoch it was offered and writing at it is the \
+         ordinary case and must be accepted: {log:?}"
     );
 }
 

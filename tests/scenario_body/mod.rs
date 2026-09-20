@@ -787,9 +787,18 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
                 }
                 epoch = *to_epoch;
             }
-            // Both of these say the registry was `Unowned` or `Owned` at this
-            // exact epoch when the event was recorded.
-            Event::Acquired { epoch: at, .. } | Event::Released { new_epoch: at, .. } => {
+            // All three say the registry was at this exact epoch when the event
+            // was recorded: an offer publishes the epoch the registry is at,
+            // an acquire takes it, and a release lands on it.
+            //
+            // `Granted` was left out of this loop at first, while the grant
+            // oracle's own comment claimed the epoch had to match — the same
+            // half-implemented conjunct as `tr_acquire`, for the third time. A
+            // bare `Granted(0, 42)` at the start passed everything: the grant
+            // oracle checked only the node, and this loop was not looking.
+            Event::Acquired { epoch: at, .. }
+            | Event::Released { new_epoch: at, .. }
+            | Event::Granted { epoch: at, .. } => {
                 if *at != epoch {
                     return Err(format!(
                         "claim 5 (monotonicity): the registry was at epoch \
@@ -798,10 +807,7 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
                     ));
                 }
             }
-            Event::Wrote { .. }
-            | Event::Fenced { .. }
-            | Event::Granted { .. }
-            | Event::Revoked { .. } => {}
+            Event::Wrote { .. } | Event::Fenced { .. } | Event::Revoked { .. } => {}
         }
     }
 
@@ -887,10 +893,12 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
     for ev in log {
         match ev {
             Event::EpochBurned { next, .. } => intended = *next,
-            // An offer goes to the node the registry is holding the actor for,
-            // and names the epoch the registry is at. Both halves matter: an
-            // offer to the wrong node is a `Grant` the model never issues, and
-            // the epoch is what the acquire has to quote back.
+            // An offer goes to the node the registry is holding the actor for.
+            // The other half — that it names the epoch the registry is at — is
+            // the monotonicity loop above, which reads every event that exposes
+            // the registry's epoch and a grant is one of them. Checking it
+            // twice would be two trackers to keep in step; checking it nowhere
+            // is what happened first.
             Event::Granted { node, epoch } => {
                 if *node != intended {
                     return Err(format!(
@@ -992,7 +1000,24 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
                 }
                 pending = Some((outgoing, *to_epoch));
             }
-            Event::EpochBurned { .. } => pending = None,
+            // A forced burn supersedes a transfer, and `tr_abort_transfer`
+            // says where the actor goes: back to `from`. Clearing the pending
+            // transfer without checking that was the same shape as everything
+            // else here — the named story pins the current handler, but an
+            // audited log could abort a handover to a third party and no oracle
+            // would object.
+            Event::EpochBurned { to_epoch, next, .. } => {
+                if let Some((outgoing, _)) = pending {
+                    if *next != outgoing {
+                        return Err(format!(
+                            "claim 4 (transfer): the handover from node \
+                             {outgoing} was aborted at epoch {to_epoch}, which \
+                             was offered to node {next} rather than back to it"
+                        ));
+                    }
+                }
+                pending = None;
+            }
             // A revoke names the node the actor is being taken from, and the
             // epoch it is being taken to. It does not complete anything, so it
             // leaves the transfer in flight.

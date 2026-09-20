@@ -1211,6 +1211,89 @@ fn oracles_accept_a_handover_released_by_its_outgoing_owner() {
     );
 }
 
+/// An offer naming an epoch the registry is not at is rejected.
+///
+/// `tr_issue_grant` publishes the registry's *current* epoch. A grant for any
+/// other epoch is a capability the model never issues — a stale one, or one
+/// for a future that has not happened.
+///
+/// The gap is the same half-implemented conjunct as `tr_acquire`, for the
+/// third time: the grant oracle's comment said the epoch had to match and only
+/// the node was checked, so a bare `Granted(0, 42)` at the start passed
+/// everything. The epoch half now lives in the monotonicity loop, which reads
+/// every event exposing where the registry is, rather than in a second tracker
+/// beside it.
+#[test]
+fn oracles_reject_an_offer_naming_the_wrong_epoch() {
+    let log = vec![Event::Granted { node: 0, epoch: 42 }];
+
+    let Err(message) = check_invariants(&log) else {
+        panic!(
+            "the oracles accepted an offer for an epoch the registry has never \
+             been at: {log:?}"
+        );
+    };
+    assert!(
+        message.contains("claim 5"),
+        "expected the monotonicity oracle to be the one that fired, got: {message}"
+    );
+}
+
+/// An aborted handover that goes to a third party is rejected.
+///
+/// `tr_abort_transfer` burns another epoch and offers the actor **back to the
+/// node it was being taken from**. Clearing the pending transfer on any forced
+/// burn, without checking where it went, meant an audited log could abort a
+/// handover into somebody else's hands unremarked.
+///
+/// `an_interrupted_transfer_returns_to_the_node_it_came_from` pins the current
+/// handler against this, and that is a different thing: a story checks the
+/// implementation, an oracle checks any log. The implementation was right and
+/// the oracle was not.
+#[test]
+fn oracles_reject_an_abort_that_goes_to_a_third_party() {
+    let log = vec![
+        Event::Granted { node: 0, epoch: 41 },
+        Event::Acquired { node: 0, epoch: 41 },
+        Event::EpochBurned { from_epoch: 41, to_epoch: 42, next: 1, forced: false },
+        // The handover from node 0 is aborted — and lands on node 2.
+        Event::EpochBurned { from_epoch: 42, to_epoch: 43, next: 2, forced: true },
+        Event::Granted { node: 2, epoch: 43 },
+        Event::Acquired { node: 2, epoch: 43 },
+    ];
+
+    let Err(message) = check_invariants(&log) else {
+        panic!("the oracles accepted an abort handing the actor to a third party: {log:?}");
+    };
+    assert!(
+        message.contains("claim 4"),
+        "expected the transfer oracle to be the one that fired, got: {message}"
+    );
+    println!("oracles rejected the misdirected abort: {message}");
+}
+
+/// The same abort, going back where it came from, is fine.
+///
+/// The paired accept, differing in the successor alone.
+#[test]
+fn oracles_accept_an_abort_that_returns_the_actor() {
+    let log = vec![
+        Event::Granted { node: 0, epoch: 41 },
+        Event::Acquired { node: 0, epoch: 41 },
+        Event::EpochBurned { from_epoch: 41, to_epoch: 42, next: 1, forced: false },
+        Event::EpochBurned { from_epoch: 42, to_epoch: 43, next: 0, forced: true },
+        Event::Granted { node: 0, epoch: 43 },
+        Event::Acquired { node: 0, epoch: 43 },
+    ];
+
+    assert!(
+        check_invariants(&log).is_ok(),
+        "an aborted handover returning the actor to the node it was being taken \
+         from is the model's only recovery from `Transferring` and must be \
+         accepted: {log:?}"
+    );
+}
+
 /// A write with no acquire behind it is rejected — P8, with a witness.
 ///
 /// P8 checks that an acquire for this exact `(node, epoch)` came earlier. It

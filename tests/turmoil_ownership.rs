@@ -347,8 +347,14 @@ fn an_isolated_owner_is_met_with_silence_not_refusal() {
     );
     assert_eq!(
         attempts[0].writes_timed_out, 2,
-        "exactly the two writes sent while isolated must have gone unanswered: \
-         {attempts:?}"
+        "exactly the two writes sent while isolated must have spent their whole \
+         deadline unanswered: {attempts:?}"
+    );
+    assert_eq!(
+        attempts[0].writes_failed, 0,
+        "and none of them may have failed some other way — a refusal or a reset \
+         is the network answering, which is the opposite of the silence this \
+         story is about: {attempts:?}"
     );
 
     assert_eq!(

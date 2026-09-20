@@ -398,8 +398,18 @@ const RPC_TIMEOUT: Duration = Duration::from_millis(250);
 pub struct Attempts {
     /// Writes this node sent, whatever became of them.
     pub writes_sent: u64,
-    /// Writes that got no answer before the deadline.
+    /// Writes that spent the whole deadline without an answer — which is what
+    /// a partition looks like from inside a node.
     pub writes_timed_out: u64,
+    /// Writes that failed some other way: refused, reset, cut off mid-reply.
+    ///
+    /// Kept apart from the count above rather than lumped in with it, because
+    /// the two mean opposite things. A refusal is the network answering; a
+    /// deadline is the network saying nothing at all, and only the second is
+    /// what a story about silence is entitled to claim. Counting them together
+    /// would let "the request was swallowed" be satisfied by a connection that
+    /// failed instantly and locally.
+    pub writes_failed: u64,
 }
 
 /// One request/response round trip. A fresh connection per request, which is
@@ -1007,8 +1017,12 @@ async fn run_cmd(node: u64, cmd: NodeCmd, state: &mut NodeState) -> io::Result<(
             // would be treating silence as a decision.
             if let Some((_, epoch)) = state.would_write(node) {
                 state.attempts.writes_sent += 1;
-                if rpc(format!("WRITE {node} {epoch}")).await.is_err() {
-                    state.attempts.writes_timed_out += 1;
+                match rpc(format!("WRITE {node} {epoch}")).await {
+                    Ok(_) => {}
+                    Err(e) if e.kind() == io::ErrorKind::TimedOut => {
+                        state.attempts.writes_timed_out += 1;
+                    }
+                    Err(_) => state.attempts.writes_failed += 1,
                 }
             }
         }

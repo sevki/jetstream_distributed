@@ -68,15 +68,24 @@ fn scenarios_hold_their_invariants() {
     // fixed, and one that is not yet fixed keeps this red until it is. The
     // sweep below searches for new ones; this makes sure the old ones cannot
     // come back unnoticed.
-    let mut writes = 0usize;
+    // Counted separately from the search below, and deliberately not added to
+    // it. The floor at the end is a claim about the *window* — that the seeds
+    // in `start..end` still reach the fence — and a corpus write satisfies it
+    // without any of them doing so. Today the corpus is empty and the two
+    // sums are the same number; the first seed filed here is the moment that
+    // stops being true, and a floor that a regression replay can satisfy on
+    // the window's behalf is a floor that has quietly stopped checking
+    // anything.
+    let mut corpus_writes = 0usize;
     for seed in committed_seeds() {
-        writes += run_scenario(Scenario::from_seed(seed))
+        corpus_writes += run_scenario(Scenario::from_seed(seed))
             .unwrap_or_else(|e| panic!("committed seed {seed} regressed: {e}"));
     }
 
     // Named in the log so a failure says which window found it, and so a green
     // night is visibly a *different* green night from the one before it.
     println!("searching scenario seeds {start}..{end}");
+    let mut writes = 0usize;
     for seed in start..end {
         writes += run_scenario(Scenario::from_seed(seed))
             .unwrap_or_else(|e| panic!("seed {seed} failed: {e}"));
@@ -105,7 +114,10 @@ fn scenarios_hold_their_invariants() {
     // teeth is shown exactly once, deterministically, by
     // `oracles_catch_an_unfenced_coordinator` in `turmoil_ownership.rs`.
     let floor = (end - start) / 16;
-    println!("searched seeds {start}..{end}: {writes} writes accepted");
+    println!(
+        "searched seeds {start}..{end}: {writes} writes accepted \
+         ({corpus_writes} more from the committed corpus, not counted)"
+    );
     assert!(
         writes as u64 > floor,
         "the scenarios must actually reach the fence; saw {writes} accepted \

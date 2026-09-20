@@ -311,11 +311,25 @@ fn a_non_owner_cannot_agree_to_hand_over() {
 /// difference, because not seeing a request is exactly what being partitioned
 /// from one looks like.
 ///
-/// So the node is asked directly: four writes sent, two of them unanswered.
-/// That is the claim, stated where it is observable. And the story ends by
-/// healing the network and writing once more at the *same* epoch, which says
-/// the node still held its guard and was still the owner throughout. The
-/// silence in the middle was the network's, not the node's.
+/// So the node is asked directly: four writes sent, two of which never reached
+/// anybody. And the story ends by healing the network and writing once more at
+/// the *same* epoch, which says the node still held its guard and was still the
+/// owner throughout.
+///
+/// **Where turmoil is kinder than a network.** The two failed writes are
+/// `writes_failed`, not `writes_timed_out`, and that is a fact about the
+/// simulator rather than about partitions. A real partition drops the SYN and
+/// the sender learns nothing until its own deadline expires; turmoil knows
+/// there is no route and says so immediately. This assertion is written the way
+/// the run actually came out rather than the way a network would behave,
+/// because a test that asserts the tidier thing is asserting something false.
+///
+/// It costs nothing here, and it is worth being precise about why. A node that
+/// can distinguish "no route" from "no reply" holds information a real one does
+/// not, and a protocol that used it would be leaning on the simulator. This one
+/// cannot: `run_cmd` counts both and acts on neither, because a node that
+/// treated either as a decision about ownership would be inventing one nobody
+/// made. What the coordinator saw — nothing — is the same under both.
 #[test]
 fn an_isolated_owner_is_met_with_silence_not_refusal() {
     let (log, attempts) = run_scenario_probed(story(vec![
@@ -346,15 +360,17 @@ fn an_isolated_owner_is_met_with_silence_not_refusal() {
          stopped delivering: {attempts:?}"
     );
     assert_eq!(
-        attempts[0].writes_timed_out, 2,
-        "exactly the two writes sent while isolated must have spent their whole \
-         deadline unanswered: {attempts:?}"
+        attempts[0].writes_failed, 2,
+        "exactly the two writes sent while isolated must have failed to reach \
+         the coordinator, which is how turmoil reports having no route: \
+         {attempts:?}"
     );
     assert_eq!(
-        attempts[0].writes_failed, 0,
-        "and none of them may have failed some other way — a refusal or a reset \
-         is the network answering, which is the opposite of the silence this \
-         story is about: {attempts:?}"
+        attempts[0].writes_timed_out, 0,
+        "and none may have expired on the deadline — see the note above: a \
+         partition already in place when the request is made is reported at \
+         once here, so a timeout in this story would mean something other than \
+         the partition happened: {attempts:?}"
     );
 
     assert_eq!(

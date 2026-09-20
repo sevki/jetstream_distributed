@@ -379,14 +379,22 @@ impl NodeState {
 
 /// How long a node waits for the coordinator before giving up.
 ///
-/// A partition in turmoil *drops* messages rather than refusing them, so a
-/// request sent across one is never answered and never fails either. Without a
-/// deadline the first isolation would park that node for the rest of the run —
-/// it would never deadlock the simulation, because the driver is what ends it,
-/// but every later action aimed at that node would be silently discarded and
-/// the scenario would be shorter than it looked. A real node has exactly this
-/// problem and exactly this answer. The clock is simulated, so the wait costs
-/// ordering and nothing else.
+/// This was added on a guess that turned out to be wrong, and it is worth
+/// recording which part. The guess was that a partition leaves a request
+/// hanging, so that without a deadline the first isolation would park a node
+/// for the rest of the run. turmoil does not behave that way when the partition
+/// is already in place: it knows there is no route and fails the connect at
+/// once — `an_isolated_owner_is_met_with_silence_not_refusal` measures exactly
+/// that, and it is a place where the simulator is kinder to the sender than a
+/// network, which drops the SYN and says nothing.
+///
+/// What the deadline still covers is the other shape: a partition that arrives
+/// after the connection is up, where the reply is dropped and there is nothing
+/// to fail. Whether the seed walk ever reaches that shape is not assumed — it
+/// is printed, per run, as the node-side totals in `turmoil_scenarios.rs`.
+///
+/// A real node needs the deadline under both shapes. The clock is simulated, so
+/// the wait costs ordering and nothing else.
 const RPC_TIMEOUT: Duration = Duration::from_millis(250);
 
 /// What a node put on the wire, and what came back.

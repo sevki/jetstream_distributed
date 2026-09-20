@@ -755,6 +755,17 @@ transfer returns the actor to the node it was being taken from, and a
 coordinator that redirected it anywhere else would be stepping outside the
 transition relation.
 
+**One place where the simulator is kinder than a network.** turmoil knows
+whether a route exists, so a request made across a partition that is already in
+place fails immediately at the sender. A real partition drops the packet and
+the sender learns nothing until its own deadline expires. The node-side counters
+keep the two apart — `writes_failed` against `writes_timed_out` — and the seed
+walk prints both, so the difference is visible rather than assumed. It costs
+nothing here only because nothing in the protocol reads them: a node that
+distinguished "no route" from "no reply" would hold information a real one does
+not, and treating either as a decision about ownership is exactly the mistake
+the fence exists to make unnecessary.
+
 Two places where the simulation is deliberately coarser than what was proved,
 stated rather than glossed:
 

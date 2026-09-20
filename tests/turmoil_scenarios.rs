@@ -16,7 +16,7 @@
 #[path = "scenario_body/mod.rs"]
 mod body;
 
-use body::{run_scenario, Scenario};
+use body::{run_scenario, run_scenario_probed, Attempts, Event, Scenario};
 
 /// The seeds that have failed before, from `tests/seeds/scenarios.txt`.
 fn committed_seeds() -> Vec<u64> {
@@ -86,9 +86,16 @@ fn scenarios_hold_their_invariants() {
     // night is visibly a *different* green night from the one before it.
     println!("searching scenario seeds {start}..{end}");
     let mut writes = 0usize;
+    let mut totals = Attempts::default();
     for seed in start..end {
-        writes += run_scenario(Scenario::from_seed(seed))
+        let (log, attempts) = run_scenario_probed(Scenario::from_seed(seed))
             .unwrap_or_else(|e| panic!("seed {seed} failed: {e}"));
+        writes += log.iter().filter(|e| matches!(e, Event::Wrote { .. })).count();
+        for a in attempts {
+            totals.writes_sent += a.writes_sent;
+            totals.writes_timed_out += a.writes_timed_out;
+            totals.writes_failed += a.writes_failed;
+        }
     }
 
     // A window in which no write was ever accepted would satisfy every oracle
@@ -122,5 +129,18 @@ fn scenarios_hold_their_invariants() {
         writes as u64 > floor,
         "the scenarios must actually reach the fence; saw {writes} accepted \
          writes over seeds {start}..{end}, wanted more than {floor}",
+    );
+
+    // Reported rather than asserted on, because it is a measurement of the
+    // simulator rather than a property of the protocol. `writes_failed` is
+    // turmoil telling a sender there is no route, which a real network does not
+    // do; `writes_timed_out` is a request that was accepted for delivery and
+    // never answered, which is the shape the node's deadline exists for. If
+    // that second number is persistently zero, the deadline is covering a case
+    // this search does not reach, and whoever next touches `RPC_TIMEOUT` should
+    // know that rather than infer it.
+    println!(
+        "nodes sent {} writes: {} unanswered at the deadline, {} with no route",
+        totals.writes_sent, totals.writes_timed_out, totals.writes_failed
     );
 }

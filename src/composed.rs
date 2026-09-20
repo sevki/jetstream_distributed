@@ -13,11 +13,14 @@
 //!   the release has to have *completed* before the token is allowed to move
 //!   (`Transferring` is not enough: it satisfies `!is_owned`, but the outgoing
 //!   owner has not acknowledged the revoke yet);
-//! * [`ComposedStep::SeizeToken`] moves the token *without* the holder acting,
-//!   and only from a node that has fail-stopped, so that crash-driven takeover -
-//!   the case epochs exist for - is reachable rather than requiring a dead node
-//!   to cooperate. Token movement is therefore partitioned by liveness: a live
-//!   holder passes, a crashed one is seized from, and there is no third way;
+//! * [`ComposedStep::SeizeToken`] moves the privilege *without* the holder
+//!   acting, so that crash-driven takeover - the case epochs exist for - is
+//!   reachable rather than requiring a dead node to cooperate. It says nothing
+//!   about whether that holder is alive: `!live` is ground truth no coordinator
+//!   can evaluate, and a node wrongly suspected must be handled rather than
+//!   excluded. Privilege movement is therefore partitioned by **cooperation**,
+//!   not by liveness: a holder that acts passes it on, one that does not has it
+//!   taken, and there is no third way;
 //! * [`ComposedStep::AcquireUnderToken`] may only fire for a node that *holds*
 //!   the token - authority cannot be taken by a node the routing layer has not
 //!   elected;
@@ -48,23 +51,27 @@ pub struct Composed {
     pub own: System,
     pub ray: Raymond,
     pub actor: ActorId,
-    /// Nodes whose routing state was rewritten by a seizure while they were
-    /// down, and which have not yet been told.
+    /// Nodes whose privilege was taken by a seizure and whose belief has not yet
+    /// been repaired - the nodes that **owe a reconciliation**.
     ///
-    /// This exists because [`cs_seize_token`] edits `from`'s `holder` and
-    /// `using` entries while `from` is fail-stopped, and `Step::Recover`'s
-    /// contract says a node comes back *with no knowledge of what happened
-    /// meanwhile*. Without a marker, recovery would silently inherit the
-    /// rewrite: the model would have the returning node know it had lost the
-    /// token, while the real one would still believe `holder[n] == n` and could
-    /// enter its Raymond critical section beside the new holder. Ownership
-    /// would still be safe - the epoch fences it - but Raymond's critical
-    /// section has no epoch, which is exactly the asymmetry documented on
-    /// [`cs_seize_token`].
+    /// [`cs_seize_token`] deliberately leaves `from`'s `holder`, `using` and
+    /// `asked` entries exactly as they were, because they are memory at `from`
+    /// and nothing can reach into a node that is down. So after a seizure
+    /// `from` is a [stale holder][`crate::raymond::is_stale_holder`]: it
+    /// believes it holds the privilege, it does not, and it may still be inside
+    /// its critical section believing that too. Ownership is safe regardless -
+    /// the epoch fences it, and
+    /// `crate::proofs::raymond::theorem_stale_holder_confers_no_authority`
+    /// proves it - but Raymond's critical section has no epoch, so the belief
+    /// has to be repaired before the node acts again.
     ///
-    /// So the reconciliation a real deployment must perform is a *modelled
-    /// transition* ([`cs_reconcile`]) rather than an assumption: a seized node
-    /// cannot rejoin `live` until it has taken it.
+    /// `composed_inv` ties this set to that: **every stale holder is in it**.
+    /// A seizure adds one and creates one; [`cs_reconcile`] removes one and
+    /// repairs one; and a grant discharges the debt outright, because receiving
+    /// the privilege *is* the node learning the truth. So the reconciliation a
+    /// real deployment must perform is a modelled transition rather than an
+    /// assumption, and [`recovers_a_seized_node`] is what stops a node coming
+    /// back and acting on a belief it never corrected.
     pub seized: Set<NodeId>,
 }
 

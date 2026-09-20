@@ -399,12 +399,18 @@ The full audit, by who acts:
 | `BeginTransfer` | the outgoing owner | `live(from)` — **added** |
 | `HandleRevoke` | the revoked node | `live(target)` |
 | `Crash` / `Recover` | the node | `live` / `!live`, being the boundary itself |
-| `IssueGrant`, `CompleteRelease`, `AbortTransfer`, `RevokeOwner` | none — the coordinator | correctly unguarded |
+| `IssueGrant`, `CompleteRelease`, `AbortTransfer`, `RevokeOwner`, `ReassignUnowned` | none — the coordinator | correctly unguarded |
 | `Replay` | none — the network | correctly unguarded |
+| `Stutter` | none — it does nothing | correctly unguarded |
+
+That is all twelve variants of `Step`, which is the point: a table that omits
+one cannot support a coverage argument, however right the rows it does contain
+are. This one omitted `ReassignUnowned` and `Stutter` when first published.
 
 `RevokeOwner` being unguarded is the design, not an oversight: it is the step
 that fires *without* the owner's cooperation, against a node that may be
-perfectly healthy.
+perfectly healthy. `ReassignUnowned` is the same shape — the coordinator
+re-offering an actor that nobody owns, burning an epoch to do it.
 
 `cs_ray` guards whichever node the Raymond step makes act
 (`ray_step_actor`), which is the carrier that has most of them. Without it a
@@ -695,16 +701,28 @@ invariant preservation):
 * the specific message shapes (`Revoke` / `Released` / `Grant`) - safety does
   not depend on them, which is itself the point, but no separate theorem says
   the message flow is the *only* way to make progress;
-* Raymond's holder pointers are proven to have a unique root, but the model does
-  not prove the pointers always form an acyclic tree. Safety here does not need
-  it; routing termination would.
+* ~~Raymond's holder pointers have a unique root but are not proven acyclic~~ —
+  both halves of that were wrong by the time it was written, in opposite
+  directions. **Acyclicity is proved**: `ray_acyclic` is part of `ray_inv` and
+  every transition preserves it (R11). And the pointers do **not** have a unique
+  root: after `SeizeToken(A, B)` both `holder[A] == A` and `holder[B] == B`, and
+  that is deliberate — `A` is a stale holder whose belief nobody could reach in
+  to correct. Uniqueness belongs to `Raymond::privilege`, the authoritative
+  field, not to the belief graph.
+
+  So the unconditional guarantee is an **acyclic forest of beliefs** plus a
+  single authoritative holder. Reaching that holder by following pointers (R12)
+  needs `ray_no_stale_holders` on top, which is exactly what reconciliation
+  restores. Routing termination would need the liveness the model does not
+  claim.
 
 **Not modelled at all** (a gap, stated rather than papered over):
 
 * **Raymond itself has no crash model.** The ownership layer models crash,
   recovery and unreliable failure detection; Raymond's own steps do not. A
-  Raymond in which nobody holds the token is not reachable, because
-  `ray_token_exists` is an invariant.
+  Raymond in which nobody holds the privilege is not reachable, because
+  `Raymond::privilege` always names a node and `ray_wf` keeps it inside
+  `nodes` — which is now structural rather than an inductive invariant.
 
   What *is* now modelled is the case that matters for the composed claim:
   `ComposedStep::SeizeToken` re-establishes the token at another node **without

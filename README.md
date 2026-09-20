@@ -383,8 +383,22 @@ review found, on the *receiving* side:
 * `cs_seize_token` guards `to` for the same reason: the coordinator hands it the
   privilege and it records that, so it is acting.
 
-`cs_reconcile` guards nobody, which the rule also explains — a node repairing
-its own belief is acting by definition.
+`cs_ray` guards whichever node the Raymond step makes act
+(`ray_step_actor`), which is the carrier that has most of them. Without it a
+crashed node could queue requests, forward them, and — the serious case — enter
+its critical section: after `Crash(A) → RevokeOwner → SeizeToken(A, B)`,
+`Ray { EnterCs(A) }` fired on `A`'s untouched holder and queue while `A` was
+still down and still marked, walking straight past the
+reconciliation-before-acting discipline. `ReceiveRequest` acts at `at`; `from`
+sent its request earlier and takes no part in the delivery.
+
+`cs_reconcile` guards nobody, and that is not an exception to the rule but a
+consequence of what `live` means here. `live` is *participating in the
+protocol*, not *powered on*. Reconciliation is the boundary step — the node
+re-reading authoritative state as part of coming back, before it resumes
+participating — which is why it may fire while `!live` and why `Recover` is a
+separate step that follows it. A node that was seized while live may also
+reconcile at any time, since it is acting either way.
 
 **Granting the privilege discharges the debt.** Both grant steps now clear the
 recipient from `seized`, because receiving the privilege *is* the node learning

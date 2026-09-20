@@ -583,16 +583,14 @@ pub proof fn theorem_composed_reachable_inv(c: Composed)
     lemma_composed_execution_inv(tr, tr.len() - 1);
 }
 
-/// The composed machine really does admit critical-section entry.
-///
-/// Without this, `composed_next` could not represent any Raymond execution that
-/// enters a critical section, every composed-reachable state would keep `using`
-/// uniformly false, and the composed theorems below would only cover a
-/// degenerate fragment of the real behaviour.
+/// `EnterCs` is a legal `ComposedStep::Ray` transition and preserves the
+/// composed invariant - for a node that is live, which is what `cs_ray` now
+/// requires of whichever node a Raymond step makes act.
 pub proof fn theorem_composed_admits_critical_section(pre: Composed, post: Composed, n: NodeId)
     requires
         composed_inv(pre),
         ray_enter_cs(pre.ray, post.ray, n),
+        pre.own.live.contains(n),
         post.own == pre.own,
         post.actor == pre.actor,
         post.seized == pre.seized,
@@ -604,7 +602,7 @@ pub proof fn theorem_composed_admits_critical_section(pre: Composed, post: Compo
     lemma_composed_ray_preserves_inv(pre, post, RayStep::EnterCs { node: n });
 }
 
-/// Leaving the critical section is likewise a legal composed step.
+/// `ExitCs` likewise, and likewise only for a live node.
 pub proof fn theorem_composed_admits_critical_section_exit(
     pre: Composed,
     post: Composed,
@@ -613,6 +611,7 @@ pub proof fn theorem_composed_admits_critical_section_exit(
     requires
         composed_inv(pre),
         ray_exit_cs(pre.ray, post.ray, n),
+        pre.own.live.contains(n),
         post.own == pre.own,
         post.actor == pre.actor,
         post.seized == pre.seized,

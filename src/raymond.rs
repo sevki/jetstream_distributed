@@ -395,6 +395,29 @@ pub open spec fn ray_step(pre: Raymond, post: Raymond, s: RayStep) -> bool {
     }
 }
 
+/// The node a Raymond step makes **act** - the one whose local state it writes.
+///
+/// Every token-preserving transition mutates the maps of exactly one node:
+/// `RequestCs`, `MakeRequest`, `EnterCs` and `ExitCs` write the named node's
+/// own entries, and `ReceiveRequest` writes `at`'s queue - `from` sent its
+/// request at some earlier point and takes no part in the delivery.
+///
+/// `AssignPrivilege` is the exception: it makes *two* nodes act, the holder and
+/// the recipient. It is never carried by [`crate::composed::cs_ray`], which is
+/// guarded on `preserves_token`, and
+/// [`crate::composed::cs_pass_token`] guards both of its nodes explicitly. The
+/// arm below exists only to keep this function total.
+pub open spec fn ray_step_actor(s: RayStep) -> NodeId {
+    match s {
+        RayStep::RequestCs { node } => node,
+        RayStep::MakeRequest { node } => node,
+        RayStep::ReceiveRequest { at, from: _ } => at,
+        RayStep::EnterCs { node } => node,
+        RayStep::ExitCs { node } => node,
+        RayStep::AssignPrivilege { node, head: _ } => node,
+    }
+}
+
 /// A step that only moves *requests* around: it queues, forwards or receives a
 /// request and never touches `holder`. `AssignPrivilege` is excluded because it
 /// moves the token; `EnterCs` and `ExitCs` are excluded because they are

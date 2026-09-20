@@ -107,8 +107,26 @@ pub open spec fn composed_inv(c: Composed) -> bool {
 /// has to admit `EnterCs` and `ExitCs` too, or no composed execution could ever
 /// enter a critical section and the composed theorems would only cover states
 /// where `using` is uniformly false.
+///
+/// **The acting node must be live.** Every one of these transitions writes some
+/// node's own local maps - its queue, its `asked` flag, its `using` flag - and
+/// a crashed node executes nothing, so without this guard the carrier admitted
+/// a dead node queueing requests, forwarding them, and entering its critical
+/// section. That last one is the serious case: after
+/// `Crash(A) -> RevokeOwner -> SeizeToken(A, B)`, the carrier let
+/// `Ray { EnterCs(A) }` fire on `A`'s untouched holder and queue while `A` was
+/// still down and still marked, walking straight past the
+/// reconciliation-before-acting discipline that
+/// [`recovers_a_seized_node`] exists to enforce.
+///
+/// This is the same rule as on [`cs_pass_token`] and [`cs_seize_token`] -
+/// liveness may guard the nodes a step makes act - applied to the carrier that
+/// has most of them. [`crate::raymond::ray_step_actor`] names which node that
+/// is for each variant; `ReceiveRequest` acts at `at`, since `from` sent its
+/// request earlier and takes no part in the delivery.
 pub open spec fn cs_ray(pre: Composed, post: Composed, s: RayStep) -> bool {
     &&& preserves_token(s)
+    &&& pre.own.live.contains(ray_step_actor(s))
     &&& ray_step(pre.ray, post.ray, s)
     &&& post.own == pre.own
     &&& post.actor == pre.actor

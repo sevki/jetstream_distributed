@@ -866,6 +866,18 @@ The same care applies to `assert forall`, which carries whatever trigger is
 written at the assertion site — `lemma_ray_frame_inv` and `lemma_reachable_step`
 had each rebuilt a loop locally that the specification no longer contained.
 
+**What that audit is and is not.** It is manual inspection plus the absence of
+resource-limit blowups; it is not a check anything enforces, and the distinction
+matters because nothing would fail if a future quantifier reintroduced a loop
+until it happened to exhaust a budget. Of the 176 quantifiers in `src/`, 151
+carry an explicit `#[trigger]` or `#![trigger …]`; the remaining 25 rely on
+Verus's inference, and are the ones where the inferred trigger is a single
+application term with nothing to regenerate (`exists|s| step(pre, post, s)` and
+the like). CI additionally passes `--triggers-mode silent`, which suppresses the
+notes Verus would otherwise print about automatically chosen triggers — good for
+signal-to-noise in the log, and worth knowing before treating the build's
+silence as evidence about triggers. It is not.
+
 CI greps `src/` for the real escape hatches and fails the build if any appear.
 Everything the proofs rely on that is not derived is a modelled transition or an
 explicitly documented entry in the failure-model table above.

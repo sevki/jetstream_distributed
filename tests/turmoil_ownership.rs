@@ -715,6 +715,63 @@ fn the_registry_refuses_a_successor_that_is_not_a_node() {
     assert_eq!(coord.handle(&format!("WRITE 0 {INITIAL_EPOCH}")), "OK 1");
 }
 
+/// The registry refuses an acquire that quotes the wrong epoch.
+///
+/// `tr_acquire` wants a `Grant` for exactly the epoch being taken, and `ACQUIRE`
+/// guards it with `e == *epoch`. I listed this guard as one the oracles could
+/// not witness and left it at that — which was half an answer. An oracle cannot
+/// see it, because the handler logs the epoch it *acquired* and the request's
+/// epoch is never recorded, so `POLL 0` then `ACQUIRE 0 999` produces a
+/// perfectly valid-looking `Acquired(0, 41)`. A protocol test can see it, and I
+/// had already built the means and not used it.
+#[test]
+fn the_registry_refuses_an_acquire_quoting_the_wrong_epoch() {
+    let mut coord = Coord::new(true);
+    assert_eq!(coord.handle("POLL 0"), format!("GRANT {INITIAL_EPOCH}"));
+
+    assert_eq!(
+        coord.handle("ACQUIRE 0 999"),
+        "NO",
+        "an acquire must name the epoch it is being offered, not any epoch"
+    );
+
+    // The actor is untaken, so the right request still works — which is what
+    // makes the refusal about the epoch rather than about the state.
+    assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}")), "OK");
+}
+
+/// The registry does not tell a bystander to stand down.
+///
+/// `Message::Revoke` binds its `target` to the outgoing owner, and `POLL`
+/// guards it with `from == node` on the `Transferring` branch. Logging the
+/// revoke was not enough to witness that guard, and the reason is worth
+/// writing down: the log line sits *inside* the guarded arm, so deleting the
+/// guard moves the logging with it. An audit event can only witness a guard it
+/// is not nested in.
+#[test]
+fn the_registry_does_not_tell_a_bystander_to_stand_down() {
+    let mut coord = Coord::new(true);
+    assert_eq!(coord.handle("POLL 0"), format!("GRANT {INITIAL_EPOCH}"));
+    assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}")), "OK");
+    assert_eq!(coord.handle("BEGIN 0 1"), "OK");
+
+    // The actor is being taken from node 0. Nobody else is standing down.
+    assert_eq!(
+        coord.handle("POLL 2"),
+        "NONE",
+        "a node outside the transfer must not be told to stand down"
+    );
+    assert_eq!(
+        coord.handle("POLL 1"),
+        "NONE",
+        "nor must the node the actor is being handed to — it is offered the \
+         actor once the release lands, not revoked"
+    );
+
+    // The outgoing owner is.
+    assert_eq!(coord.handle("POLL 0"), format!("REVOKE {}", INITIAL_EPOCH + 1));
+}
+
 /// A release is an acknowledgement of one transfer, not of whichever is current.
 ///
 /// `tr_complete_release` requires `Message::Released { from, new_epoch }` to
@@ -956,6 +1013,65 @@ fn oracles_reject_an_offer_to_a_node_the_actor_is_not_held_for() {
         message.contains("P8 (grant)"),
         "expected the grant oracle to be the one that fired, got: {message}"
     );
+}
+
+/// An epoch acquired twice is rejected, even by the same node.
+///
+/// `tr_acquire` matches on `Unowned`, so it cannot fire a second time for an
+/// epoch — the actor is already `Owned`. The check here rejected only a
+/// *different* node, and I asserted in review that a same-node repeat would be
+/// caught by it, which was simply false.
+#[test]
+fn oracles_reject_an_epoch_acquired_twice_by_one_node() {
+    let log = vec![
+        Event::Granted { node: 0, epoch: 41 },
+        Event::Acquired { node: 0, epoch: 41 },
+        Event::Acquired { node: 0, epoch: 41 },
+    ];
+
+    let Err(message) = check_invariants(&log) else {
+        panic!("the oracles accepted an epoch being acquired twice: {log:?}");
+    };
+    assert!(
+        message.contains("P5/P6"),
+        "expected the ownership oracle to be the one that fired, got: {message}"
+    );
+}
+
+/// An acquire while a handover is still in flight is rejected.
+///
+/// The actor is `Transferring` between the agreement and the release, and in
+/// that phase the registry offers nothing and nobody acquires. Reading the
+/// outgoing owner out of `Acquired` alone — without the phase — let a node that
+/// acquired mid-transfer count as a real owner, and a second cooperative burn
+/// then overwrote the pending transfer. The whole sequence passed.
+///
+/// This was the inference I flagged in review as load-bearing and mine. It was
+/// also wrong.
+#[test]
+fn oracles_reject_an_acquire_during_a_handover() {
+    let log = vec![
+        Event::Granted { node: 0, epoch: 41 },
+        Event::Acquired { node: 0, epoch: 41 },
+        Event::EpochBurned { from_epoch: 41, to_epoch: 42, next: 1, forced: false },
+        // Nobody has released yet, so the actor is still `Transferring`.
+        Event::Granted { node: 1, epoch: 42 },
+        Event::Acquired { node: 1, epoch: 42 },
+        Event::EpochBurned { from_epoch: 42, to_epoch: 43, next: 2, forced: false },
+        Event::Released { node: 1, new_epoch: 43 },
+    ];
+
+    let Err(message) = check_invariants(&log) else {
+        panic!(
+            "the oracles accepted an acquire made while a handover was still \
+             in flight: {log:?}"
+        );
+    };
+    assert!(
+        message.contains("claim 4"),
+        "expected the transfer oracle to be the one that fired, got: {message}"
+    );
+    println!("oracles rejected the mid-transfer acquire: {message}");
 }
 
 /// A node handing the actor to itself is rejected.

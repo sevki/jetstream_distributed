@@ -688,18 +688,26 @@ impl Lcg {
 // The oracles
 // ---------------------------------------------------------------------------
 
-/// One guard this audit found and deliberately did not close.
+/// Two kinds of guard this function cannot witness, and where they are checked
+/// instead.
 ///
-/// `ACQUIRE` requires the epoch the node quotes to be the one the registry is
-/// at. Deleting that check is invisible here, and adding a witness for it would
-/// take logging the epoch the *request* named alongside the epoch it acquired —
-/// at which point the oracle is restating the guard rather than checking a
-/// property. Every other check in this function corresponds to something the
-/// model says about the resulting state; that one is about the request.
+/// An oracle here reads the audit log, so it can only see a guard whose
+/// violation changes what gets logged. Two do not.
 ///
-/// It is written down rather than quietly left out, because the point of the
-/// audit was that a guard nothing records is a guard nothing checks, and the
-/// same is true of a guard nobody mentions.
+/// `ACQUIRE` requires the epoch a node quotes to match the registry's, and the
+/// handler logs the epoch it *acquired* — so a request naming any epoch at all
+/// produces the same, entirely valid-looking, `Acquired`.
+///
+/// `POLL` decides who is told to stand down, and the `Revoked` it writes sits
+/// *inside* that guarded arm: delete the guard and the logging moves with it.
+/// An audit event cannot witness a guard it is nested in, which is a mistake
+/// worth only making once.
+///
+/// Both are witnessed by driving `Coord` with raw lines instead — see
+/// `the_registry_refuses_an_acquire_quoting_the_wrong_epoch` and
+/// `the_registry_does_not_tell_a_bystander_to_stand_down`. The log is the wrong
+/// instrument for a guard about the request rather than the result; the
+/// protocol boundary is the right one.
 ///
 /// Check the model's theorems against what the coordinator actually did.
 ///
@@ -813,21 +821,23 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
     // that witness is now the only thing keeping this check honest, which is
     // as it should be. A check should be live because something exercises it,
     // not because of where it sits in this function.
+    // Any second acquire of an epoch, not just one by a different node.
+    // Rejecting only a different node was a mistake, and one I compounded by
+    // claiming in review that a same-node repeat would be caught here: it was
+    // not, and `tr_acquire` cannot fire the second time either way, because the
+    // actor is already `Owned`. Ownership at an epoch being *final* means the
+    // acquire happens once.
     let mut owner_at: HashMap<u64, u64> = HashMap::new();
     for ev in log {
         if let Event::Acquired { node, epoch } = ev {
-            match owner_at.get(epoch) {
-                Some(prev) if prev != node => {
-                    return Err(format!(
-                        "P5/P6: epoch {epoch} was acquired by node {prev} and then \
-                         by node {node}, with no burn in between — an epoch does \
-                         not determine its owner"
-                    ));
-                }
-                _ => {
-                    owner_at.insert(*epoch, *node);
-                }
+            if let Some(prev) = owner_at.get(epoch) {
+                return Err(format!(
+                    "P5/P6: epoch {epoch} was acquired by node {prev} and then \
+                     again by node {node} — ownership at an epoch is not final \
+                     if it can be taken twice"
+                ));
             }
+            owner_at.insert(*epoch, *node);
         }
     }
 
@@ -929,14 +939,42 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
     // A forced burn clears the pending transfer, because `tr_abort_transfer`
     // and `tr_revoke_owner` supersede it: a release arriving afterwards is
     // acknowledging something that no longer exists.
+    // While a transfer is in flight the actor is `Transferring`, and in that
+    // phase the registry offers nothing, nobody acquires, and no second
+    // handover can be agreed — `IssueGrant` and `tr_acquire` want `Unowned`,
+    // `tr_begin_transfer` wants `Owned`.
+    //
+    // Reading the outgoing owner out of `Acquired` alone, without that phase,
+    // was the load-bearing inference in this check and it was wrong:
+    // `Acquired(1,42)` logged while the first handover was still in flight
+    // counted node 1 as a real owner, and a second cooperative burn then
+    // overwrote the pending transfer. The whole sequence passed.
     let mut owner_at: HashMap<u64, u64> = HashMap::new();
     let mut pending: Option<(u64, u64)> = None;
     for ev in log {
         match ev {
+            Event::Granted { epoch, .. } if pending.is_some() => {
+                return Err(format!(
+                    "claim 4 (transfer): the registry offered epoch {epoch} while \
+                     the transfer {pending:?} was still in flight"
+                ));
+            }
             Event::Acquired { node, epoch } => {
+                if pending.is_some() {
+                    return Err(format!(
+                        "claim 4 (transfer): node {node} acquired epoch {epoch} \
+                         while the transfer {pending:?} was still in flight"
+                    ));
+                }
                 owner_at.insert(*epoch, *node);
             }
             Event::EpochBurned { from_epoch, to_epoch, next, forced: false } => {
+                if pending.is_some() {
+                    return Err(format!(
+                        "claim 4 (transfer): a handover was agreed at epoch \
+                         {from_epoch} while {pending:?} was still in flight"
+                    ));
+                }
                 let Some(outgoing) = owner_at.get(from_epoch).copied() else {
                     return Err(format!(
                         "claim 4 (transfer): a handover was agreed at epoch \

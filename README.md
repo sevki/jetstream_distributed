@@ -408,9 +408,16 @@ nothing about whether an implementation performs it.
 
 `src/raymond.rs` models Raymond's distributed mutual-exclusion algorithm as a
 **routing** layer, kept strictly separate from ownership semantics. Per node it
-tracks a `holder` pointer (the next hop towards the token), a request `queue`,
-an `asked` flag (outstanding request) and `using` (token possession / critical
-section).
+tracks a `holder` pointer (that node's **belief** about the next hop towards the
+privilege), a request `queue`, an `asked` flag (outstanding request) and `using`
+(inside the critical section). Alongside them, and deliberately *not* derived
+from them, is `Raymond::privilege`: the node that **actually** holds it.
+
+That split is the routing counterpart of `issued` versus `token_authorized` in
+the ownership layer, and it is what lets a seizure take the privilege from a
+node without reaching into it. `believes_holds(r, n)` is belief, `has_token(r, n)`
+is authority, and `is_stale_holder(r, n)` is the gap — see
+[Seizure needs no oracle](#seizure-needs-no-oracle-belief-versus-authority).
 
 Requests in flight are explicit state: `Raymond::requests` records every request
 ever sent as `(originator, destination)`, never shrinks, and is not consumed by

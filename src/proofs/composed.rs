@@ -45,6 +45,9 @@ pub proof fn lemma_composed_ray_preserves_inv(pre: Composed, post: Composed, s: 
     ) by {
         assert(believes_holds(pre.ray, m));
         assert(!has_token(pre.ray, m));
+        // Name the term the invariant's quantifier triggers on.
+        assert(is_stale_holder(pre.ray, m));
+        assert(pre.seized.contains(m));
     }
 }
 

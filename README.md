@@ -220,10 +220,13 @@ verifying, the build fails.
 | P7 | **Staleness is permanent** — a fenced-out node can never be fenced back in by waiting | `proofs::properties::theorem_stale_stays_stale` | valid execution |
 | P8 | **No authority without a capability** — a node that may mutate provably holds an issued token for exactly that `(actor, epoch)` | `proofs::properties::theorem_no_authority_without_token` | reachability |
 | P9 | **Epoch monotonicity survives composition** | `proofs::properties::theorem_composed_epoch_monotone` | none |
-| R9 | **The token is never lost** — every Raymond transition preserves token existence, which is why it can live in `ray_inv` | `proofs::raymond::lemma_ray_token_exists_init`, `lemma_ray_token_exists_step` | Raymond invariant |
-| R10 | **Raymond critical sections are exclusive** — at most one node is inside at a time | `proofs::raymond::theorem_ray_critical_section_is_exclusive` | Raymond invariant |
-| R11 | **The holder pointers are acyclic** — part of `ray_inv`, preserved by every transition. Both token movers rewrite the same two pointers, so one lemma covers `AssignPrivilege` and `SeizeToken` alike: the new rank is the old one shifted up by one with the new root sent to zero | `proofs::raymond::lemma_frame_acyclic`, `lemma_repoint_acyclic` | Raymond invariant |
-| R12 | **Every node reaches the token by following holder pointers** — which is what makes "requests travel hop-by-hop towards the token" a checked claim. Needs R11: with a non-root cycle beside the real root, a node in the cycle follows its pointers for ever and never arrives | `proofs::raymond::theorem_every_node_reaches_the_token` | Raymond invariant |
+| R9 | **The privilege is never lost** — every Raymond transition leaves `privilege` pointing at a node | `proofs::raymond::lemma_ray_token_exists_init`, `lemma_ray_token_exists_step` | Raymond invariant |
+| R10 | **Raymond critical sections are exclusive — while nobody's belief is stale.** The hypothesis is not a weakening; it is the algorithm's real scope. Raymond's mutual exclusion rests on every node agreeing where the privilege is, and a seizure breaks that until the seized node reconciles | `proofs::raymond::theorem_ray_critical_section_is_exclusive` | Raymond invariant, `ray_no_stale_holders` |
+| R10a | **At most one node is *authorised* to be in its critical section**, with no side conditions: the authorised occupant is the privilege holder, and there is one of those by construction. This is the part of R10 that survives a seizure | `proofs::raymond::theorem_authorised_critical_section_is_exclusive` | Raymond invariant |
+| R13 | **A stale holder confers no authority.** A node that believes it holds the privilege, does not, and may still be inside its critical section, still cannot mutate the actor — `couples` is written against possession, not belief. The routing counterpart of 6b, and what survives imperfect failure detection | `proofs::raymond::theorem_stale_holder_confers_no_authority` | the coupling |
+| R14 | **Reconciliation repairs the belief**: the stale holder drops it, leaves the critical section it thought it was in, and re-points at the real holder | `proofs::raymond::lemma_reconcile_preserves_inv` | Raymond invariant |
+| R11 | **The holder pointers are acyclic** — part of `ray_inv`, preserved by every transition. A handover rewrites two pointers and needs a new rank (the old one shifted up by one, new root at zero); a seizure only makes the new holder point at itself, which *removes* a constraint, so the old rank still works | `proofs::raymond::lemma_frame_acyclic`, `lemma_repoint_acyclic` | Raymond invariant |
+| R12 | **Every node reaches the privilege holder by following holder pointers** — what makes "requests travel hop-by-hop towards the token" a checked claim. Two hypotheses, both load-bearing: R11 says the walk terminates rather than circling, and `ray_no_stale_holders` says it terminates at the real holder rather than at somebody who merely thinks so. The second was free when authority *was* belief; it is not free now, and it should not be — after a seizure a node whose belief-path leads to the seized holder genuinely cannot route to the privilege | `proofs::raymond::theorem_every_node_reaches_the_token` | Raymond invariant, `ray_no_stale_holders` |
 | I | The inductive invariant holds in every reachable state (`init ==> inv`, `inv /\ next ==> inv`) | `proofs::invariant::theorem_reachable_inv` | the model's transition relation |
 | S | **The headline scenario**: `A` owns X@41, a transfer and a crash/recovery occur, `B` owns X@42, `A` returns still holding its epoch-41 token - and cannot perform an authoritative mutation. The postcondition exports the whole nine-step run, so the crash, the recovery and the outcome are the same execution — exported as separate existentials they need not have been, and an ordinary live handover could supply the outcome | `proofs::adversarial::scenario_stale_owner_returns` | `A != B` |
 | S1 | A stale `Grant` cannot resurrect a superseded epoch | `proofs::adversarial::theorem_stale_grant_cannot_be_used` | none |
@@ -233,7 +236,7 @@ verifying, the build fails.
 | S4a | **An interrupted transfer really happens**: the run is exported with its four labels, so the `AbortTransfer` at index 3 interrupts the very `BeginTransfer` at index 2 that opened the transfer, ending at `Unowned(43, A)` with nobody able to mutate at 41 or 42. Without it, S4 stays provable even if `AbortTransfer` were changed to be always false — a conditional lemma about an unreachable transition | `proofs::adversarial::scenario_interrupted_transfer` | `A != B` |
 | S5 | **A fabricated `Released` is inert.** `HandleRevoke` lets any live node manufacture a `Released` from any `Revoke` ever sent, however old. `CompleteRelease` is the only step that consumes one, and it re-reads the actor's current state, so if it fires the actor is `Transferring` right now and the network holds the `Released` naming exactly that handover's `from` and `new_epoch` | `proofs::adversarial::theorem_complete_release_needs_the_matching_released` | none |
 | S6 | **A fabricated `Released` cannot steer a handover.** The resulting epoch is read from the live `Transferring` record, not from the message | `proofs::adversarial::theorem_complete_release_outcome_is_fixed_by_state` | none |
-| R1 | **Raymond: exactly one valid token** - `ray_inv` carries token *existence* as well as uniqueness, so a root is guaranteed rather than merely not-duplicated | `proofs::raymond::theorem_ray_exactly_one_token`, `theorem_ray_at_most_one_token`, preserved by `lemma_ray_step_preserves_inv` | Raymond invariant |
+| R1 | **Raymond: exactly one valid privilege** - now *structural*: `Raymond::privilege` is one node id, so uniqueness needs no invariant. It used to be inductive, and that was exactly what made a returning stale holder unrepresentable | `proofs::raymond::theorem_ray_exactly_one_token`, `theorem_ray_at_most_one_token`, preserved by `lemma_ray_step_preserves_inv` | Raymond invariant |
 | R2 | **Raymond: holder/routing changes cannot manufacture ownership** | `proofs::raymond::theorem_routing_cannot_manufacture_ownership` | Raymond invariant, coupling |
 | R3 | **Raymond: duplicate/reordered requests cannot create a second owner** | `proofs::raymond::theorem_duplicate_requests_are_safe` | Raymond invariant |
 | R4 | **Raymond: token transfer preserves ownership safety** | `proofs::composed::lemma_composed_pass_token_preserves_inv` (and, as a layer-local lemma, `proofs::raymond::theorem_token_transfer_preserves_ownership_safety`) | none — in the composed machine the release-before-transfer condition is a *guard*, not an assumption |
@@ -242,11 +245,11 @@ verifying, the build fails.
 | C0a | (Step-level lemma backing C0) `EnterCs`/`ExitCs` are legal `ComposedStep::Ray` transitions and preserve the composed invariant | `proofs::composed::theorem_composed_admits_critical_section`, `..._exit` | composed invariant holds before the step |
 | C1 | **Non-vacuity**: a complete *voluntary* handover driven through **both** layers is reachable. The contract exports the whole run: `labels == handover_labels(x, a, b)` — ten steps, `BeginTransfer` at 2, `CompleteRelease` at 4, `PassToken` at 8 — plus the `Transferring { a, b, 41, 42 }` state at index 3, since the labels carry no epochs. No other execution satisfies it: the substitutes that satisfied earlier versions were crash takeover, revoking a live `A`, and an unrelated 39 → 40 transfer | `proofs::composed_scenario::scenario_composed_handover` | `A != B` |
 | C2 | **Crash-driven takeover is reachable in the composed machine**: `A` owns X@41 holding the token, crashes and takes no further step; the coordinator burns the epoch; the token is *seized*; `B` ends up owning X@42 and holding the token, with `A`'s epoch-41 token still issued and powerless. The postcondition exports the whole run — eight labels with `Crash(A)` at 2, `RevokeOwner` at 3 and `SeizeToken` at 4, and no `CompleteRelease` anywhere, so a voluntary release before the crash cannot stand in for the revocation | `proofs::composed_scenario::scenario_composed_crash_takeover` | `A != B` |
-| C3 | Seizing the token preserves the coupling and leaves the target holding the one token — safety comes from the epoch being burned first, not from the holder agreeing to let go | `proofs::composed::lemma_composed_seize_preserves_inv`, `proofs::raymond::lemma_seize_preserves_inv` | composed invariant; **the seized node has fail-stopped** (`!live`) — see below |
-| C4 | **Token movement is partitioned by the holder's liveness**: a live holder passes it on, a fail-stopped one is seized from, and no other composed step moves the token at all | `proofs::composed::theorem_token_movement_is_partitioned` | composed invariant |
+| C3 | Seizing the token preserves the coupling and leaves the target holding the one token — safety comes from the epoch being burned first, not from the holder agreeing to let go | `proofs::composed::lemma_composed_seize_preserves_inv`, `proofs::raymond::lemma_seize_preserves_inv` | composed invariant. **No liveness assumption**: the epoch was burned first, so this holds even when the seized node is healthy and was suspected wrongly — see below |
+| C4 | **Privilege movement is partitioned by cooperation**: a holder that acts passes it on, a holder that does not has it taken, and no other composed step moves it at all. This used to be partitioned by *liveness*, which required a guard no coordinator can evaluate | `proofs::composed::theorem_token_movement_is_partitioned` | composed invariant |
 | C5 | The two layers describe the **same cluster**: `ray.nodes == own.nodes` is part of `composed_inv` and `composed_init`. Without it a Raymond root could be a node the ownership layer never heard of, so `!own.live.contains(n)` would hold for it with no `Crash` having happened, and the seizure guard would be satisfied by unmodelled liveness rather than by a fail-stop | `composed::composed_inv`, preserved by `proofs::composed::theorem_composed_step_preserves_inv` | — |
 | P10 | **The node population is constant** — `Crash` and `Recover` move nodes in and out of `live`, never out of `nodes` | `proofs::properties::theorem_node_domain_constant` | none |
-| C6 | **A seized node cannot rejoin `live` while still seized** — `cs_own` refuses `Recover` for it, so the only way back is through `Reconcile`, which makes the reconciliation a real deployment must perform a step an execution has to contain rather than an assumption | `proofs::composed::theorem_seized_node_cannot_recover` | — |
+| C6 | **A seized node cannot rejoin `live` while still seized** — `cs_own` refuses `Recover` for it, so the only way back is through `Reconcile`, which now carries the content the claim always asserted: it is where the stale belief is dropped, by the node that holds it. Backed by `composed_inv`'s "every stale holder owes a reconciliation", which is what makes `seized` mean somethint must perform a step an execution has to contain rather than an assumption | `proofs::composed::theorem_seized_node_cannot_recover` | — |
 | C7 | Reconciliation is **not a dead end**: `A` can be told what happened and then rejoin, holding no token and no authority | `proofs::composed_scenario::scenario_composed_crash_takeover` (third witness) | `A != B` |
 | C | The coupling is an **invariant** of the composed machine: `composed_init ==> composed_inv`, `composed_inv /\ composed_next ==> composed_inv`, hence `composed_reachable ==> composed_inv` | `proofs::composed::theorem_composed_reachable_inv`, `theorem_composed_step_preserves_inv` | the composed transition relation |
 | R6 | A concrete routing execution: request `D → B → A → C[token]`, token `C → A → B → D`, then a twelfth step redelivering `D`'s original request after the token has finished moving. The contract exports the whole run — `tr[0] == routing_init_state(a, b, c, d)` and `labels == routing_labels(a, b, c, d)` — which pins the *path* and not just the endpoints: exactly one `RequestCs`, `D`'s, so each forward is caused by the receive before it. Pinning `r0` alone was not enough, because reachability still admitted `A`, `B` and `D` requesting independently and serving their own queue heads | `proofs::raymond_routing::scenario_request_and_token_routing` | four distinct nodes |
@@ -257,60 +260,124 @@ verifying, the build fails.
 starting from an `init` state ends in `sys`. It is discharged once and for all by
 `theorem_reachable_inv`.
 
-### Token movement is partitioned by liveness
+### Privilege movement is partitioned by cooperation
 
-A live holder hands the token on (`ComposedStep::PassToken`, which requires
-`pre.own.live.contains(n)`); a fail-stopped one has it taken
-(`ComposedStep::SeizeToken`, which requires `!pre.own.live.contains(from)`).
+A holder that acts hands the privilege on (`ComposedStep::PassToken`, which
+requires `pre.own.live.contains(n)` and `believes_holds`); a holder that does
+not has it taken (`ComposedStep::SeizeToken`).
 `proofs::composed::theorem_token_movement_is_partitioned` proves there is no
-third way: routing steps, ownership transitions and acquisition all leave token
-possession exactly as they found it.
+third way: routing steps, ownership transitions, acquisition and reconciliation
+all leave possession exactly as they found it.
 
-The liveness guard on `PassToken` is what makes that step mean what it is
-written as. `ray_assign_privilege` models the holder *acting* — choosing to hand
-the privilege to the head of its queue — and a crashed node cannot act. Adding
-seizure without it would have opened the forcible path while leaving the
-impossible one open beside it.
+The `SeizeToken` arm used to claim `!pre.own.live.contains(m)` as well, because
+seizure was guarded on it. It no longer is, and the arm now says only what is
+true and checkable: the privilege moved away from `m` without `m` taking a step.
+That is the distinction a deployment can act on — a coordinator knows whether
+*it* is forcing the transfer; it does not know whether the node is alive. See
+[Seizure needs no oracle](#seizure-needs-no-oracle-belief-versus-authority).
+
+The liveness guard on `PassToken` stays, and means something different: it is
+not a detection requirement but a statement about who is acting.
+`ray_assign_privilege` models the holder *choosing* to hand the privilege to the
+head of its queue, and a crashed node cannot choose anything.
 
 ### A seized node must reconcile before it returns
 
-`cs_seize_token` rewrites the seized node's `holder` and `using` entries **while
-it is down**, and `Step::Recover`'s contract says a node comes back *with no
-knowledge of what happened meanwhile*. Left alone, recovery would silently
-inherit that rewrite: the model would have the returning node know it had lost
-the token, while the real one would still believe `holder[n] == n` and could
-enter its Raymond critical section beside the new holder. Ownership would stay
-safe — the epoch fences it — but Raymond's critical section has no epoch, which
-is the same asymmetry as above.
+A seizure leaves the seized node's `holder` and `using` entries exactly as they
+were — nobody can reach into a machine that is down — and `Step::Recover`'s
+contract says a node comes back *with no knowledge of what happened meanwhile*.
+So a node that is simply allowed to recover comes back still believing
+`holder[n] == n`, and can enter its Raymond critical section beside the new
+holder. Ownership stays safe, because the epoch fences it; Raymond's critical
+section has no epoch.
 
-So `Composed` carries `seized`, the set of nodes whose routing state was
-rewritten behind their back. `cs_own` refuses `Step::Recover` for a node in it,
-and `ComposedStep::Reconcile` is the only way out. The reconciliation a real
-deployment must perform — re-read the routing state rather than trust what you
-remember — is therefore a **modelled transition** rather than an assumption:
-an execution has to contain it. `scenario_composed_crash_takeover` runs it
-through to `A` rejoining afterwards, so the guard is a discipline rather than an
-unreachable restriction.
+So `Composed` carries `seized`, the set of nodes whose privilege was taken and
+whose belief has not yet been repaired, and `composed_inv` ties it to reality:
+**every stale holder owes a reconciliation**. `cs_own` refuses `Step::Recover`
+for a node in that set, and `ComposedStep::Reconcile` is the only way out.
 
-### Seizure only applies to a crashed node
+The reconciliation a real deployment must perform — re-read the routing state
+rather than trust what you remember — is therefore a **modelled transition**
+with content, not a marker: it is the step in which the belief is dropped, the
+critical section left, and the holder pointer re-aimed at the node that actually
+holds the privilege. `scenario_composed_crash_takeover` runs it through to `A`
+rejoining afterwards, so the guard is a discipline rather than an unreachable
+restriction.
 
-`ComposedStep::SeizeToken` requires `!pre.own.live.contains(from)`, and
-`is_unowned` alone would not be enough.
+It is not guarded on the node being down. Seizure is no longer restricted to
+crashed nodes, so a live node can be left stale by a coordinator that suspected
+it wrongly, and must be able to learn the truth too. What the ordering rule
+still enforces is the crashed case: you cannot come back and start acting on a
+belief you never corrected.
 
-`RevokeOwner` may fire against a perfectly healthy owner — unreliable detection
-is modelled on purpose — so without the liveness guard a seizure could fire
-against a live node that is inside its Raymond critical section. `ray_seize`
-clears `using[from]`, so the model would then report exclusivity while two nodes
-were really inside: the invariant would be preserved by *erasing* the first
-node's execution rather than by anything the protocol does.
+### Seizure needs no oracle: belief versus authority
 
-The asymmetry is the point, and it is worth stating because it marks the edge of
-what epochs buy. Revoking the **ownership record** is safe against a healthy
-node, because the epoch fences it. Seizing the **token** is not, because
-Raymond's critical section has no epoch — there is nothing to fence a node that
-believes it still holds the privilege. So seizure is restricted to fail-stopped
-nodes, where clearing `using` is a fact about the world rather than a modelling
-convenience.
+An earlier version of this model guarded `ComposedStep::SeizeToken` on
+`!pre.own.live.contains(from)`, with this argument: `RevokeOwner` may fire
+against a perfectly healthy owner, so without a liveness guard a seizure could
+fire against a live node inside its Raymond critical section; `ray_seize` clears
+`using[from]`, so the model would report exclusivity while two nodes were really
+inside.
+
+The analysis was right and the conclusion was wrong, twice over.
+
+**It conflated two guarantees.** Ownership safety is fenced by the epoch, which
+is burned *before* the seizure fires, so it never needed the node to be dead.
+Only Raymond's critical-section exclusivity needed anything, and what it needs
+is a condition on the *state* — `ray_no_stale_holders` — not a guard on the
+step. The difference matters: a state condition is something a deployment can
+restore, by reconciling; a step guard is something it must evaluate.
+
+**And `!live` is ground truth, which no coordinator has.** It has a suspicion —
+which is exactly why `RevokeOwner` is modelled as firing against healthy nodes.
+Guarding the forcible path on perfect failure detection put the composed
+machine's strongest theorems out of reach of any real deployment, in a clause
+that read like an ordinary guard.
+
+The repair was the one the ownership layer had already made once. `issued` keeps
+a crashed node's capability for ever and `token_authorized` decides whether it
+still confers anything; the routing layer now makes the same split:
+
+| | physical / believed | authoritative |
+| --- | --- | --- |
+| ownership | `issued` | `token_authorized` |
+| routing | `holder[n]` — state stored *at* `n` | `Raymond::privilege` |
+| predicate | `believes_holds(r, n)` | `has_token(r, n)` |
+
+`ray_seize` now touches only the new holder. `from`'s `holder`, `using` and
+`asked` entries are left exactly as they are, because they live on a machine
+nobody can reach — editing them was modelling something no implementation can
+do. What that creates is a **stale holder**: a node that believes it holds the
+privilege, does not, and may still be inside its critical section believing that
+too.
+
+That state is the point. It could not previously be written down, because
+`ray_unique_token` was an inductive invariant over the holder pointers and the
+state violated it outright — the invariant held partly because the dangerous
+state was unrepresentable, which is the pattern the ownership layer takes such
+care to avoid. Uniqueness is now *structural* (`privilege` is one value), the
+stale state is representable, and `theorem_stale_holder_confers_no_authority`
+proves it inert: `couples` is written against possession, so belief confers
+nothing however firm it is.
+
+Three consequences worth stating plainly:
+
+* **`cs_seize_token` has no liveness guard at all.** Ownership safety survives
+  seizure from a node that is perfectly healthy and wrongly suspected, which is
+  the case a deployment will actually hit.
+* **Raymond's mutual exclusion has a window.** Between a seizure and the seized
+  node's reconciliation, two nodes can be inside their critical sections. That
+  is true of any system that takes a privilege away from a node it cannot reach,
+  and the model now says so instead of hiding it.
+* **`cs_reconcile` acquired its content.** It used to remove a marker and change
+  nothing else; the work it claimed to model had already been done at seizure
+  time, by the coordinator, to a node it could not talk to. Now it is where the
+  belief is dropped — by the node that holds it.
+
+Chubby reaches the same place from the other direction: a sequencer's validity
+is checked "against the server's Chubby cache or ... the most recent sequencer
+that the server has observed", which is belief checked against authority. See
+[Relation to Chubby](#relation-to-chubby).
 
 ### A node cannot fence itself
 

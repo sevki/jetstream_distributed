@@ -1,0 +1,191 @@
+name: verify
+
+on:
+  # Pull requests cover branch work; restricting `push` to the default branch
+  # avoids running the whole suite twice for every commit on a PR branch.
+  push:
+    branches: [main]
+  pull_request:
+
+# Supersede in-flight runs for the same ref rather than letting them compete
+# for runners: the proof check is long enough that stacked runs were being
+# reclaimed mid-verification.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# A PR fails if any proof in this repository stops verifying.
+jobs:
+  verus:
+    name: Verus proof check
+    runs-on: ubuntu-24.04
+    # Bound the job: a hung verification is a CI defect in its own right, and a
+    # timeout gives a reportable failure instead of a runner that vanishes.
+    timeout-minutes: 15
+    env:
+      # Pinned Verus release. The Rust toolchain below must be the one this
+      # release was built against (see rust-toolchain.toml).
+      VERUS_VERSION: 0.2026.09.13.671956e
+      VERUS_TOOLCHAIN: 1.98.1-x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Rust toolchain Verus was built against
+        run: |
+          rustup toolchain install "$VERUS_TOOLCHAIN" \
+            --component rustc-dev,llvm-tools,rust-std,cargo,rustfmt
+
+      - name: Restore the Verus release from cache
+        id: verus-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/verus
+          key: verus-${{ env.VERUS_VERSION }}-x86-linux
+
+      - name: Download Verus
+        if: steps.verus-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euxo pipefail
+          url="https://github.com/verus-lang/verus/releases/download/release%2F${VERUS_VERSION}/verus-${VERUS_VERSION}-x86-linux.zip"
+          curl --fail --location --silent --show-error -o /tmp/verus.zip "$url"
+          unzip -q /tmp/verus.zip -d /tmp/verus-unpacked
+          mv /tmp/verus-unpacked/verus-x86-linux "$HOME/verus"
+          chmod +x "$HOME/verus/verus" "$HOME/verus/rust_verify" "$HOME/verus/z3" "$HOME/verus/cargo-verus"
+
+      # Saved unconditionally so that a run whose proofs failed still primes the
+      # cache for the next attempt.
+      - name: Save the Verus release to cache
+        if: steps.verus-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/verus
+          key: verus-${{ env.VERUS_VERSION }}-x86-linux
+
+      - name: Put Verus on PATH
+        run: echo "$HOME/verus" >> "$GITHUB_PATH"
+
+      - name: Report Verus version
+        run: verus --version
+
+      # `--profile` is a diagnostic, not a behaviour change: it only reports on
+      # functions that exceed the solver's resource limit, naming the quantifiers
+      # being instantiated. It costs nothing when everything verifies.
+      #
+      # `set -euo pipefail` is written out rather than left to the runner's
+      # default `bash -e`: the exit status of the verifier is the whole point of
+      # this step, and it should not depend on an implicit property of the
+      # environment. The explicit check on the summary is defence in depth on
+      # top of that - a verifier that ever reported errors while exiting 0 would
+      # otherwise pass silently.
+      - name: Verify all proofs
+        run: |
+          set -euo pipefail
+          verus --crate-type=lib src/lib.rs --triggers-mode silent --profile \
+            | tee /tmp/verus-output.txt
+
+          summary=$(grep -E '^verification results' /tmp/verus-output.txt || true)
+          if [ -z "$summary" ]; then
+            echo "::error::verus produced no verification summary"
+            exit 1
+          fi
+          echo "$summary" >> "$GITHUB_STEP_SUMMARY"
+
+          # `[^0-9]0 errors` so that "10 errors" cannot satisfy "0 errors".
+          if ! printf '%s\n' "$summary" | grep -qE '(^|[^0-9])0 errors'; then
+            echo "::error::verification summary reports errors: $summary"
+            exit 1
+          fi
+
+      # The README claims the proofs use no escape hatches. Enforce that claim.
+      # `axiom` is matched as a whole word because Verus really does have a
+      # `pub broadcast axiom fn ...` declaration form, which would otherwise let
+      # an undischarged assumption underpin a "verified" theorem. Whole-word
+      # matching leaves vstd's `axiom_*` lemma names alone, but it does mean
+      # prose in `src/` must not use the bare word.
+      - name: Reject verification escape hatches
+        run: |
+          set -euo pipefail
+          pattern='(^|[^A-Za-z0-9_])(assume|admit)[[:space:]]*\(|(^|[^A-Za-z0-9_])axiom([^A-Za-z0-9_]|$)|external_body|assume_specification|verifier::external'
+          if grep -rnE "$pattern" src/; then
+            echo "::error::found a verification escape hatch in src/"
+            exit 1
+          fi
+          echo "no escape hatches found"
+
+  # The crate is also a normal Cargo package. This job verifies it through the
+  # Cargo entry point, against the `vstd` version pinned in Cargo.toml rather
+  # than the prebuilt one inside the Verus release - so the pin is checked, and
+  # the Cargo entry point is not an untested claim.
+  cargo-verus:
+    name: cargo verus verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      VERUS_VERSION: 0.2026.09.13.671956e
+      VERUS_TOOLCHAIN: 1.98.1-x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Rust toolchain Verus was built against
+        run: |
+          rustup toolchain install "$VERUS_TOOLCHAIN" \
+            --component rustc-dev,llvm-tools,rust-std,cargo,rustfmt
+
+      - name: Restore the Verus release from cache
+        id: verus-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/verus
+          key: verus-${{ env.VERUS_VERSION }}-x86-linux
+
+      - name: Download Verus
+        if: steps.verus-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euxo pipefail
+          url="https://github.com/verus-lang/verus/releases/download/release%2F${VERUS_VERSION}/verus-${VERUS_VERSION}-x86-linux.zip"
+          curl --fail --location --silent --show-error -o /tmp/verus.zip "$url"
+          unzip -q /tmp/verus.zip -d /tmp/verus-unpacked
+          mv /tmp/verus-unpacked/verus-x86-linux "$HOME/verus"
+          chmod +x "$HOME/verus/verus" "$HOME/verus/rust_verify" "$HOME/verus/z3" "$HOME/verus/cargo-verus"
+
+      - name: Put Verus on PATH
+        run: echo "$HOME/verus" >> "$GITHUB_PATH"
+
+      # `cargo verus verify` only verifies crates that opt in via
+      # `[package.metadata.verus] verify = true`. Without that it builds this
+      # crate with ordinary rustc, verifies `vstd` alone, prints *vstd's*
+      # `verification results` line and exits 0 - a false green that a naive
+      # grep for the summary does not catch, because the summary is there.
+      #
+      # So the check is positional: a verification summary has to appear after
+      # the line where Cargo starts compiling this crate. vstd's summary is
+      # emitted before that point and cannot satisfy it.
+      - name: Verify through cargo-verus
+        run: |
+          set -euo pipefail
+          cargo verus verify 2>&1 | tee /tmp/cargo-verus.txt
+
+          if grep -q 'did not find any crates that opted into verification' /tmp/cargo-verus.txt; then
+            echo "::error::cargo verus verified nothing in this crate - is [package.metadata.verus] verify = true still in Cargo.toml?"
+            exit 1
+          fi
+
+          # `|| true` so that a missing line reaches the diagnostic below rather
+          # than aborting the step under `set -e` with no explanation.
+          start=$(grep -n 'Checking distributed-ownership' /tmp/cargo-verus.txt | tail -1 | cut -d: -f1 || true)
+          if [ -z "$start" ]; then
+            echo "::error::cargo verus never compiled this crate, so it cannot have verified it"
+            exit 1
+          fi
+
+          summary=$(awk -v n="$start" 'NR > n && /verification results/' /tmp/cargo-verus.txt)
+          if [ -z "$summary" ]; then
+            echo "::error::no verification summary for this crate - cargo verus built it without verifying it"
+            exit 1
+          fi
+          echo "$summary" >> "$GITHUB_STEP_SUMMARY"
+
+          if ! printf '%s\n' "$summary" | grep -qE '(^|[^0-9])0 errors'; then
+            echo "::error::this crate's verification summary reports errors: $summary"
+            exit 1
+          fi

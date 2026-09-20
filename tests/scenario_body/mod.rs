@@ -222,7 +222,16 @@ impl Coord {
     pub fn handle(&mut self, line: &str, peer: Option<u64>) -> String {
         let mut parts = line.split_whitespace();
         let verb = parts.next().unwrap_or("");
-        let args: Vec<u64> = parts.filter_map(|p| p.parse().ok()).collect();
+        // Every field parses or the line is malformed. `filter_map` quietly
+        // *dropped* what it could not parse, which turns a bad request into a
+        // shorter good one: `POLL junk 0` became `POLL 0`, and after a grant
+        // `ACQUIRE 0 junk 41` became `ACQUIRE 0 41`. The raw-line boundary
+        // exists precisely to accept what the generator cannot express, and it
+        // was sanitising it on the way in.
+        let Some(args) = parts.map(|p| p.parse::<u64>().ok()).collect::<Option<Vec<u64>>>()
+        else {
+            return "ERR".to_string();
+        };
 
         // Who a request claims to be from is a field in the line. Who it is
         // actually from is the connection it arrived on, and the registry has
@@ -237,10 +246,17 @@ impl Coord {
         // protocol, where any reachable client could send `BEGIN 0 2` while
         // node 0 was partitioned away and the partition would protect nothing.
         //
-        // `FORCE` is deliberately exempt: `tr_revoke_owner` makes no node act,
-        // so there is no sender to authenticate. It is the registry's own
-        // decision about a node it has given up on, which is the whole point of
-        // the forcible path.
+        // `FORCE` is the one verb no node may send, and the reasoning that
+        // first exempted it was half right. `tr_revoke_owner` makes no node
+        // act — so there is nobody to authenticate *as* — but that means the
+        // registry's own control path may initiate it, not that anything
+        // reachable may. Left open, a node could sit in a loop revoking
+        // whoever legitimately held the actor. The driver stands in for the
+        // registry here, so `FORCE` requires a connection that is not a node's.
+        if verb == "FORCE" && peer.is_some() {
+            return "NO".to_string();
+        }
+
         let claimed = match (verb, args.as_slice()) {
             ("POLL", [node])
             | ("ACQUIRE", [node, _])
@@ -1030,8 +1046,20 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
     // overwrote the pending transfer. The whole sequence passed.
     let mut owner_at: HashMap<u64, u64> = HashMap::new();
     let mut pending: Option<(u64, u64)> = None;
+    let mut owned = false;
     for ev in log {
         match ev {
+            // `tr_issue_grant` applies to `Unowned` only, and the phase gate
+            // covered `Transferring` and not `Owned` — so a second offer after
+            // the actor had been taken passed, and `POLL`'s `Owned::Unowned`
+            // arm could have been weakened with the suite still green. Half a
+            // phase is the same mistake as half a conjunct.
+            Event::Granted { epoch, .. } if owned => {
+                return Err(format!(
+                    "claim 4 (transfer): the registry offered epoch {epoch} \
+                     while the actor was already held"
+                ));
+            }
             Event::Granted { epoch, .. } if pending.is_some() => {
                 return Err(format!(
                     "claim 4 (transfer): the registry offered epoch {epoch} while \
@@ -1039,6 +1067,7 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
                 ));
             }
             Event::Acquired { node, epoch } => {
+                owned = true;
                 if pending.is_some() {
                     return Err(format!(
                         "claim 4 (transfer): node {node} acquired epoch {epoch} \
@@ -1066,6 +1095,7 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
                          actor to itself at epoch {from_epoch}"
                     ));
                 }
+                owned = false;
                 pending = Some((outgoing, *to_epoch));
             }
             // A forced burn supersedes a transfer, and `tr_abort_transfer`
@@ -1084,6 +1114,7 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
                         ));
                     }
                 }
+                owned = false;
                 pending = None;
             }
             // A revoke names the node the actor is being taken from, and the

@@ -851,8 +851,8 @@ fn the_registry_believes_the_connection_not_the_request() {
     // The owner itself is unaffected, so the refusals are about the sender.
     assert_eq!(coord.handle("BEGIN 0 1", Some(0)), "OK");
 
-    // And the registry's own decision needs no sender: `tr_revoke_owner` makes
-    // no node act.
+    // And the registry's own control path still works — see
+    // `the_registry_refuses_a_forced_revoke_sent_by_a_node` for the other half.
     assert_eq!(coord.handle("FORCE 2", None), "OK");
 }
 
@@ -878,6 +878,87 @@ fn the_registry_refuses_an_acquire_it_never_offered() {
 
     // The same request, once the offer exists.
     assert_eq!(coord.handle("POLL 0", Some(0)), format!("GRANT {INITIAL_EPOCH}"));
+    assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}"), Some(0)), "OK");
+}
+
+/// The registry refuses a `FORCE` sent by a node.
+///
+/// I exempted `FORCE` from sender authentication on the grounds that
+/// `tr_revoke_owner` makes no node act — and flagged it in review as something
+/// I believed but wanted challenged. It was half right. No node actor means
+/// there is nobody to authenticate *as*, so the registry's own control path may
+/// initiate it; it does not mean anything reachable may. Left open, a node
+/// could sit in a loop revoking whoever legitimately held the actor.
+#[test]
+fn the_registry_refuses_a_forced_revoke_sent_by_a_node() {
+    let mut coord = Coord::new(true);
+    assert_eq!(coord.handle("POLL 0", Some(0)), format!("GRANT {INITIAL_EPOCH}"));
+    assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}"), Some(0)), "OK");
+
+    assert_eq!(
+        coord.handle("FORCE 1", Some(2)),
+        "NO",
+        "a node must not be able to revoke another node's ownership"
+    );
+    assert_eq!(
+        coord.handle("FORCE 1", Some(0)),
+        "NO",
+        "nor may the owner revoke itself through the forcible path"
+    );
+
+    // The registry's own control path still can.
+    assert_eq!(coord.handle("FORCE 1", None), "OK");
+}
+
+/// The registry does not offer an actor that is already held.
+///
+/// `tr_issue_grant` applies to `Unowned` only. The oracle's phase gate covered
+/// `Transferring` and not `Owned`, so a second offer after the actor had been
+/// taken passed — and `POLL`'s `Owned::Unowned` arm could have been weakened
+/// with the suite still green. Half a phase is the same mistake as half a
+/// conjunct.
+#[test]
+fn the_registry_does_not_offer_an_actor_that_is_held() {
+    let mut coord = Coord::new(true);
+    assert_eq!(coord.handle("POLL 0", Some(0)), format!("GRANT {INITIAL_EPOCH}"));
+    assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}"), Some(0)), "OK");
+
+    assert_eq!(
+        coord.handle("POLL 0", Some(0)),
+        "NONE",
+        "the owner is not offered what it already holds"
+    );
+}
+
+/// A line with a field that is not a number is malformed, not shorter.
+///
+/// Parsing with `filter_map` dropped what it could not parse, which turns a bad
+/// request into a good one with fewer fields: `POLL junk 0` became `POLL 0`,
+/// and after a grant `ACQUIRE 0 junk 41` became `ACQUIRE 0 41`. The raw-line
+/// boundary exists to accept what the generator cannot express, and it was
+/// sanitising its input on the way in.
+#[test]
+fn the_registry_refuses_a_line_with_an_unparseable_field() {
+    let mut coord = Coord::new(true);
+
+    assert_eq!(
+        coord.handle("POLL junk 0", Some(0)),
+        "ERR",
+        "a poll with a junk field is not a poll for node 0"
+    );
+    assert_eq!(coord.handle("POLL 0", Some(0)), format!("GRANT {INITIAL_EPOCH}"));
+    assert_eq!(
+        coord.handle(&format!("ACQUIRE 0 junk {INITIAL_EPOCH}"), Some(0)),
+        "ERR",
+        "nor is an acquire with one an acquire at that epoch"
+    );
+    assert_eq!(
+        coord.handle("FORCE junk", None),
+        "ERR",
+        "and a state-changing line is no exception"
+    );
+
+    // The registry is untouched by any of them.
     assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}"), Some(0)), "OK");
 }
 

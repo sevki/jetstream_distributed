@@ -693,6 +693,7 @@ runtime oracles over the coordinator's audit log:
 | two accepted writes at the same epoch came from the same node | claim 1, exclusive mutable ownership |
 | every burn strictly increases the epoch, and never below the high-water mark | claim 5, epoch monotonicity |
 | two acquires of one epoch name one node | P5 / P6, ownership at an epoch is final |
+| a handover goes to another node, and its release comes from the node that agreed to it | claim 4, transfer safety |
 | no write below a burned epoch is ever accepted | claims 2 / 3, stale-owner fencing |
 | every acquire is by the node the registry offered the actor to, at an epoch it was actually offered | P8 at the grant, no authority without a capability |
 | every accepted write is backed by an earlier acquire of that exact `(node, epoch)` | P8 at the token, no authority without a capability |

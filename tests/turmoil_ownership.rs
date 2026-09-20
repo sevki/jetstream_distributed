@@ -958,6 +958,75 @@ fn oracles_reject_an_offer_to_a_node_the_actor_is_not_held_for() {
     );
 }
 
+/// A node handing the actor to itself is rejected.
+///
+/// `tr_begin_transfer` requires `from != to`. The coordinator guards it, and
+/// until this check existed deleting that guard changed nothing any test could
+/// see — the log records a well-formed burn either way.
+#[test]
+fn oracles_reject_a_node_handing_the_actor_to_itself() {
+    let log = vec![
+        Event::Granted { node: 0, epoch: 41 },
+        Event::Acquired { node: 0, epoch: 41 },
+        Event::EpochBurned { from_epoch: 41, to_epoch: 42, next: 0, forced: false },
+    ];
+
+    let Err(message) = check_invariants(&log) else {
+        panic!("the oracles accepted a handover from a node to itself: {log:?}");
+    };
+    assert!(
+        message.contains("claim 4"),
+        "expected the transfer oracle to be the one that fired, got: {message}"
+    );
+    println!("oracles rejected the self-handover: {message}");
+}
+
+/// A release from a node that was not handing the actor over is rejected.
+///
+/// `tr_complete_release` binds `from` from the current `Transferring`, so the
+/// acknowledgement belongs to the outgoing owner. Nothing correlated the two:
+/// a release credited to a bystander completed the transfer just as well.
+#[test]
+fn oracles_reject_a_release_from_a_node_outside_the_transfer() {
+    let log = vec![
+        Event::Granted { node: 0, epoch: 41 },
+        Event::Acquired { node: 0, epoch: 41 },
+        Event::EpochBurned { from_epoch: 41, to_epoch: 42, next: 1, forced: false },
+        // Node 2 is neither the outgoing owner nor the target.
+        Event::Released { node: 2, new_epoch: 42 },
+    ];
+
+    let Err(message) = check_invariants(&log) else {
+        panic!("the oracles accepted a release from a node outside the transfer: {log:?}");
+    };
+    assert!(
+        message.contains("claim 4"),
+        "expected the transfer oracle to be the one that fired, got: {message}"
+    );
+}
+
+/// The same handover, released by the node that agreed to it, is fine.
+///
+/// The paired accept for both rejections above: it differs from the first in
+/// the successor and from the second in the releasing node.
+#[test]
+fn oracles_accept_a_handover_released_by_its_outgoing_owner() {
+    let log = vec![
+        Event::Granted { node: 0, epoch: 41 },
+        Event::Acquired { node: 0, epoch: 41 },
+        Event::EpochBurned { from_epoch: 41, to_epoch: 42, next: 1, forced: false },
+        Event::Released { node: 0, new_epoch: 42 },
+        Event::Granted { node: 1, epoch: 42 },
+        Event::Acquired { node: 1, epoch: 42 },
+    ];
+
+    assert!(
+        check_invariants(&log).is_ok(),
+        "a cooperative handover completed by the node that agreed to it is the \
+         ordinary path and must be accepted: {log:?}"
+    );
+}
+
 /// A write with no acquire behind it is rejected — P8, with a witness.
 ///
 /// P8 checks that an acquire for this exact `(node, epoch)` came earlier. It

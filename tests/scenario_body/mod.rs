@@ -887,6 +887,61 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
         }
     }
 
+    // Claim 4 — transfer safety. A handover goes to somebody else, and the
+    // release that completes it comes from the node it is taking the actor
+    // from, naming the transfer actually in flight.
+    //
+    // The last two items of the audit that followed @codex's acquire findings,
+    // and the same shape as the rest: `tr_begin_transfer` requires
+    // `from != to`, `tr_complete_release` binds `from` and `new_epoch` from the
+    // current `Transferring`, and nothing here correlated either. A node could
+    // hand the actor to itself, and a release could be credited to a node that
+    // was never part of the transfer, without any oracle objecting.
+    //
+    // The outgoing owner is not in the log directly; it is the node that
+    // acquired the epoch being burned, which is the same thing. A cooperative
+    // burn from an epoch nobody acquired is itself a violation — `BEGIN`
+    // requires `Owned` — so it is reported rather than skipped.
+    //
+    // A forced burn clears the pending transfer, because `tr_abort_transfer`
+    // and `tr_revoke_owner` supersede it: a release arriving afterwards is
+    // acknowledging something that no longer exists.
+    let mut owner_at: HashMap<u64, u64> = HashMap::new();
+    let mut pending: Option<(u64, u64)> = None;
+    for ev in log {
+        match ev {
+            Event::Acquired { node, epoch } => {
+                owner_at.insert(*epoch, *node);
+            }
+            Event::EpochBurned { from_epoch, to_epoch, next, forced: false } => {
+                let Some(outgoing) = owner_at.get(from_epoch).copied() else {
+                    return Err(format!(
+                        "claim 4 (transfer): a handover was agreed at epoch \
+                         {from_epoch}, which nobody owns"
+                    ));
+                };
+                if *next == outgoing {
+                    return Err(format!(
+                        "claim 4 (transfer): node {outgoing} agreed to hand the \
+                         actor to itself at epoch {from_epoch}"
+                    ));
+                }
+                pending = Some((outgoing, *to_epoch));
+            }
+            Event::EpochBurned { .. } => pending = None,
+            Event::Released { node, new_epoch } => {
+                if pending != Some((*node, *new_epoch)) {
+                    return Err(format!(
+                        "claim 4 (transfer): node {node} released at epoch \
+                         {new_epoch}, but the transfer in flight is {pending:?}"
+                    ));
+                }
+                pending = None;
+            }
+            _ => {}
+        }
+    }
+
     // Claims 2 and 3 — stale-owner fencing. Once the registry has burned
     // forward to an epoch, no write below it may ever be accepted again.
     //

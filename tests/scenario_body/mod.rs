@@ -819,11 +819,15 @@ impl Lcg {
 // The oracles
 // ---------------------------------------------------------------------------
 
-/// Two kinds of guard this function cannot witness, and where they are checked
+/// The guards this function cannot witness, and where they are checked
 /// instead.
 ///
-/// An oracle here reads the audit log, so it can only see a guard whose
-/// violation changes what gets logged. Two do not.
+/// There are two reasons an oracle here misses a guard, and they are
+/// different problems with the same remedy.
+///
+/// **The log does not record the difference.** An oracle reads the audit log,
+/// so it can only see a guard whose violation changes what gets written. Two
+/// do not.
 ///
 /// `ACQUIRE` requires the epoch a node quotes to match the registry's, and the
 /// handler logs the epoch it *acquired* — so a request naming any epoch at all
@@ -842,6 +846,22 @@ impl Lcg {
 /// `the_registry_does_not_offer_the_actor_to_a_bystander`. The log is the wrong
 /// instrument for a guard about the request rather than the result; the
 /// protocol boundary is the right one.
+///
+/// **Nothing ever sends the request.** The larger category, and the one that
+/// has produced the most findings. The oracle would see the violation, but no
+/// scenario can produce it: `Action::from_pair` generates only well-formed
+/// requests, and a named story drives the same node agent, which sends what a
+/// correct node would send. A guard against a request the alphabet cannot
+/// express is unreachable however many seeds the walk counts through — a
+/// handover to the sender itself, a write against somebody else's live epoch,
+/// a release from the node receiving the actor rather than the one giving it
+/// up, a successor that is not a node, a `FORCE` from a node, a line that does
+/// not parse. Every one of those had to be reached by hand.
+///
+/// The general lesson is that a search is bounded by its generator and says
+/// nothing whatever about what the generator cannot say. Both categories are
+/// covered the same way: construct the request at the protocol boundary and
+/// assert the refusal, rather than hoping a scenario wanders into it.
 ///
 /// Check the model's theorems against what the coordinator actually did.
 ///

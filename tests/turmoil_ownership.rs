@@ -1803,3 +1803,135 @@ fn oracles_catch_an_overfencing_coordinator() {
     );
     println!("oracles rejected the over-fenced run: {message}");
 }
+
+// ---------------------------------------------------------------------------
+// Guards that only the raw protocol can reach, round two
+// ---------------------------------------------------------------------------
+//
+// Three more of the same shape, and the shape is worth restating because it
+// keeps producing findings: the generated actions are all well-formed, so a
+// guard against a request the generator cannot express is invisible to the
+// seed walk however long it runs. A named story does not help either — it
+// drives the same node agent, which sends what a correct node would send. Only
+// a raw line reaches these.
+
+/// A handover to the owner itself is refused.
+///
+/// `tr_begin_transfer` requires `from != to`. `Action::from_pair` builds
+/// handovers with distinct endpoints by construction, so no generated scenario
+/// has ever sent `BEGIN 0 0`, and `oracles_reject_a_node_handing_the_actor_to
+/// _itself` audits a hand-built log rather than this handler. Between them the
+/// `owner != *to` conjunct could have been deleted with the whole suite green.
+#[test]
+fn the_registry_refuses_a_handover_to_the_owner_itself() {
+    let mut coord = Coord::new(Fence::Checked);
+    assert_eq!(coord.handle("POLL 0", Peer::Node(0)), format!("GRANT {INITIAL_EPOCH}"));
+    assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}"), Peer::Node(0)), "OK");
+
+    assert_eq!(
+        coord.handle("BEGIN 0 0", Peer::Node(0)),
+        "NO",
+        "a node cannot agree to hand the actor to itself: there is no such \
+         transition, and the epoch it would burn buys nothing"
+    );
+
+    // Nothing moved: node 0 still owns the actor at the same epoch.
+    assert_eq!(
+        coord.handle(&format!("WRITE 0 {INITIAL_EPOCH}"), Peer::Node(0)),
+        "OK 1",
+        "a refused handover must not have burned the epoch out from under the \
+         owner"
+    );
+    // And the refusal is about the successor, not about handovers: a real one
+    // from the same node in the same state is accepted.
+    assert_eq!(coord.handle("BEGIN 0 1", Peer::Node(0)), "OK");
+}
+
+/// A write from a node that does not hold the actor is fenced.
+///
+/// The first half of `can_mutate`'s owner check. Every generated `Write` uses
+/// the sending node's own stored guard, so a node writing against somebody
+/// else's live epoch is not something the alphabet can say. The stale-owner
+/// stories change the owner *and* the epoch together, and
+/// `run_scenario_unfenced` removes the whole predicate — so nothing isolated
+/// this conjunct. `the_registry_believes_the_connection_not_the_request`
+/// rejects the spoof earlier, at the peer check, and never reaches here.
+#[test]
+fn the_registry_fences_a_write_from_a_node_that_does_not_hold_the_actor() {
+    let mut coord = Coord::new(Fence::Checked);
+    assert_eq!(coord.handle("POLL 0", Peer::Node(0)), format!("GRANT {INITIAL_EPOCH}"));
+    assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}"), Peer::Node(0)), "OK");
+
+    // Node 1 names the epoch that is genuinely current. The epoch is right and
+    // the node is wrong, which is the half being isolated: it is sent from
+    // node 1's own connection, so the peer check has nothing to object to.
+    assert_eq!(
+        coord.handle(&format!("WRITE 1 {INITIAL_EPOCH}"), Peer::Node(1)),
+        "FENCED",
+        "the current epoch is not a capability by itself — it has to be held \
+         by the node presenting it"
+    );
+
+    // The real owner is unaffected, so the refusal above is about node 1 and
+    // not about the registry having moved on.
+    assert_eq!(coord.handle(&format!("WRITE 0 {INITIAL_EPOCH}"), Peer::Node(0)), "OK 1");
+}
+
+/// A write quoting an epoch the owner does not hold is fenced.
+///
+/// The other half, isolated the same way: right node, wrong epoch. A node
+/// agent only ever quotes the epoch in its own guard, so this one is equally
+/// unreachable from the action alphabet.
+#[test]
+fn the_registry_fences_a_write_quoting_an_epoch_the_owner_does_not_hold() {
+    let mut coord = Coord::new(Fence::Checked);
+    assert_eq!(coord.handle("POLL 0", Peer::Node(0)), format!("GRANT {INITIAL_EPOCH}"));
+    assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}"), Peer::Node(0)), "OK");
+
+    // An epoch the registry has never been at. Owning the actor is not a
+    // licence to name any epoch.
+    assert_eq!(
+        coord.handle(&format!("WRITE 0 {}", INITIAL_EPOCH + 1), Peer::Node(0)),
+        "FENCED",
+        "the owner may write at the epoch it holds and at no other"
+    );
+
+    assert_eq!(coord.handle(&format!("WRITE 0 {INITIAL_EPOCH}"), Peer::Node(0)), "OK 1");
+}
+
+/// A release from a node that is not the one handing the actor over is refused.
+///
+/// `tr_complete_release` binds `from` from the current `Transferring`, and the
+/// handler checks both halves — `from == *node` and `new_epoch == *epoch`. Only
+/// the epoch half was pinned here:
+/// `a_release_for_an_earlier_transfer_does_not_complete_a_later_one` replays a
+/// stale epoch from the correct node. A generated `Release` cannot reach the
+/// node half at all, because only the node that received `REVOKE` has a
+/// pending revoke to acknowledge, so a bystander sends nothing.
+#[test]
+fn the_registry_refuses_a_release_from_a_node_outside_the_transfer() {
+    let mut coord = Coord::new(Fence::Checked);
+    let new_epoch = INITIAL_EPOCH + 1;
+    assert_eq!(coord.handle("POLL 0", Peer::Node(0)), format!("GRANT {INITIAL_EPOCH}"));
+    assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}"), Peer::Node(0)), "OK");
+    // The actor is being taken from node 0 and given to node 1.
+    assert_eq!(coord.handle("BEGIN 0 1", Peer::Node(0)), "OK");
+
+    // Node 1 is the *target* of this transfer, not the node standing down, and
+    // it names the transfer's own epoch — so the epoch half of the guard has
+    // no objection and only the node half can refuse this.
+    assert_eq!(
+        coord.handle(&format!("RELEASE 1 {new_epoch}"), Peer::Node(1)),
+        "NO",
+        "the acknowledgement belongs to the node handing the actor over; the \
+         successor cannot complete the transfer on its behalf"
+    );
+
+    // The transfer is still in flight, so the refusal cost nothing: the node
+    // that actually agreed to it can still finish it.
+    assert_eq!(
+        coord.handle(&format!("RELEASE 0 {new_epoch}"), Peer::Node(0)),
+        "OK",
+        "the outgoing owner's own release must still complete the transfer"
+    );
+}

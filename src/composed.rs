@@ -138,21 +138,34 @@ pub open spec fn cs_own(pre: Composed, post: Composed, s: Step) -> bool {
 /// while `Transferring` either - but it would not be the
 /// release-before-transfer discipline this module claims to enforce.
 ///
-/// The second guard, `pre.own.live.contains(n)`, is what makes this step mean
-/// what it is written as. `ray_assign_privilege` models the holder *acting* -
-/// choosing to hand the privilege to the head of its queue - and a crashed node
-/// cannot act. Without it, a dead node could still voluntarily pass the token,
-/// which is exactly the cooperation [`cs_seize_token`] exists to avoid needing;
-/// adding seizure without this guard would have opened the forcible path while
-/// leaving the impossible one open beside it.
+/// The liveness guards are what make this step mean what it is written as.
+/// `ray_assign_privilege` models *both* nodes acting - the holder choosing to
+/// hand the privilege to the head of its queue, and the head receiving it - and
+/// a crashed node cannot act. Without the guard on `n`, a dead node could still
+/// voluntarily pass the privilege, which is exactly the cooperation
+/// [`cs_seize_token`] exists to avoid needing; without the guard on `head`, the
+/// step would install a belief in a node that cannot receive it.
 ///
-/// Together the two transitions partition token movement by the holder's
-/// liveness: a live holder passes, a crashed one is seized from, and
+/// Together the two transitions partition privilege movement by whether the
+/// holder acts: a cooperating holder passes, an uncooperative one is seized
+/// from, and
 /// `proofs::composed::theorem_token_movement_is_partitioned` proves there is no
 /// third way.
 pub open spec fn cs_pass_token(pre: Composed, post: Composed, n: NodeId, head: NodeId) -> bool {
     &&& is_unowned(pre.own.actors[pre.actor])
+    // Both nodes must be live, because `ray_assign_privilege` has both of them
+    // act: `n` chooses to pass the privilege on and rewrites its own belief,
+    // and `head` receives it and records `holder[head] := head`. Without the
+    // second guard the step installs a belief in a node that may have crashed
+    // after its request arrived - the same unreachable-memory move that
+    // [`cs_seize_token`] no longer makes for the old holder - and a later
+    // `Recover(head)` would frame it in, so the node would be modelled as
+    // knowing about an event it could not have observed.
+    //
+    // See the note on [`cs_seize_token`] for why these guards are not the
+    // oracle that `!live` was.
     &&& pre.own.live.contains(n)
+    &&& pre.own.live.contains(head)
     &&& ray_assign_privilege(pre.ray, post.ray, n, head)
     &&& post.own == pre.own
     &&& post.actor == pre.actor
@@ -199,8 +212,24 @@ pub open spec fn cs_pass_token(pre: Composed, post: Composed, n: NodeId, head: N
 /// anything belonging to `from`, so the state it creates - a stale holder,
 /// possibly still inside its critical section - is representable and proved
 /// inert rather than excluded.
+///
+/// **`to` must be live, and that is not the same kind of guard.** The step
+/// writes `holder[to] := to`, which is memory at `to`, so `to` is one of the
+/// nodes *acting*: the coordinator hands it the privilege and it records that.
+/// A liveness guard on a node that acts in the step is a statement about who
+/// takes part, not a detection requirement - nobody has to determine that `to`
+/// is up, because if it is not, the exchange simply does not happen. A liveness
+/// guard on a node that does *not* act, which is what `!live(from)` was, is an
+/// oracle, because something has to evaluate it before the step may fire.
+///
+/// That is the rule the whole file now follows: **liveness may guard the nodes
+/// a step makes act, and may not guard the ones it does not.** Under it,
+/// `cs_pass_token` guards both `n` and `head`, this step guards `to` and says
+/// nothing about `from`, and `cs_reconcile` guards nobody - a node repairing
+/// its own belief is acting by definition.
 pub open spec fn cs_seize_token(pre: Composed, post: Composed, from: NodeId, to: NodeId) -> bool {
     &&& is_unowned(pre.own.actors[pre.actor])
+    &&& pre.own.live.contains(to)
     &&& ray_seize(pre.ray, post.ray, from, to)
     &&& post.own == pre.own
     &&& post.actor == pre.actor

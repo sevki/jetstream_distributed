@@ -360,6 +360,32 @@ stale state is representable, and `theorem_stale_holder_confers_no_authority`
 proves it inert: `couples` is written against possession, so belief confers
 nothing however firm it is.
 
+**The rule this leaves behind.** Not all liveness guards are oracles, and the
+difference is which node the step makes *act*:
+
+> **Liveness may guard the nodes a step makes act, and may not guard the ones it
+> does not.**
+
+A guard on an acting node is a statement about who takes part — nobody has to
+determine anything, because if the node is down the exchange simply does not
+happen. A guard on a non-acting node is an oracle, because something must
+evaluate it before the step may fire. `!live(from)` was the second kind, which
+is why it had to go; `live(n)` on `cs_pass_token` was always the first kind.
+
+Applying the rule uniformly closed two more holes of exactly the shape the
+review found, on the *receiving* side:
+
+* `cs_pass_token` now guards `head` as well as `n`. `ray_assign_privilege` has
+  `head` record `holder[head] := head`, so if `head` crashed after its request
+  reached `n`, the old step installed a belief in a node that could not receive
+  it — and a later `Recover(head)` framed it in, modelling the node as knowing
+  about an event it never observed.
+* `cs_seize_token` guards `to` for the same reason: the coordinator hands it the
+  privilege and it records that, so it is acting.
+
+`cs_reconcile` guards nobody, which the rule also explains — a node repairing
+its own belief is acting by definition.
+
 Three consequences worth stating plainly:
 
 * **`cs_seize_token` has no liveness guard at all.** Ownership safety survives

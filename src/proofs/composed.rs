@@ -105,6 +105,9 @@ pub proof fn lemma_composed_pass_token_preserves_inv(
     assert forall|m: NodeId| #[trigger] is_stale_holder(post.ray, m) implies post.seized.contains(
         m,
     ) by {
+        // `head` holds and believes, so it is not stale - which is why the
+        // handover may discharge a marker it was carrying.
+        assert(has_token(post.ray, head));
         assert(m != head);
         assert(m != n);
         assert(post.ray.holder[m] == pre.ray.holder[m]);
@@ -112,6 +115,7 @@ pub proof fn lemma_composed_pass_token_preserves_inv(
         assert(has_token(pre.ray, n));
         assert(!has_token(pre.ray, m));
         assert(is_stale_holder(pre.ray, m));
+        assert(pre.seized.contains(m));
     }
 }
 
@@ -144,12 +148,16 @@ pub proof fn lemma_composed_seize_preserves_inv(
     assert forall|m: NodeId| #[trigger] is_stale_holder(post.ray, m) implies post.seized.contains(
         m,
     ) by {
+        // `to` holds the privilege now, so it is not stale - which is why
+        // dropping it from the marker set cannot break this clause.
+        assert(has_token(post.ray, to));
+        assert(m != to);
         if m != from {
-            assert(m != to);
             assert(post.ray.holder[m] == pre.ray.holder[m]);
             assert(believes_holds(pre.ray, m));
             assert(!has_token(pre.ray, m));
             assert(is_stale_holder(pre.ray, m));
+            assert(pre.seized.contains(m));
         }
     }
 }

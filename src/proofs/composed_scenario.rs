@@ -606,7 +606,7 @@ pub proof fn handover_phase_pass_token(
             requests: c.ray.requests,
         },
         actor: x,
-        seized: c.seized,
+        seized: c.seized.remove(b),
     };
     let s9 = ComposedStep::PassToken { node: a, head: b };
     assert(is_unowned(c.own.actors[x]));
@@ -1262,7 +1262,7 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
             requests: c4.ray.requests,
         },
         actor: x,
-        seized: c4.seized.insert(a),
+        seized: c4.seized.insert(a).remove(b),
     };
     let s5 = ComposedStep::SeizeToken { from: a, to: b };
     assert(!c4.own.live.contains(a));

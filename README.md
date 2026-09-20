@@ -386,6 +386,19 @@ review found, on the *receiving* side:
 `cs_reconcile` guards nobody, which the rule also explains — a node repairing
 its own belief is acting by definition.
 
+**Granting the privilege discharges the debt.** Both grant steps now clear the
+recipient from `seized`, because receiving the privilege *is* the node learning
+the truth: it is live, it records `holder := itself`, and it really does hold, so
+its belief is correct again. Without that, a node marked by an earlier seizure
+and later handed the privilege back would stop being stale while staying marked
+— and `cs_reconcile` requires `is_stale_holder`, so the marker could never be
+cleared and `recovers_a_seized_node` would reject that node's recovery for ever.
+
+That state became reachable only when the `!live(from)` guard came off. Before,
+a marked node was always dead and had to reconcile before rejoining, so it could
+never be a live grant target; afterwards it can be. A guard removed for good
+reasons opened a path that had to be closed somewhere else.
+
 Three consequences worth stating plainly:
 
 * **`cs_seize_token` has no liveness guard at all.** Ownership safety survives

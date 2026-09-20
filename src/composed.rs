@@ -169,7 +169,10 @@ pub open spec fn cs_pass_token(pre: Composed, post: Composed, n: NodeId, head: N
     &&& ray_assign_privilege(pre.ray, post.ray, n, head)
     &&& post.own == pre.own
     &&& post.actor == pre.actor
-    &&& post.seized == pre.seized
+    // Same discharge as on [`cs_seize_token`]: `head` receives the privilege,
+    // records that it holds it, and really does, so a reconciliation it owed
+    // from an earlier seizure is settled by the handover itself.
+    &&& post.seized == pre.seized.remove(head)
 }
 
 /// The privilege is **seized** and re-established at `to`, without the node
@@ -233,7 +236,19 @@ pub open spec fn cs_seize_token(pre: Composed, post: Composed, from: NodeId, to:
     &&& ray_seize(pre.ray, post.ray, from, to)
     &&& post.own == pre.own
     &&& post.actor == pre.actor
-    &&& post.seized == pre.seized.insert(from)
+    // `from` now owes a reconciliation, and `to` no longer does. Granting the
+    // privilege *is* the node learning the truth: `to` is live, it records
+    // `holder[to] := to`, and it really does hold, so its belief is correct
+    // again and there is nothing left to repair.
+    //
+    // Without the `remove`, a node marked by an earlier seizure and then handed
+    // the privilege back would stop being stale while staying marked, so
+    // `cs_reconcile` - which requires `is_stale_holder` - could never clear it,
+    // and `recovers_a_seized_node` would reject its recovery for ever. That
+    // became reachable only when the `!live(from)` guard came off: before, a
+    // marked node was always dead and had to reconcile before rejoining, so it
+    // could never be a live grant target.
+    &&& post.seized == pre.seized.insert(from).remove(to)
 }
 
 /// A node takes ownership - **only** if it is the node holding the token.

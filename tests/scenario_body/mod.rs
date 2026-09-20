@@ -278,7 +278,10 @@ impl Coord {
         // registry's own control path may initiate it, not that anything
         // reachable may. Left open, a node could sit in a loop revoking
         // whoever legitimately held the actor. The driver stands in for the
-        // registry here, so `FORCE` requires a connection that is not a node's.
+        // registry here, so `FORCE` requires the control connection —
+        // named, not merely "not a node's". That distinction is the whole
+        // fix: the first version asked for anything that was not a node, so
+        // every host nobody had heard of qualified.
         if verb == "FORCE" && peer != Peer::Control {
             return "NO".to_string();
         }

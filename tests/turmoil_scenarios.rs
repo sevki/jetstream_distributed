@@ -49,8 +49,31 @@ fn committed_seeds() -> Vec<u64> {
 /// Absent is different from wrong. Absent means "no preference" and takes the
 /// default; wrong means somebody tried to say something and it did not arrive.
 fn env_u64(name: &str, fallback: u64) -> u64 {
-    match std::env::var(name) {
-        Err(_) => fallback,
+    window_bound(name, std::env::var(name), fallback)
+}
+
+/// The decision `env_u64` makes, separated from the process environment that
+/// supplies it.
+///
+/// Split out so it can be tested. Environment variables are process-global and
+/// this binary runs its tests on threads of one process, so a test that set
+/// `JETSTREAM_SCENARIO_START` to something bad would be setting it for the
+/// search running alongside it. Taking the `Result` as an argument is how the
+/// rule gets checked without the test and the thing it tests sharing state.
+fn window_bound(name: &str, raw: Result<String, std::env::VarError>, fallback: u64) -> u64 {
+    use std::env::VarError;
+    match raw {
+        Err(VarError::NotPresent) => fallback,
+        // Matching `Err(_)` here would have folded this case in with absent,
+        // which is the exact defect the doc comment above is about: the
+        // variable *is* set, somebody did try to say something, and it did not
+        // arrive. Bytes that are not UTF-8 are a wrong value, not a missing
+        // one.
+        Err(VarError::NotUnicode(bytes)) => panic!(
+            "{name} is set to {bytes:?}, which is not valid UTF-8 and so cannot \
+             be a u64. Refusing to fall back to {fallback}: the variable is \
+             set, so somebody meant something by it."
+        ),
         Ok(raw) => raw.trim().parse().unwrap_or_else(|_| {
             panic!(
                 "{name} is set to `{raw}`, which is not a u64. Refusing to fall \
@@ -60,6 +83,37 @@ fn env_u64(name: &str, fallback: u64) -> u64 {
             )
         }),
     }
+}
+
+#[test]
+fn an_absent_window_bound_takes_the_default() {
+    assert_eq!(
+        window_bound("X", Err(std::env::VarError::NotPresent), 256),
+        256
+    );
+}
+
+#[test]
+fn a_window_bound_that_parses_is_used() {
+    assert_eq!(window_bound("X", Ok("1024".to_string()), 256), 1024);
+    // Trimmed, because a workflow that writes the value across a YAML line
+    // continuation hands it over with whitespace attached.
+    assert_eq!(window_bound("X", Ok("  1024\n".to_string()), 256), 1024);
+}
+
+#[test]
+#[should_panic(expected = "which is not a u64")]
+fn a_window_bound_that_does_not_parse_stops_the_search() {
+    window_bound("X", Ok("1O24".to_string()), 256);
+}
+
+#[test]
+#[should_panic(expected = "which is not valid UTF-8")]
+fn a_window_bound_that_is_not_utf8_stops_the_search() {
+    // The case `Err(_)` used to swallow: present, meant, and unreadable.
+    use std::os::unix::ffi::OsStringExt;
+    let bytes = std::ffi::OsString::from_vec(vec![0xff, 0xfe]);
+    window_bound("X", Err(std::env::VarError::NotUnicode(bytes)), 256);
 }
 
 /// The search. Each seed is an independent story; a failure names the seed,

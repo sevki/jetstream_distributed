@@ -92,6 +92,12 @@ pub open spec fn composed_inv(c: Composed) -> bool {
     // node whose liveness was simply not modelled rather than by one that
     // fail-stopped.
     &&& c.ray.nodes == c.own.nodes
+    // **Every stale holder owes a reconciliation.** This is what makes `seized`
+    // mean something: it is exactly the set of nodes whose belief the
+    // coordinator has invalidated and not yet repaired. A seizure adds one and
+    // creates one; reconciliation removes one and repairs one; no other step
+    // creates a stale holder at all.
+    &&& (forall|n: NodeId| #[trigger] is_stale_holder(c.ray, n) ==> c.seized.contains(n))
 }
 
 /// Any Raymond step that does not move the token: request routing *and*
@@ -153,43 +159,48 @@ pub open spec fn cs_pass_token(pre: Composed, post: Composed, n: NodeId, head: N
     &&& post.seized == pre.seized
 }
 
-/// The token is **seized** and re-established at `to`, without the node that
-/// holds it acting.
+/// The privilege is **seized** and re-established at `to`, without the node
+/// that holds it acting.
 ///
 /// This is the step that makes crash-driven takeover expressible. Without it
-/// the only way the token can move is [`ComposedStep::PassToken`], which
-/// requires `has_token(pre.ray, from)` *and* models `from` voluntarily passing
-/// the privilege on. So after `RevokeOwner` fires against a crashed owner `A` -
-/// leaving the actor `Unowned` at the next epoch and offered to `B` - the only
-/// composed continuation was `A`, a node the ownership layer has marked dead,
-/// taking a routing step. That is precisely the cooperation epochs and fencing
-/// exist to make unnecessary, so a composed machine that required it was
-/// proving something narrower than it appeared to: agreement along executions
-/// where the token always moves *voluntarily*.
+/// the only way the privilege can move is [`cs_pass_token`], which requires
+/// `has_token(pre.ray, from)` *and* models `from` voluntarily passing it on. So
+/// after `RevokeOwner` fires against a crashed owner `A` - leaving the actor
+/// `Unowned` at the next epoch and offered to `B` - the only composed
+/// continuation was `A`, a node the ownership layer has marked dead, taking a
+/// routing step. That is precisely the cooperation epochs and fencing exist to
+/// make unnecessary.
 ///
-/// The first guard is the same `is_unowned` as [`cs_pass_token`], and for the
-/// same reason: in `Unowned` nobody has authority at all, so moving the token
+/// The guard is the same `is_unowned` as [`cs_pass_token`], and for the same
+/// reason: in `Unowned` nobody has authority at all, so moving the privilege
 /// cannot strand it. Seizure is safe for exactly the reason revocation is - the
 /// epoch was burned first.
 ///
-/// The second guard, `!pre.own.live.contains(from)`, is **not** decoration, and
-/// `is_unowned` alone is not enough. `RevokeOwner` may fire against a perfectly
-/// healthy owner - unreliable detection is modelled on purpose - so without a
-/// liveness check a seizure could fire against a live node that is inside its
-/// Raymond critical section. `ray_seize` clears `using[from]`, so the model
-/// would then report exclusivity while two nodes were really inside: the
-/// invariant would be preserved by *erasing* the first node's execution rather
-/// than by anything the protocol does.
+/// **There is deliberately no liveness guard.** An earlier version required
+/// `!pre.own.live.contains(from)`, on the argument that seizing from a live
+/// node would let the model report exclusivity while two nodes were really
+/// inside their Raymond critical sections. The argument was sound and the
+/// conclusion was wrong, for two reasons.
 ///
-/// The asymmetry is the point. Revoking the *ownership record* is safe against
-/// a healthy node because the epoch fences it. Seizing the *token* is not,
-/// because Raymond's critical section has no epoch - there is nothing to fence
-/// a node that believes it still holds the privilege. So seizure is restricted
-/// to fail-stopped nodes, where clearing `using` is a fact about the world
-/// rather than a convenience: a crashed node is not executing anything.
+/// The first is that it conflated two guarantees. Ownership safety is fenced by
+/// the epoch, which is burned *before* the seizure fires, so it does not need
+/// the node to be dead. Raymond's critical-section exclusivity has no epoch and
+/// does need something - but the honest something is
+/// `crate::raymond::ray_no_stale_holders`, a condition on the state, not a
+/// guard on the step.
+///
+/// The second is that `!live` is **ground truth**, and no coordinator has it. A
+/// real one has a suspicion, which is exactly why `RevokeOwner` is modelled as
+/// firing against healthy nodes. Guarding the forcible path on perfect failure
+/// detection would have put the composed machine's strongest theorems out of
+/// reach of any deployment, in a clause that reads like an ordinary guard.
+///
+/// What replaces it is that [`crate::raymond::ray_seize`] no longer touches
+/// anything belonging to `from`, so the state it creates - a stale holder,
+/// possibly still inside its critical section - is representable and proved
+/// inert rather than excluded.
 pub open spec fn cs_seize_token(pre: Composed, post: Composed, from: NodeId, to: NodeId) -> bool {
     &&& is_unowned(pre.own.actors[pre.actor])
-    &&& !pre.own.live.contains(from)
     &&& ray_seize(pre.ray, post.ray, from, to)
     &&& post.own == pre.own
     &&& post.actor == pre.actor
@@ -217,23 +228,31 @@ pub open spec fn recovers_a_seized_node(c: Composed, s: Step) -> bool {
     }
 }
 
-/// A seized node is told what happened while it was down.
+/// A seized node **reconciles**: it discovers its privilege was taken, drops
+/// the belief, and leaves the critical section it thought it was in.
 ///
-/// This is the modelled counterpart of the reconciliation a real
-/// implementation has to perform before a fenced node rejoins: re-read the
-/// routing state rather than trust what it remembers. It changes nothing except
-/// the marker, because in this model the routing state *is* the truth - the
-/// step exists so that an execution has to contain it, rather than helping
-/// itself to the conclusion.
+/// This step used to be a marker removal - it changed nothing but the `seized`
+/// set, because seizure had already edited the node's routing state on its
+/// behalf. Row C6 claimed it made reconciliation "a step an execution has to
+/// contain rather than an assumption", and the step was in the execution, but
+/// it carried no content: the work a deployment must actually do had been done
+/// at seizure time, by the coordinator, reaching into a node it could not
+/// reach.
 ///
-/// It fires while the node is still down, which is the honest ordering: you
-/// learn the truth as part of coming back, not after you have started acting.
+/// Now that [`crate::raymond::ray_seize`] leaves the seized node alone, this is
+/// where the stale belief is dropped, by the node that holds it.
+///
+/// It is not guarded on the node being down. Seizure is no longer restricted to
+/// crashed nodes, so a live node can be left stale - by a coordinator that
+/// suspected it wrongly - and must be able to learn the truth as well. What the
+/// ordering rule still enforces is the *crashed* case:
+/// [`recovers_a_seized_node`] refuses `Step::Recover` until this step has run,
+/// so a node cannot come back and start acting on a belief it never corrected.
 pub open spec fn cs_reconcile(pre: Composed, post: Composed, n: NodeId) -> bool {
-    &&& !pre.own.live.contains(n)
     &&& pre.seized.contains(n)
+    &&& ray_reconcile(pre.ray, post.ray, n)
     &&& post.seized == pre.seized.remove(n)
     &&& post.own == pre.own
-    &&& post.ray == pre.ray
     &&& post.actor == pre.actor
 }
 

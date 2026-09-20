@@ -186,6 +186,7 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (res: (
         network: Set::<Message>::empty(),
     };
     let ray0 = Raymond {
+        privilege: a,
         nodes: nodes,
         holder: Map::<NodeId, NodeId>::empty().insert(a, a).insert(b, a),
         queue: Map::<NodeId, Seq<NodeId>>::empty().insert(a, empty_q).insert(b, empty_q),
@@ -449,6 +450,7 @@ pub proof fn handover_phase_request(
     let c6 = Composed {
         own: c.own,
         ray: Raymond {
+            privilege: c.ray.privilege,
             nodes: c.ray.nodes,
             holder: c.ray.holder,
             queue: c.ray.queue.insert(b, c.ray.queue[b].push(b)),
@@ -468,6 +470,7 @@ pub proof fn handover_phase_request(
     let c7 = Composed {
         own: c6.own,
         ray: Raymond {
+            privilege: c6.ray.privilege,
             nodes: c6.ray.nodes,
             holder: c6.ray.holder,
             queue: c6.ray.queue,
@@ -490,6 +493,7 @@ pub proof fn handover_phase_request(
     let c8 = Composed {
         own: c7.own,
         ray: Raymond {
+            privilege: c7.ray.privilege,
             nodes: c7.ray.nodes,
             holder: c7.ray.holder,
             queue: c7.ray.queue.insert(a, c7.ray.queue[a].push(b)),
@@ -593,6 +597,7 @@ pub proof fn handover_phase_pass_token(
     let c9 = Composed {
         own: c.own,
         ray: Raymond {
+            privilege: b,
             nodes: c.ray.nodes,
             holder: c.ray.holder.insert(a, b).insert(b, b),
             queue: c.ray.queue.insert(a, c.ray.queue[a].drop_first()),
@@ -876,6 +881,7 @@ pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId
         network: Set::<Message>::empty(),
     };
     let ray0 = Raymond {
+        privilege: a,
         nodes: nodes,
         holder: Map::<NodeId, NodeId>::empty().insert(a, a).insert(b, a),
         queue: Map::<NodeId, Seq<NodeId>>::empty().insert(a, empty_q).insert(b, empty_q),
@@ -914,6 +920,7 @@ pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId
     let c1 = Composed {
         own: c0.own,
         ray: Raymond {
+            privilege: c0.ray.privilege,
             nodes: c0.ray.nodes,
             holder: c0.ray.holder,
             queue: c0.ray.queue.insert(a, c0.ray.queue[a].push(a)),
@@ -933,6 +940,7 @@ pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId
     let c2 = Composed {
         own: c1.own,
         ray: Raymond {
+            privilege: c1.ray.privilege,
             nodes: c1.ray.nodes,
             holder: c1.ray.holder,
             queue: c1.ray.queue.insert(a, c1.ray.queue[a].drop_first()),
@@ -960,6 +968,7 @@ pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId
     let c3 = Composed {
         own: c2.own,
         ray: Raymond {
+            privilege: c2.ray.privilege,
             nodes: c2.ray.nodes,
             holder: c2.ray.holder,
             queue: c2.ray.queue,
@@ -1116,6 +1125,7 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
         network: Set::<Message>::empty(),
     };
     let ray0 = Raymond {
+        privilege: a,
         nodes: nodes,
         holder: Map::<NodeId, NodeId>::empty().insert(a, a).insert(b, a),
         queue: Map::<NodeId, Seq<NodeId>>::empty().insert(a, empty_q).insert(b, empty_q),
@@ -1239,12 +1249,16 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
     // 5. The token is seized from the crashed node. A does not act.
     let c5 = Composed {
         own: c4.own,
+        // Seizure now touches only `b`. `A`'s holder, asked and using entries
+        // are left exactly as they were, which is what makes it a stale holder
+        // rather than a node the coordinator silently corrected.
         ray: Raymond {
+            privilege: b,
             nodes: c4.ray.nodes,
-            holder: c4.ray.holder.insert(a, b).insert(b, b),
+            holder: c4.ray.holder.insert(b, b),
             queue: c4.ray.queue,
-            asked: c4.ray.asked.insert(a, false),
-            using: c4.ray.using.insert(a, false),
+            asked: c4.ray.asked,
+            using: c4.ray.using,
             requests: c4.ray.requests,
         },
         actor: x,
@@ -1289,23 +1303,33 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
     assert(!may_mutate(c6.own.actors[x], a, 41));
     assert(c6.seized.contains(a));
 
-    // 7. A reconciles: it is told what happened to its routing state while it
-    // was down. Nothing but the marker changes, because in this model the
-    // routing state already *is* the truth - the step exists so that an
-    // execution has to contain it rather than assume it.
+    // 7. A reconciles. This is where its stale belief is actually dropped: the
+    // seizure at step 5 left `holder[A] == A` and `using[A]` exactly as they
+    // were, because nobody can reach into a crashed node, so until now `A` has
+    // been a stale holder - believing it holds the privilege, holding nothing.
+    assert(is_stale_holder(c6.ray, a));
     let c7 = Composed {
         own: c6.own,
-        ray: c6.ray,
+        ray: Raymond {
+            privilege: c6.ray.privilege,
+            nodes: c6.ray.nodes,
+            holder: c6.ray.holder.insert(a, c6.ray.privilege),
+            queue: c6.ray.queue,
+            asked: c6.ray.asked.insert(a, false),
+            using: c6.ray.using.insert(a, false),
+            requests: c6.ray.requests,
+        },
         actor: x,
         seized: c6.seized.remove(a),
     };
     let s7 = ComposedStep::Reconcile { node: a };
-    assert(!c6.own.live.contains(a));
     assert(c6.seized.contains(a));
+    assert(ray_reconcile(c6.ray, c7.ray, a));
     assert(composed_step(c6, c7, s7));
     lemma_composed_reachable_step(c6, c7, s7);
     theorem_composed_step_preserves_inv(c6, c7, s7);
     assert(!c7.seized.contains(a));
+    assert(!is_stale_holder(c7.ray, a));
 
     // 8. Only now may A come back - and it comes back with no authority, its
     // epoch-41 token still issued and still worthless, and no token.

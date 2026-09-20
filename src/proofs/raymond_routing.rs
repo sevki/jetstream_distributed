@@ -47,6 +47,7 @@ verus! {
 /// meets without any of the hops having happened.
 pub open spec fn routing_init_state(a: NodeId, b: NodeId, c: NodeId, d: NodeId) -> Raymond {
     Raymond {
+        privilege: c,
         nodes: Set::<NodeId>::empty().insert(a).insert(b).insert(c).insert(d),
         holder: Map::<NodeId, NodeId>::empty().insert(a, c).insert(b, a).insert(c, c).insert(d, b),
         queue: Map::<NodeId, Seq<NodeId>>::empty().insert(a, Seq::<NodeId>::empty()).insert(
@@ -184,6 +185,7 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
 
     // 1. D asks for the token.
     let r1 = Raymond {
+        privilege: r0.privilege,
         nodes: r0.nodes,
         holder: r0.holder,
         queue: r0.queue.insert(d, r0.queue[d].push(d)),
@@ -196,6 +198,7 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
 
     // 2. D forwards the request to its next hop, B.
     let r2 = Raymond {
+        privilege: r1.privilege,
         nodes: r1.nodes,
         holder: r1.holder,
         queue: r1.queue,
@@ -209,6 +212,7 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
 
     // 3. B receives D's request.
     let r3 = Raymond {
+        privilege: r2.privilege,
         nodes: r2.nodes,
         holder: r2.holder,
         queue: r2.queue.insert(b, r2.queue[b].push(d)),
@@ -222,6 +226,7 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
 
     // 4. B forwards the request to its next hop, A.
     let r4 = Raymond {
+        privilege: r3.privilege,
         nodes: r3.nodes,
         holder: r3.holder,
         queue: r3.queue,
@@ -236,6 +241,7 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
 
     // 5. A receives B's request.
     let r5 = Raymond {
+        privilege: r4.privilege,
         nodes: r4.nodes,
         holder: r4.holder,
         queue: r4.queue.insert(a, r4.queue[a].push(b)),
@@ -249,6 +255,7 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
 
     // 6. A forwards the request to its next hop, C - the token holder.
     let r6 = Raymond {
+        privilege: r5.privilege,
         nodes: r5.nodes,
         holder: r5.holder,
         queue: r5.queue,
@@ -263,6 +270,7 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
 
     // 7. C receives A's request. The path D -> B -> A -> C is complete.
     let r7 = Raymond {
+        privilege: r6.privilege,
         nodes: r6.nodes,
         holder: r6.holder,
         queue: r6.queue.insert(c, r6.queue[c].push(a)),
@@ -401,6 +409,7 @@ pub proof fn routing_one_hop(r: Raymond, n: NodeId, head: NodeId) -> (r2: Raymon
         r2.requests == r.requests,
 {
     let r2 = Raymond {
+        privilege: head,
         nodes: r.nodes,
         holder: r.holder.insert(n, head).insert(head, head),
         queue: r.queue.insert(n, r.queue[n].drop_first()),
@@ -582,6 +591,7 @@ pub proof fn routing_phase_delivery(
 {
     // 11. D, at the head of its own queue, enters the critical section.
     let r11 = Raymond {
+        privilege: r10.privilege,
         nodes: r10.nodes,
         holder: r10.holder,
         queue: r10.queue.insert(d, r10.queue[d].drop_first()),
@@ -600,6 +610,7 @@ pub proof fn routing_phase_delivery(
     assert(r11.holder[d] == d);
     assert(r11.requests.contains((d, b)));
     let r12 = Raymond {
+        privilege: r11.privilege,
         nodes: r11.nodes,
         holder: r11.holder,
         queue: r11.queue.insert(b, r11.queue[b].push(d)),

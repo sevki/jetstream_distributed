@@ -58,11 +58,60 @@ pub struct Raymond {
     /// against the *current* `holder[from]` would silently drop an in-flight
     /// request the moment the token moved.
     pub requests: Set<(NodeId, NodeId)>,
+    /// The node that **actually** holds the privilege.
+    ///
+    /// This is the authoritative fact, and it is deliberately *not* derived from
+    /// `holder`. `holder[n]` is state stored **at node `n`**: it is what `n`
+    /// believes, and nothing but `n` can change it. Deriving authority from
+    /// belief would mean that taking the privilege away from a crashed node
+    /// required editing that node's memory, which is the one thing a crash makes
+    /// impossible.
+    ///
+    /// This is the same split the ownership layer makes between `issued` (a
+    /// token is physically held) and `token_authorized` (it still confers
+    /// authority). There, a crashed owner keeps its token for ever and the
+    /// theorems prove it inert. Here, a node whose privilege was seized keeps
+    /// *believing* it holds the privilege, and the theorems prove that inert
+    /// too - see [`is_stale_holder`] and
+    /// `crate::proofs::raymond::theorem_stale_holder_confers_no_authority`.
+    pub privilege: NodeId,
 }
 
-/// `n` currently possesses the token.
-pub open spec fn has_token(r: Raymond, n: NodeId) -> bool {
+/// `n` **believes** it holds the privilege.
+///
+/// Belief is per-node state and can be wrong: after a seizure the old holder
+/// still believes, and goes on believing until it reconciles. Raymond's own
+/// transitions are driven by belief, because a node has nothing else to act on.
+pub open spec fn believes_holds(r: Raymond, n: NodeId) -> bool {
     r.nodes.contains(n) && r.holder.contains_key(n) && r.holder[n] == n
+}
+
+/// `n` **actually** holds the privilege.
+///
+/// This is the predicate [`couples`] is written against, so authority over the
+/// actor tracks the real privilege and never a node's belief about it.
+pub open spec fn has_token(r: Raymond, n: NodeId) -> bool {
+    r.nodes.contains(n) && r.privilege == n
+}
+
+/// `n` believes it holds the privilege and does not: a **stale holder**.
+///
+/// This state is what a seizure creates, and being able to write it down is the
+/// point. It is the routing counterpart of a stale capability token: physically
+/// present, entirely inert.
+pub open spec fn is_stale_holder(r: Raymond, n: NodeId) -> bool {
+    believes_holds(r, n) && !has_token(r, n)
+}
+
+/// Nobody's belief is stale - every node that believes it holds the privilege
+/// does.
+///
+/// Normal operation. A seizure leaves this false until the seized node
+/// reconciles, which is exactly the window in which the routing layer's
+/// belief-level guarantees do not hold. Theorems that need those guarantees say
+/// so by requiring this.
+pub open spec fn ray_no_stale_holders(r: Raymond) -> bool {
+    forall|n: NodeId| #[trigger] believes_holds(r, n) ==> has_token(r, n)
 }
 
 /// Every node has an entry in every per-node map.
@@ -96,9 +145,17 @@ pub open spec fn ray_holder_closed(r: Raymond) -> bool {
 pub open spec fn ray_wf(r: Raymond) -> bool {
     &&& ray_maps_total(r)
     &&& ray_holder_closed(r)
+    &&& r.nodes.contains(r.privilege)
 }
 
 /// **At most one valid token.**
+///
+/// Now structural rather than something to maintain: `privilege` is one value,
+/// so two nodes cannot both hold it. That is the payoff of not deriving
+/// authority from the holder pointers - uniqueness used to be an invariant that
+/// every transition had to be shown to preserve, and it used to be the reason
+/// the dangerous state was unrepresentable. Belief is where the multiplicity
+/// now lives, and belief is inert.
 pub open spec fn ray_unique_token(r: Raymond) -> bool {
     forall|n: NodeId, m: NodeId|
         #![trigger has_token(r, n), has_token(r, m)]
@@ -114,6 +171,15 @@ pub open spec fn ray_unique_token(r: Raymond) -> bool {
 /// theorem parameterised by `ray_inv` rely on a root being there.
 pub open spec fn ray_token_exists(r: Raymond) -> bool {
     exists|n: NodeId| #[trigger] has_token(r, n)
+}
+
+/// **The node that holds the privilege believes it does.**
+///
+/// The converse is exactly what fails after a seizure, and exactly what
+/// [`is_stale_holder`] names. This direction never fails: the privilege only
+/// ever moves to a node that is told about it in the same step.
+pub open spec fn ray_authority_believes(r: Raymond) -> bool {
+    forall|n: NodeId| #[trigger] has_token(r, n) ==> believes_holds(r, n)
 }
 
 /// A rank witnessing that the holder pointers form a forest directed at its
@@ -163,17 +229,26 @@ pub open spec fn holder_iter(r: Raymond, n: NodeId, k: nat) -> NodeId
     }
 }
 
-/// Only the token holder can be inside the critical section.
-pub open spec fn ray_using_implies_token(r: Raymond) -> bool {
-    forall|n: NodeId| #[trigger] r.nodes.contains(n) && r.using[n] ==> has_token(r, n)
+/// Only a node that **believes** it holds the privilege can be inside its
+/// critical section.
+///
+/// Belief, not authority, because belief is all a node has to act on. This used
+/// to say `has_token`, and it could, because seizure reached into the crashed
+/// node and cleared its `using` flag for it. Now that it does not, a stale
+/// holder inside its critical section is a state this model can write down -
+/// which is the point. What it costs is Raymond-level mutual exclusion during
+/// the window before reconciliation; what it does not cost is ownership safety,
+/// because [`couples`] is written against authority. See
+/// `crate::proofs::raymond::theorem_stale_holder_confers_no_authority`.
+pub open spec fn ray_using_implies_belief(r: Raymond) -> bool {
+    forall|n: NodeId| #[trigger] r.nodes.contains(n) && r.using[n] ==> believes_holds(r, n)
 }
 
 /// The Raymond safety invariant.
 pub open spec fn ray_inv(r: Raymond) -> bool {
     &&& ray_wf(r)
-    &&& ray_unique_token(r)
-    &&& ray_token_exists(r)
-    &&& ray_using_implies_token(r)
+    &&& ray_authority_believes(r)
+    &&& ray_using_implies_belief(r)
     &&& ray_acyclic(r)
 }
 
@@ -190,6 +265,7 @@ pub open spec fn ray_request_cs(pre: Raymond, post: Raymond, n: NodeId) -> bool 
     &&& post.using == pre.using
     &&& post.nodes == pre.nodes
     &&& post.requests == pre.requests
+    &&& post.privilege == pre.privilege
 }
 
 /// `n` forwards a request one hop towards the token.
@@ -207,6 +283,7 @@ pub open spec fn ray_make_request(pre: Raymond, post: Raymond, n: NodeId) -> boo
     &&& post.queue == pre.queue
     &&& post.using == pre.using
     &&& post.nodes == pre.nodes
+    &&& post.privilege == pre.privilege
 }
 
 /// `at` receives a request that `from` sent to it at some earlier point.
@@ -228,6 +305,7 @@ pub open spec fn ray_receive_request(pre: Raymond, post: Raymond, at: NodeId, fr
     &&& post.using == pre.using
     &&& post.nodes == pre.nodes
     &&& post.requests == pre.requests
+    &&& post.privilege == pre.privilege
 }
 
 /// The token holder hands the token to the head of its queue.
@@ -241,12 +319,18 @@ pub open spec fn ray_assign_privilege(
     head: NodeId,
 ) -> bool {
     &&& has_token(pre, n)
+    &&& believes_holds(pre, n)
     &&& !pre.using[n]
     &&& pre.queue[n].len() > 0
     &&& pre.queue[n][0] == head
     &&& head != n
     &&& pre.nodes.contains(head)
+    // Both nodes act: `n` is live and cooperating, so it may rewrite its own
+    // belief, and `head` learns it has the privilege in the same step. That is
+    // what distinguishes a handover from a seizure, where only the new holder
+    // acts.
     &&& post.holder == pre.holder.insert(n, head).insert(head, head)
+    &&& post.privilege == head
     &&& post.queue == pre.queue.insert(n, pre.queue[n].drop_first())
     &&& post.asked == pre.asked.insert(n, false)
     &&& post.using == pre.using
@@ -257,13 +341,17 @@ pub open spec fn ray_assign_privilege(
 /// The token holder is itself at the head of its queue, so it enters the
 /// critical section.
 pub open spec fn ray_enter_cs(pre: Raymond, post: Raymond, n: NodeId) -> bool {
-    &&& has_token(pre, n)
+    // Belief, not authority: a node decides to enter on what it knows, and a
+    // stale holder does not know it is stale. Guarding this on `has_token`
+    // would be assuming the conclusion.
+    &&& believes_holds(pre, n)
     &&& !pre.using[n]
     &&& pre.queue[n].len() > 0
     &&& pre.queue[n][0] == n
     &&& post.using == pre.using.insert(n, true)
     &&& post.queue == pre.queue.insert(n, pre.queue[n].drop_first())
     &&& post.holder == pre.holder
+    &&& post.privilege == pre.privilege
     &&& post.asked == pre.asked
     &&& post.nodes == pre.nodes
     &&& post.requests == pre.requests
@@ -283,6 +371,7 @@ pub open spec fn ray_exit_cs(pre: Raymond, post: Raymond, n: NodeId) -> bool {
     &&& post.asked == pre.asked
     &&& post.nodes == pre.nodes
     &&& post.requests == pre.requests
+    &&& post.privilege == pre.privilege
 }
 
 /// The labelled Raymond transitions.
@@ -344,6 +433,10 @@ pub open spec fn ray_init(r: Raymond, root: NodeId) -> bool {
     &&& ray_wf(r)
     &&& r.nodes.contains(root)
     &&& r.holder[root] == root
+    // Belief and authority agree at the start: the root is the holder and knows
+    // it. Divergence is something a seizure introduces, not something a system
+    // begins with.
+    &&& r.privilege == root
     // Triggered on `r.holder[n]`, not on `r.nodes.contains(n)`. Under the
     // latter, this clause and `ray_holder_closed` regenerate each other: this
     // one introduces `r.holder[n]`, `ray_holder_closed` turns that into
@@ -361,46 +454,75 @@ pub open spec fn ray_init(r: Raymond, root: NodeId) -> bool {
     &&& ray_acyclic(r)
 }
 
-/// **The token is seized.** It is re-established at `to` without the current
-/// holder acting at all.
+/// **The privilege is seized.** It is re-established at `to` without the node
+/// that holds it acting at all.
 ///
 /// This is deliberately *not* a [`RayStep`]. Raymond's algorithm has no
-/// seizure: every token movement in it is the holder voluntarily passing the
-/// privilege to the head of its queue. Seizure is a recovery action taken by
-/// the coordinator after it has revoked an owner, so it belongs to the composed
-/// machine ([`crate::composed::cs_seize_token`]), where the revocation that
-/// justifies it is visible. Keeping it out of `RayStep` also keeps
-/// `preserves_token` and every Raymond-local theorem honest: they are about
-/// Raymond, and Raymond does not do this.
+/// seizure: every privilege movement in it is the holder voluntarily passing
+/// the privilege to the head of its queue. Seizure is a recovery action taken
+/// by the coordinator after it has revoked an owner, so it belongs to the
+/// composed machine ([`crate::composed::cs_seize_token`]), where the revocation
+/// that justifies it is visible.
 ///
-/// It exists because without it the composed machine cannot express the case
-/// the ownership layer has epochs *for*. After `RevokeOwner` fires against a
-/// crashed owner `A`, the actor is `Unowned` at the next epoch and offered to
-/// `B` - but the token is still at `A`, and `ray_assign_privilege` requires
-/// `has_token(pre, A)`, i.e. requires the crashed node to act. Modelling
-/// takeover as the holder cooperating is exactly the thing fencing is supposed
-/// to make unnecessary.
+/// **Only `to` acts.** `from`'s `holder`, `using` and `asked` entries are
+/// untouched, because they are stored at `from` and `from` may well be
+/// unreachable - reaching into them would be modelling something no
+/// implementation can do. So after a seizure `from` is a
+/// [stale holder][`is_stale_holder`]: it believes it holds the privilege, it
+/// does not, and it may still be inside its critical section believing that
+/// too.
 ///
-/// `using[from]` is cleared rather than guarded against: a node whose token is
-/// being seized is not in a critical section afterwards, whatever it believed.
-/// That is what keeps `ray_using_implies_token` true across the step - and it
-/// is only *honest* because [`crate::composed::cs_seize_token`] additionally
-/// requires `from` to have fail-stopped. Clearing the flag of a live node would
-/// preserve the invariant by erasing that node's execution rather than by
-/// anything the protocol does.
+/// An earlier version of this model did edit those entries, and the reason is
+/// worth recording: with authority derived from `holder`, there was no other
+/// way to move the privilege, and the state where a returning node still
+/// believed violated the uniqueness invariant outright. The invariant held
+/// because the dangerous state could not be written down. Splitting belief from
+/// authority is what makes it writable, and
+/// `crate::proofs::raymond::theorem_stale_holder_confers_no_authority` is what
+/// makes it harmless.
 pub open spec fn ray_seize(pre: Raymond, post: Raymond, from: NodeId, to: NodeId) -> bool {
     &&& has_token(pre, from)
     &&& pre.nodes.contains(to)
     &&& to != from
-    &&& post.holder == pre.holder.insert(from, to).insert(to, to)
+    // `to` is told it now holds the privilege. Nothing else changes - in
+    // particular nothing belonging to `from`.
+    &&& post.holder == pre.holder.insert(to, to)
+    &&& post.privilege == to
     &&& post.queue == pre.queue
-    &&& post.asked == pre.asked.insert(from, false)
-    &&& post.using == pre.using.insert(from, false)
+    &&& post.asked == pre.asked
+    &&& post.using == pre.using
     &&& post.nodes == pre.nodes
     &&& post.requests == pre.requests
 }
 
-/// Some Raymond transition takes `pre` to `post`.
+/// **A stale holder reconciles**: it learns its privilege was taken, drops the
+/// belief, and leaves the critical section it thought it was in.
+///
+/// Like [`ray_seize`] this is not a [`RayStep`] - Raymond has no such action.
+/// It is the step a real deployment must perform before a fenced node rejoins,
+/// and it is the one that does the work: re-point `holder[n]` away from itself,
+/// and clear `using[n]`.
+///
+/// Note which node acts. Reconciliation is `n` itself discovering the truth, so
+/// editing `n`'s own state is exactly right here and exactly wrong in
+/// [`ray_seize`]. That asymmetry is the whole content of the step: the belief
+/// is dropped by the node that holds it, at the moment it comes back, rather
+/// than by the coordinator at the moment it left.
+pub open spec fn ray_reconcile(pre: Raymond, post: Raymond, n: NodeId) -> bool {
+    &&& is_stale_holder(pre, n)
+    // It re-points at the node that actually holds the privilege. A real
+    // implementation might learn any node on a path to the holder; pointing
+    // straight at it is the simplest faithful choice, and it is what makes the
+    // repaired belief graph a tree again.
+    &&& post.holder == pre.holder.insert(n, pre.privilege)
+    &&& post.using == pre.using.insert(n, false)
+    &&& post.asked == pre.asked.insert(n, false)
+    &&& post.privilege == pre.privilege
+    &&& post.queue == pre.queue
+    &&& post.nodes == pre.nodes
+    &&& post.requests == pre.requests
+}
+
 pub open spec fn ray_next(pre: Raymond, post: Raymond) -> bool {
     exists|s: RayStep| #[trigger] ray_step(pre, post, s)
 }

@@ -8,6 +8,7 @@
 //! Liveness is *not* claimed. See `README.md`.
 #![allow(unused_imports)]
 
+use vstd::assert_maps_equal;
 use vstd::prelude::*;
 
 use crate::fencing::*;
@@ -24,31 +25,42 @@ pub proof fn theorem_ray_init_inv(r: Raymond, root: NodeId)
     ensures
         ray_inv(r),
         has_token(r, root),
+        believes_holds(r, root),
+        ray_no_stale_holders(r),
 {
     assert(has_token(r, root));
-    assert(ray_token_exists(r));
-    assert forall|n: NodeId, m: NodeId| has_token(r, n) && has_token(r, m) implies n == m by {
+    assert(believes_holds(r, root));
+    assert forall|n: NodeId| #[trigger] has_token(r, n) implies believes_holds(r, n) by {
+        assert(n == root);
+    }
+    assert forall|n: NodeId| #[trigger] r.nodes.contains(n) && r.using[n] implies believes_holds(
+        r,
+        n,
+    ) by {
+        assert(!r.using[n]);
+    }
+    // Nobody is stale at the start: a non-root node does not point at itself,
+    // and the root is the holder.
+    assert forall|n: NodeId| #[trigger] believes_holds(r, n) implies has_token(r, n) by {
         if n != root {
             assert(r.holder[n] != n);
-            assert(false);
-        }
-        if m != root {
-            assert(r.holder[m] != m);
             assert(false);
         }
     }
 }
 
-/// Request routing never moves the token: `holder` is untouched by
-/// `RequestCs`, `MakeRequest` and `ReceiveRequest`.
+/// Request routing never moves the privilege: neither `holder` nor `privilege`
+/// is touched by `RequestCs`, `MakeRequest` and `ReceiveRequest`.
 pub proof fn lemma_routing_preserves_holder(pre: Raymond, post: Raymond, s: RayStep)
     requires
         ray_step(pre, post, s),
         is_routing_step(s),
     ensures
         post.holder == pre.holder,
+        post.privilege == pre.privilege,
         post.nodes == pre.nodes,
         forall|n: NodeId| #[trigger] has_token(post, n) <==> has_token(pre, n),
+        forall|n: NodeId| #[trigger] believes_holds(post, n) <==> believes_holds(pre, n),
 {
     match s {
         RayStep::RequestCs { node } => {},
@@ -60,17 +72,18 @@ pub proof fn lemma_routing_preserves_holder(pre: Raymond, post: Raymond, s: RayS
     }
 }
 
-/// Every step except the token transfer leaves `holder` - and therefore token
-/// possession - completely alone. This covers critical-section bookkeeping as
-/// well as request routing.
+/// Every step except the privilege transfer leaves `holder` and `privilege` -
+/// and therefore both belief and authority - completely alone.
 pub proof fn lemma_token_preserving_steps_keep_holder(pre: Raymond, post: Raymond, s: RayStep)
     requires
         ray_step(pre, post, s),
         preserves_token(s),
     ensures
         post.holder == pre.holder,
+        post.privilege == pre.privilege,
         post.nodes == pre.nodes,
         forall|n: NodeId| #[trigger] has_token(post, n) <==> has_token(pre, n),
+        forall|n: NodeId| #[trigger] believes_holds(post, n) <==> believes_holds(pre, n),
 {
     match s {
         RayStep::RequestCs { node } => {},
@@ -132,59 +145,39 @@ pub proof fn theorem_duplicate_requests_are_safe(
     lemma_ray_step_preserves_inv(mid, post, RayStep::ReceiveRequest { at: at, from: from });
 }
 
-/// A step that leaves `nodes` and `holder` alone leaves token possession alone.
-///
-/// Stated explicitly so that the `has_token(pre, _)` terms exist for the SMT
-/// solver: `ray_unique_token` triggers on them, and without this lemma the
-/// trigger never fires for framing steps.
+/// A step that leaves `nodes`, `holder` and `privilege` alone leaves both
+/// belief and authority alone.
 pub proof fn lemma_same_holder_same_token(pre: Raymond, post: Raymond)
     requires
         post.nodes == pre.nodes,
         post.holder == pre.holder,
+        post.privilege == pre.privilege,
     ensures
         forall|m: NodeId| #[trigger] has_token(post, m) <==> has_token(pre, m),
+        forall|m: NodeId| #[trigger] believes_holds(post, m) <==> believes_holds(pre, m),
 {
 }
 
-/// Unique token possession survives any step that does not move the token.
-pub proof fn lemma_frame_unique_token(pre: Raymond, post: Raymond)
-    requires
-        ray_unique_token(pre),
-        post.nodes == pre.nodes,
-        post.holder == pre.holder,
-    ensures
-        ray_unique_token(post),
-{
-    lemma_same_holder_same_token(pre, post);
-    assert forall|x: NodeId, y: NodeId|
-        #![trigger has_token(post, x), has_token(post, y)]
-        has_token(post, x) && has_token(post, y) implies x == y by {
-        assert(has_token(pre, x));
-        assert(has_token(pre, y));
-    }
-}
 
-/// The whole Raymond invariant survives any step that does not move the token,
-/// provided the per-node maps keep their entries and nobody enters the critical
-/// section without the token.
+/// The whole Raymond invariant survives any step that does not move the
+/// privilege, provided the per-node maps keep their entries and nobody enters a
+/// critical section without believing it holds the privilege.
 pub proof fn lemma_ray_frame_inv(pre: Raymond, post: Raymond)
     requires
         ray_inv(pre),
         post.nodes == pre.nodes,
         post.holder == pre.holder,
+        post.privilege == pre.privilege,
         forall|m: NodeId|
             #[trigger] pre.nodes.contains(m) ==> post.queue.contains_key(m)
                 && post.asked.contains_key(m) && post.using.contains_key(m),
-        forall|m: NodeId| #[trigger] pre.nodes.contains(m) && post.using[m] ==> has_token(pre, m),
+        forall|m: NodeId|
+            #[trigger] pre.nodes.contains(m) && post.using[m] ==> believes_holds(pre, m),
     ensures
         ray_inv(post),
 {
     lemma_same_holder_same_token(pre, post);
-    lemma_frame_unique_token(pre, post);
     lemma_frame_acyclic(pre, post);
-    let root = choose|n: NodeId| has_token(pre, n);
-    assert(has_token(post, root));
-    assert(ray_token_exists(post));
     // Split exactly as `ray_maps_total` / `ray_holder_closed` are split. An
     // `assert forall` introduces a quantified fact with the trigger written
     // here, so proving both halves in one block would reintroduce the matching
@@ -200,12 +193,13 @@ pub proof fn lemma_ray_frame_inv(pre: Raymond, post: Raymond)
     ) by {
         assert(pre.nodes.contains(m));
     }
-    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) && post.using[m] implies has_token(
-        post,
-        m,
-    ) by {
-        assert(pre.nodes.contains(m));
+    assert forall|m: NodeId| #[trigger] has_token(post, m) implies believes_holds(post, m) by {
         assert(has_token(pre, m));
+    }
+    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) && post.using[m]
+        implies believes_holds(post, m) by {
+        assert(pre.nodes.contains(m));
+        assert(believes_holds(pre, m));
     }
 }
 
@@ -327,20 +321,20 @@ pub proof fn lemma_holder_iter_shift(r: Raymond, n: NodeId, k: nat)
     }
 }
 
-/// Following holder pointers from any node reaches the token, by induction on
-/// the node's rank.
+/// Following belief from any node reaches a node that believes it holds the
+/// privilege, by induction on the rank.
 proof fn lemma_reaches_token_from(r: Raymond, rank: Map<NodeId, nat>, n: NodeId) -> (k: nat)
     requires
         ray_wf(r),
         ray_ranked_by(r, rank),
         r.nodes.contains(n),
     ensures
-        has_token(r, holder_iter(r, n, k)),
+        believes_holds(r, holder_iter(r, n, k)),
     decreases rank[n],
 {
     if r.holder[n] == n {
         assert(holder_iter(r, n, 0nat) == n);
-        assert(has_token(r, n));
+        assert(believes_holds(r, n));
         0nat
     } else {
         let m = r.holder[n];
@@ -356,26 +350,37 @@ proof fn lemma_reaches_token_from(r: Raymond, rank: Map<NodeId, nat>, n: NodeId)
     }
 }
 
-/// **Every node reaches the token by following holder pointers.**
+/// **Every node reaches the privilege holder by following holder pointers** -
+/// as long as nobody's belief is stale.
 ///
-/// This is what turns this module's opening claim - "requests travel hop-by-hop
-/// towards the token" - into something checked. It needs acyclicity and does not
-/// follow from the rest of the invariant: with a non-root cycle beside the real
-/// root, a node inside the cycle follows its holder pointers for ever and never
-/// arrives.
+/// This is what turns this module's opening claim, "requests travel hop-by-hop
+/// towards the token", into something checked. Two hypotheses carry it, and
+/// both are load-bearing. Acyclicity says the walk terminates rather than
+/// circling; `ray_no_stale_holders` says the node it terminates at is the real
+/// holder rather than somebody who merely thinks so.
 ///
-/// It is still a *safety* property, not liveness: it says the route exists in
-/// the current state, not that any request traverses it. Raymond's liveness
-/// needs reliable FIFO links and no crashes, none of which this model assumes.
+/// The second was free before, because authority was *defined* as believing.
+/// It is not free now, and it should not be: after a seizure a node whose
+/// belief-path leads to the seized holder genuinely cannot route to the
+/// privilege, and no amount of proving will make it. That is the routing damage
+/// a seizure does, and reconciliation - [`lemma_reconcile_preserves_inv`] - is
+/// what repairs it.
+///
+/// It is still a *safety* property, not liveness: the route exists in the
+/// current state, not that any request traverses it.
 pub proof fn theorem_every_node_reaches_the_token(r: Raymond, n: NodeId) -> (k: nat)
     requires
         ray_inv(r),
+        ray_no_stale_holders(r),
         r.nodes.contains(n),
     ensures
         has_token(r, holder_iter(r, n, k)),
 {
     let rank = choose|rank: Map<NodeId, nat>| ray_ranked_by(r, rank);
-    lemma_reaches_token_from(r, rank, n)
+    let k = lemma_reaches_token_from(r, rank, n);
+    assert(believes_holds(r, holder_iter(r, n, k)));
+    assert(has_token(r, holder_iter(r, n, k)));
+    k
 }
 
 /// Exactly which holder pointers `AssignPrivilege` rewrites.
@@ -394,36 +399,23 @@ pub proof fn lemma_assign_holder_pointers(pre: Raymond, post: Raymond, n: NodeId
 {
 }
 
-/// The token moves from `n` to `head`, and stays unique while it does.
+/// The privilege moves from `n` to `head`, and belief moves with it.
 pub proof fn lemma_assign_token_moves(pre: Raymond, post: Raymond, n: NodeId, head: NodeId)
     requires
         ray_inv(pre),
         ray_assign_privilege(pre, post, n, head),
     ensures
         has_token(post, head),
+        believes_holds(post, head),
         !has_token(post, n),
+        !believes_holds(post, n),
         forall|m: NodeId| #[trigger] has_token(post, m) ==> m == head,
-        ray_unique_token(post),
 {
     lemma_assign_holder_pointers(pre, post, n, head);
-    assert(has_token(pre, n));
-    assert(has_token(post, head));
-    assert(!has_token(post, n));
-    assert forall|m: NodeId| #[trigger] has_token(post, m) implies m == head by {
-        if m != head {
-            assert(m != n);
-            assert(post.holder[m] == pre.holder[m]);
-            assert(pre.holder.contains_key(m));
-            assert(has_token(pre, m));
-            assert(has_token(pre, n));
-            assert(m == n);
-            assert(false);
-        }
-    }
-    assert forall|x: NodeId, y: NodeId|
-        #![trigger has_token(post, x), has_token(post, y)]
-        has_token(post, x) && has_token(post, y) implies x == y by {
-    }
+    assert(post.privilege == head);
+    assert(post.holder[head] == head);
+    assert(post.holder[n] == head);
+    assert(head != n);
 }
 
 /// `AssignPrivilege` keeps every node's maps well formed.
@@ -435,6 +427,7 @@ pub proof fn lemma_assign_wf(pre: Raymond, post: Raymond, n: NodeId, head: NodeI
         ray_wf(post),
 {
     lemma_assign_holder_pointers(pre, post, n, head);
+    assert(post.nodes.contains(post.privilege));
     assert forall|m: NodeId| #[trigger] post.nodes.contains(m) implies post.holder.contains_key(m)
         && post.queue.contains_key(m) && post.asked.contains_key(m)
         && post.using.contains_key(m) by {
@@ -453,26 +446,33 @@ pub proof fn lemma_assign_wf(pre: Raymond, post: Raymond, n: NodeId, head: NodeI
     }
 }
 
-/// Nobody is in the critical section when the token is passed on, so
-/// `ray_using_implies_token` survives the move vacuously.
+/// Nobody is in the critical section when the privilege is passed on, so
+/// `ray_using_implies_belief` survives the move vacuously.
+///
+/// This is where a voluntary handover differs from a seizure. `n` is guarded on
+/// `!pre.using[n]`, and `ray_inv` says only believers are in a critical
+/// section, so the only node whose belief this step revokes was not using it.
 pub proof fn lemma_assign_using(pre: Raymond, post: Raymond, n: NodeId, head: NodeId)
     requires
         ray_inv(pre),
         ray_assign_privilege(pre, post, n, head),
     ensures
-        ray_using_implies_token(post),
+        ray_using_implies_belief(post),
 {
-    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) && post.using[m] implies has_token(
-        post,
-        m,
-    ) by {
+    lemma_assign_holder_pointers(pre, post, n, head);
+    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) && post.using[m]
+        implies believes_holds(post, m) by {
         assert(pre.nodes.contains(m));
         assert(pre.using[m]);
-        assert(has_token(pre, m));
-        assert(has_token(pre, n));
-        assert(m == n);
-        assert(!pre.using[n]);
-        assert(false);
+        assert(believes_holds(pre, m));
+        if m == n {
+            assert(!pre.using[n]);
+            assert(false);
+        } else if m == head {
+            assert(post.holder[head] == head);
+        } else {
+            assert(post.holder[m] == pre.holder[m]);
+        }
     }
 }
 
@@ -523,8 +523,8 @@ pub proof fn theorem_delayed_request_delivery_is_safe(
     lemma_routing_preserves_holder(pre, post, RayStep::ReceiveRequest { at: at, from: from });
 }
 
-/// Passing the token preserves the "exactly one token" invariant: the old
-/// holder stops being a root at the same instant the new holder becomes one.
+/// Passing the privilege on preserves the Raymond invariant, and leaves `head`
+/// holding it and believing so.
 pub proof fn lemma_assign_privilege_preserves_unique_token(
     pre: Raymond,
     post: Raymond,
@@ -544,8 +544,10 @@ pub proof fn lemma_assign_privilege_preserves_unique_token(
     lemma_assign_wf(pre, post, n, head);
     lemma_assign_using(pre, post, n, head);
     lemma_repoint_acyclic(pre, post, n, head);
-    assert(has_token(post, head));
-    assert(ray_token_exists(post));
+    lemma_assign_holder_pointers(pre, post, n, head);
+    assert forall|m: NodeId| #[trigger] has_token(post, m) implies believes_holds(post, m) by {
+        assert(m == head);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -557,63 +559,40 @@ pub proof fn lemma_assign_privilege_preserves_unique_token(
 // is identical; the differences are that it does not touch the queue and that
 // it clears `using[from]` instead of requiring it to be false.
 
-/// Exactly which holder pointers a seizure rewrites.
-pub proof fn lemma_seize_holder_pointers(pre: Raymond, post: Raymond, from: NodeId, to: NodeId)
-    requires
-        ray_seize(pre, post, from, to),
-    ensures
-        post.holder[to] == to,
-        post.holder[from] == to,
-        post.holder.contains_key(to),
-        post.holder.contains_key(from),
-        forall|m: NodeId| m != from && m != to ==> #[trigger] post.holder[m] == pre.holder[m],
-        forall|m: NodeId|
-            m != from && m != to ==> (#[trigger] post.holder.contains_key(m)
-                <==> pre.holder.contains_key(m)),
-{
-}
 
-/// The token moves to `to`, and stays unique while it does.
-pub proof fn lemma_seize_token_moves(pre: Raymond, post: Raymond, from: NodeId, to: NodeId)
+
+
+
+/// **A seizure preserves the Raymond invariant and leaves `to` holding the one
+/// privilege** - without touching anything belonging to `from`.
+///
+/// Shorter than the handover case, and the reason is the point of the split.
+/// Moving authority is now a single assignment to `privilege`; uniqueness is
+/// structural, so there is nothing to re-establish. What the step *does* create
+/// is a stale holder, and the invariant tolerates one by construction:
+/// `ray_authority_believes` constrains the holder's belief, not everyone's, and
+/// `ray_using_implies_belief` is untroubled by a node that both believes and is
+/// using.
+pub proof fn lemma_seize_preserves_inv(pre: Raymond, post: Raymond, from: NodeId, to: NodeId)
     requires
         ray_inv(pre),
         ray_seize(pre, post, from, to),
     ensures
+        ray_inv(post),
         has_token(post, to),
+        believes_holds(post, to),
         !has_token(post, from),
         forall|m: NodeId| #[trigger] has_token(post, m) ==> m == to,
-        ray_unique_token(post),
+        // The state the old model could not write down.
+        is_stale_holder(post, from),
 {
-    lemma_seize_holder_pointers(pre, post, from, to);
-    assert(has_token(pre, from));
-    assert(has_token(post, to));
-    assert(!has_token(post, from));
-    assert forall|m: NodeId| #[trigger] has_token(post, m) implies m == to by {
-        if m != to {
-            assert(m != from);
-            assert(post.holder[m] == pre.holder[m]);
-            assert(pre.holder.contains_key(m));
-            assert(has_token(pre, m));
-            assert(has_token(pre, from));
-            assert(m == from);
-            assert(false);
-        }
-    }
-    assert forall|x: NodeId, y: NodeId|
-        #![trigger has_token(post, x), has_token(post, y)]
-        has_token(post, x) && has_token(post, y) implies x == y by {
-    }
-}
-
-/// A seizure keeps every node's maps well formed.
-pub proof fn lemma_seize_wf(pre: Raymond, post: Raymond, from: NodeId, to: NodeId)
-    requires
-        ray_wf(pre),
-        ray_seize(pre, post, from, to),
-    ensures
-        ray_wf(post),
-{
-    lemma_seize_holder_pointers(pre, post, from, to);
+    assert(post.privilege == to);
+    assert(post.holder[to] == to);
+    assert(believes_holds(pre, from));
+    assert(post.holder[from] == pre.holder[from]);
+    assert(is_stale_holder(post, from));
+    // Well-formedness.
+    assert(post.nodes.contains(post.privilege));
     assert forall|m: NodeId| #[trigger] post.nodes.contains(m) implies post.holder.contains_key(m)
         && post.queue.contains_key(m) && post.asked.contains_key(m)
         && post.using.contains_key(m) by {
@@ -623,63 +602,130 @@ pub proof fn lemma_seize_wf(pre: Raymond, post: Raymond, from: NodeId, to: NodeI
         #[trigger] post.holder[m],
     ) by {
         assert(pre.nodes.contains(m));
-        if m == to || m == from {
+        if m == to {
             assert(post.holder[m] == to);
-            assert(pre.nodes.contains(to));
         } else {
             assert(post.holder[m] == pre.holder[m]);
         }
     }
+    assert forall|m: NodeId| #[trigger] has_token(post, m) implies believes_holds(post, m) by {
+        assert(m == to);
+    }
+    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) && post.using[m]
+        implies believes_holds(post, m) by {
+        assert(pre.nodes.contains(m));
+        assert(pre.using[m]);
+        assert(believes_holds(pre, m));
+        if m != to {
+            assert(post.holder[m] == pre.holder[m]);
+        }
+    }
+    // Acyclicity: the step only makes `to` point at itself, which *removes* a
+    // constraint from the ranking, so the old rank still witnesses it.
+    let rank = choose|rank: Map<NodeId, nat>| ray_ranked_by(pre, rank);
+    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) implies rank.contains_key(m) by {
+        assert(pre.nodes.contains(m));
+    }
+    assert forall|m: NodeId|
+        post.nodes.contains(m) && #[trigger] post.holder[m] != m implies rank[post.holder[m]]
+            < rank[m] by {
+        assert(m != to);
+        assert(post.holder[m] == pre.holder[m]);
+        assert(pre.nodes.contains(m));
+    }
+    assert(ray_ranked_by(post, rank));
 }
 
-/// The node whose token is seized is no longer in a critical section, and it is
-/// the only node that could have been, so `ray_using_implies_token` survives.
-pub proof fn lemma_seize_using(pre: Raymond, post: Raymond, from: NodeId, to: NodeId)
+/// **A stale holder confers no authority.**
+///
+/// The routing counterpart of `theorem_stale_token_confers_no_authority`, and
+/// the reason a seizure need not reach into the crashed node. `couples` is
+/// written against `has_token` - actual possession of the privilege - so a node
+/// that merely believes cannot be permitted to mutate, however firmly it
+/// believes and whatever it is doing in its critical section meanwhile.
+///
+/// This is what survives imperfect failure detection. It does not depend on the
+/// seized node being crashed, or on anything having cleared its state.
+pub proof fn theorem_stale_holder_confers_no_authority(
+    r: Raymond,
+    own: OwnershipState,
+    n: NodeId,
+    e: Epoch,
+)
     requires
-        ray_inv(pre),
-        ray_seize(pre, post, from, to),
+        couples(r, own),
+        is_stale_holder(r, n),
     ensures
-        ray_using_implies_token(post),
+        !may_mutate(own, n, e),
 {
-    lemma_seize_token_moves(pre, post, from, to);
-    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) && post.using[m] implies has_token(
-        post,
-        m,
-    ) by {
-        assert(pre.nodes.contains(m));
-        if m == from {
-            assert(post.using[m] == false);
-            assert(false);
-        } else {
-            assert(post.using[m] == pre.using[m]);
-            assert(pre.using[m]);
-            assert(has_token(pre, m));
-            assert(has_token(pre, from));
-            assert(m == from);
-            assert(false);
-        }
+    if may_mutate(own, n, e) {
+        assert(has_token(r, n));
+        assert(false);
     }
 }
 
-/// **A seizure preserves the Raymond invariant and leaves `to` holding the one
-/// token.** The routing layer cannot end up with two tokens, or none, because
-/// the coordinator took one away from a node that was not cooperating.
-pub proof fn lemma_seize_preserves_inv(pre: Raymond, post: Raymond, from: NodeId, to: NodeId)
+/// **Reconciliation drops the stale belief**, and preserves the invariant.
+///
+/// The node acts on its own state here, which is what makes this step
+/// implementable where editing it from outside was not.
+///
+/// Acyclicity comes straight from [`lemma_repoint_acyclic`]: re-pointing `n` at
+/// the privilege holder is the same rewrite as a seizure that moves the
+/// privilege to a node already believing it holds it, and the holder does
+/// already believe - that is `ray_authority_believes`.
+pub proof fn lemma_reconcile_preserves_inv(pre: Raymond, post: Raymond, n: NodeId)
     requires
         ray_inv(pre),
-        ray_seize(pre, post, from, to),
+        ray_reconcile(pre, post, n),
     ensures
         ray_inv(post),
-        has_token(post, to),
-        !has_token(post, from),
-        forall|m: NodeId| #[trigger] has_token(post, m) ==> m == to,
+        !believes_holds(post, n),
+        !post.using[n],
+        has_token(post, pre.privilege),
 {
-    lemma_seize_token_moves(pre, post, from, to);
-    lemma_seize_wf(pre, post, from, to);
-    lemma_seize_using(pre, post, from, to);
-    lemma_repoint_acyclic(pre, post, from, to);
-    assert(has_token(post, to));
-    assert(ray_token_exists(post));
+    let priv_node = pre.privilege;
+    assert(has_token(pre, priv_node));
+    assert(believes_holds(pre, priv_node));
+    assert(pre.holder[priv_node] == priv_node);
+    assert(n != priv_node);
+    assert(post.holder[n] == priv_node);
+    assert(!believes_holds(post, n));
+    assert(post.nodes.contains(post.privilege));
+
+    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) implies post.holder.contains_key(m)
+        && post.queue.contains_key(m) && post.asked.contains_key(m)
+        && post.using.contains_key(m) by {
+        assert(pre.nodes.contains(m));
+    }
+    assert forall|m: NodeId| post.nodes.contains(m) implies post.nodes.contains(
+        #[trigger] post.holder[m],
+    ) by {
+        assert(pre.nodes.contains(m));
+        if m == n {
+            assert(post.holder[m] == priv_node);
+        } else {
+            assert(post.holder[m] == pre.holder[m]);
+        }
+    }
+    assert forall|m: NodeId| #[trigger] has_token(post, m) implies believes_holds(post, m) by {
+        assert(m == priv_node);
+        assert(post.holder[priv_node] == pre.holder[priv_node]);
+    }
+    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) && post.using[m]
+        implies believes_holds(post, m) by {
+        assert(m != n);
+        assert(post.using[m] == pre.using[m]);
+        assert(pre.nodes.contains(m));
+        assert(believes_holds(pre, m));
+        assert(post.holder[m] == pre.holder[m]);
+    }
+
+    // `holder.insert(n, priv)` and `holder.insert(n, priv).insert(priv, priv)`
+    // agree, because the holder already believes.
+    assert_maps_equal!(
+        post.holder == pre.holder.insert(n, priv_node).insert(priv_node, priv_node)
+    );
+    lemma_repoint_acyclic(pre, post, n, priv_node);
 }
 
 /// A one-state labelled run.
@@ -784,9 +830,9 @@ pub proof fn lemma_ray_step_preserves_inv(pre: Raymond, post: Raymond, s: RaySte
         },
         RayStep::EnterCs { node } => {
             assert forall|m: NodeId| #[trigger] pre.nodes.contains(m) && post.using[m]
-                implies has_token(pre, m) by {
+                implies believes_holds(pre, m) by {
                 if m == node {
-                    assert(has_token(pre, node));
+                    assert(believes_holds(pre, node));
                 } else {
                     assert(post.using[m] == pre.using[m]);
                 }
@@ -795,7 +841,7 @@ pub proof fn lemma_ray_step_preserves_inv(pre: Raymond, post: Raymond, s: RaySte
         },
         RayStep::ExitCs { node } => {
             assert forall|m: NodeId| #[trigger] pre.nodes.contains(m) && post.using[m]
-                implies has_token(pre, m) by {
+                implies believes_holds(pre, m) by {
                 assert(m != node);
                 assert(post.using[m] == pre.using[m]);
             }
@@ -813,10 +859,12 @@ pub proof fn lemma_ray_step_preserves_inv(pre: Raymond, post: Raymond, s: RaySte
     }
 }
 
-/// **At most one valid token**, in any state reachable by Raymond steps.
+/// **At most one node holds the privilege.** Structural now: `privilege` is a
+/// single node id, so this needs no invariant at all. It used to be an
+/// inductive invariant, and it used to be the reason a returning stale holder
+/// was unrepresentable.
 pub proof fn theorem_ray_at_most_one_token(r: Raymond, n: NodeId, m: NodeId)
     requires
-        ray_inv(r),
         has_token(r, n),
         has_token(r, m),
     ensures
@@ -824,7 +872,7 @@ pub proof fn theorem_ray_at_most_one_token(r: Raymond, n: NodeId, m: NodeId)
 {
 }
 
-/// The initial routing state has the token.
+/// The initial routing state has the privilege.
 pub proof fn lemma_ray_token_exists_init(r: Raymond, root: NodeId)
     requires
         ray_init(r, root),
@@ -834,9 +882,9 @@ pub proof fn lemma_ray_token_exists_init(r: Raymond, root: NodeId)
     assert(has_token(r, root));
 }
 
-/// **The token is never lost.** Every Raymond transition keeps a token in the
-/// system: the token-preserving steps leave possession alone, and the transfer
-/// hands it to `head` in the same step that takes it from `n`.
+/// **The privilege is never lost.** Every Raymond transition leaves
+/// `privilege` pointing at a node: the token-preserving steps do not touch it,
+/// and the transfer hands it to `head` in the same step that takes it from `n`.
 pub proof fn lemma_ray_token_exists_step(pre: Raymond, post: Raymond, s: RayStep)
     requires
         ray_inv(pre),
@@ -851,14 +899,13 @@ pub proof fn lemma_ray_token_exists_step(pre: Raymond, post: Raymond, s: RayStep
         },
         _ => {
             lemma_token_preserving_steps_keep_holder(pre, post, s);
-            let n = choose|n: NodeId| has_token(pre, n);
-            assert(has_token(post, n));
+            assert(has_token(post, pre.privilege));
         },
     }
 }
 
-/// **Exactly one token.** In any state satisfying both invariants there is a
-/// token, and it is unique.
+/// **Exactly one privilege.** In any well-formed state there is a holder, and
+/// it is unique.
 pub proof fn theorem_ray_exactly_one_token(r: Raymond)
     requires
         ray_inv(r),
@@ -866,17 +913,31 @@ pub proof fn theorem_ray_exactly_one_token(r: Raymond)
         exists|n: NodeId| #[trigger] has_token(r, n),
         forall|n: NodeId, m: NodeId| has_token(r, n) && has_token(r, m) ==> n == m,
 {
+    assert(has_token(r, r.privilege));
     assert forall|n: NodeId, m: NodeId| has_token(r, n) && has_token(r, m) implies n == m by {
         theorem_ray_at_most_one_token(r, n, m);
     }
 }
 
-/// **Only the token holder can be in the critical section.** Exposed as a
-/// theorem in its own right, since it is the Raymond-layer counterpart of
-/// ownership exclusivity.
+/// **Raymond critical sections are exclusive - while nobody's belief is
+/// stale.**
+///
+/// The extra hypothesis is not a weakening of the algorithm; it is the
+/// algorithm's actual scope becoming visible. Raymond's mutual exclusion rests
+/// on there being one privilege and every node agreeing where it is. A seizure
+/// breaks the agreement, and until the seized node reconciles, two nodes can be
+/// inside their critical sections: the stale holder, which never learned, and
+/// the new holder.
+///
+/// That window is real in any deployment that takes a privilege away from a
+/// node it cannot reach, and this model now says so rather than hiding it by
+/// editing the absent node's state. What does *not* break in that window is
+/// ownership safety - see
+/// [`theorem_stale_holder_confers_no_authority`].
 pub proof fn theorem_ray_critical_section_is_exclusive(r: Raymond, n: NodeId, m: NodeId)
     requires
         ray_inv(r),
+        ray_no_stale_holders(r),
         r.nodes.contains(n),
         r.nodes.contains(m),
         r.using[n],
@@ -884,17 +945,40 @@ pub proof fn theorem_ray_critical_section_is_exclusive(r: Raymond, n: NodeId, m:
     ensures
         n == m,
 {
+    assert(believes_holds(r, n));
+    assert(believes_holds(r, m));
     assert(has_token(r, n));
     assert(has_token(r, m));
     theorem_ray_at_most_one_token(r, n, m);
 }
 
-/// **Token transfer preserves ownership safety.**
+/// **At most one node is authorised to be in its critical section**, with no
+/// side conditions at all: the authorised occupant is the privilege holder, and
+/// there is one of those by construction.
 ///
-/// The token may only be passed on while the ownership layer is *not* `Owned` -
-/// that is, after the actor has been released. Under that condition the
-/// coupling survives the transfer, so afterwards still at most one node can
-/// possibly hold authority, and it is the new token holder.
+/// This is the part of Raymond's exclusivity that survives a seizure, stated
+/// separately from the part that does not.
+pub proof fn theorem_authorised_critical_section_is_exclusive(
+    r: Raymond,
+    n: NodeId,
+    m: NodeId,
+)
+    requires
+        ray_inv(r),
+        r.using[n] && has_token(r, n),
+        r.using[m] && has_token(r, m),
+    ensures
+        n == m,
+{
+    theorem_ray_at_most_one_token(r, n, m);
+}
+
+/// **Privilege transfer preserves ownership safety.**
+///
+/// The privilege may only be passed on while the ownership layer is *not*
+/// `Owned` - that is, after the actor has been released. Under that condition
+/// the coupling survives the transfer, so afterwards still at most one node can
+/// possibly hold authority, and it is the new holder.
 pub proof fn theorem_token_transfer_preserves_ownership_safety(
     pre: Raymond,
     post: Raymond,
@@ -920,15 +1004,10 @@ pub proof fn theorem_token_transfer_preserves_ownership_safety(
     }
 }
 
-/// Taking ownership while holding the token establishes the coupling: the only
-/// node that can mutate is exactly the token holder.
-pub proof fn theorem_acquire_under_token_establishes_coupling(
-    r: Raymond,
-    n: NodeId,
-    e: Epoch,
-)
+/// Taking ownership while holding the privilege establishes the coupling: the
+/// only node that can mutate is exactly the privilege holder.
+pub proof fn theorem_acquire_under_token_establishes_coupling(r: Raymond, n: NodeId, e: Epoch)
     requires
-        ray_inv(r),
         has_token(r, n),
     ensures
         couples(r, OwnershipState::Owned { owner: n, epoch: e }),
@@ -940,9 +1019,8 @@ pub proof fn theorem_acquire_under_token_establishes_coupling(
 }
 
 /// **The composed safety property.** Under the coupling, two nodes permitted to
-/// mutate the actor are the same node, and that node is the Raymond token
-/// holder. Routing cannot create a second one because there is only ever one
-/// token.
+/// mutate the actor are the same node, and that node actually holds the
+/// privilege - not merely believes it does.
 pub proof fn theorem_coupled_exclusivity(
     r: Raymond,
     own: OwnershipState,
@@ -952,7 +1030,6 @@ pub proof fn theorem_coupled_exclusivity(
     e2: Epoch,
 )
     requires
-        ray_inv(r),
         couples(r, own),
         may_mutate(own, n1, e1),
         may_mutate(own, n2, e2),

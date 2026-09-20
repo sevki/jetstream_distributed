@@ -89,14 +89,8 @@ pub proof fn lemma_composed_pass_token_preserves_inv(
     }
 }
 
-/// **Seizing the token preserves the coupling.**
-///
-/// Same argument as `lemma_composed_pass_token_preserves_inv`, and it is worth
-/// noticing that it is the *same* argument: the guard is `is_unowned`, so
-/// nobody has authority over the actor, so `couples` holds vacuously however
-/// the token moves. Safety here does not come from the holder agreeing to let
-/// go - it comes from the epoch having been burned before the token moved,
-/// which is what lets a takeover be forcible at all.
+/// A seizure preserves the composed invariant, and records the stale holder it
+/// creates.
 pub proof fn lemma_composed_seize_preserves_inv(
     pre: Composed,
     post: Composed,
@@ -111,12 +105,26 @@ pub proof fn lemma_composed_seize_preserves_inv(
         has_token(post.ray, to),
         !has_token(post.ray, from),
         forall|m: NodeId| #[trigger] has_token(post.ray, m) ==> m == to,
+        is_stale_holder(post.ray, from),
+        post.seized.contains(from),
 {
     lemma_seize_preserves_inv(pre.ray, post.ray, from, to);
     assert forall|nd: NodeId, e: Epoch|
         may_mutate(post.own.actors[post.actor], nd, e) implies has_token(post.ray, nd) by {
         assert(is_unowned(pre.own.actors[pre.actor]));
         assert(false);
+    }
+    // The only new stale holder is `from`, and it is now in `seized`.
+    assert forall|m: NodeId| #[trigger] is_stale_holder(post.ray, m) implies post.seized.contains(
+        m,
+    ) by {
+        if m != from {
+            assert(m != to);
+            assert(post.ray.holder[m] == pre.ray.holder[m]);
+            assert(believes_holds(pre.ray, m));
+            assert(!has_token(pre.ray, m));
+            assert(is_stale_holder(pre.ray, m));
+        }
     }
 }
 
@@ -180,15 +188,31 @@ pub proof fn theorem_composed_step_preserves_inv(pre: Composed, post: Composed, 
     }
 }
 
-/// Reconciliation touches only the seizure marker, so every part of the
-/// invariant rides through untouched.
+/// Reconciliation preserves the composed invariant: the repaired node is no
+/// longer stale, so dropping it from `seized` keeps the two in step.
 pub proof fn lemma_composed_reconcile_preserves_inv(pre: Composed, post: Composed, n: NodeId)
     requires
         composed_inv(pre),
         cs_reconcile(pre, post, n),
     ensures
         composed_inv(post),
+        !is_stale_holder(post.ray, n),
+        !post.seized.contains(n),
 {
+    lemma_reconcile_preserves_inv(pre.ray, post.ray, n);
+    assert(post.ray.privilege == pre.ray.privilege);
+    assert(post.ray.nodes == pre.ray.nodes);
+    assert forall|nd: NodeId, e: Epoch|
+        may_mutate(post.own.actors[post.actor], nd, e) implies has_token(post.ray, nd) by {
+        assert(has_token(pre.ray, nd));
+    }
+    assert forall|m: NodeId| #[trigger] is_stale_holder(post.ray, m) implies post.seized.contains(
+        m,
+    ) by {
+        assert(m != n);
+        assert(post.ray.holder[m] == pre.ray.holder[m]);
+        assert(is_stale_holder(pre.ray, m));
+    }
 }
 
 /// **A seized node cannot rejoin `live` while it is still seized.**
@@ -231,15 +255,20 @@ pub proof fn theorem_seized_node_cannot_recover(
     }
 }
 
-/// **Only two composed steps move the token, and the holder's liveness decides
-/// which.**
+/// **Only two composed steps move the privilege, and cooperation is what
+/// separates them.**
 ///
-/// A live holder passes it on ([`cs_pass_token`]); a fail-stopped one has it
-/// taken ([`cs_seize_token`]); nothing else touches it. The `false` arms are the
-/// content: routing, ownership transitions and acquisition all leave token
-/// possession exactly as they found it, so there is no third way for the token
-/// to move and in particular no step in which a crashed node hands it over as
-/// though it were acting.
+/// A holder that acts passes it on ([`cs_pass_token`]); a holder that does not
+/// has it taken ([`cs_seize_token`]); nothing else touches it. The `false` arms
+/// are the content: routing, ownership transitions, acquisition and
+/// reconciliation all leave possession exactly as they found it.
+///
+/// The `SeizeToken` arm used to also claim `!pre.own.live.contains(m)`, because
+/// seizure was guarded on it. It no longer is, and the arm is honest about what
+/// remains: the privilege moved away from `m` without `m` taking a step. That
+/// is the distinction a deployment can actually act on - a coordinator knows
+/// whether *it* is forcing the transfer; it does not know whether the node is
+/// alive.
 pub proof fn theorem_token_movement_is_partitioned(
     pre: Composed,
     post: Composed,
@@ -253,8 +282,9 @@ pub proof fn theorem_token_movement_is_partitioned(
         !has_token(post.ray, m),
     ensures
         match s {
-            ComposedStep::PassToken { node, head } => node == m && pre.own.live.contains(m),
-            ComposedStep::SeizeToken { from, to } => from == m && !pre.own.live.contains(m),
+            ComposedStep::PassToken { node, head } => node == m && pre.own.live.contains(m)
+                && believes_holds(pre.ray, m),
+            ComposedStep::SeizeToken { from, to } => from == m && post.seized.contains(m),
             ComposedStep::Ray { ray_step } => false,
             ComposedStep::Own { own_step } => false,
             ComposedStep::Reconcile { node } => false,
@@ -278,23 +308,24 @@ pub proof fn theorem_token_movement_is_partitioned(
             assert(false);
         },
         ComposedStep::Reconcile { node } => {
-            assert(post.ray == pre.ray);
+            // Reconciliation edits belief, never the privilege.
+            assert(post.ray.privilege == pre.ray.privilege);
+            assert(post.ray.nodes == pre.ray.nodes);
             assert(has_token(post.ray, m));
             assert(false);
         },
         ComposedStep::PassToken { node, head } => {
-            // `ray_assign_privilege` needs the *holder* to act, and the token is
-            // unique, so that holder is `m`.
             assert(has_token(pre.ray, node));
             theorem_ray_at_most_one_token(pre.ray, m, node);
             assert(node == m);
             assert(pre.own.live.contains(node));
+            assert(believes_holds(pre.ray, node));
         },
         ComposedStep::SeizeToken { from, to } => {
             assert(has_token(pre.ray, from));
             theorem_ray_at_most_one_token(pre.ray, m, from);
             assert(from == m);
-            assert(!pre.own.live.contains(from));
+            assert(post.seized == pre.seized.insert(from));
         },
     }
 }

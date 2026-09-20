@@ -495,11 +495,15 @@ fn a_delayed_write_arrives_at_a_registry_that_moved_on() {
     );
     assert_eq!(
         attempts[0].writes_timed_out, 0,
-        "the held write must have been answered before the node gave up — the          point of this story is a delivered request meeting a changed registry,          and a timeout here would mean it was never delivered: {attempts:?}"
+        "the held write must have been answered before the node gave up — \
+         the point of this story is a delivered request meeting a changed \
+         registry, and a timeout here would mean it was never delivered: \
+         {attempts:?}"
     );
     assert!(
         fenced(&log).contains(&(0, 41)),
-        "the delayed write must have been refused on arrival, at an epoch the          registry had already burned past: {log:?}"
+        "the delayed write must have been refused on arrival, at an epoch \
+         the registry had already burned past: {log:?}"
     );
     assert_eq!(
         accepted(&log),
@@ -539,7 +543,9 @@ fn a_timeout_is_not_evidence_the_write_did_not_land() {
     assert_eq!(
         accepted(&log),
         vec![(0, 41), (0, 41)],
-        "and both must have been accepted — the one it gave up on landed, which          is precisely why a node may not read its own timeout as a verdict:          {log:?}"
+        "and both must have been accepted — the one it gave up on landed, \
+         which is precisely why a node may not read its own timeout as a \
+         verdict: {log:?}"
     );
 }
 

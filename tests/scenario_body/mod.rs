@@ -1314,7 +1314,9 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
             Event::Fenced { node, epoch } => {
                 if held == Some((*node, *epoch)) {
                     return Err(format!(
-                        "may_mutate (refusals): node {node} was fenced at epoch                          {epoch} while the registry still held the actor for it                          — a refusal the model has no state for"
+                        "may_mutate (refusals): node {node} was fenced at epoch \
+                         {epoch} while the registry still held the actor \
+                         for it — a refusal the model has no state for"
                     ));
                 }
             }

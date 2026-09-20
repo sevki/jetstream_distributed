@@ -700,12 +700,15 @@ impl Lcg {
 ///
 /// `POLL` decides who is told to stand down, and the `Revoked` it writes sits
 /// *inside* that guarded arm: delete the guard and the logging moves with it.
-/// An audit event cannot witness a guard it is nested in, which is a mistake
-/// worth only making once.
+/// An audit event cannot witness a guard it is nested in. `Granted` has the
+/// same shape for the same reason — it is written inside `POLL`'s
+/// `intended == node` arm — so it witnesses what an offer looks like, not the
+/// decision to make one.
 ///
-/// Both are witnessed by driving `Coord` with raw lines instead — see
-/// `the_registry_refuses_an_acquire_quoting_the_wrong_epoch` and
-/// `the_registry_does_not_tell_a_bystander_to_stand_down`. The log is the wrong
+/// All three are witnessed by driving `Coord` with raw lines instead — see
+/// `the_registry_refuses_an_acquire_quoting_the_wrong_epoch`,
+/// `the_registry_does_not_tell_a_bystander_to_stand_down` and
+/// `the_registry_does_not_offer_the_actor_to_a_bystander`. The log is the wrong
 /// instrument for a guard about the request rather than the result; the
 /// protocol boundary is the right one.
 ///

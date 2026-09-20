@@ -740,6 +740,47 @@ fn the_registry_refuses_an_acquire_quoting_the_wrong_epoch() {
     assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}")), "OK");
 }
 
+/// The registry does not offer the actor to a node it is not holding it for.
+///
+/// `Granted` has exactly the flaw that made `Revoked` decorative: it is logged
+/// *inside* `POLL`'s `intended == node` arm, so deleting that guard moves the
+/// logging with it and the oracle sees an empty log rather than a bad offer.
+/// The oracle-side check is still worth having — it rejects a bad offer in a
+/// hand-built log — but it cannot witness the coordinator's decision, and only
+/// the protocol boundary can.
+///
+/// Found by writing the generalisation out for the `Revoked` case rather than
+/// by being told, which is the first time this pattern has been caught one step
+/// ahead of the review instead of one behind.
+#[test]
+fn the_registry_does_not_offer_the_actor_to_a_bystander() {
+    let mut coord = Coord::new(true);
+
+    // The actor starts offered to node 0 and to nobody else.
+    assert_eq!(
+        coord.handle("POLL 1"),
+        "NONE",
+        "the actor is held for node 0; node 1 must be offered nothing"
+    );
+    assert_eq!(
+        coord.handle("POLL 2"),
+        "NONE",
+        "nor node 2"
+    );
+    assert_eq!(coord.handle("POLL 0"), format!("GRANT {INITIAL_EPOCH}"));
+
+    // And the same once it has moved on: a forced revoke to node 1 leaves the
+    // others with nothing.
+    assert_eq!(coord.handle(&format!("ACQUIRE 0 {INITIAL_EPOCH}")), "OK");
+    assert_eq!(coord.handle("FORCE 1"), "OK");
+    assert_eq!(
+        coord.handle("POLL 0"),
+        "NONE",
+        "the node that just lost the actor is offered nothing"
+    );
+    assert_eq!(coord.handle("POLL 1"), format!("GRANT {}", INITIAL_EPOCH + 1));
+}
+
 /// The registry does not tell a bystander to stand down.
 ///
 /// `Message::Revoke` binds its `target` to the outgoing owner, and `POLL`

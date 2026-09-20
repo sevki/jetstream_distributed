@@ -33,6 +33,70 @@ transitions provably keep it that way.
 This is a *model*. There is no networking, no persistence and no actor runtime
 here, and that is deliberate.
 
+## Relation to Chubby
+
+The obvious prior art is [*The Chubby lock service for loosely-coupled
+distributed systems*](https://storage.googleapis.com/gweb-research2023-media/pubtools/4444.pdf)
+(Burrows, OSDI 2006). It is worth being precise about the relationship, because
+the central mechanism here is Chubby's, not a new one.
+
+**The fencing mechanism is the same idea.** Chubby §2.4: a lock holder may
+request a *sequencer*, "an opaque byte-string that describes the state of the
+lock immediately after acquisition", containing the lock name, the mode, and the
+**lock generation number** — a per-node counter that "increases when the node's
+lock transitions from free to held". The client passes it to the resource
+server, which "is expected to test whether the sequencer is still valid ... if
+not, it should reject the request". That is exactly `Token { actor, epoch,
+holder }` plus `valid_fence`, and Chubby's lock generation number is this
+model's `Epoch`. This repository is a formalisation of that design, not an
+alternative to it.
+
+**What this adds is the proof, and the precision that a proof forces.** Chubby
+is an experience paper: it describes the initial design, compares it with actual
+use, and explains how the design had to change. It carries no machine-checked
+proofs, and it does not need to — its evidence is years of production at scale.
+The evidence here is different in kind. "The recipient server is expected to
+test whether the sequencer is still valid" is doing a great deal of work in that
+sentence, and writing the obligation down as a state machine is what turns it
+into something checkable:
+
+* who may mutate is a single predicate, `may_mutate`, and
+  `theorem_no_authority_without_token` proves that anyone who satisfies it
+  provably holds an issued token for exactly that `(actor, epoch)`;
+* the headline scenario — `A` owns at 41, `B` takes over at 42, `A` returns
+  still holding its epoch-41 token — is the situation sequencers exist for, and
+  it is discharged as a nine-step execution rather than argued informally;
+* the awkward part, **a node cannot fence itself**, becomes impossible to leave
+  implicit. `FenceGuard::accepts` consults the node's own belief, so a
+  partitioned holder accepts its own stale epoch; the rejection that matters
+  happens where the effect lands. Chubby's locks are *advisory* for exactly this
+  reason — "holding a lock called F neither is necessary to access the file F,
+  nor prevents other clients from doing so" — and this model is advisory in the
+  same sense, but has to say so in a proof obligation rather than in prose.
+
+**Three deliberate differences, and why.**
+
+| | Chubby | here |
+| --- | --- | --- |
+| Timing | `lock-delay`: after a holder fails, the lock is withheld for up to a minute, protecting servers that do **not** check sequencers. Described in the paper as "imperfect but easier". | No timing assumptions at all. Messages never expire, `issued` and `network` never shrink, and safety rests only on epoch ordering. A delay-based argument cannot be proved safe in an asynchronous model, so the unmodified-server path is deliberately not modelled. |
+| Consensus | A Chubby cell is five replicas running Paxos; that is what makes a lock's state a single agreed fact. | Assumed, not modelled. "Ownership records are updated atomically" is the first row of the failure-model table, and Chubby is precisely the kind of thing that would discharge it. |
+| Topology | Centralised: clients talk to a master. | The privilege is routed **peer-to-peer** by Raymond's algorithm, and `couples` proves routing cannot manufacture authority. Chubby has no analogue, because it does not need one. |
+
+The third difference is where this model has something Chubby does not, and it
+is also where it was recently found to be wrong. Because privilege moves between
+peers rather than being held centrally, a node can be left believing it holds
+the privilege after the privilege has moved. Chubby handles the corresponding
+case by checking a sequencer "against the server's Chubby cache or ... the most
+recent sequencer that the server has observed" — belief is checked against
+authority. This model originally had no such split on the routing side and
+resolved a seizure by editing the absent node's state, which no implementation
+can do; see [The holder graph is a tree](#the-holder-graph-is-a-tree-and-now-says-so)
+and the `believes_holds` / `has_token` split in `src/raymond.rs`.
+
+**What Chubby has that this does not**: a deployed system, sessions and
+KeepAlives, failover, caching with invalidations, a filesystem namespace, ACLs,
+events, and liveness of any kind. This model proves safety only, and says so.
+
 ## The state machine
 
 ```rust

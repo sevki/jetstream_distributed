@@ -23,8 +23,8 @@ use crate::transfer::*;
 
 verus! {
 
-/// A Raymond step that does not move the token - routing or critical-section
-/// bookkeeping - leaves the coupling untouched.
+/// A Raymond step that does not move the privilege - routing or
+/// critical-section bookkeeping - leaves the coupling untouched.
 pub proof fn lemma_composed_ray_preserves_inv(pre: Composed, post: Composed, s: RayStep)
     requires
         composed_inv(pre),
@@ -37,6 +37,14 @@ pub proof fn lemma_composed_ray_preserves_inv(pre: Composed, post: Composed, s: 
     assert forall|nd: NodeId, e: Epoch|
         may_mutate(post.own.actors[post.actor], nd, e) implies has_token(post.ray, nd) by {
         assert(has_token(pre.ray, nd));
+    }
+    // Belief and authority are both untouched, so the stale holders are exactly
+    // the ones that were already there.
+    assert forall|m: NodeId| #[trigger] is_stale_holder(post.ray, m) implies post.seized.contains(
+        m,
+    ) by {
+        assert(believes_holds(pre.ray, m));
+        assert(!has_token(pre.ray, m));
     }
 }
 
@@ -64,9 +72,9 @@ pub proof fn lemma_composed_own_preserves_inv(pre: Composed, post: Composed, s: 
     }
 }
 
-/// **The guard that matters.** The token may only move once the actor has been
-/// released, so at the moment of transfer nobody has authority and the coupling
-/// survives vacuously - which is exactly why it cannot be stranded.
+/// **The guard that matters.** The privilege may only move once the actor has
+/// been released, so at the moment of transfer nobody has authority and the
+/// coupling survives vacuously - which is exactly why it cannot be stranded.
 pub proof fn lemma_composed_pass_token_preserves_inv(
     pre: Composed,
     post: Composed,
@@ -82,10 +90,25 @@ pub proof fn lemma_composed_pass_token_preserves_inv(
         forall|m: NodeId| #[trigger] has_token(post.ray, m) ==> m == head,
 {
     lemma_assign_privilege_preserves_unique_token(pre.ray, post.ray, n, head);
+    lemma_assign_holder_pointers(pre.ray, post.ray, n, head);
     assert forall|nd: NodeId, e: Epoch|
         may_mutate(post.own.actors[post.actor], nd, e) implies has_token(post.ray, nd) by {
         assert(!is_owned(pre.own.actors[pre.actor]));
         assert(false);
+    }
+    // A voluntary handover creates no stale holder: `head` believes and holds,
+    // `n` now points at `head` so believes nothing, and every other node's
+    // belief is unchanged - so it was already stale before, if at all.
+    assert forall|m: NodeId| #[trigger] is_stale_holder(post.ray, m) implies post.seized.contains(
+        m,
+    ) by {
+        assert(m != head);
+        assert(m != n);
+        assert(post.ray.holder[m] == pre.ray.holder[m]);
+        assert(believes_holds(pre.ray, m));
+        assert(has_token(pre.ray, n));
+        assert(!has_token(pre.ray, m));
+        assert(is_stale_holder(pre.ray, m));
     }
 }
 

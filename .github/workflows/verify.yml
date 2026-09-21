@@ -189,3 +189,73 @@ jobs:
             echo "::error::this crate's verification summary reports errors: $summary"
             exit 1
           fi
+
+  # The simulation. Separate from the two verification jobs on purpose: it is
+  # evidence of a different kind and it fails for different reasons. A proof
+  # that stops verifying means the model is wrong; a scenario that fails means
+  # the implementation and the model disagree, and which of them is wrong is
+  # then the interesting question.
+  #
+  # This job needs no Verus toolchain: `cargo test` builds the crate with
+  # ordinary rustc, where `verus!` erases its ghost code and leaves the one
+  # executable item - `FenceGuard` - behind.
+  simulation:
+    name: Turmoil scenarios
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      # The same Rust toolchain the proof jobs install. Verus itself is not
+      # needed here, but the compiler is still pinned: a simulation built by a
+      # different rustc is not evidence about the code the proofs are checked
+      # against.
+      VERUS_TOOLCHAIN: 1.98.1-x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      # Named explicitly rather than left to rust-toolchain.toml. Cargo does
+      # honour that file, and the cache step's log confirms this job has been
+      # building with 1.98.1 all along — so this is not a fix for a job that
+      # was using the wrong compiler. It is a fix for a step that could not say
+      # which compiler it meant: `rustup show active-toolchain || rustup
+      # toolchain install` names no version, so reading it tells you nothing
+      # about what will be installed, and its fallback takes no argument. The
+      # other two jobs state the toolchain; this one now states the same one,
+      # from the same variable.
+      - name: Install the Rust toolchain the proofs are built with
+        run: |
+          rustup toolchain install "$VERUS_TOOLCHAIN" \
+            --component rustc-dev,llvm-tools,rust-std,cargo,rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: simulation
+
+      # Built as its own step so that a compile failure is reported as one.
+      # `RUSTFLAGS: -D warnings` is deliberately *not* set: RUSTFLAGS reaches
+      # every dependency too, and a warning in `vstd` or `turmoil` would fail
+      # this job for something no change here could fix.
+      - name: Build the scenarios
+        run: cargo test --no-run --tests
+
+      # The regression corpus claims a seed reproduces a failure exactly. That
+      # is a claim about the whole dependency graph, not only about this crate:
+      # a different `turmoil` patch release is a different simulator, and would
+      # reinterpret every committed seed without a change here. The direct
+      # dependencies are pinned exactly and `Cargo.lock` is committed; printing
+      # the resolved graph makes any drift visible in the log rather than only
+      # in a diff nobody reads.
+      - name: Show the resolved dependency graph
+        run: cat Cargo.lock
+
+      # The named stories first: each one asserts what it was supposed to
+      # reach, so a failure here names the property rather than a seed. That
+      # includes `oracles_catch_an_unfenced_coordinator`, which is what makes a
+      # green run of the search below mean anything.
+      - name: Named ownership stories
+        run: cargo test --test turmoil_ownership -- --nocapture
+
+      # Then the blind search. The window is fixed on a pull request so that a
+      # red result means the change did it; `JETSTREAM_SCENARIO_START` moves it
+      # for anyone who wants to search further.
+      - name: Scenario search
+        run: cargo test --test turmoil_scenarios -- --nocapture

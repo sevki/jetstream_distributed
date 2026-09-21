@@ -607,6 +607,11 @@ distributed-ownership/
 │       ├── composed.rs     the coupling as a composed-machine invariant
 │       ├── composed_scenario.rs  an end-to-end handover across both layers
 │       └── raymond_routing.rs  the D → B → A → C routing execution
+├── tests/
+│   ├── scenario_body/mod.rs    the executable protocol + the runtime oracles
+│   ├── turmoil_ownership.rs    named stories, each with an expected ending
+│   ├── turmoil_scenarios.rs    the blind seed search + the regression replay
+│   └── seeds/scenarios.txt     seeds that once broke something
 └── .github/workflows/verify.yml
 ```
 
@@ -615,8 +620,11 @@ verifies a *crate*, so every proof file has to be a module of that crate. Keepin
 them under `src/proofs/` is the ordinary Rust way to express that; a top-level
 `proofs/` would need `#[path = "../proofs/..."]` attributes for no benefit.
 
-Executable code is confined to `src/exec.rs`, which holds the `u64`-valued
-fence check a node actually runs, proved to return exactly the model's verdict.
+Executable code *in the crate* is confined to `src/exec.rs`, which holds the
+`u64`-valued fence check a node actually runs, proved to return exactly the
+model's verdict. The one other piece of executable code in the repository lives
+under `tests/`, where it is simulation rather than library — see
+[Network resiliency](#network-resiliency-the-model-run-for-real).
 It offers **queries only**: a `FenceGuard` has private fields, a single
 constructor and no setter, so its ghost view is fixed at construction. Were it
 mutable — by a `bump` method or by assigning to a public field — its view could
@@ -666,6 +674,178 @@ line and exits 0. It is a false green that survives a naive grep for the
 summary, because a summary is present — just not this crate's. The CI step
 therefore requires a summary emitted *after* Cargo starts compiling this
 crate.
+
+## Network resiliency: the model, run for real
+
+Everything above is a claim about a transition relation. It says nothing about
+whether an implementation follows it, and the gap has always been listed under
+future work. `tests/` closes part of it by simulation rather than by proof.
+
+Under [turmoil](https://github.com/tokio-rs/turmoil) — a deterministic,
+seeded, simulated network with a simulated clock — an *executable* ownership
+protocol runs over real sockets: a coordinator holding the registry, and three
+nodes polling, acquiring, writing and releasing. Partitions, delays and
+reordering happen underneath it while the model's own theorems are checked as
+runtime oracles over the coordinator's audit log:
+
+| Oracle | The claim it comes from |
+| --- | --- |
+| two accepted writes at the same epoch came from the same node | claim 1, exclusive mutable ownership |
+| every burn strictly increases the epoch, and never below the high-water mark | claim 5, epoch monotonicity |
+| an epoch is acquired once, by the node it was offered to | P5 / P6, ownership at an epoch is final |
+| a handover goes to another node; its stand-down order and its release both name the node it is taking the actor from | claim 4, transfer safety |
+| no write below a burned epoch is ever accepted | claims 2 / 3, stale-owner fencing |
+| every acquire is by the node the registry offered the actor to, at an epoch it was actually offered | P8 at the grant, no authority without a capability |
+| every accepted write is backed by an earlier acquire of that exact `(node, epoch)` | P8 at the token, no authority without a capability |
+| no write is *refused* while the registry's own log says that node holds that epoch | the definition of `may_mutate` — **not a theorem**, see below |
+
+The last row is different in kind from the seven above it and is listed
+separately for that reason. Every theorem in this repository has the form
+"this cannot happen": none of them says a write is ever *accepted*, and none
+could — that is liveness, and it is not what the proofs are about. The
+consequence is a hole with a definite shape. A coordinator whose `WRITE` arm
+answered `FENCED` unconditionally satisfies all seven oracles above, because
+each is a claim about writes that got through and there would not be any. So
+the eighth checks the other direction of `may_mutate`'s definition — the
+registry accepts exactly when the actor is `Owned` by that node at that epoch,
+so a refusal aimed at the current owner is a state the model does not have.
+It is derived from a definition rather than from a proof, which is weaker
+provenance than the rest of the table, and it is the reason the table has a
+row the "claim it comes from" column cannot fill honestly.
+
+Two searches reach them. `turmoil_ownership.rs` holds named stories, each of
+which asserts what it was supposed to *reach* — the headline one is A owning
+the actor at epoch 41, being cut off, the coordinator handing the actor to B at
+42, and A returning still holding a guard that says yes.
+`turmoil_scenarios.rs` counts seeds upwards, generating action sequences it has
+no opinion about, and replays every seed in `tests/seeds/scenarios.txt` first so
+a fixed bug stays fixed. Both drive the same runner and the same oracles.
+`Scenario::from_bytes` is the entry point a coverage-guided fuzzer would use to
+drive that same runner; no fuzz target is wired up yet.
+
+**What this is evidence of.** A divergence is one of two things: an
+implementation that does not follow the protocol, or a protocol whose proof
+rests on something the network does not give you. Both are findings. What it is
+*not* is a check on the proofs — those are static, and no simulation can
+contradict them. It is also not a substitute for the refinement listed under
+future work: the coordinator here is hand-written to match the model, and
+nothing machine-checks that it does.
+
+**Would the oracles notice?** A suite that cannot fail is indistinguishable
+from one that passes, so `oracles_catch_an_unfenced_coordinator` runs one story
+twice with a single bit changed — the coordinator stops checking writes against
+the registry — and requires the oracles to *reject* the second run. Same
+actions, same seed, same network, same oracles; what separates them is exactly
+the check `src/exec.rs` says has to happen where the effect lands.
+`oracles_catch_a_write_at_a_burned_epoch` does the same for the fencing oracle,
+on the case the others cannot see: a stale write with nothing written after it.
+`oracles_catch_an_overfencing_coordinator` is the mirror of the first: the same
+story again with the fence jammed *on* rather than off, which is the failure
+none of the seven proof-derived oracles can see, and which the eighth exists
+for. The write floor in the seed walk catches the totally degenerate version of
+it by counting accepted writes across the window, but a registry that fenced
+only one node, or one request in three, clears that floor comfortably.
+
+Beyond those two, **every oracle in the table has a witness**: a hand-built log
+that it, and not one of its neighbours, rejects — paired where it matters with
+a nearly identical log it accepts, so a check cannot pass by rejecting
+everything. The logs are hand-built on purpose. Several are ones this
+coordinator cannot produce, and that is the point: an oracle which is sound
+only because the thing it audits is correct is not auditing anything. Writing
+those witnesses is what found most of the defects in this table: of the six
+oracles that existed when the audit started, three were checking something
+weaker than the theorem they named, and one of those was checking the wrong
+thing entirely — the P5/P6 oracle read
+write epochs, which is a *consequence* of "an epoch determines its owner"
+rather than the claim, and accepted an epoch changing hands with nothing burned
+between.
+
+That second one exists because the first version of `check_invariants` did not
+catch it. Comparing writes against writes notices a stale write only once the
+replacement owner has written too, so `Acquire(0)@41, Force→42, Write(0)@41`
+had one writer per epoch, a strictly increasing burn and an acquire behind
+every write — and sailed past every check, which is precisely the failure the
+epoch exists to prevent. A burn is what makes an epoch stale, so a burn is what
+the high-water mark has to follow.
+
+**Where the executable code lives, and why.** Entirely in `tests/`. CI greps
+`src/` for `verifier::external`, so unverified protocol code there would need
+that attribute and would fail the build by design. The one piece of `src/` the
+simulation uses is `FenceGuard`, because it is the node-local check a real node
+performs — and watching a stale guard say yes while the coordinator says no is
+precisely the asymmetry `src/exec.rs` documents.
+
+Where the model makes a node act, the simulation makes that node send the
+request. `tr_begin_transfer` carries `pre.live.contains(from)` — agreeing to
+hand over is an action *by* the owner — so `BEGIN` originates at the owner's
+host and names itself, and the registry checks the sender. A partitioned
+owner's agreement is swallowed by the partition, which is what that liveness
+guard means here. Routing it through the driver instead would let a node nobody
+can reach volunteer, reopening in the simulation the exact hole the guard was
+added to the model to close.
+
+For the same reason, the three ways the coordinator forces progress are kept
+distinct rather than merged: `tr_revoke_owner` from `Owned`,
+`tr_reassign_unowned` from `Unowned`, and `tr_abort_transfer` from
+`Transferring`. Only the first two take a successor from the caller; an aborted
+transfer returns the actor to the node it was being taken from, and a
+coordinator that redirected it anywhere else would be stepping outside the
+transition relation.
+
+**One place where the simulator is kinder than a network.** turmoil knows
+whether a route exists, so a request made across a partition that is already in
+place fails immediately at the sender. A real partition drops the packet and
+the sender learns nothing until its own deadline expires. The node-side counters
+keep the two apart — `writes_failed` against `writes_timed_out` — and the seed
+walk prints both, so the difference is visible rather than assumed.
+
+Printing them is how the gap was found. A run reported 284 writes sent across
+256 seeds with **zero** unanswered at the deadline: every failure was a removed
+route, so the node's deadline had never once fired and the scenarios contained
+no request that was accepted for delivery and then ignored. Since "duplicate,
+reordered and arbitrarily delayed requests are safe" is one of the claims in the
+table above, a search that could not produce a delayed request was not reaching
+it. `Stall` and `Resume` use turmoil's `hold`/`release` to do exactly that.
+
+Three stories then split the case apart, because one story could not carry it.
+`a_held_request_expires_and_the_node_carries_on` shows the node giving up and
+going on working. That alone is satisfied by a run in which nothing is ever
+delivered late, so
+`a_delayed_write_arrives_at_a_registry_that_moved_on` releases the hold while
+the node is still waiting: the write is delivered into a registry that burned
+its epoch meanwhile, and is fenced on arrival, which is the claim itself. And
+`a_timeout_is_not_evidence_the_write_did_not_land` covers the direction no
+network behaviour produces — the registry applies the write and answers after
+the caller has given up, so a node that read its own timeout as a verdict would
+be wrong about a write that had already landed. It costs
+nothing here only because nothing in the protocol reads them: a node that
+distinguished "no route" from "no reply" would hold information a real one does
+not, and treating either as a decision about ownership is exactly the mistake
+the fence exists to make unnecessary.
+
+Two places where the simulation is deliberately coarser than what was proved,
+stated rather than glossed:
+
+* `tr_handle_revoke` and `tr_complete_release` are folded into one `RELEASE`
+  request, so the simulation never occupies the intermediate state the model
+  distinguishes;
+* the registry is a `Mutex`, which is the executable form of the model's
+  load-bearing assumption that ownership records are updated atomically. A
+  deployment buys that from consensus or a compare-and-swap store. Saying so is
+  the point: the assumption is visible rather than smuggled in.
+
+```bash
+cargo test --test turmoil_ownership -- --nocapture   # the named stories
+cargo test --test turmoil_scenarios -- --nocapture   # the seed search
+
+# search further: a moving, non-overlapping window
+JETSTREAM_SCENARIO_START=100000 JETSTREAM_SCENARIO_SEEDS=20000 \
+  cargo test --test turmoil_scenarios --release
+```
+
+A third CI job runs both on every pull request. It needs no Verus toolchain:
+ordinary `rustc` erases the ghost code in `verus!` and leaves `FenceGuard`
+behind.
 
 ## Status: proven, modelled, future work
 
@@ -748,7 +928,11 @@ invariant preservation):
   it - so that no executable API can perform a handover the model does not;
 * the actual actor runtime: networking, persistence, and the code that obeys the
   protocol. Verifying the protocol says nothing about whether an implementation
-  follows it.
+  follows it. `tests/` now exercises a hand-written one against the model's own
+  theorems on a simulated network (see
+  [Network resiliency](#network-resiliency-the-model-run-for-real)), which is
+  evidence rather than proof: nothing machine-checks that the coordinator in
+  `tests/` refines the transition relation in `src/`.
 
 ### The holder graph is a tree, and now says so
 

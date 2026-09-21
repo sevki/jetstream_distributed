@@ -1,0 +1,375 @@
+//! The scenario search, and the replay of every seed it has ever found.
+//!
+//! The scenarios themselves — the actions, the oracles, the simulated network
+//! they run on — live in `tests/scenario_body/mod.rs`, shared with the named
+//! stories in `turmoil_ownership.rs` rather than duplicated: a runner and an
+//! oracle that have drifted apart are worse than either alone, since both go
+//! green while the thing they guard has moved underneath them.
+//!
+//! This is the blind half. It counts seeds upwards, which is cheap,
+//! reproducible and has no idea what any of its scenarios were supposed to
+//! reach. `Scenario::from_bytes` is there so a coverage-guided fuzzer could
+//! drive the same runner instead — coverage is how you find the scenario
+//! nobody would have counted up to — but no fuzz target is wired up in this
+//! repository yet, so today that entry point is unused.
+
+#[path = "scenario_body/mod.rs"]
+mod body;
+
+use body::{run_scenario, run_scenario_probed, Attempts, Event, Scenario};
+
+/// The seeds that have failed before, from `tests/seeds/scenarios.txt`.
+fn committed_seeds() -> Vec<u64> {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/seeds/scenarios.txt");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        panic!(
+            "{} is missing: the regression corpus has to exist for this test to \
+             be replaying anything",
+            path.display()
+        );
+    };
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| line.parse().unwrap_or_else(|_| panic!("`{line}` in scenarios.txt is not a u64 seed")))
+        .collect()
+}
+
+/// Read a `u64` from the environment, or fall back if it is not set.
+///
+/// A value that is present and unparsable is a failure, not a fallback. The
+/// comment here used to argue the opposite — that a nightly job dying on a typo
+/// in its own workflow finds nothing at all — which is true and beside the
+/// point: falling back to zero *also* finds nothing, and does it while
+/// reporting success. A typo in `JETSTREAM_SCENARIO_START` would re-run the
+/// default window every night, green forever, discovering exactly what the
+/// previous night discovered.
+///
+/// Absent is different from wrong. Absent means "no preference" and takes the
+/// default; wrong means somebody tried to say something and it did not arrive.
+fn env_u64(name: &str, fallback: u64) -> u64 {
+    window_bound(name, std::env::var(name), fallback)
+}
+
+/// The decision `env_u64` makes, separated from the process environment that
+/// supplies it.
+///
+/// Split out so it can be tested. Environment variables are process-global and
+/// this binary runs its tests on threads of one process, so a test that set
+/// `JETSTREAM_SCENARIO_START` to something bad would be setting it for the
+/// search running alongside it. Taking the `Result` as an argument is how the
+/// rule gets checked without the test and the thing it tests sharing state.
+fn window_bound(name: &str, raw: Result<String, std::env::VarError>, fallback: u64) -> u64 {
+    use std::env::VarError;
+    match raw {
+        Err(VarError::NotPresent) => fallback,
+        // Matching `Err(_)` here would have folded this case in with absent,
+        // which is the exact defect the doc comment above is about: the
+        // variable *is* set, somebody did try to say something, and it did not
+        // arrive. Bytes that are not UTF-8 are a wrong value, not a missing
+        // one.
+        Err(VarError::NotUnicode(bytes)) => panic!(
+            "{name} is set to {bytes:?}, which is not valid UTF-8 and so cannot \
+             be a u64. Refusing to fall back to {fallback}: the variable is \
+             set, so somebody meant something by it."
+        ),
+        Ok(raw) => raw.trim().parse().unwrap_or_else(|_| {
+            panic!(
+                "{name} is set to `{raw}`, which is not a u64. Refusing to fall \
+                 back to {fallback}: a search that silently runs the wrong \
+                 window is worse than one that stops, because it keeps \
+                 reporting success."
+            )
+        }),
+    }
+}
+
+#[test]
+fn an_absent_window_bound_takes_the_default() {
+    assert_eq!(
+        window_bound("X", Err(std::env::VarError::NotPresent), 256),
+        256
+    );
+}
+
+#[test]
+fn a_window_bound_that_parses_is_used() {
+    assert_eq!(window_bound("X", Ok("1024".to_string()), 256), 1024);
+    // Trimmed, because a workflow that writes the value across a YAML line
+    // continuation hands it over with whitespace attached.
+    assert_eq!(window_bound("X", Ok("  1024\n".to_string()), 256), 1024);
+}
+
+#[test]
+#[should_panic(expected = "which is not a u64")]
+fn a_window_bound_that_does_not_parse_stops_the_search() {
+    window_bound("X", Ok("1O24".to_string()), 256);
+}
+
+#[test]
+#[should_panic(expected = "which is not valid UTF-8")]
+fn a_window_bound_that_is_not_utf8_stops_the_search() {
+    // The case `Err(_)` used to swallow: present, meant, and unreadable.
+    use std::os::unix::ffi::OsStringExt;
+    let bytes = std::ffi::OsString::from_vec(vec![0xff, 0xfe]);
+    window_bound("X", Err(std::env::VarError::NotUnicode(bytes)), 256);
+}
+
+/// The end of the window, or a failure if there isn't one.
+///
+/// This was `start.saturating_add(seeds)`, which is the arithmetic version of
+/// the `Err(_)` above: it turns a request the program cannot honour into a
+/// quietly different request it can. At the `u64` boundary the clamp shortens
+/// the window — at `u64::MAX` it empties it — and a window under
+/// `FLOOR_WINDOW` skips the coverage floor entirely. So a job asking for 256
+/// seeds would run none of them, apply no floor, and report success.
+///
+/// The doc comment on `env_u64` already states the rule this broke: a search
+/// that silently runs the wrong window is worse than one that stops, because
+/// it keeps reporting success. Saturating is silently running the wrong
+/// window.
+fn window_end(start: u64, seeds: u64) -> u64 {
+    start.checked_add(seeds).unwrap_or_else(|| {
+        panic!(
+            "a window of {seeds} seeds starting at {start} runs past u64::MAX. \
+             Refusing to search a truncated one: the shortened window would \
+             fall under the coverage floor and be exempted from it, so the \
+             run would report success having searched almost nothing."
+        )
+    })
+}
+
+#[test]
+fn an_ordinary_window_has_an_end() {
+    assert_eq!(window_end(0, 256), 256);
+    assert_eq!(window_end(1_000, 256), 1_256);
+    // The largest window that does fit is still fine: the check is on
+    // overflow, not on proximity to it.
+    assert_eq!(window_end(u64::MAX - 256, 256), u64::MAX);
+}
+
+#[test]
+#[should_panic(expected = "runs past u64::MAX")]
+fn a_window_that_overflows_stops_the_search() {
+    // Clamped, this was `end == start`: zero seeds searched, a window of zero
+    // exempted from the floor, and a green result.
+    window_end(u64::MAX, 256);
+}
+
+#[test]
+#[should_panic(expected = "runs past u64::MAX")]
+fn a_window_that_overflows_by_one_stops_the_search() {
+    window_end(u64::MAX - 255, 257);
+}
+
+/// The search. Each seed is an independent story; a failure names the seed,
+/// and `run_scenario(Scenario::from_seed(n))` replays it exactly.
+#[test]
+fn scenarios_hold_their_invariants() {
+    // Deeper on demand: `JETSTREAM_SCENARIO_SEEDS=100000 cargo test --test
+    // turmoil_scenarios` searches as long as you like, with the same runner and
+    // the same oracles. The default is what CI can afford on every push.
+    let seeds = env_u64("JETSTREAM_SCENARIO_SEEDS", 256);
+
+    // Where the window starts. A search that always starts at zero is not a
+    // search: it re-runs a fixed test suite at random-looking parameters and
+    // cannot find anything it did not find the first time. A nightly job is
+    // expected to pass a start that moves, so consecutive nights cover
+    // adjacent, non-overlapping windows. Zero here keeps the default a fixed,
+    // deterministic band, which is what a pull request wants: the same 256
+    // scenarios on every push, so a red result means the change did it.
+    let start = env_u64("JETSTREAM_SCENARIO_START", 0);
+    let end = window_end(start, seeds);
+
+    // Every seed that has ever failed, replayed first: a fixed bug stays
+    // fixed, and one that is not yet fixed keeps this red until it is. The
+    // sweep below searches for new ones; this makes sure the old ones cannot
+    // come back unnoticed.
+    // Counted separately from the search below, and deliberately not added to
+    // it. The floor at the end is a claim about the *window* — that the seeds
+    // in `start..end` still reach the fence — and a corpus write satisfies it
+    // without any of them doing so. Today the corpus is empty and the two
+    // sums are the same number; the first seed filed here is the moment that
+    // stops being true, and a floor that a regression replay can satisfy on
+    // the window's behalf is a floor that has quietly stopped checking
+    // anything.
+    let mut corpus_writes = 0usize;
+    for seed in committed_seeds() {
+        corpus_writes += run_scenario(Scenario::from_seed(seed))
+            .unwrap_or_else(|e| panic!("committed seed {seed} regressed: {e}"));
+    }
+
+    // Named in the log so a failure says which window found it, and so a green
+    // night is visibly a *different* green night from the one before it.
+    println!("searching scenario seeds {start}..{end}");
+    let mut writes = 0usize;
+    let mut totals = Attempts::default();
+    for seed in start..end {
+        let (log, attempts) = run_scenario_probed(Scenario::from_seed(seed))
+            .unwrap_or_else(|e| panic!("seed {seed} failed: {e}"));
+        writes += log.iter().filter(|e| matches!(e, Event::Wrote { .. })).count();
+        for a in attempts {
+            totals.writes_sent += a.writes_sent;
+            totals.writes_timed_out += a.writes_timed_out;
+            totals.writes_failed += a.writes_failed;
+            totals.writes_disconnected += a.writes_disconnected;
+        }
+    }
+
+    // A window in which no write was ever accepted would satisfy every oracle
+    // above while exercising none of them: an empty log is exclusive, monotone
+    // and capability-backed for free. This is the check on that.
+    //
+    // Proportional rather than a fixed count, because the window is
+    // configurable and a fixed number would silently mean "fail on any small
+    // window" the moment someone shortened it.
+    //
+    // The rate it is set against was measured rather than guessed. A model of
+    // the generator over four 256-seed windows accepts between 44 and 65 writes
+    // per window, and one accepted write per sixteen seeds sits comfortably
+    // under the leanest of those — room for a window leaner than any sampled,
+    // without room for a runner that has stopped delivering.
+    //
+    // That range is lower than the 82-111 measured before `Stall` joined the
+    // alphabet, which is the cost of holding messages rather than only dropping
+    // them, and it is the right trade: a held request is the only way the
+    // search reaches a request that was accepted for delivery and never
+    // answered.
+    //
+    // The model is pessimistic here on purpose — it treats a held link as
+    // blocking for the rest of the scenario, where the real drain releases and
+    // waits — so the real count should sit at or above it, and it does: the
+    // first run under this alphabet accepted 68 where the model said 65.
+    //
+    // Before holds existed the model was exact, twice, to the write. It is not
+    // any more and is not meant to be. A bound that is known to be low is worth
+    // more here than a figure that looks precise, because the floor is the only
+    // thing anything depends on and a low bound is the safe side of it.
+    //
+    // What this floor is *not* is evidence that the oracles can fail. Nothing
+    // proportional could be: it says the runner ran. That the oracles have
+    // teeth is shown exactly once, deterministically, by
+    // `oracles_catch_an_unfenced_coordinator` in `turmoil_ownership.rs`.
+    println!(
+        "searched seeds {start}..{end}: {writes} writes accepted \
+         ({corpus_writes} more from the committed corpus, not counted)"
+    );
+    // Reported rather than asserted on, because it is a measurement of the
+    // simulator rather than a property of the protocol. `writes_failed` is
+    // turmoil telling a sender there is no route, which a real network does not
+    // do; `writes_timed_out` is a request that was accepted for delivery and
+    // never answered, which is the shape the node's deadline exists for. If
+    // that second number is persistently zero, the deadline is covering a case
+    // this search does not reach, and whoever next touches `RPC_TIMEOUT` should
+    // know that rather than infer it.
+    //
+    // `writes_disconnected` is printed for the same reason and watched for the
+    // opposite one. It counts connections that ended before any reply, which
+    // until it was given its own counter were reported as *successes* — the
+    // node saw `Ok("")` and carried on. A number that is not small here would
+    // mean the simulated network is severing established connections often
+    // enough that the runs are about that rather than about the protocol.
+    //
+    // It reads zero over 0..256 on the run that introduced it, and what that
+    // means is genuinely open. Either a disconnect is rare in this simulation
+    // or it cannot happen in it at all — `partition` fails the connect rather
+    // than an established stream, `hold` delays delivery without closing
+    // anything, and the coordinator always writes a reply — in which case this
+    // is the `RPC_TIMEOUT` situation again: a path that exists for a case the
+    // search structurally cannot reach.
+    //
+    // Which of the two it is, is not recorded here because it is not known.
+    // Asserting "unreachable" from a zero would be the same mistake as the
+    // earlier claim that turmoil hangs on a partitioned connect, which was
+    // also reasoning about the simulator rather than measuring it. What can be
+    // said is that the bug the counter exists to expose — an EOF reported to
+    // the caller as a successful, answered request — did not occur in this
+    // window, and that before the fix it would have been invisible if it had.
+    println!(
+        "nodes sent {} writes: {} unanswered at the deadline, {} with no route, \
+         {} cut off before a reply",
+        totals.writes_sent,
+        totals.writes_timed_out,
+        totals.writes_failed,
+        totals.writes_disconnected
+    );
+
+    // A rate is a claim about a population, and below a certain size there is
+    // no population to make it about. At one seed the floor rounds to zero and
+    // the strict `>` then demands a write from a single scenario — but plenty
+    // of individual seeds legitimately never reach the fence, so
+    // `JETSTREAM_SCENARIO_START=10 JETSTREAM_SCENARIO_SEEDS=1`, which is the
+    // obvious way to re-run one reported seed, would fail on a run where every
+    // invariant held.
+    //
+    // So the floor applies only to a window big enough to have a rate. It is
+    // not a way to switch the check off: the default window is 256 and CI sets
+    // no environment at all, so the path CI takes always asserts.
+    let window = end - start;
+    let Some(floor) = coverage_floor(window) else {
+        println!(
+            "window of {window} seeds is below {FLOOR_WINDOW}: too short for a \
+             rate to mean anything, so the coverage floor is not applied"
+        );
+        return;
+    };
+
+    assert!(
+        writes as u64 > floor,
+        "the scenarios must actually reach the fence; saw {writes} accepted \
+         writes over seeds {start}..{end}, wanted more than {floor}",
+    );
+}
+
+/// The shortest window the coverage floor is applied to.
+const FLOOR_WINDOW: u64 = 32;
+
+/// How many accepted writes a window of this size must beat, or `None` if it
+/// is too short for a rate to mean anything.
+///
+/// An empty window is neither, and the distinction is the whole reason this is
+/// a function. Zero seeds is not a short window that the floor politely
+/// declines to judge; it is no search at all, and the exemption was swallowing
+/// it — `JETSTREAM_SCENARIO_SEEDS=0` ran nothing, asserted nothing and
+/// reported success.
+///
+/// I had already fixed exactly this failure one commit earlier, in
+/// `window_end`, and looked straight at this case while doing it. The
+/// reasoning for leaving it was that the run announces itself in the log, so
+/// the emptiness is visible. That is the same argument the overflow case
+/// makes — it also prints `searching scenario seeds X..X` — and I rejected it
+/// there. A log line is not an exit status. Two standards for one failure
+/// mode, four lines apart.
+fn coverage_floor(window: u64) -> Option<u64> {
+    assert!(
+        window != 0,
+        "a window of zero seeds searches nothing. Refusing to report success \
+         on it: the short-window exemption below is for a window too small to \
+         have a rate, not for one with nothing in it."
+    );
+    if window < FLOOR_WINDOW {
+        return None;
+    }
+    Some(window / 16)
+}
+
+#[test]
+#[should_panic(expected = "searches nothing")]
+fn an_empty_window_stops_the_search() {
+    coverage_floor(0);
+}
+
+#[test]
+fn a_window_too_short_for_a_rate_is_exempt() {
+    // One seed is the obvious way to re-run a single reported seed, and plenty
+    // of individual seeds legitimately never reach the fence.
+    assert_eq!(coverage_floor(1), None);
+    assert_eq!(coverage_floor(FLOOR_WINDOW - 1), None);
+}
+
+#[test]
+fn a_window_long_enough_for_a_rate_has_a_floor() {
+    assert_eq!(coverage_floor(FLOOR_WINDOW), Some(2));
+    assert_eq!(coverage_floor(256), Some(16));
+}

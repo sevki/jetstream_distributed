@@ -1,0 +1,28 @@
+# Scenario seeds that once broke something.
+#
+# For the turmoil scenario search a failing input is entirely described by one
+# number: the seed drives both the action sequence and turmoil's network
+# schedule, so `Scenario::from_seed(n)` replays a failure exactly. That makes
+# the corpus a text file rather than a directory of blobs.
+#
+# `scenarios_hold_their_invariants` replays every line on every pull request,
+# before it searches for anything new. A seed that is fixed stays fixed; a seed
+# that is not yet fixed keeps the test red until it is, which is the point.
+#
+# The file is empty of seeds today, and that is a statement rather than an
+# omission: no scenario has yet made the implementation and the model disagree.
+# It is not a claim that none can.
+#
+# One decimal u64 per line. `#` comments and blank lines are ignored.
+#
+# A seed names a scenario only against the generator that produced it, so a
+# change to `Action::from_pair` or to the action alphabet retires this file
+# rather than reinterpreting it. That has happened once already, when `BEGIN`
+# moved from the driver to the owner's host and `Handover` grew a `from` field.
+#
+# It names one only against the simulator too. A different `turmoil` release is
+# a different network schedule for the same seed, which would reinterpret every
+# line here with nothing in this repository having changed — so the simulation
+# dependencies are pinned exactly and `Cargo.lock` is committed. Both were
+# caret requirements with the lockfile ignored until it was pointed out, which
+# made "replays a failure exactly" a claim about a graph nobody had fixed.

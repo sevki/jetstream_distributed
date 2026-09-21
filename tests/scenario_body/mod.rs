@@ -1675,7 +1675,17 @@ pub fn owed_for(line: &str, peer: Peer) -> Owed {
     let mut parts = line.split_whitespace();
     let verb = parts.next().unwrap_or("");
     let fields: Vec<&str> = parts.collect();
-    let args: Option<Vec<u64>> = fields.iter().map(|f| f.parse::<u64>().ok()).collect();
+
+    // Each field on its own terms, rather than all of them or none.
+    //
+    // This is the third time the same mistake has been caught here, each time
+    // one field further out, so it is worth stating as the rule instead of as
+    // another case: **a permission check uses its own field's parse result,
+    // never the whole line's.** An all-or-nothing parse makes one illegible
+    // field hide every authority fact the others carry — `BEGIN junk 99` names
+    // a successor that does not exist, and `FORCE 99 junk` does too, and both
+    // were recorded as owing `ERR` and nothing else.
+    let field = |i: usize| fields.get(i).and_then(|f| f.parse::<u64>().ok());
 
     let arity = match verb {
         "POLL" | "FORCE" => Some(1),
@@ -1704,45 +1714,41 @@ pub fn owed_for(line: &str, peer: Peer) -> Owed {
         if peer != Peer::Control {
             owed.not_permitted = true;
         }
+        // And the successor it names has to be a node that exists, on any
+        // connection, whatever became of the fields after it.
+        if field(0).is_some_and(|next| next >= NODES) {
+            owed.not_permitted = true;
+        }
     } else if arity.is_some() {
         // Every other known verb names its sender in its first field, and the
-        // registry believes the connection rather than the field. Checkable
-        // whenever that one field is legible, whatever became of the rest.
+        // registry believes the connection rather than the field.
         //
         // Only for a verb the protocol *has*: it has no opinion about who may
         // send a request it does not recognise, so an unknown verb is
         // malformed and nothing else.
-        if let Some(claimed) = fields.first().and_then(|f| f.parse::<u64>().ok()) {
+        if let Some(claimed) = field(0) {
             if peer != Peer::Node(claimed) {
                 owed.not_permitted = true;
             }
         }
+        // A handover's successor has to exist too, read from its own field.
+        if verb == "BEGIN" && field(1).is_some_and(|to| to >= NODES) {
+            owed.not_permitted = true;
+        }
     }
 
     // Then whether the line is well formed at all: a verb the protocol has —
-    // which the empty line and the wrong case are not — and every field after
-    // it a `u64`. That last is the rule the strict parse replaced
-    // `filter_map` to enforce, stated independently of it.
+    // which the empty line and the wrong case are not — the right number of
+    // fields, and every one of them a `u64`. That last is the rule the strict
+    // parse replaced `filter_map` to enforce, stated independently of it.
     let Some(n) = arity else {
         owed.malformed = true;
         return owed;
     };
-    let Some(args) = args else {
-        owed.malformed = true;
-        return owed;
-    };
-    if args.len() != n {
+    if fields.len() != n || fields.iter().any(|f| f.parse::<u64>().is_err()) {
         owed.malformed = true;
     }
 
-    // What is left needs the fields parsed: the successor a forced revoke or
-    // a handover names has to be a node that exists, on any connection.
-    if verb == "FORCE" && args.first().is_some_and(|next| *next >= NODES) {
-        owed.not_permitted = true;
-    }
-    if verb == "BEGIN" && args.get(1).is_some_and(|to| *to >= NODES) {
-        owed.not_permitted = true;
-    }
     owed
 }
 
@@ -1995,10 +2001,10 @@ pub fn run_protocol(run: &ProtocolRun) -> Result<Served, String> {
         if step.spoofed {
             served.spoofed += 1;
         }
-        if !is_a_reply(&reply) {
+        if !is_a_reply_to(&step.line, &reply) {
             return Err(format!(
                 "step {i}: `{}` from {:?} was answered `{reply}`, which is not \
-                 one of the protocol's replies",
+                 a reply that request can have",
                 step.line, step.peer
             ));
         }
@@ -2093,16 +2099,41 @@ pub fn replay_protocol(run: &ProtocolRun) -> Vec<Event> {
     coord.log().to_vec()
 }
 
-/// Every reply the registry is allowed to give.
+/// Every reply the registry may give **to this request**.
 ///
-/// Weaker than the oracles and worth having anyway: a handler that answered
-/// something outside this set would be speaking a protocol no node parses, and
-/// the audit log could be perfectly clean while it did.
-fn is_a_reply(reply: &str) -> bool {
+/// Per verb, not a flat set, and the difference is not cosmetic. A flat set
+/// accepts any protocol token for any request, and a wrong-vocabulary refusal
+/// changes nothing a log-reading oracle can see — the log is *unchanged*,
+/// which is exactly what a refusal is supposed to leave behind. Measured
+/// rather than argued: with a refused `RELEASE` answered `FENCED`, and again
+/// with a refused `ACQUIRE` answered `NONE`, this search passed 20 000 seeds
+/// apiece while the registry spoke a protocol no node parses.
+///
+/// The vocabulary is read off what each request *asks*, not off the handler's
+/// branches:
+///
+/// * A poll asks what is on offer, so it is answered with a grant, a
+///   revocation, or nothing at all.
+/// * A write either lands — carrying the sequence number it landed at, which
+///   is what makes the log auditable — or is stopped by the fence.
+/// * Everything else either takes effect or does not.
+///
+/// Refusals are the exception and are universal: `NO` and `ERR` are available
+/// to every request, including one whose verb the protocol does not have.
+/// *When* a refusal is owed is `owed_for`'s business; this says only which
+/// words may carry one.
+pub fn is_a_reply_to(line: &str, reply: &str) -> bool {
+    if matches!(reply, "NO" | "ERR") {
+        return true;
+    }
+    let verb = line.split_whitespace().next().unwrap_or("");
     let mut parts = reply.split(' ');
-    match (parts.next(), parts.next(), parts.next()) {
-        (Some("NONE" | "OK" | "NO" | "ERR" | "FENCED"), None, None) => true,
-        (Some("GRANT" | "REVOKE" | "OK"), Some(n), None) => n.parse::<u64>().is_ok(),
+    match (verb, parts.next(), parts.next(), parts.next()) {
+        ("POLL", Some("GRANT" | "REVOKE"), Some(n), None) => n.parse::<u64>().is_ok(),
+        ("POLL", Some("NONE"), None, None) => true,
+        ("WRITE", Some("OK"), Some(n), None) => n.parse::<u64>().is_ok(),
+        ("WRITE", Some("FENCED"), None, None) => true,
+        ("ACQUIRE" | "BEGIN" | "RELEASE" | "FORCE", Some("OK"), None, None) => true,
         _ => false,
     }
 }

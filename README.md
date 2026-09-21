@@ -789,8 +789,22 @@ arriving as `POLL 0`, right arity, executed. Measured both ways: with that mode
 deleted and the parser regressed, 20 000 seeds stay green; with it present, the
 walk fails on seed 0.
 
-Writing that obligation down went wrong twice, the same way both times, and
-neither was caught by reading it. The two refusal reasons are independent, so
+**A refusal also has to be in the words that request uses.** The reply check
+started as a flat set of the protocol's tokens, which accepts any of them for
+any request — and a wrong-vocabulary refusal leaves the log *unchanged*, which
+is exactly what a refusal is supposed to leave behind, so no log-reading oracle
+can see it. Measured: with a refused `RELEASE` answered `FENCED`, and again
+with a refused `ACQUIRE` answered `NONE`, this search passed 20 000 seeds
+apiece while the registry spoke a protocol no node parses. The vocabulary is
+now per verb, read off what each request *asks* rather than off the handler's
+branches: a poll is answered with a grant, a revocation or nothing; a write
+either lands carrying the sequence number it landed at or is stopped by the
+fence; everything else takes effect or does not. `NO` and `ERR` stay universal,
+because *when* a refusal is owed is the obligation's business, not the
+vocabulary's.
+
+Writing that obligation down went wrong three times, the same way each time,
+and none of the three was caught by reading it. The two refusal reasons are independent, so
 every one that *can* be established has to be: an obligation that drops a reason
 it could have known demands one exact refusal where two are defensible, and then
 reports a sound registry as defective for choosing the other. `FORCE 41.0` from
@@ -799,9 +813,15 @@ demanded `ERR` from a registry that refuses strangers before parsing their input
 — which is the better order, not a fault. Fixing that for `FORCE` and stopping
 there was one case short of the rule: `WRITE 0 junk` on the control connection
 is the same shape, because the *sender* field is legible even though the epoch
-is not. Authority is now decided from whatever is legible, before the line is
-judged well formed at all, and three tests pin it in both directions — relaxing
-an obligation is only safe while the strict cases stay strict.
+is not. Fixing that for the *sender* field and stopping there was one field short
+again: `BEGIN junk 99` names a successor that does not exist and `FORCE 99
+junk` does too, and an all-or-nothing parse let one illegible field hide what
+the legible ones carried. Three catches of one mistake, each a field further
+out, so it is written down as the rule instead of as a third case: **a
+permission check uses its own field's parse result, never the whole line's.**
+Authority is decided from whatever is legible, before the line is judged well
+formed at all, and the tests pin it in both directions — relaxing an obligation
+is only safe while the strict cases stay strict.
 
 **Still thin.** Completed handovers are reached 5 times in 1 024 runs, so
 claim 4 is barely exercised here — it is covered by the scenario walk and the

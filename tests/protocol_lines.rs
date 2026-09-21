@@ -171,7 +171,7 @@ fn arbitrary_protocol_lines_hold_their_invariants() {
 // These pin the rule in both directions. Relaxing the obligation is only safe
 // while the strict cases stay strict, so they are tested together.
 
-use body::{owed_for, Owed, Peer};
+use body::{is_a_reply_to, owed_for, Owed, Peer};
 
 #[test]
 fn a_request_refusable_for_two_reasons_may_be_refused_either_way() {
@@ -212,6 +212,71 @@ fn a_request_refusable_for_one_reason_must_be_refused_that_way() {
     let owed = owed_for("WRITE 0 41", Peer::Node(1));
     assert_eq!(owed, Owed { malformed: false, not_permitted: true });
     assert_eq!(owed.exact(), Some("NO"));
+}
+
+#[test]
+fn a_permission_check_reads_its_own_field_not_the_whole_line() {
+    // The third catch of one mistake, each a field further out, so it is
+    // pinned as the rule rather than as a third case: an illegible field must
+    // not hide the authority facts the legible ones carry.
+
+    // The successor is legible and names a node that does not exist; the
+    // sender field is not legible at all.
+    let owed = owed_for("BEGIN junk 99", Peer::Node(0));
+    assert_eq!(owed, Owed { malformed: true, not_permitted: true });
+    assert_eq!(owed.exact(), None);
+
+    // A forced revoke naming a successor that does not exist, with a surplus
+    // field after it that does not parse.
+    let owed = owed_for("FORCE 99 junk", Peer::Control);
+    assert_eq!(owed, Owed { malformed: true, not_permitted: true });
+    assert_eq!(owed.exact(), None);
+
+    // And the sender field legible while a later one is not, which is the
+    // case that was caught second.
+    let owed = owed_for("WRITE 0 junk", Peer::Control);
+    assert_eq!(owed, Owed { malformed: true, not_permitted: true });
+    assert_eq!(owed.exact(), None);
+}
+
+#[test]
+fn a_refusal_has_to_be_in_the_words_that_request_uses() {
+    // A wrong-vocabulary refusal leaves the log *unchanged*, which is exactly
+    // what a refusal is supposed to leave behind — so no log-reading oracle
+    // can see it. Measured: with a refused `RELEASE` answered `FENCED`, and
+    // again with a refused `ACQUIRE` answered `NONE`, the search passed 20 000
+    // seeds apiece while the registry spoke a protocol no node parses.
+    assert!(!is_a_reply_to("RELEASE 0 41", "FENCED"));
+    assert!(!is_a_reply_to("ACQUIRE 0 41", "NONE"));
+    assert!(!is_a_reply_to("POLL 0", "FENCED"));
+    assert!(!is_a_reply_to("BEGIN 0 1", "GRANT 41"));
+
+    // A write's `OK` carries the sequence number it landed at; nothing else's
+    // does, and that distinction is what lets the generator tell an epoch the
+    // registry named from a write's position in the log.
+    assert!(is_a_reply_to("WRITE 0 41", "OK 3"));
+    assert!(!is_a_reply_to("WRITE 0 41", "OK"));
+    assert!(is_a_reply_to("ACQUIRE 0 41", "OK"));
+    assert!(!is_a_reply_to("ACQUIRE 0 41", "OK 3"));
+
+    // What each request does ask for.
+    assert!(is_a_reply_to("POLL 0", "GRANT 41"));
+    assert!(is_a_reply_to("POLL 0", "REVOKE 42"));
+    assert!(is_a_reply_to("POLL 0", "NONE"));
+    assert!(is_a_reply_to("WRITE 0 41", "FENCED"));
+    assert!(is_a_reply_to("BEGIN 0 1", "OK"));
+    assert!(is_a_reply_to("FORCE 1", "OK"));
+
+    // Refusals are universal, including for a verb the protocol does not
+    // have. Which refusal is *owed* is `owed_for`'s business, not this one's.
+    for line in ["POLL 0", "WRITE 0 41", "RELEASE 0 41", "FORCE 1", "SHOUT 0"] {
+        assert!(is_a_reply_to(line, "NO"), "{line} must be refusable `NO`");
+        assert!(is_a_reply_to(line, "ERR"), "{line} must be refusable `ERR`");
+    }
+
+    // And a word the protocol does not have is never a reply to anything.
+    assert!(!is_a_reply_to("POLL 0", "MAYBE"));
+    assert!(!is_a_reply_to("SHOUT 0", "OK"));
 }
 
 #[test]

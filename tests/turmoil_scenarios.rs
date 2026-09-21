@@ -306,20 +306,70 @@ fn scenarios_hold_their_invariants() {
     // So the floor applies only to a window big enough to have a rate. It is
     // not a way to switch the check off: the default window is 256 and CI sets
     // no environment at all, so the path CI takes always asserts.
-    const FLOOR_WINDOW: u64 = 32;
     let window = end - start;
-    if window < FLOOR_WINDOW {
+    let Some(floor) = coverage_floor(window) else {
         println!(
             "window of {window} seeds is below {FLOOR_WINDOW}: too short for a \
              rate to mean anything, so the coverage floor is not applied"
         );
         return;
-    }
+    };
 
-    let floor = window / 16;
     assert!(
         writes as u64 > floor,
         "the scenarios must actually reach the fence; saw {writes} accepted \
          writes over seeds {start}..{end}, wanted more than {floor}",
     );
+}
+
+/// The shortest window the coverage floor is applied to.
+const FLOOR_WINDOW: u64 = 32;
+
+/// How many accepted writes a window of this size must beat, or `None` if it
+/// is too short for a rate to mean anything.
+///
+/// An empty window is neither, and the distinction is the whole reason this is
+/// a function. Zero seeds is not a short window that the floor politely
+/// declines to judge; it is no search at all, and the exemption was swallowing
+/// it — `JETSTREAM_SCENARIO_SEEDS=0` ran nothing, asserted nothing and
+/// reported success.
+///
+/// I had already fixed exactly this failure one commit earlier, in
+/// `window_end`, and looked straight at this case while doing it. The
+/// reasoning for leaving it was that the run announces itself in the log, so
+/// the emptiness is visible. That is the same argument the overflow case
+/// makes — it also prints `searching scenario seeds X..X` — and I rejected it
+/// there. A log line is not an exit status. Two standards for one failure
+/// mode, four lines apart.
+fn coverage_floor(window: u64) -> Option<u64> {
+    assert!(
+        window != 0,
+        "a window of zero seeds searches nothing. Refusing to report success \
+         on it: the short-window exemption below is for a window too small to \
+         have a rate, not for one with nothing in it."
+    );
+    if window < FLOOR_WINDOW {
+        return None;
+    }
+    Some(window / 16)
+}
+
+#[test]
+#[should_panic(expected = "searches nothing")]
+fn an_empty_window_stops_the_search() {
+    coverage_floor(0);
+}
+
+#[test]
+fn a_window_too_short_for_a_rate_is_exempt() {
+    // One seed is the obvious way to re-run a single reported seed, and plenty
+    // of individual seeds legitimately never reach the fence.
+    assert_eq!(coverage_floor(1), None);
+    assert_eq!(coverage_floor(FLOOR_WINDOW - 1), None);
+}
+
+#[test]
+fn a_window_long_enough_for_a_rate_has_a_floor() {
+    assert_eq!(coverage_floor(FLOOR_WINDOW), Some(2));
+    assert_eq!(coverage_floor(256), Some(16));
 }

@@ -16,10 +16,21 @@
 //! about scheduling.
 
 use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use jetstream::prelude::*;
-use jetstream_distributed_ownership::{Event, Offer, Ownership, OwnershipChannel, Registry};
+// The `#[service]` macro puts the generated client and server in a
+// `<trait>_protocol` module and leaves the trait itself at the crate root —
+// `pub mod ownership_protocol { pub struct OwnershipService<T: Ownership> { pub
+// inner: T }, pub struct OwnershipChannel }`. The trait has to be in scope
+// because the channel reaches the registry through `impl Ownership for
+// OwnershipChannel`, not through inherent methods.
+use jetstream_distributed_ownership::{
+    ownership_protocol::{OwnershipChannel, OwnershipService},
+    Event, Offer, Ownership, Registry,
+};
 use jetstream_rpc::session::{Session, SingleLaneSession};
 use turmoil::net::{TcpListener, TcpStream};
 
@@ -41,19 +52,31 @@ async fn connect() -> OwnershipChannel {
 fn a_handover_fences_the_outgoing_owner() {
     let mut sim = turmoil::Builder::new().build();
 
-    // Who is which node, by address. See the crate docs: an address is not a
-    // credential, but in a simulated network nothing can spoof one, and the
-    // shape — identity arriving with the connection rather than in an argument
-    // — is what carries over to TLS.
-    let roster: HashMap<_, _> =
-        HashMap::from([(turmoil::lookup("a"), 0u64), (turmoil::lookup("b"), 1u64)]);
-    let registry = Registry::new(roster, 0, 41);
+    // The registry is built *inside* the host, because `turmoil::lookup` needs a
+    // live simulation to resolve a name and panics without one — every other
+    // use of it in this repository is inside a host for the same reason. It is
+    // shared back out so the audit log can be read once the run is over.
+    let shared: Arc<OnceLock<Registry>> = Arc::new(OnceLock::new());
 
-    let served = registry.clone();
+    let built = shared.clone();
     sim.host("registry", move || {
-        let served = served.clone();
+        let built = built.clone();
         async move {
-            let listener = TcpListener::bind(("0.0.0.0".parse().unwrap(), PORT)).await?;
+            // Who is which node, by address. See the crate docs: an address is
+            // not a credential, but in a simulated network nothing can spoof
+            // one, and the shape — identity arriving with the connection
+            // rather than in an argument — is what carries over to TLS.
+            let served = built
+                .get_or_init(|| {
+                    let roster = HashMap::from([
+                        (turmoil::lookup("a"), 0u64),
+                        (turmoil::lookup("b"), 1u64),
+                    ]);
+                    Registry::new(roster, 0, 41)
+                })
+                .clone();
+            let listener =
+                TcpListener::bind((IpAddr::from(Ipv4Addr::UNSPECIFIED), PORT)).await?;
             loop {
                 let (stream, _) = listener.accept().await?;
                 let served = served.clone();
@@ -117,6 +140,8 @@ fn a_handover_fences_the_outgoing_owner() {
     });
 
     sim.run().expect("the simulation runs to completion");
+
+    let registry = shared.get().expect("the host built the registry");
 
     // And the audit log says exactly that happened. The log is what every
     // oracle in `tests/` reads, so a service whose log is right is a service

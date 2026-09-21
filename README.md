@@ -612,6 +612,8 @@ distributed-ownership/
 │   ├── turmoil_ownership.rs    named stories, each with an expected ending
 │   ├── turmoil_scenarios.rs    the blind seed search + the regression replay
 │   └── seeds/scenarios.txt     seeds that once broke something
+├── services/
+│   └── ownership/              the protocol as a Jetstream service
 └── .github/workflows/verify.yml
 ```
 
@@ -638,6 +640,53 @@ Specification and proof code are kept apart from the model: `src/model.rs`
 defines only the state space and the transition relation and does not import the
 specification layer, so a specification cannot be quietly weakened to fit the
 model.
+
+## The protocol as a Jetstream service
+
+Everything above is a model and a simulation of it. `services/ownership/` is the
+protocol served over [Jetstream](https://github.com/sevki/jetstream) RPC — a
+`#[service] trait Ownership` with `poll`, `acquire`, `write`, `begin_transfer`
+and `release`, implemented by a `Registry` that performs the fence with
+`exec::FenceGuard`.
+
+**The service form removes a class of defect rather than guarding against it.**
+The line protocol in `tests/` carries the sender as a field — `WRITE 0 41`
+*claims* to be node 0 — so the registry has to be told to believe the connection
+rather than the claim, and every request is a place to get that wrong. Four
+rounds of review on that suite were spent hardening exactly that rule. Here no
+method takes a node number at all. Who is calling is the `Context`, which
+Jetstream fills in from the transport: *"The context is the transport's, not the
+frame's"* (`jetstream_rpc::server`). A caller cannot forge it, so "the line lied
+about who sent it" is not defended against — it is unrepresentable.
+
+`force` is absent from the trait for the same reason. It is the coordinator's
+own transition, and the line protocol needed a dedicated control connection to
+stop a node sending it; a node-facing service simply does not offer it.
+
+**The assumption, stated rather than assumed.** `Context::peer()` is the
+authenticated identity and is `None` over plain TCP — jetstream's own comment
+says a plain stream authenticates nothing. The authenticated forms are a TLS
+certificate or an iroh `NodeId`, and `NodeId`'s value is private with no
+accessor outside `jetstream_rpc`, so neither is usable yet. The service
+therefore identifies a caller by address, against a roster fixed at
+construction. **An address is not a credential.** In a simulated network nothing
+can spoof one; on a real network it is worth very little. Replacing it with TLS
+identity is the first thing to do, and what does not change when it is replaced
+is the shape: identity arrives with the connection, never in an argument.
+
+**What is verified about it, precisely.** One thing: the fence. `write` builds a
+`FenceGuard` from the registry's own current state and asks `accepts`, which is
+proved to return exactly `may_mutate` for the generation the guard records.
+Everything else in the crate is ordinary code with ordinary arguments for it.
+The refinement that would tie the whole service to the model remains future work,
+as it was before.
+
+**Status.** The service is pinned to the Jetstream working tree rather than to a
+release — `16.3.1` is not on crates.io, which the dependency resolution caught.
+Its dependency graph resolves and both files parse, but the environment it was
+written in cannot reach crates.io's tarballs, so **CI is the first place it is
+compiled**. That is the same footing the fuzz target was on when it was added,
+and it is stated here rather than discovered.
 
 ## Verifying locally
 

@@ -157,3 +157,74 @@ fn arbitrary_protocol_lines_hold_their_invariants() {
         totals.writes
     );
 }
+
+// ---------------------------------------------------------------------------
+// The obligation itself
+// ---------------------------------------------------------------------------
+//
+// `owed_for` is the one oracle here that reads the *request* rather than the
+// log, so it is the one that can accuse a sound registry of a defect. Both
+// ways it has done so were found by running it rather than by reading it, and
+// both were the same mistake: dropping a refusal reason it could have known,
+// which turns "some refusal is owed" into "this exact refusal is owed".
+//
+// These pin the rule in both directions. Relaxing the obligation is only safe
+// while the strict cases stay strict, so they are tested together.
+
+use body::{owed_for, Owed, Peer};
+
+#[test]
+fn a_request_refusable_for_two_reasons_may_be_refused_either_way() {
+    // The case that was found first. `FORCE` is the registry's own verb, so a
+    // node sending it is unauthorised however badly the rest of the line is
+    // mangled — and a registry that refuses strangers before parsing their
+    // input is sound, not defective.
+    let owed = owed_for("FORCE 41.0", Peer::Node(1));
+    assert_eq!(owed, Owed { malformed: true, not_permitted: true });
+    assert_eq!(owed.exact(), None, "either `ERR` or `NO` must be acceptable");
+
+    // And the case that was one step further out, which the first fix missed.
+    // The *sender* field is legible even though the epoch is not, so the
+    // connection can be disbelieved without parsing the rest.
+    let owed = owed_for("WRITE 0 junk", Peer::Control);
+    assert_eq!(owed, Owed { malformed: true, not_permitted: true });
+    assert_eq!(owed.exact(), None, "either `ERR` or `NO` must be acceptable");
+}
+
+#[test]
+fn a_request_refusable_for_one_reason_must_be_refused_that_way() {
+    // The other half of the same rule, and the half that gives it teeth. A
+    // relaxation that swallowed these would accept any refusal for anything,
+    // which is the vacuity this whole file is about.
+
+    // Malformed and nothing else: the connection agrees with the line.
+    let owed = owed_for("WRITE 0 junk", Peer::Node(0));
+    assert_eq!(owed, Owed { malformed: true, not_permitted: false });
+    assert_eq!(owed.exact(), Some("ERR"));
+
+    // The surplus field the lenient parser used to drop, which is the shape
+    // that makes this obligation worth having at all.
+    let owed = owed_for("POLL junk 0", Peer::Node(0));
+    assert_eq!(owed, Owed { malformed: true, not_permitted: false });
+    assert_eq!(owed.exact(), Some("ERR"));
+
+    // Not permitted and nothing else: a well-formed line on the wrong wire.
+    let owed = owed_for("WRITE 0 41", Peer::Node(1));
+    assert_eq!(owed, Owed { malformed: false, not_permitted: true });
+    assert_eq!(owed.exact(), Some("NO"));
+}
+
+#[test]
+fn an_unknown_verb_carries_no_opinion_about_who_sent_it() {
+    // The protocol has no rule about who may send a request it does not have,
+    // so the sender field of one is not a sender field — it is a number in a
+    // line that means nothing. Reading it as one would demand `NO` where only
+    // `ERR` is owed, which is the same mistake pointing the other way.
+    let owed = owed_for("SHOUT 0 41", Peer::Control);
+    assert_eq!(owed, Owed { malformed: true, not_permitted: false });
+    assert_eq!(owed.exact(), Some("ERR"));
+
+    let owed = owed_for("", Peer::Node(0));
+    assert_eq!(owed, Owed { malformed: true, not_permitted: false });
+    assert_eq!(owed.exact(), Some("ERR"));
+}

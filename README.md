@@ -789,13 +789,19 @@ arriving as `POLL 0`, right arity, executed. Measured both ways: with that mode
 deleted and the parser regressed, 20 000 seeds stay green; with it present, the
 walk fails on seed 0.
 
-Writing the obligation down also got the *order* wrong the first time, and the
-search said so. `FORCE 41.0` from a node is both unparseable and unauthorised.
-Deciding the fields first recorded it as owing `ERR` exactly, which reports a
-registry that refuses strangers before parsing their input as defective for
-answering `NO` — and refusing on authority first is the better order, not a
-fault. An obligation that cannot say so is an obligation fitted to one
-implementation, which is the one thing it must not be.
+Writing that obligation down went wrong twice, the same way both times, and
+neither was caught by reading it. The two refusal reasons are independent, so
+every one that *can* be established has to be: an obligation that drops a reason
+it could have known demands one exact refusal where two are defensible, and then
+reports a sound registry as defective for choosing the other. `FORCE 41.0` from
+a node is both unparseable and unauthorised, and deciding the fields first
+demanded `ERR` from a registry that refuses strangers before parsing their input
+— which is the better order, not a fault. Fixing that for `FORCE` and stopping
+there was one case short of the rule: `WRITE 0 junk` on the control connection
+is the same shape, because the *sender* field is legible even though the epoch
+is not. Authority is now decided from whatever is legible, before the line is
+judged well formed at all, and three tests pin it in both directions — relaxing
+an obligation is only safe while the strict cases stay strict.
 
 **Still thin.** Completed handovers are reached 5 times in 1 024 runs, so
 claim 4 is barely exercised here — it is covered by the scenario walk and the

@@ -1634,13 +1634,13 @@ pub struct Owed {
 }
 
 impl Owed {
-    fn owes_anything(self) -> bool {
+    pub fn owes_anything(self) -> bool {
         self.malformed || self.not_permitted
     }
 
     /// The exact reply owed, when only one reason applies. `None` when both
     /// do and any refusal will serve.
-    fn exact(self) -> Option<&'static str> {
+    pub fn exact(self) -> Option<&'static str> {
         match (self.malformed, self.not_permitted) {
             (true, false) => Some("ERR"),
             (false, true) => Some("NO"),
@@ -1674,68 +1674,72 @@ pub fn owed_for(line: &str, peer: Peer) -> Owed {
     let mut owed = Owed::default();
     let mut parts = line.split_whitespace();
     let verb = parts.next().unwrap_or("");
-    let args: Option<Vec<u64>> = parts.map(|p| p.parse::<u64>().ok()).collect();
-
-    // `FORCE` is the registry's own verb and no node may send it, which is
-    // knowable from the verb and the connection without reading a field. So
-    // it is decided before the fields are.
-    //
-    // The order matters, and getting it wrong was caught by the search rather
-    // than by reading: `FORCE 41.0` from a node is both unparseable and
-    // unauthorised, and deciding the fields first recorded it as owing `ERR`
-    // *exactly* — which would report a registry that refuses strangers before
-    // parsing their input as defective for answering `NO`. Refusing on
-    // authority first is the better order, not a fault, and an obligation
-    // that cannot say so is an obligation fitted to one implementation.
-    if verb == "FORCE" && peer != Peer::Control {
-        owed.not_permitted = true;
-    }
-
-    // Every field after the verb is a `u64`, or the line is malformed. This
-    // is the rule the strict parse replaced `filter_map` to enforce, stated
-    // independently of it.
-    let Some(args) = args else {
-        // Nothing further is knowable about a line whose fields do not parse
-        // — not even which node it claims to be from.
-        owed.malformed = true;
-        return owed;
-    };
+    let fields: Vec<&str> = parts.collect();
+    let args: Option<Vec<u64>> = fields.iter().map(|f| f.parse::<u64>().ok()).collect();
 
     let arity = match verb {
         "POLL" | "FORCE" => Some(1),
         "ACQUIRE" | "WRITE" | "BEGIN" | "RELEASE" => Some(2),
         _ => None,
     };
-    match arity {
-        None => {
-            // An unknown verb, which includes the empty line and the wrong
-            // case. Nothing further is knowable: the protocol has no opinion
-            // about who may send a request it does not have.
-            owed.malformed = true;
-            return owed;
-        }
-        Some(n) if args.len() != n => owed.malformed = true,
-        Some(_) => {}
-    }
 
-    // `FORCE`'s authority was settled above. What is left is its argument:
-    // the successor has to be a node that exists, on any connection.
+    // Authority first, from whatever is legible, and *before* the line is
+    // judged well formed. The two reasons are independent, so every one that
+    // can be established has to be — an obligation that drops a reason it
+    // could have known demands one exact refusal where two are defensible,
+    // and then reports a sound handler as defective for choosing the other.
+    //
+    // Both halves of this were got wrong once, and found rather than reasoned
+    // out. `FORCE 41.0` from a node is unparseable *and* unauthorised, and
+    // the first version decided the fields first, so it demanded `ERR` from a
+    // registry that quite reasonably refuses strangers before parsing their
+    // input. The fix covered `FORCE` and stopped there, one case short of the
+    // rule: `WRITE 0 junk` on the control connection is the same shape,
+    // because the *sender* field is legible even though the epoch is not, so
+    // `NO` is as defensible as `ERR`.
     if verb == "FORCE" {
-        if args.first().is_some_and(|next| *next >= NODES) {
+        // The registry's own verb. No node may send it, whatever the line
+        // claims and whatever else is wrong with it — knowable without
+        // reading a field at all.
+        if peer != Peer::Control {
             owed.not_permitted = true;
         }
-        return owed;
+    } else if arity.is_some() {
+        // Every other known verb names its sender in its first field, and the
+        // registry believes the connection rather than the field. Checkable
+        // whenever that one field is legible, whatever became of the rest.
+        //
+        // Only for a verb the protocol *has*: it has no opinion about who may
+        // send a request it does not recognise, so an unknown verb is
+        // malformed and nothing else.
+        if let Some(claimed) = fields.first().and_then(|f| f.parse::<u64>().ok()) {
+            if peer != Peer::Node(claimed) {
+                owed.not_permitted = true;
+            }
+        }
     }
 
-    // Every other verb names its sender, and the registry believes the
-    // connection rather than the field. Only checkable when the field is
-    // there to be believed or disbelieved.
-    if let Some(&claimed) = args.first() {
-        if peer != Peer::Node(claimed) {
-            owed.not_permitted = true;
-        }
+    // Then whether the line is well formed at all: a verb the protocol has —
+    // which the empty line and the wrong case are not — and every field after
+    // it a `u64`. That last is the rule the strict parse replaced
+    // `filter_map` to enforce, stated independently of it.
+    let Some(n) = arity else {
+        owed.malformed = true;
+        return owed;
+    };
+    let Some(args) = args else {
+        owed.malformed = true;
+        return owed;
+    };
+    if args.len() != n {
+        owed.malformed = true;
     }
-    // `BEGIN`'s successor has to exist too.
+
+    // What is left needs the fields parsed: the successor a forced revoke or
+    // a handover names has to be a node that exists, on any connection.
+    if verb == "FORCE" && args.first().is_some_and(|next| *next >= NODES) {
+        owed.not_permitted = true;
+    }
     if verb == "BEGIN" && args.get(1).is_some_and(|to| *to >= NODES) {
         owed.not_permitted = true;
     }

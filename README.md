@@ -801,11 +801,23 @@ branches: a poll is answered with a grant, a revocation or nothing; a write
 either lands carrying the sequence number it landed at or is stopped by the
 fence; everything else takes effect or does not. `NO` and `ERR` stay universal,
 because *when* a refusal is owed is the obligation's business, not the
-vocabulary's. The case this deliberately cannot see is a refusal that was not
-warranted — a good `POLL` answered `NO` — because refusing a request you
-needn't refuse moves no state and writes no log entry. That is a liveness
-failure, and nothing here judges liveness; a registry that answered `NO` to
-everything would satisfy every oracle in this suite.
+vocabulary's. **An unwarranted refusal is a separate question, and I got it wrong once.** A
+refusal moves no state and writes no log entry, and I concluded from that that
+no such refusal is judged anywhere — liveness, out of scope. That is wrong for
+a write. `may_mutate (refusals)` judges exactly this: a registry that refuses
+its own current owner, which is what `oracles_catch_an_overfencing_coordinator`
+exists for. The real distinction is not safety against liveness but *logged*
+against *unlogged* — the oracle fires on `Event::Fenced`, so the same refusal
+spelled `NO` or `ERR` walks straight past it, and the aggregate write floor is
+no help against a defect that is selective rather than total. Measured: a
+registry refusing one permitted write in three that way passed 20 000 seeds,
+550 000 requests, with 3 947 writes accepted. The search now checks it against
+the log directly, by the oracle's own rule, and all three spellings fail on the
+same seed and the same step.
+
+What is genuinely out of scope is the rest of it — a good `POLL` answered `NO`.
+Nothing in the model says a poll must be answered, so a registry that refused
+every one would satisfy every oracle here.
 
 Writing that obligation down went wrong three times, the same way each time,
 and none of the three was caught by reading it. The two refusal reasons are independent, so

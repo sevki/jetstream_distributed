@@ -1383,10 +1383,11 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
     // `Unowned`, and neither is a state where a write is permitted.
     let mut held: Option<(u64, u64)> = None;
     for ev in log {
-        match ev {
-            Event::Acquired { node, epoch } => held = Some((*node, *epoch)),
-            Event::EpochBurned { .. } | Event::Released { .. } => held = None,
-            Event::Fenced { node, epoch } => {
+        // The holder rule itself is `track_holder`, shared with the search's
+        // check on refusals this oracle cannot see. A second copy of a rule is
+        // a second place for it to be wrong.
+        if let Event::Fenced { node, epoch } = ev {
+            {
                 if held == Some((*node, *epoch)) {
                     return Err(format!(
                         "may_mutate (refusals): node {node} was fenced at epoch \
@@ -1395,11 +1396,45 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
                     ));
                 }
             }
-            Event::Wrote { .. } | Event::Granted { .. } | Event::Revoked { .. } => {}
         }
+        track_holder(&mut held, ev);
     }
 
     Ok(())
+}
+
+/// Advance "who the log says holds the actor" by one event.
+///
+/// `held` is `Some` only between an acquire and the next burn: a cooperative
+/// burn moves the actor to `Transferring` and a forced one to `Unowned`, and
+/// neither is a state where a write is permitted.
+fn track_holder(held: &mut Option<(u64, u64)>, ev: &Event) {
+    match ev {
+        Event::Acquired { node, epoch } => *held = Some((*node, *epoch)),
+        Event::EpochBurned { .. } | Event::Released { .. } => *held = None,
+        Event::Wrote { .. } | Event::Granted { .. } | Event::Revoked { .. }
+        | Event::Fenced { .. } => {}
+    }
+}
+
+/// Who the log says holds the actor, and at which epoch.
+pub fn holder(log: &[Event]) -> Option<(u64, u64)> {
+    let mut held = None;
+    for ev in log {
+        track_holder(&mut held, ev);
+    }
+    held
+}
+
+/// The node and epoch a `WRITE` names, if this line is one.
+fn write_target(line: &str) -> Option<(u64, u64)> {
+    let mut parts = line.split_whitespace();
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some("WRITE"), Some(node), Some(epoch), None) => {
+            Some((node.parse().ok()?, epoch.parse().ok()?))
+        }
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1990,6 +2025,9 @@ pub fn run_protocol(run: &ProtocolRun) -> Result<Served, String> {
     let mut offered = Offered::default();
     for (i, w) in run.words.iter().enumerate() {
         let step = Step::from_words(w[0], w[1], w[2], offered);
+        // Who the log says holds the actor *before* this step, for the
+        // refusal check below.
+        let held = holder(coord.log());
         let reply = coord.handle(&step.line, step.peer);
         offered = note_reply(offered, &step.line, &reply);
         match step.shape {
@@ -2030,6 +2068,37 @@ pub fn run_protocol(run: &ProtocolRun) -> Result<Served, String> {
                     ));
                 }
                 _ => {}
+            }
+        }
+        // A permitted write refused without saying so.
+        //
+        // `may_mutate (refusals)` already claims this property — it is what
+        // `oracles_catch_an_overfencing_coordinator` exists for, a registry
+        // that refuses its own current owner — but it reads the log, and it
+        // fires only on `Event::Fenced`. `NO` and `ERR` log nothing, so the
+        // oracle never sees them, and the aggregate write floor is no help
+        // against a defect that is selective rather than total. That is not a
+        // hypothetical gap: a registry refusing one permitted write in three
+        // this way passed 20 000 seeds — 550 000 requests — with the write
+        // floor comfortably satisfied.
+        //
+        // The condition is the oracle's own, read from the same log by the
+        // same rule: `may_mutate` is a biconditional where the handler is
+        // concerned, so a write naming the node and epoch the log says holds
+        // the actor has to be accepted. `owed_for` gates it, because a write
+        // that is malformed or arrives on the wrong connection is owed a
+        // refusal and this must not contradict that.
+        if matches!(reply.as_str(), "NO" | "ERR") && !owed.owes_anything() {
+            if let Some(target) = write_target(&step.line) {
+                if held == Some(target) {
+                    return Err(format!(
+                        "step {i}: `{}` from {:?} was refused `{reply}`, which \
+                         logs nothing, while the log says node {} still held \
+                         the actor at epoch {} — a refusal the model has no \
+                         state for, and one no oracle can see",
+                        step.line, step.peer, target.0, target.1
+                    ));
+                }
             }
         }
         if matches!(reply.as_str(), "NO" | "ERR" | "FENCED" | "NONE") {
@@ -2123,12 +2192,20 @@ pub fn replay_protocol(run: &ProtocolRun) -> Vec<Event> {
 /// *When* a refusal is owed is `owed_for`'s business; this says only which
 /// words may carry one.
 ///
-/// So the case this deliberately cannot see is a refusal that was not
-/// warranted — a perfectly good `POLL` answered `NO`. Refusing a request you
-/// needn't refuse moves no state and writes no log entry, so there is no
-/// safety property to violate; it is a *liveness* failure, and this model
-/// proves safety only and says so. A registry that answered `NO` to
-/// everything would satisfy every oracle here, on purpose.
+/// An unwarranted refusal is a separate question from vocabulary, and the two
+/// were confused here once. A refusal moves no state and writes no log entry,
+/// and the first version of this comment concluded from that that no such
+/// refusal is judged anywhere — liveness, out of scope. That is wrong for a
+/// write. `may_mutate (refusals)` does judge a registry that refuses its own
+/// current owner; it is what `oracles_catch_an_overfencing_coordinator`
+/// exists for. The distinction is not safety against liveness, it is *logged*
+/// against *unlogged*: the oracle fires on `Event::Fenced`, so the same
+/// refusal spelled `NO` or `ERR` walks past it. `run_protocol` closes that
+/// gap directly, against the log.
+///
+/// What is genuinely out of scope is the rest of it — a good `POLL` answered
+/// `NO`. Nothing in the model says a poll must be answered, so a registry
+/// that refused every one of them would satisfy every oracle here.
 pub fn is_a_reply_to(line: &str, reply: &str) -> bool {
     if matches!(reply, "NO" | "ERR") {
         return true;

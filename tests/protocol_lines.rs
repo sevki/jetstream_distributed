@@ -171,7 +171,7 @@ fn arbitrary_protocol_lines_hold_their_invariants() {
 // These pin the rule in both directions. Relaxing the obligation is only safe
 // while the strict cases stay strict, so they are tested together.
 
-use body::{is_a_reply_to, owed_for, Owed, Peer};
+use body::{holder, is_a_reply_to, owed_for, Event, Owed, Peer};
 
 #[test]
 fn a_request_refusable_for_two_reasons_may_be_refused_either_way() {
@@ -277,6 +277,39 @@ fn a_refusal_has_to_be_in_the_words_that_request_uses() {
     // And a word the protocol does not have is never a reply to anything.
     assert!(!is_a_reply_to("POLL 0", "MAYBE"));
     assert!(!is_a_reply_to("SHOUT 0", "OK"));
+}
+
+#[test]
+fn a_refusal_that_logs_nothing_is_still_a_refusal() {
+    // `may_mutate (refusals)` already claims that a registry may not refuse
+    // its own current owner. It reads the log, so it fires on `Event::Fenced`
+    // and never on `NO` or `ERR`, which log nothing at all — and the write
+    // floor is aggregate, so a selective defect clears it. Measured: refusing
+    // one permitted write in three that way passed 20 000 seeds with 3 947
+    // writes accepted.
+    //
+    // `holder` is the rule that check runs on, shared with the oracle so the
+    // two cannot drift apart.
+    let held = [
+        Event::Granted { node: 0, epoch: 41 },
+        Event::Acquired { node: 0, epoch: 41 },
+    ];
+    assert_eq!(holder(&held), Some((0, 41)));
+
+    // A burn ends it, cooperative or forced — neither leaves a state where a
+    // write is permitted.
+    let mut burned = held.to_vec();
+    burned.push(Event::EpochBurned { from_epoch: 41, to_epoch: 42, next: 1, forced: true });
+    assert_eq!(holder(&burned), None);
+
+    let mut released = held.to_vec();
+    released.push(Event::Released { node: 0, new_epoch: 42 });
+    assert_eq!(holder(&released), None);
+
+    // A write does not end it: the owner may write again at the same epoch.
+    let mut wrote = held.to_vec();
+    wrote.push(Event::Wrote { node: 0, epoch: 41, seq: 1 });
+    assert_eq!(holder(&wrote), Some((0, 41)));
 }
 
 #[test]

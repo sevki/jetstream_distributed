@@ -2122,6 +2122,13 @@ pub fn replay_protocol(run: &ProtocolRun) -> Vec<Event> {
 /// to every request, including one whose verb the protocol does not have.
 /// *When* a refusal is owed is `owed_for`'s business; this says only which
 /// words may carry one.
+///
+/// So the case this deliberately cannot see is a refusal that was not
+/// warranted — a perfectly good `POLL` answered `NO`. Refusing a request you
+/// needn't refuse moves no state and writes no log entry, so there is no
+/// safety property to violate; it is a *liveness* failure, and this model
+/// proves safety only and says so. A registry that answered `NO` to
+/// everything would satisfy every oracle here, on purpose.
 pub fn is_a_reply_to(line: &str, reply: &str) -> bool {
     if matches!(reply, "NO" | "ERR") {
         return true;

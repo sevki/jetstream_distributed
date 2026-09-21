@@ -801,7 +801,11 @@ branches: a poll is answered with a grant, a revocation or nothing; a write
 either lands carrying the sequence number it landed at or is stopped by the
 fence; everything else takes effect or does not. `NO` and `ERR` stay universal,
 because *when* a refusal is owed is the obligation's business, not the
-vocabulary's.
+vocabulary's. The case this deliberately cannot see is a refusal that was not
+warranted — a good `POLL` answered `NO` — because refusing a request you
+needn't refuse moves no state and writes no log entry. That is a liveness
+failure, and nothing here judges liveness; a registry that answered `NO` to
+everything would satisfy every oracle in this suite.
 
 Writing that obligation down went wrong three times, the same way each time,
 and none of the three was caught by reading it. The two refusal reasons are independent, so

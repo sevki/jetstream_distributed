@@ -2143,6 +2143,7 @@ pub fn run_protocol(run: &ProtocolRun) -> Result<Served, String> {
         // What the log says the registry's state is *before* this step, for
         // the refusal check below.
         let standing = Standing::from_log(coord.log());
+        let logged_before = coord.log().len();
         let reply = coord.handle(&step.line, step.peer);
         offered = note_reply(offered, &step.line, &reply);
         match step.shape {
@@ -2154,6 +2155,10 @@ pub fn run_protocol(run: &ProtocolRun) -> Result<Served, String> {
         if step.spoofed {
             served.spoofed += 1;
         }
+        // What this step recorded, which is the only moment the correspondence
+        // between one request and one log entry is still visible.
+        agrees_with_log(&step.line, &reply, &coord.log()[logged_before..])
+            .map_err(|e| format!("step {i}: {e} (from {:?})", step.peer))?;
         if !is_a_reply_to(&step.line, &reply) {
             return Err(format!(
                 "step {i}: `{}` from {:?} was answered `{reply}`, which is not \
@@ -2283,6 +2288,92 @@ pub fn replay_protocol(run: &ProtocolRun) -> Vec<Event> {
         offered = note_reply(offered, &step.line, &reply);
     }
     coord.log().to_vec()
+}
+
+/// Does the reply agree with what the registry actually recorded?
+///
+/// The dual of the refusal check in `run_protocol`, and the half that was
+/// missing. That one catches a registry that *does nothing and says no*. This
+/// catches one that **says yes and does nothing** — an `ACQUIRE` answered `OK`
+/// with no acquire logged, a `POLL` answered `GRANT 41` with no grant issued.
+/// Measured before it existed: each of those passed 20 000 seeds, because
+/// `owed_for` owes no unconditional refusal, the vocabulary is satisfied, and
+/// an unchanged log is a *valid* log.
+///
+/// Together the two say the whole thing: **the reply and the log must agree.**
+/// Every reply names a transition or names none, and the events appended by
+/// the step have to be exactly that.
+///
+/// `appended` is what this step added to the log, which is why this is checked
+/// in the search rather than in `check_invariants` — an oracle handed a
+/// finished log cannot tell which entry belongs to which request, and that is
+/// precisely the information a lie about success destroys.
+pub fn agrees_with_log(line: &str, reply: &str, appended: &[Event]) -> Result<(), String> {
+    let mut parts = line.split_whitespace();
+    let verb = parts.next().unwrap_or("");
+    let a = parts.next().and_then(|f| f.parse::<u64>().ok());
+    let b = parts.next().and_then(|f| f.parse::<u64>().ok());
+
+    let mut reply_parts = reply.split(' ');
+    let (head, arg) = (reply_parts.next().unwrap_or(""), reply_parts.next());
+    let arg = arg.and_then(|n| n.parse::<u64>().ok());
+
+    // A refusal does nothing, and doing nothing is the whole of what it says.
+    if matches!(head, "NO" | "ERR" | "NONE") {
+        return match appended {
+            [] => Ok(()),
+            _ => Err(format!(
+                "`{line}` was answered `{reply}`, which claims nothing \
+                 happened, but the step logged {appended:?}"
+            )),
+        };
+    }
+
+    let ok = match (verb, head, appended) {
+        // A grant and a revocation are the two things a poll can be told.
+        ("POLL", "GRANT", [Event::Granted { node, epoch }]) => {
+            Some(*node) == a && Some(*epoch) == arg
+        }
+        ("POLL", "REVOKE", [Event::Revoked { node, new_epoch }]) => {
+            Some(*node) == a && Some(*new_epoch) == arg
+        }
+        // `tr_acquire`.
+        ("ACQUIRE", "OK", [Event::Acquired { node, epoch }]) => {
+            arg.is_none() && Some(*node) == a && Some(*epoch) == b
+        }
+        // A write that landed carries the sequence number it landed at.
+        ("WRITE", "OK", [Event::Wrote { node, epoch, seq }]) => {
+            Some(*node) == a && Some(*epoch) == b && arg == Some(*seq as u64)
+        }
+        ("WRITE", "FENCED", [Event::Fenced { node, epoch }]) => {
+            arg.is_none() && Some(*node) == a && Some(*epoch) == b
+        }
+        // `tr_begin_transfer` burns the epoch cooperatively, toward the node
+        // the request named.
+        ("BEGIN", "OK", [Event::EpochBurned { next, forced: false, .. }]) => {
+            arg.is_none() && Some(*next) == b
+        }
+        // `tr_complete_release`.
+        ("RELEASE", "OK", [Event::Released { node, new_epoch }]) => {
+            arg.is_none() && Some(*node) == a && Some(*new_epoch) == b
+        }
+        // The three forced transitions all burn an epoch. Which successor the
+        // burn names is *not* checked against the request: `tr_abort_transfer`
+        // deliberately returns the actor to the node it came from rather than
+        // to the one the coordinator asked for, and pinning it here would make
+        // this contradict the model.
+        ("FORCE", "OK", [Event::EpochBurned { forced: true, .. }]) => arg.is_none(),
+        _ => false,
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "`{line}` was answered `{reply}`, but the step logged \
+             {appended:?} — a reply and a log that do not describe the same \
+             thing happening"
+        ))
+    }
 }
 
 /// Every reply the registry may give **to this request**.

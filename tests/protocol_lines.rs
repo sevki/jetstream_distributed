@@ -171,7 +171,7 @@ fn arbitrary_protocol_lines_hold_their_invariants() {
 // These pin the rule in both directions. Relaxing the obligation is only safe
 // while the strict cases stay strict, so they are tested together.
 
-use body::{is_a_reply_to, owed_for, Event, Owed, Peer, Standing};
+use body::{agrees_with_log, is_a_reply_to, owed_for, Event, Owed, Peer, Standing};
 
 #[test]
 fn a_request_refusable_for_two_reasons_may_be_refused_either_way() {
@@ -348,6 +348,75 @@ fn a_refusal_that_logs_nothing_is_still_a_refusal() {
     // `POLL` is deliberately absent: `NONE` answers any poll, and the model
     // never requires `tr_issue_grant` to fire.
     assert!(!Standing::from_log(&granted).must_accept("POLL 0"));
+}
+
+#[test]
+fn a_reply_and_the_log_must_describe_the_same_thing_happening() {
+    // The dual of the check above, and the half that was missing from it.
+    // That one catches a registry that does nothing and says no. This catches
+    // one that says *yes* and does nothing — and an unchanged log is a
+    // perfectly valid log, so no oracle handed the finished run can see it.
+    // Measured before this existed: an `ACQUIRE` answered `OK` with nothing
+    // acquired, a `BEGIN` answered `OK` with nothing transferred, and a `POLL`
+    // answered `GRANT 41` with no grant issued each passed 20 000 seeds.
+    let ok = |line: &str, reply: &str, appended: &[Event]| {
+        assert!(
+            agrees_with_log(line, reply, appended).is_ok(),
+            "{line} -> {reply} with {appended:?} should agree"
+        );
+    };
+    let bad = |line: &str, reply: &str, appended: &[Event]| {
+        assert!(
+            agrees_with_log(line, reply, appended).is_err(),
+            "{line} -> {reply} with {appended:?} should not agree"
+        );
+    };
+
+    // Saying yes means having done the thing.
+    ok("ACQUIRE 0 41", "OK", &[Event::Acquired { node: 0, epoch: 41 }]);
+    bad("ACQUIRE 0 41", "OK", &[]);
+    bad("ACQUIRE 0 41", "OK", &[Event::Acquired { node: 1, epoch: 41 }]);
+    bad("ACQUIRE 0 41", "OK", &[Event::Acquired { node: 0, epoch: 42 }]);
+
+    // Saying no means having done nothing.
+    ok("ACQUIRE 0 41", "NO", &[]);
+    bad("ACQUIRE 0 41", "NO", &[Event::Acquired { node: 0, epoch: 41 }]);
+    ok("POLL 0", "NONE", &[]);
+    bad("POLL 0", "NONE", &[Event::Granted { node: 0, epoch: 41 }]);
+
+    // A poll's two answers each name what was recorded.
+    ok("POLL 0", "GRANT 41", &[Event::Granted { node: 0, epoch: 41 }]);
+    bad("POLL 0", "GRANT 41", &[]);
+    bad("POLL 0", "GRANT 42", &[Event::Granted { node: 0, epoch: 41 }]);
+    ok("POLL 0", "REVOKE 42", &[Event::Revoked { node: 0, new_epoch: 42 }]);
+
+    // A write's `OK` carries the sequence number it actually landed at.
+    ok("WRITE 0 41", "OK 1", &[Event::Wrote { node: 0, epoch: 41, seq: 1 }]);
+    bad("WRITE 0 41", "OK 2", &[Event::Wrote { node: 0, epoch: 41, seq: 1 }]);
+    bad("WRITE 0 41", "OK", &[Event::Wrote { node: 0, epoch: 41, seq: 1 }]);
+    ok("WRITE 0 41", "FENCED", &[Event::Fenced { node: 0, epoch: 41 }]);
+    bad("WRITE 0 41", "FENCED", &[]);
+
+    // A handover burns the epoch toward the node the request named.
+    let burn = |next, forced| Event::EpochBurned {
+        from_epoch: 41, to_epoch: 42, next, forced,
+    };
+    ok("BEGIN 0 1", "OK", &[burn(1, false)]);
+    bad("BEGIN 0 1", "OK", &[]);
+    bad("BEGIN 0 1", "OK", &[burn(2, false)]);
+    bad("BEGIN 0 1", "OK", &[burn(1, true)], );
+    ok("RELEASE 0 42", "OK", &[Event::Released { node: 0, new_epoch: 42 }]);
+    bad("RELEASE 0 42", "OK", &[Event::Released { node: 0, new_epoch: 41 }]);
+
+    // A forced burn must be forced — but which successor it names is *not*
+    // checked against the request, because `tr_abort_transfer` deliberately
+    // returns the actor to the node it came from rather than to the one the
+    // coordinator asked for. Pinning it here would make this contradict the
+    // model it is supposed to be checking.
+    ok("FORCE 1", "OK", &[burn(1, true)]);
+    ok("FORCE 1", "OK", &[burn(0, true)]);
+    bad("FORCE 1", "OK", &[burn(1, false)]);
+    bad("FORCE 1", "OK", &[]);
 }
 
 #[test]

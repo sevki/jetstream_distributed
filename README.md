@@ -835,6 +835,25 @@ whether the model permits a request. It is the same reconstruction
 shared with it rather than copied. After the check, 200 000 seeds pass with
 counts *identical* to before it — so it rejects nothing legitimate.
 
+**And the dual of it, which that fix was missing.** The check above catches a
+registry that *does nothing and says no*. It says nothing about one that **says
+yes and does nothing** — an `ACQUIRE` answered `OK` with no acquire logged, a
+`POLL` answered `GRANT 41` with no grant issued. An unchanged log is a
+perfectly *valid* log, so no oracle handed the finished run can see it, and
+each of those passed 20 000 seeds.
+
+Together the two halves say the whole thing:
+
+> **The reply and the log must agree.** Every reply names a transition or names
+> none, and the events the step appended have to be exactly that.
+
+That correspondence can only be checked *during* the run. An oracle handed a
+finished log cannot tell which entry belongs to which request — which is
+precisely the information a lie about success destroys. Five lies are checked
+both ways, including a write's `OK` carrying a sequence number one off from the
+one it landed at. It costs about eighteen per cent more wall clock, which is
+the only reason to mention it.
+
 **Provenance, stated because it is weaker than most of this file.** No Verus
 theorem says any request is ever accepted; the proofs are all of the form "this
 cannot happen", and liveness is not what they are about. `may_mutate

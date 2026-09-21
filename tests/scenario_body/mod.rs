@@ -265,6 +265,14 @@ impl Coord {
     /// which. Keeping them in step is the whole point: a transition the
     /// implementation has that the model does not is exactly the kind of thing
     /// this suite exists to find.
+    /// The audit log so far.
+    ///
+    /// Exposed for the protocol search, which drives this registry directly
+    /// rather than over a socket and so has nowhere else to read the log from.
+    pub fn log(&self) -> &[Event] {
+        &self.log
+    }
+
     pub fn handle(&mut self, line: &str, peer: Peer) -> String {
         let mut parts = line.split_whitespace();
         let verb = parts.next().unwrap_or("");
@@ -1373,13 +1381,14 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
     // `held` is `Some` only between an acquire and the next burn: a
     // cooperative burn moves the actor to `Transferring` and a forced one to
     // `Unowned`, and neither is a state where a write is permitted.
-    let mut held: Option<(u64, u64)> = None;
+    // The state reconstruction is `Standing`, shared with the search's check on
+    // the refusals this oracle cannot see. A second copy of a rule is a second
+    // place for it to be wrong.
+    let mut standing = Standing::from_log(&[]);
     for ev in log {
-        match ev {
-            Event::Acquired { node, epoch } => held = Some((*node, *epoch)),
-            Event::EpochBurned { .. } | Event::Released { .. } => held = None,
-            Event::Fenced { node, epoch } => {
-                if held == Some((*node, *epoch)) {
+        if let Event::Fenced { node, epoch } = ev {
+            {
+                if standing.holder() == Some((*node, *epoch)) {
                     return Err(format!(
                         "may_mutate (refusals): node {node} was fenced at epoch \
                          {epoch} while the registry still held the actor \
@@ -1387,11 +1396,1154 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
                     ));
                 }
             }
-            Event::Wrote { .. } | Event::Granted { .. } | Event::Revoked { .. } => {}
         }
+        standing.apply(ev);
     }
 
     Ok(())
+}
+
+/// What the audit log says the registry's state is.
+///
+/// The log is the only thing a reader of a finished run has, so every check
+/// that wants to know "should this request have succeeded?" has to reconstruct
+/// the state from it. `may_mutate (refusals)` already did that for one
+/// question — who holds the actor — and this is the same reconstruction made
+/// whole, so that the four other transitions can be asked the same thing.
+///
+/// This reconstructs what the *log says happened*, not what the registry's
+/// own field holds. A registry whose state and log disagree is a defect the
+/// other oracles catch, and this must not quietly paper over it, so the
+/// uncertain cases below decline to judge rather than guess.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Standing {
+    state: Owned,
+    issued: Vec<(u64, u64)>,
+    /// Set when an event could not be interpreted against the state the log
+    /// had reached. Nothing is claimed about a run in that condition.
+    confused: bool,
+}
+
+impl Standing {
+    /// Replay a log from the start state the proofs use.
+    pub fn from_log(log: &[Event]) -> Self {
+        let mut standing = Standing {
+            state: Owned::Unowned { epoch: INITIAL_EPOCH, intended: INITIAL_OWNER },
+            issued: Vec::new(),
+            confused: false,
+        };
+        for ev in log {
+            standing.apply(ev);
+        }
+        standing
+    }
+
+    pub fn apply(&mut self, ev: &Event) {
+        match *ev {
+            // A grant records that the offer was made. It is answered only
+            // from `Unowned` with this node intended, so it moves nothing.
+            Event::Granted { node, epoch } => self.issued.push((node, epoch)),
+            Event::Acquired { node, epoch } => {
+                self.state = Owned::Owned { owner: node, epoch };
+            }
+            Event::EpochBurned { from_epoch, to_epoch, next, forced } => {
+                if forced {
+                    self.state = Owned::Unowned { epoch: to_epoch, intended: next };
+                } else {
+                    // A cooperative burn is `tr_begin_transfer`, which only
+                    // fires from `Owned` — the outgoing owner is whoever the
+                    // log said held it.
+                    match self.state {
+                        Owned::Owned { owner, .. } => {
+                            self.state = Owned::Transferring {
+                                from: owner,
+                                to: next,
+                                old_epoch: from_epoch,
+                                new_epoch: to_epoch,
+                            };
+                        }
+                        _ => self.confused = true,
+                    }
+                }
+            }
+            Event::Released { node, new_epoch } => match self.state {
+                Owned::Transferring { to, .. } => {
+                    let _ = node;
+                    self.state = Owned::Unowned { epoch: new_epoch, intended: to };
+                }
+                _ => self.confused = true,
+            },
+            Event::Revoked { .. } | Event::Wrote { .. } | Event::Fenced { .. } => {}
+        }
+    }
+
+    /// Who the log says holds the actor, and at which epoch.
+    pub fn holder(&self) -> Option<(u64, u64)> {
+        match self.state {
+            Owned::Owned { owner, epoch } => Some((owner, epoch)),
+            _ => None,
+        }
+    }
+
+    /// Must this request be accepted, in the state the log describes?
+    ///
+    /// **Provenance, stated because it is weaker than most of this file.**
+    /// No Verus theorem says any request is ever accepted — the proofs are all
+    /// of the form "this cannot happen", and liveness is not what they are
+    /// about. `may_mutate (refusals)` already crossed this line for writes,
+    /// deliberately, because a registry that refuses its own current owner
+    /// satisfies seven of the eight oracles while doing nothing a client can
+    /// use. This extends that same argument to the other transitions, and
+    /// inherits the same weaker provenance rather than pretending otherwise.
+    ///
+    /// Each arm is a model transition's guard, read from the log:
+    /// `tr_acquire`, `can_mutate`, `tr_begin_transfer`, `tr_complete_release`,
+    /// and the three `FORCE` transitions, which are total over the states.
+    ///
+    /// **`POLL` is deliberately absent.** `tr_issue_grant` being *enabled* is
+    /// not the model requiring it to fire, and `NONE` is a legitimate answer
+    /// to any poll. So a poll answered `NO` stays invisible here, as recorded
+    /// on `is_a_reply_to`.
+    pub fn must_accept(&self, line: &str) -> bool {
+        if self.confused {
+            return false;
+        }
+        let mut parts = line.split_whitespace();
+        let verb = parts.next().unwrap_or("");
+        let a = parts.next().and_then(|f| f.parse::<u64>().ok());
+        let b = parts.next().and_then(|f| f.parse::<u64>().ok());
+        if parts.next().is_some() {
+            // Arity is `owed_for`'s business, and a line with a surplus field
+            // is owed a refusal rather than an acceptance.
+            return false;
+        }
+        match (verb, a, b) {
+            // `can_mutate`: the fence accepts exactly the current owner at the
+            // current epoch.
+            ("WRITE", Some(node), Some(epoch)) => self.holder() == Some((node, epoch)),
+            // `tr_acquire`: from `Unowned`, by the intended owner, at exactly
+            // that epoch, and the grant has to have been issued.
+            ("ACQUIRE", Some(node), Some(epoch)) => {
+                self.issued.contains(&(node, epoch))
+                    && matches!(
+                        self.state,
+                        Owned::Unowned { epoch: e, intended } if intended == node && e == epoch
+                    )
+            }
+            // `tr_begin_transfer`: the owner agrees to hand over, to a node
+            // that exists and is not itself.
+            ("BEGIN", Some(from), Some(to)) => {
+                to < NODES
+                    && from != to
+                    && matches!(self.state, Owned::Owned { owner, .. } if owner == from)
+            }
+            // `tr_complete_release`: the outgoing owner acknowledges, naming
+            // the transfer's current `new_epoch`.
+            ("RELEASE", Some(node), Some(epoch)) => matches!(
+                self.state,
+                Owned::Transferring { from, new_epoch, .. }
+                    if from == node && new_epoch == epoch
+            ),
+            // The three forced transitions are total: from any state, a
+            // `FORCE` naming a node that exists takes one of them.
+            ("FORCE", Some(next), None) => next < NODES,
+            _ => false,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The protocol boundary, driven by bytes
+// ---------------------------------------------------------------------------
+//
+// Why this exists at all is the largest finding of the review that built this
+// file. `Action::from_pair` emits only well-formed requests, and a named story
+// drives the same node agent, which sends what a correct node would send. So
+// every guard against a request the alphabet cannot express was invisible to
+// the seed walk — not "not yet found", but unreachable however long it counts.
+// Six of them had to be reached by hand, one test at a time.
+//
+// Hand-written tests are the right instrument for a guard somebody has already
+// thought of. They are no instrument at all for the next one. This generator
+// makes the malformed request a thing the search produces rather than a thing
+// somebody remembered, and the property it checks is the one those six tests
+// each check a single instance of: **no sequence of arbitrary lines from
+// arbitrary peers can drive the registry into a state whose audit log the
+// oracles reject.**
+//
+// Note what is *not* fuzzed here. `Scenario::from_bytes` would let a
+// coverage-guided fuzzer steer the action alphabet, which explores deeper
+// sequences of well-formed requests — a different axis, and not this one. A
+// fuzzer over that entry point would not have found any of the six.
+
+/// One thing that arrives at the registry: a connection, and a line on it.
+///
+/// The peer and the line are related but not determined by each other, and
+/// getting that balance right took a measurement. A peer drawn independently
+/// of the line is the spoof case — the registry must believe the connection
+/// rather than the request body — but if it is *always* independent then a
+/// well-formed request matches its sender only about a quarter of the time,
+/// the run never advances past the connection check, and the search spends
+/// itself proving that the registry refuses strangers.
+///
+/// So the peer usually matches the node the line claims to be, and
+/// deliberately does not in a minority of steps. Both halves are needed: the
+/// matching ones get the registry into a state worth attacking, and the
+/// mismatched ones are the attack.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Step {
+    pub peer: Peer,
+    pub line: String,
+    /// How the line was built.
+    ///
+    /// Recorded because counting *refusals* does not establish that malformed
+    /// input is being generated at all, and the first version of this search
+    /// believed otherwise. `NONE`, `NO` and `FENCED` are ordinary answers to
+    /// well-formed, authenticated requests — a poll when the actor is held, an
+    /// acquire that was never offered, a write at a burned epoch. Deleting
+    /// every malformed generation mode left the refusal count *higher* and the
+    /// search green.
+    ///
+    /// So the floors are on how the step was made, not on what came back. A
+    /// mode that stops being generated takes its counter to zero and fails.
+    ///
+    /// The limit of that is worth stating rather than leaving to be
+    /// discovered: this is the *label*, so the floors catch a mode being
+    /// removed and would not catch one hollowed out while the label stayed.
+    pub shape: Shape,
+    /// Whether the connection disagrees with the line about who is sending.
+    ///
+    /// Recorded for the same reason as `shape`, and separately from it,
+    /// because the spoof is orthogonal to the syntax: a perfectly well-formed
+    /// `WRITE 1 42` arriving on node 2's connection is the case the registry's
+    /// believe-the-connection rule exists for. Deriving this from the
+    /// registry's *obligations* instead would not hold: `BEGIN 1 99` is owed a
+    /// refusal for naming a node that does not exist, on any connection at
+    /// all, so a count of owed refusals stays comfortably positive with the
+    /// spoof generation deleted outright.
+    pub spoofed: bool,
+}
+
+/// How a generated line was built.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shape {
+    /// A syntactically valid request. Whether it is *permitted* is another
+    /// question — the peer may be wrong and the fields may be nonsense.
+    WellFormed,
+    /// A valid request then broken: a field dropped, added, replaced with a
+    /// non-number, the verb lowercased, the separators mangled, or the line
+    /// truncated mid-token.
+    Corrupted,
+    /// Bytes with no structure at all.
+    Junk,
+    /// Nothing, which is what a short read looks like.
+    Empty,
+}
+
+/// A run of arbitrary protocol lines against one registry.
+///
+/// Held as the words that generate the lines rather than as the lines
+/// themselves, because one generation mode quotes the epoch the registry last
+/// named and so cannot be resolved until the run reaches it. The run is still
+/// entirely determined by the words, which is what keeps a seed replayable.
+///
+/// That mode is not a convenience. Without it the search measurably could not
+/// get anywhere: over 1024 runs it reached 15 acquires, no writes, no releases
+/// and no revokes, because reaching a write means quoting an epoch that
+/// another step has usually just burned. A node that could not echo what it
+/// was told would be a strange node, and a generator that could not was a
+/// strange generator.
+#[derive(Debug, Clone)]
+pub struct ProtocolRun {
+    pub seed: u64,
+    pub words: Vec<[u64; 3]>,
+}
+
+/// What the registry last said, as far as the generator is concerned.
+///
+/// Not the registry's state — the generator cannot see that, and should not:
+/// a generator that knew the state would only ever send requests that succeed,
+/// which is the action alphabet again. This is what a *node* would know, which
+/// is what it was last told.
+#[derive(Debug, Default, Clone, Copy)]
+struct Offered {
+    node: Option<u64>,
+    epoch: Option<u64>,
+}
+
+/// Values for a field that names a node.
+///
+/// Weighted towards real node ids, with `NODES`, 99 and `u64::MAX` present so
+/// the off-the-end case is reached. One table for both fields was the first
+/// version and it was measurably wrong: a node field drawn from a table
+/// containing 40 through 44 is out of range most of the time, so most
+/// well-formed requests were refused before they reached the guard under test.
+/// The search reported 122 requests served against 17,871 refused, which its
+/// own vacuity floor of 64 barely cleared.
+const NODE_VALUES: [u64; 8] = [0, 0, 1, 1, 2, NODES, 99, u64::MAX];
+
+/// Values for a field that names an epoch.
+///
+/// Clustered around `INITIAL_EPOCH`, because an epoch that is off by one is a
+/// refusal worth reaching and an epoch of 3 is one the registry can dismiss
+/// without consulting anything. The two largest `u64`s are here because an
+/// epoch is a field that gets added to.
+const EPOCH_VALUES: [u64; 9] =
+    [40, 41, 41, 42, 42, 43, 44, u64::MAX - 1, u64::MAX];
+
+/// The verbs the registry has, weighted.
+///
+/// Repeated entries rather than a uniform choice, and `FORCE` appears once in
+/// fourteen for the same reason it does in `Action::from_pair`: it is the only
+/// verb that succeeds from *any* state, so a uniform sixth of the steps
+/// burning the epoch means no grant ever survives long enough to be acquired
+/// and written at. Measured over 1024 runs, uniform choice reached 31 acquires
+/// and 4 writes; the protocol's interesting states were all downstream of the
+/// ones it was demolishing.
+const VERBS: [&str; 14] = [
+    "POLL", "POLL", "POLL", "ACQUIRE", "ACQUIRE", "ACQUIRE", "WRITE", "WRITE", "WRITE", "WRITE",
+    "BEGIN", "RELEASE", "RELEASE", "FORCE",
+];
+
+/// Tokens that are not a `u64`, for the field-corruption case.
+///
+/// `1O24` is a capital O for a zero, which is the typo that motivated the
+/// strict parse in the first place. `41.0` and `-1` parse as numbers in most
+/// languages and not in this one. The empty string is what a doubled separator
+/// leaves behind.
+const NON_NUMBERS: [&str; 6] = ["x", "-1", "41.0", "1O24", "0x29", "١٤"];
+
+impl Step {
+    /// One step from three words, in the same spirit as `Action::from_pair`.
+    ///
+    /// The mode split is deliberate and load-bearing. A generator that emitted
+    /// only junk would spend the whole run being refused at the parser and
+    /// never reach a guard at all; one that emitted only well-formed lines
+    /// would be the action alphabet again. Most steps are well formed so the
+    /// registry advances, and a third of them are corrupted so the advance
+    /// keeps meeting malformed input from a state that took work to reach.
+    /// One step from three words and whatever the registry last offered.
+    ///
+    /// `offered` is the node the registry last dealt with and the epoch it
+    /// last named, if any.
+    ///
+    /// The epoch comes only from a `GRANT` or a `REVOKE`: an `OK 3` is a
+    /// write's sequence number, and quoting it as an epoch would be a
+    /// generator that had confused the protocol's two numeric fields with each
+    /// other. The node is whoever sent the request that was not refused,
+    /// because the node the registry just answered is the node that would
+    /// plausibly act next — which is a fact about the protocol, not a script.
+    fn from_words(a: u64, b: u64, c: u64, offered: Offered) -> Self {
+        let (line, shape) = match b % 16 {
+            0..=8 => (well_formed(b / 16, c, offered), Shape::WellFormed),
+            9..=13 => (corrupt(&well_formed(b / 16, c, offered), c / 13), Shape::Corrupted),
+            14 => (junk(c), Shape::Junk),
+            _ => (String::new(), Shape::Empty),
+        };
+        let peer = peer_for(&line, a);
+        let spoofed = misdirected(&line, peer);
+        Step { peer, line, shape, spoofed }
+    }
+}
+
+/// Did this line arrive somewhere a correct node would not have sent it?
+///
+/// True only when the line names a sender that exists and the connection is
+/// somebody else, or when it is a `FORCE` off the control path. A line whose
+/// node field is missing or out of range is not counted: nothing correct
+/// sends it on any connection, so calling it misdirected would let the
+/// mangled shapes stand in for a spoof this search had stopped generating.
+fn misdirected(line: &str, peer: Peer) -> bool {
+    let mut parts = line.split_whitespace();
+    match (parts.next(), parts.next().and_then(|f| f.parse::<u64>().ok())) {
+        (Some("FORCE"), _) => peer != Peer::Control,
+        (Some(_), Some(node)) if node < NODES => peer != Peer::Node(node),
+        _ => false,
+    }
+}
+
+/// What the registry owes a request, decided from the request and the
+/// connection alone.
+///
+/// Two *independent* reasons, not a sequence. Which one the registry reports
+/// when both apply is not a property worth pinning: the first version of this
+/// pinned it and was immediately wrong about `FORCE 0 7` from an unknown
+/// host, which `Coord::handle` refuses as unauthorised before it ever counts
+/// the fields — and refusing unauthorised input before parsing it further is
+/// the better order, not a defect. An obligation that encodes the handler's
+/// sequence is an obligation fitted to the implementation, which is exactly
+/// what this must not be.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Owed {
+    /// An unknown verb, the wrong number of fields, or a field that is not a
+    /// `u64`. Owed `ERR`.
+    pub malformed: bool,
+    /// Not something this peer may ask for, or naming a node that does not
+    /// exist. Owed `NO`.
+    pub not_permitted: bool,
+}
+
+impl Owed {
+    pub fn owes_anything(self) -> bool {
+        self.malformed || self.not_permitted
+    }
+
+    /// The exact reply owed, when only one reason applies. `None` when both
+    /// do and any refusal will serve.
+    pub fn exact(self) -> Option<&'static str> {
+        match (self.malformed, self.not_permitted) {
+            (true, false) => Some("ERR"),
+            (false, true) => Some("NO"),
+            _ => None,
+        }
+    }
+}
+
+/// The refusals the registry owes in *every* state.
+///
+/// This exists because the oracles cannot see the defect it catches. They
+/// audit the audit log, and the log records what the registry *did*, never
+/// what it was asked. So a request that should have been refused and was
+/// accepted instead leaves a perfectly legal log: restore the old
+/// `filter_map` parser and `POLL junk 0` executes as `POLL 0`, answering
+/// `GRANT 41` and writing `Granted { node: 0, epoch: 41 }` — which satisfies
+/// every invariant in `check_invariants`, because it *is* a thing the
+/// registry is allowed to do. It was merely allowed to do it for the wrong
+/// reason.
+///
+/// Measured rather than argued: with the parser regressed that way, this
+/// search passed 20 000 seeds — over half a million requests — while the
+/// single hand-written `the_registry_refuses_a_line_with_an_unparseable_field`
+/// caught it immediately. A search strictly weaker than the test it was
+/// written to generalise is not much of a search.
+///
+/// Only *unconditional* refusals belong here. Whether `ACQUIRE 0 41` should
+/// succeed depends on the registry's state and is the oracles' business; that
+/// `POLL junk 0` must be refused depends on nothing at all.
+pub fn owed_for(line: &str, peer: Peer) -> Owed {
+    let mut owed = Owed::default();
+    let mut parts = line.split_whitespace();
+    let verb = parts.next().unwrap_or("");
+    let fields: Vec<&str> = parts.collect();
+
+    // Each field on its own terms, rather than all of them or none.
+    //
+    // This is the third time the same mistake has been caught here, each time
+    // one field further out, so it is worth stating as the rule instead of as
+    // another case: **a permission check uses its own field's parse result,
+    // never the whole line's.** An all-or-nothing parse makes one illegible
+    // field hide every authority fact the others carry — `BEGIN junk 99` names
+    // a successor that does not exist, and `FORCE 99 junk` does too, and both
+    // were recorded as owing `ERR` and nothing else.
+    let field = |i: usize| fields.get(i).and_then(|f| f.parse::<u64>().ok());
+
+    let arity = match verb {
+        "POLL" | "FORCE" => Some(1),
+        "ACQUIRE" | "WRITE" | "BEGIN" | "RELEASE" => Some(2),
+        _ => None,
+    };
+
+    // Authority first, from whatever is legible, and *before* the line is
+    // judged well formed. The two reasons are independent, so every one that
+    // can be established has to be — an obligation that drops a reason it
+    // could have known demands one exact refusal where two are defensible,
+    // and then reports a sound handler as defective for choosing the other.
+    //
+    // Both halves of this were got wrong once, and found rather than reasoned
+    // out. `FORCE 41.0` from a node is unparseable *and* unauthorised, and
+    // the first version decided the fields first, so it demanded `ERR` from a
+    // registry that quite reasonably refuses strangers before parsing their
+    // input. The fix covered `FORCE` and stopped there, one case short of the
+    // rule: `WRITE 0 junk` on the control connection is the same shape,
+    // because the *sender* field is legible even though the epoch is not, so
+    // `NO` is as defensible as `ERR`.
+    if verb == "FORCE" {
+        // The registry's own verb. No node may send it, whatever the line
+        // claims and whatever else is wrong with it — knowable without
+        // reading a field at all.
+        if peer != Peer::Control {
+            owed.not_permitted = true;
+        }
+        // And the successor it names has to be a node that exists, on any
+        // connection, whatever became of the fields after it.
+        if field(0).is_some_and(|next| next >= NODES) {
+            owed.not_permitted = true;
+        }
+    } else if arity.is_some() {
+        // Every other known verb names its sender in its first field, and the
+        // registry believes the connection rather than the field.
+        //
+        // Only for a verb the protocol *has*: it has no opinion about who may
+        // send a request it does not recognise, so an unknown verb is
+        // malformed and nothing else.
+        if let Some(claimed) = field(0) {
+            if peer != Peer::Node(claimed) {
+                owed.not_permitted = true;
+            }
+        }
+        // A handover's successor has to exist too, read from its own field.
+        if verb == "BEGIN" && field(1).is_some_and(|to| to >= NODES) {
+            owed.not_permitted = true;
+        }
+    }
+
+    // Then whether the line is well formed at all: a verb the protocol has —
+    // which the empty line and the wrong case are not — the right number of
+    // fields, and every one of them a `u64`. That last is the rule the strict
+    // parse replaced `filter_map` to enforce, stated independently of it.
+    let Some(n) = arity else {
+        owed.malformed = true;
+        return owed;
+    };
+    if fields.len() != n || fields.iter().any(|f| f.parse::<u64>().is_err()) {
+        owed.malformed = true;
+    }
+
+    owed
+}
+
+/// Who the line arrives from.
+///
+/// Three cases in seven. Most often the connection matches what the line
+/// claims, because that is the only way the run gets anywhere; `FORCE` is
+/// answered only on the control path, so a plausible `FORCE` comes from there;
+/// and the rest is an arbitrary peer, which is where the spoof lives.
+fn peer_for(line: &str, choice: u64) -> Peer {
+    let arbitrary = match (choice / 7) % 5 {
+        0..=2 => Peer::Node((choice / 35) % NODES),
+        3 => Peer::Control,
+        _ => Peer::Unknown,
+    };
+    if choice % 7 >= 5 {
+        return arbitrary;
+    }
+    let mut parts = line.split_whitespace();
+    match (parts.next(), parts.next().and_then(|f| f.parse::<u64>().ok())) {
+        (Some("FORCE"), _) => Peer::Control,
+        (Some(_), Some(node)) if node < NODES => Peer::Node(node),
+        _ => arbitrary,
+    }
+}
+
+/// A syntactically valid request. Whether the registry accepts it is its own
+/// business — the arguments come from `FIELD_VALUES` and are often wrong.
+fn well_formed(choice: u64, fields: u64, offered: Offered) -> String {
+    let verb = VERBS[(choice % VERBS.len() as u64) as usize];
+    // Mostly whoever the registry last answered. Drawing the node freshly each
+    // time was measurably why the transfer path was never reached: a handover
+    // is five consecutive steps at *one* node, and an independent draw put the
+    // right node there one time in eight.
+    let node = match offered.node {
+        Some(n) if fields % 4 != 0 => n,
+        _ => NODE_VALUES[(fields % NODE_VALUES.len() as u64) as usize],
+    };
+    match verb {
+        // `FORCE`'s one argument is the successor, which is a node.
+        "POLL" | "FORCE" => format!("{verb} {node}"),
+        // `BEGIN`'s second argument is a node too, not an epoch. It usually
+        // differs from the sender, because `tr_begin_transfer` requires that
+        // and a handover refused for naming itself teaches the search nothing
+        // about the transfer path beyond it. The collision is still reachable
+        // — `the_registry_refuses_a_handover_to_the_owner_itself` is a guard,
+        // and a guard nothing sends at is a guard nothing checks.
+        "BEGIN" => {
+            let pick = (fields / 8) % NODE_VALUES.len() as u64;
+            let to = if (fields / 8) % 5 == 0 {
+                NODE_VALUES[pick as usize]
+            } else {
+                // `node % NODES` first. Without it this overflowed on the very
+                // first run of the search, because `NODE_VALUES` contains
+                // `u64::MAX` precisely so that the off-the-end case is
+                // reached, and `u64::MAX + 1` is a panic in a debug build. The
+                // analogous line in `Action::from_pair` is safe only because
+                // its `from` was already reduced.
+                (node % NODES + 1 + pick % (NODES - 1)) % NODES
+            };
+            format!("{verb} {node} {to}")
+        }
+        _ => {
+            // Mostly the epoch the registry last named, because that is what a
+            // node would quote and the only way a run reaches a write. The
+            // table is still drawn from a third of the time, which is where
+            // the stale and impossible epochs come from — and those are half
+            // the point, since the fence exists for exactly them.
+            let epoch = match offered.epoch {
+                Some(e) if (fields / 8) % 3 != 0 => e,
+                _ => EPOCH_VALUES[((fields / 8) % EPOCH_VALUES.len() as u64) as usize],
+            };
+            format!("{verb} {node} {epoch}")
+        }
+    }
+}
+
+/// Break a valid line in one of the ways a real one breaks.
+fn corrupt(line: &str, how: u64) -> String {
+    let mut parts: Vec<String> = line.split(' ').map(str::to_string).collect();
+    match how % 8 {
+        // A field short. `filter_map` used to turn this into a shorter valid
+        // request rather than an error, which is the defect the strict parse
+        // replaced.
+        0 => {
+            parts.pop();
+            parts.join(" ")
+        }
+        // A field long.
+        1 => {
+            parts.push("7".to_string());
+            parts.join(" ")
+        }
+        // A field that is not a number. Placed at a varying position, because
+        // the first version of the parser dropped what it could not read and
+        // so cared very much which field it was.
+        2 => {
+            if parts.len() > 1 {
+                let at = 1 + (how / 8) as usize % (parts.len() - 1);
+                parts[at] = NON_NUMBERS[(how / 8) as usize % NON_NUMBERS.len()].to_string();
+            }
+            parts.join(" ")
+        }
+        // Wrong case. The verb match is exact, and a reader could reasonably
+        // assume otherwise.
+        3 => line.to_lowercase(),
+        // Padded. `split_whitespace` should absorb this; that it does is worth
+        // a search knowing rather than a comment claiming.
+        4 => format!("   {line}  "),
+        // Tabs and doubled spaces instead of single ones.
+        5 => parts.join("\t\t"),
+        // A *surplus* non-number, inserted rather than substituted, leaving
+        // every real field in place.
+        //
+        // This is the one shape the old `filter_map` parser turned back into a
+        // valid request. It dropped the field it could not read, so `POLL junk
+        // 0` arrived as `POLL 0`, with the right arity, and executed. Every
+        // other corruption above changes the field *count*, which that parser
+        // rejected by accident — so without this mode the strict parse could
+        // be reverted and this search would not object. It was not objecting:
+        // measured over 20 000 seeds with the parser regressed, the run was
+        // green.
+        6 => {
+            let at = 1 + (how / 8) as usize % parts.len();
+            parts.insert(at, NON_NUMBERS[(how / 8) as usize % NON_NUMBERS.len()].to_string());
+            parts.join(" ")
+        }
+        // Truncated mid-token, which is what a short read looks like.
+        _ => {
+            let keep = line.len().saturating_sub(1 + (how / 8) as usize % 4);
+            line.chars().take(keep).collect()
+        }
+    }
+}
+
+/// Bytes with no structure at all.
+fn junk(seed: u64) -> String {
+    let mut rng = Lcg::new(seed);
+    let len = (seed % 12) as usize;
+    (0..len)
+        .map(|_| char::from_u32((rng.next() % 0x7f) as u32).unwrap_or('?'))
+        .collect()
+}
+
+impl ProtocolRun {
+    /// Build one from a seed, so a finding can be reported as a number.
+    pub fn from_seed(seed: u64) -> Self {
+        let mut rng = Lcg::new(seed);
+        // Longer than a scenario, because these runs cost microseconds rather
+        // than simulated seconds and a handover needs several steps to line up.
+        let len = 8 + (rng.next() % 40) as usize;
+        let words = (0..len).map(|_| [rng.next(), rng.next(), rng.next()]).collect();
+        ProtocolRun { seed, words }
+    }
+
+    /// Build one from an arbitrary byte string, for a coverage-guided fuzzer.
+    ///
+    /// Three bytes a step, and no header: unlike `Scenario::from_bytes` there
+    /// is no network schedule to seed, because nothing here is simulated. The
+    /// registry is driven directly, which is also why this half of the search
+    /// runs in milliseconds where the scenario walk takes half a minute.
+    pub fn from_bytes(data: &[u8]) -> Option<Self> {
+        let words: Vec<[u64; 3]> = data
+            .chunks_exact(3)
+            .take(MAX_STEPS)
+            .map(|w| [w[0] as u64, w[1] as u64, w[2] as u64])
+            .collect();
+        if words.is_empty() {
+            return None;
+        }
+        Some(ProtocolRun { seed: 0, words })
+    }
+}
+
+/// How long a generated run may get.
+const MAX_STEPS: usize = 64;
+
+/// What the registry did with a run of lines.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Served {
+    /// Requests the registry acted on rather than refused.
+    ///
+    /// The vacuity measure for this search, and it needs one badly: a
+    /// generator that produced nothing but garbage would be refused at the
+    /// parser every time, satisfy every oracle trivially and reach no guard at
+    /// all. Counting refusals would not notice. Counting what got through
+    /// does.
+    pub accepted: usize,
+    /// Requests refused — `NO`, `ERR` or `FENCED`.
+    pub refused: usize,
+    /// Writes the registry accepted.
+    ///
+    /// Counted separately from `accepted` because the two can move in
+    /// opposite directions, and the difference is where this search earns its
+    /// keep. A regression that made every `ACQUIRE` fail would leave
+    /// `accepted` almost unchanged — polls still succeed — while the run
+    /// stopped reaching the fence, the capability check and everything else
+    /// downstream of holding the actor. A write is the deepest state a run can
+    /// reach, so it is the one worth a floor.
+    pub writes: usize,
+    /// Steps generated as each shape, and steps whose connection did not
+    /// match what the line claimed.
+    ///
+    /// Floors go on these rather than on refusals, because a refusal does not
+    /// mean the request was malformed. See `Step::shape` and `Step::spoofed`.
+    pub corrupted: usize,
+    pub junk: usize,
+    pub empty: usize,
+    pub spoofed: usize,
+    /// Requests the registry was obliged to refuse in any state, and did.
+    ///
+    /// Reported so a reader can see the obligation check is doing work rather
+    /// than being vacuously satisfied by a search that never generates an
+    /// unconditionally-refusable request.
+    pub owed_refusals: usize,
+    /// Handovers the registry completed.
+    ///
+    /// Reported and deliberately **not** asserted on. Measured over the
+    /// default window it lands at 5 runs in 1024: reaching it needs
+    /// `POLL → ACQUIRE → BEGIN → POLL → RELEASE` to line up at one node with
+    /// nothing burning the epoch in between, and a random walk finds that
+    /// rarely. A floor on a rate that low would be a flaky test rather than an
+    /// informative one — so this is stated as a thin spot rather than dressed
+    /// up as coverage. Claim 4's oracle is exercised properly by the scenario
+    /// walk and by named stories; here it is barely exercised at all.
+    pub transfers: usize,
+}
+
+/// Drive one registry with a run of arbitrary lines.
+///
+/// The oracles are checked after *every* step rather than once at the end, for
+/// two reasons. A log that violates an invariant and is then repaired by a
+/// later burn would pass an end-of-run check, and naming the step that broke
+/// it is most of the value of a finding. Runs are at most 64 steps, so the
+/// quadratic cost is nothing.
+pub fn run_protocol(run: &ProtocolRun) -> Result<Served, String> {
+    let mut coord = Coord::new(Fence::Checked);
+    let mut served = Served::default();
+    let mut offered = Offered::default();
+    for (i, w) in run.words.iter().enumerate() {
+        let step = Step::from_words(w[0], w[1], w[2], offered);
+        // What the log says the registry's state is *before* this step, for
+        // the refusal check below.
+        let standing = Standing::from_log(coord.log());
+        let logged_before = coord.log().len();
+        let reply = coord.handle(&step.line, step.peer);
+        offered = note_reply(offered, &step.line, &reply);
+        match step.shape {
+            Shape::WellFormed => {}
+            Shape::Corrupted => served.corrupted += 1,
+            Shape::Junk => served.junk += 1,
+            Shape::Empty => served.empty += 1,
+        }
+        if step.spoofed {
+            served.spoofed += 1;
+        }
+        // What this step recorded, which is the only moment the correspondence
+        // between one request and one log entry is still visible.
+        agrees_with_log(&step.line, &reply, &coord.log()[logged_before..])
+            .map_err(|e| format!("step {i}: {e} (from {:?})", step.peer))?;
+        if !is_a_reply_to(&step.line, &reply) {
+            return Err(format!(
+                "step {i}: `{}` from {:?} was answered `{reply}`, which is not \
+                 a reply that request can have",
+                step.line, step.peer
+            ));
+        }
+        // The obligation check. This is the half the oracles cannot do: they
+        // read the log, and the log does not record what was asked.
+        let owed = owed_for(&step.line, step.peer);
+        if owed.owes_anything() {
+            served.owed_refusals += 1;
+            match owed.exact() {
+                Some(wanted) if reply != wanted => {
+                    return Err(format!(
+                        "step {i}: `{}` from {:?} must be refused `{wanted}` in \
+                         every state, and was answered `{reply}`",
+                        step.line, step.peer
+                    ));
+                }
+                None if !matches!(reply.as_str(), "NO" | "ERR") => {
+                    return Err(format!(
+                        "step {i}: `{}` from {:?} is both malformed and not \
+                         permitted, so it must be refused in every state, and \
+                         was answered `{reply}`",
+                        step.line, step.peer
+                    ));
+                }
+                _ => {}
+            }
+        }
+        // A permitted request refused without saying so.
+        //
+        // The general form of a defect @codex found in the write path, and
+        // the general form is the point: **any correct behaviour whose
+        // absence leaves the log unchanged is invisible to an oracle that
+        // reads the log.** `may_mutate (refusals)` claims this property for
+        // writes, which is what `oracles_catch_an_overfencing_coordinator`
+        // exists for — but it fires on `Event::Fenced`, and a refusal spelled
+        // `NO` or `ERR` records nothing for it to read. The aggregate write
+        // floor is no help either, against a defect that is selective rather
+        // than total.
+        //
+        // Measured on all five transitions, each refusing one legitimate
+        // request in three, unlogged, before this check existed: `WRITE`,
+        // `ACQUIRE`, `BEGIN` and `RELEASE` every one passed 20 000 seeds —
+        // over half a million requests apiece — with every floor satisfied.
+        //
+        // `owed_for` gates it, because a request that is malformed or arrives
+        // on the wrong connection is owed a refusal and this must not
+        // contradict that. `Standing::must_accept` is the guard of the model
+        // transition the request would take, read from the log.
+        if matches!(reply.as_str(), "NO" | "ERR")
+            && !owed.owes_anything()
+            && standing.must_accept(&step.line)
+        {
+            return Err(format!(
+                "step {i}: `{}` from {:?} was refused `{reply}`, which logs \
+                 nothing, while the log says the model permits it — a refusal \
+                 the model has no state for, and one no log-reading oracle \
+                 can see",
+                step.line, step.peer
+            ));
+        }
+        if matches!(reply.as_str(), "NO" | "ERR" | "FENCED" | "NONE") {
+            served.refused += 1;
+        } else {
+            served.accepted += 1;
+        }
+        check_invariants(coord.log()).map_err(|e| {
+            format!(
+                "after step {i} (`{}` from {:?}, answered `{reply}`): {e}",
+                step.line, step.peer
+            )
+        })?;
+    }
+    served.writes = coord
+        .log()
+        .iter()
+        .filter(|e| matches!(e, Event::Wrote { .. }))
+        .count();
+    served.transfers = coord
+        .log()
+        .iter()
+        .filter(|e| matches!(e, Event::Released { .. }))
+        .count();
+    Ok(served)
+}
+
+/// Update what the generator knows from one exchange.
+///
+/// A refusal teaches a node nothing, so it leaves this untouched: `NO` does
+/// not say who the registry thinks the owner is, and pretending otherwise
+/// would give the generator information the protocol never sends.
+fn note_reply(prev: Offered, line: &str, reply: &str) -> Offered {
+    if matches!(reply, "NO" | "ERR" | "FENCED" | "NONE") {
+        return prev;
+    }
+    let claimed = line.split_whitespace().nth(1).and_then(|f| f.parse::<u64>().ok());
+    Offered {
+        node: claimed.filter(|n| *n < NODES).or(prev.node),
+        epoch: epoch_named_by(reply).or(prev.epoch),
+    }
+}
+
+/// The epoch a reply names, if it names one.
+///
+/// `GRANT` and `REVOKE` carry an epoch. `OK 3` carries a write's sequence
+/// number, which is a different quantity that happens to be a `u64`, and
+/// reading it as an epoch would be the same category error the protocol's two
+/// numeric fields invite everywhere else.
+fn epoch_named_by(reply: &str) -> Option<u64> {
+    let mut parts = reply.split(' ');
+    match (parts.next(), parts.next()) {
+        (Some("GRANT" | "REVOKE"), Some(n)) => n.parse().ok(),
+        _ => None,
+    }
+}
+
+/// Replay a run and hand back the audit log, for coverage measurement.
+pub fn replay_protocol(run: &ProtocolRun) -> Vec<Event> {
+    let mut coord = Coord::new(Fence::Checked);
+    let mut offered = Offered::default();
+    for w in &run.words {
+        let step = Step::from_words(w[0], w[1], w[2], offered);
+        let reply = coord.handle(&step.line, step.peer);
+        offered = note_reply(offered, &step.line, &reply);
+    }
+    coord.log().to_vec()
+}
+
+/// Does the reply agree with what the registry actually recorded?
+///
+/// The dual of the refusal check in `run_protocol`, and the half that was
+/// missing. That one catches a registry that *does nothing and says no*. This
+/// catches one that **says yes and does nothing** — an `ACQUIRE` answered `OK`
+/// with no acquire logged, a `POLL` answered `GRANT 41` with no grant issued.
+/// Measured before it existed: each of those passed 20 000 seeds, because
+/// `owed_for` owes no unconditional refusal, the vocabulary is satisfied, and
+/// an unchanged log is a *valid* log.
+///
+/// Together the two say the whole thing: **the reply and the log must agree.**
+/// Every reply names a transition or names none, and the events appended by
+/// the step have to be exactly that.
+///
+/// `appended` is what this step added to the log, which is why this is checked
+/// in the search rather than in `check_invariants` — an oracle handed a
+/// finished log cannot tell which entry belongs to which request, and that is
+/// precisely the information a lie about success destroys.
+pub fn agrees_with_log(line: &str, reply: &str, appended: &[Event]) -> Result<(), String> {
+    let mut parts = line.split_whitespace();
+    let verb = parts.next().unwrap_or("");
+    let a = parts.next().and_then(|f| f.parse::<u64>().ok());
+    let b = parts.next().and_then(|f| f.parse::<u64>().ok());
+
+    let mut reply_parts = reply.split(' ');
+    let (head, arg) = (reply_parts.next().unwrap_or(""), reply_parts.next());
+    let arg = arg.and_then(|n| n.parse::<u64>().ok());
+
+    // A refusal does nothing, and doing nothing is the whole of what it says.
+    if matches!(head, "NO" | "ERR" | "NONE") {
+        return match appended {
+            [] => Ok(()),
+            _ => Err(format!(
+                "`{line}` was answered `{reply}`, which claims nothing \
+                 happened, but the step logged {appended:?}"
+            )),
+        };
+    }
+
+    let ok = match (verb, head, appended) {
+        // A grant and a revocation are the two things a poll can be told.
+        ("POLL", "GRANT", [Event::Granted { node, epoch }]) => {
+            Some(*node) == a && Some(*epoch) == arg
+        }
+        ("POLL", "REVOKE", [Event::Revoked { node, new_epoch }]) => {
+            Some(*node) == a && Some(*new_epoch) == arg
+        }
+        // `tr_acquire`.
+        ("ACQUIRE", "OK", [Event::Acquired { node, epoch }]) => {
+            arg.is_none() && Some(*node) == a && Some(*epoch) == b
+        }
+        // A write that landed carries the sequence number it landed at.
+        ("WRITE", "OK", [Event::Wrote { node, epoch, seq }]) => {
+            Some(*node) == a && Some(*epoch) == b && arg == Some(*seq as u64)
+        }
+        ("WRITE", "FENCED", [Event::Fenced { node, epoch }]) => {
+            arg.is_none() && Some(*node) == a && Some(*epoch) == b
+        }
+        // `tr_begin_transfer` burns the epoch cooperatively, toward the node
+        // the request named.
+        ("BEGIN", "OK", [Event::EpochBurned { next, forced: false, .. }]) => {
+            arg.is_none() && Some(*next) == b
+        }
+        // `tr_complete_release`.
+        ("RELEASE", "OK", [Event::Released { node, new_epoch }]) => {
+            arg.is_none() && Some(*node) == a && Some(*new_epoch) == b
+        }
+        // The three forced transitions all burn an epoch. Which successor the
+        // burn names is *not* checked against the request: `tr_abort_transfer`
+        // deliberately returns the actor to the node it came from rather than
+        // to the one the coordinator asked for, and pinning it here would make
+        // this contradict the model.
+        ("FORCE", "OK", [Event::EpochBurned { forced: true, .. }]) => arg.is_none(),
+        _ => false,
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "`{line}` was answered `{reply}`, but the step logged \
+             {appended:?} — a reply and a log that do not describe the same \
+             thing happening"
+        ))
+    }
+}
+
+/// Every reply the registry may give **to this request**.
+///
+/// Per verb, not a flat set, and the difference is not cosmetic. A flat set
+/// accepts any protocol token for any request, and a wrong-vocabulary refusal
+/// changes nothing a log-reading oracle can see — the log is *unchanged*,
+/// which is exactly what a refusal is supposed to leave behind. Measured
+/// rather than argued: with a refused `RELEASE` answered `FENCED`, and again
+/// with a refused `ACQUIRE` answered `NONE`, this search passed 20 000 seeds
+/// apiece while the registry spoke a protocol no node parses.
+///
+/// The vocabulary is read off what each request *asks*, not off the handler's
+/// branches:
+///
+/// * A poll asks what is on offer, so it is answered with a grant, a
+///   revocation, or nothing at all.
+/// * A write either lands — carrying the sequence number it landed at, which
+///   is what makes the log auditable — or is stopped by the fence.
+/// * Everything else either takes effect or does not.
+///
+/// Refusals are the exception and are universal: `NO` and `ERR` are available
+/// to every request, including one whose verb the protocol does not have.
+/// *When* a refusal is owed is `owed_for`'s business; this says only which
+/// words may carry one.
+///
+/// An unwarranted refusal is a separate question from vocabulary, and the two
+/// were confused here once. A refusal moves no state and writes no log entry,
+/// and the first version of this comment concluded from that that no such
+/// refusal is judged anywhere — liveness, out of scope. That is wrong for a
+/// write. `may_mutate (refusals)` does judge a registry that refuses its own
+/// current owner; it is what `oracles_catch_an_overfencing_coordinator`
+/// exists for. The distinction is not safety against liveness, it is *logged*
+/// against *unlogged*: the oracle fires on `Event::Fenced`, so the same
+/// refusal spelled `NO` or `ERR` walks past it. `run_protocol` closes that
+/// gap directly, against the log.
+///
+/// What is genuinely out of scope is the rest of it — a good `POLL` answered
+/// `NO`. Nothing in the model says a poll must be answered, so a registry
+/// that refused every one of them would satisfy every oracle here.
+pub fn is_a_reply_to(line: &str, reply: &str) -> bool {
+    if matches!(reply, "NO" | "ERR") {
+        return true;
+    }
+    let verb = line.split_whitespace().next().unwrap_or("");
+    let mut parts = reply.split(' ');
+    match (verb, parts.next(), parts.next(), parts.next()) {
+        ("POLL", Some("GRANT" | "REVOKE"), Some(n), None) => n.parse::<u64>().is_ok(),
+        ("POLL", Some("NONE"), None, None) => true,
+        ("WRITE", Some("OK"), Some(n), None) => n.parse::<u64>().is_ok(),
+        ("WRITE", Some("FENCED"), None, None) => true,
+        ("ACQUIRE" | "BEGIN" | "RELEASE" | "FORCE", Some("OK"), None, None) => true,
+        _ => false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Reading a search window from the environment
+// ---------------------------------------------------------------------------
+//
+// Shared rather than copied, for the reason stated at the top of both search
+// files: a second copy of a rule is a second place for it to be wrong, and
+// every one of these four functions exists because the first version of that
+// rule was wrong somewhere. They are pure — no environment is touched except
+// by `env_u64` — so the tests that pin them live in the search files that use
+// them and run on the real toolchain.
+
+/// Read a `u64` from the environment, or fall back if it is not set.
+///
+/// A value that is present and unparsable is a failure, not a fallback. The
+/// comment here used to argue the opposite — that a nightly job dying on a typo
+/// in its own workflow finds nothing at all — which is true and beside the
+/// point: falling back to zero *also* finds nothing, and does it while
+/// reporting success. A typo in `JETSTREAM_SCENARIO_START` would re-run the
+/// default window every night, green forever, discovering exactly what the
+/// previous night discovered.
+///
+/// Absent is different from wrong. Absent means "no preference" and takes the
+/// default; wrong means somebody tried to say something and it did not arrive.
+pub fn env_u64(name: &str, fallback: u64) -> u64 {
+    window_bound(name, std::env::var(name), fallback)
+}
+
+/// The decision `env_u64` makes, separated from the process environment that
+/// supplies it.
+///
+/// Split out so it can be tested. Environment variables are process-global and
+/// this binary runs its tests on threads of one process, so a test that set
+/// `JETSTREAM_SCENARIO_START` to something bad would be setting it for the
+/// search running alongside it. Taking the `Result` as an argument is how the
+/// rule gets checked without the test and the thing it tests sharing state.
+pub fn window_bound(name: &str, raw: Result<String, std::env::VarError>, fallback: u64) -> u64 {
+    use std::env::VarError;
+    match raw {
+        Err(VarError::NotPresent) => fallback,
+        // Matching `Err(_)` here would have folded this case in with absent,
+        // which is the exact defect the doc comment above is about: the
+        // variable *is* set, somebody did try to say something, and it did not
+        // arrive. Bytes that are not UTF-8 are a wrong value, not a missing
+        // one.
+        Err(VarError::NotUnicode(bytes)) => panic!(
+            "{name} is set to {bytes:?}, which is not valid UTF-8 and so cannot \
+             be a u64. Refusing to fall back to {fallback}: the variable is \
+             set, so somebody meant something by it."
+        ),
+        Ok(raw) => raw.trim().parse().unwrap_or_else(|_| {
+            panic!(
+                "{name} is set to `{raw}`, which is not a u64. Refusing to fall \
+                 back to {fallback}: a search that silently runs the wrong \
+                 window is worse than one that stops, because it keeps \
+                 reporting success."
+            )
+        }),
+    }
+}
+
+/// The end of the window, or a failure if there isn't one.
+///
+/// This was `start.saturating_add(seeds)`, which is the arithmetic version of
+/// the `Err(_)` above: it turns a request the program cannot honour into a
+/// quietly different request it can. At the `u64` boundary the clamp shortens
+/// the window — at `u64::MAX` it empties it — and a window under
+/// `FLOOR_WINDOW` skips the coverage floor entirely. So a job asking for 256
+/// seeds would run none of them, apply no floor, and report success.
+///
+/// The doc comment on `env_u64` already states the rule this broke: a search
+/// that silently runs the wrong window is worse than one that stops, because
+/// it keeps reporting success. Saturating is silently running the wrong
+/// window.
+pub fn window_end(start: u64, seeds: u64) -> u64 {
+    start.checked_add(seeds).unwrap_or_else(|| {
+        panic!(
+            "a window of {seeds} seeds starting at {start} runs past u64::MAX. \
+             Refusing to search a truncated one: the shortened window would \
+             fall under the coverage floor and be exempted from it, so the \
+             run would report success having searched almost nothing."
+        )
+    })
+}
+
+/// The shortest window the coverage floor is applied to.
+pub const FLOOR_WINDOW: u64 = 32;
+
+/// How many accepted writes a window of this size must beat, or `None` if it
+/// is too short for a rate to mean anything.
+///
+/// An empty window is neither, and the distinction is the whole reason this is
+/// a function. Zero seeds is not a short window that the floor politely
+/// declines to judge; it is no search at all, and the exemption was swallowing
+/// it — `JETSTREAM_SCENARIO_SEEDS=0` ran nothing, asserted nothing and
+/// reported success.
+///
+/// I had already fixed exactly this failure one commit earlier, in
+/// `window_end`, and looked straight at this case while doing it. The
+/// reasoning for leaving it was that the run announces itself in the log, so
+/// the emptiness is visible. That is the same argument the overflow case
+/// makes — it also prints `searching scenario seeds X..X` — and I rejected it
+/// there. A log line is not an exit status. Two standards for one failure
+/// mode, four lines apart.
+pub fn coverage_floor(window: u64) -> Option<u64> {
+    assert!(
+        window != 0,
+        "a window of zero seeds searches nothing. Refusing to report success \
+         on it: the short-window exemption below is for a window too small to \
+         have a rate, not for one with nothing in it."
+    );
+    if window < FLOOR_WINDOW {
+        return None;
+    }
+    Some(window / 16)
 }
 
 // ---------------------------------------------------------------------------

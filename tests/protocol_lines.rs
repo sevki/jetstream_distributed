@@ -1,0 +1,435 @@
+//! The search over what arrives at the registry, rather than over what a
+//! correct node would send.
+//!
+//! The generator, the registry and the oracles live in
+//! `tests/scenario_body/mod.rs`, shared with the two turmoil targets for the
+//! reason stated there: a second copy of a rule is a second place for it to be
+//! wrong.
+//!
+//! This walk exists because the other one structurally cannot find what it
+//! finds. `Action::from_pair` emits only well-formed requests, so a guard
+//! against a malformed one is unreachable from it however long it counts —
+//! and the guards against malformed requests are most of the guards the
+//! registry has. Six of them were reached by hand, one test each, after a
+//! reviewer pointed at each in turn. This is the instrument for the seventh.
+//!
+//! It is also very cheap. Nothing here is simulated: the registry is driven
+//! directly, so this walk covers four times the seeds of the scenario walk in
+//! a fraction of a second.
+
+#[path = "scenario_body/mod.rs"]
+mod body;
+
+use body::{coverage_floor, env_u64, run_protocol, ProtocolRun, Served, FLOOR_WINDOW};
+
+/// The seeds that have failed before, from `tests/seeds/protocol.txt`.
+fn committed_seeds() -> Vec<u64> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/seeds/protocol.txt");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        panic!(
+            "{} is missing: the regression corpus has to exist for this test to \
+             be replaying anything",
+            path.display()
+        );
+    };
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| {
+            line.parse()
+                .unwrap_or_else(|_| panic!("`{line}` in protocol.txt is not a u64 seed"))
+        })
+        .collect()
+}
+
+#[test]
+fn arbitrary_protocol_lines_hold_their_invariants() {
+    let seeds = env_u64("JETSTREAM_PROTOCOL_SEEDS", 1024);
+    let start = env_u64("JETSTREAM_PROTOCOL_START", 0);
+    let end = body::window_end(start, seeds);
+
+    // Every seed that has ever failed, replayed first, and counted separately
+    // from the sweep for the reason the scenario walk states: a floor that a
+    // regression replay can satisfy on the window's behalf has quietly stopped
+    // checking the window.
+    for seed in committed_seeds() {
+        run_protocol(&ProtocolRun::from_seed(seed))
+            .unwrap_or_else(|e| panic!("committed protocol seed {seed} regressed: {e}"));
+    }
+
+    println!("searching protocol seeds {start}..{end}");
+    let mut totals = Served::default();
+    for seed in start..end {
+        let served = run_protocol(&ProtocolRun::from_seed(seed))
+            .unwrap_or_else(|e| panic!("protocol seed {seed} failed: {e}"));
+        totals.accepted += served.accepted;
+        totals.refused += served.refused;
+        totals.writes += served.writes;
+        totals.transfers += served.transfers;
+        totals.corrupted += served.corrupted;
+        totals.junk += served.junk;
+        totals.empty += served.empty;
+        totals.spoofed += served.spoofed;
+        totals.owed_refusals += served.owed_refusals;
+    }
+
+    println!(
+        "searched protocol seeds {start}..{end}: {} requests served, {} refused, \
+         {} writes accepted, {} handovers completed",
+        totals.accepted, totals.refused, totals.writes, totals.transfers
+    );
+    println!(
+        "  of which generated: {} corrupted, {} junk, {} empty, {} misdirected; \
+         {} requests were owed a refusal in every state",
+        totals.corrupted, totals.junk, totals.empty, totals.spoofed, totals.owed_refusals
+    );
+
+    // The vacuity check, and this search needs one more than the other does.
+    // A generator that emitted nothing but garbage would be refused at the
+    // parser every time and satisfy every oracle by never reaching one — and
+    // the refusals would look like diligence. So the floor is on requests that
+    // got *through*: the registry has to have been driven somewhere before its
+    // guards mean anything.
+    let window = end - start;
+    let Some(floor) = coverage_floor(window) else {
+        println!(
+            "window of {window} seeds is below {FLOOR_WINDOW}: too short for a \
+             rate to mean anything, so the coverage floor is not applied"
+        );
+        return;
+    };
+    assert!(
+        totals.accepted as u64 > floor,
+        "the generated lines must actually reach the registry; saw \
+         {} served over seeds {start}..{end}, wanted more than {floor}",
+        totals.accepted
+    );
+
+    // And the other half of the same claim: that malformed input is being
+    // generated at all.
+    //
+    // This used to be a floor on *refusals*, and that floor was worth nothing.
+    // `NONE`, `NO` and `FENCED` are ordinary answers to well-formed,
+    // authenticated requests — a poll when the actor is held, an acquire that
+    // was never offered, a write at a burned epoch — so a search that had
+    // stopped generating malformed input entirely would still be refused
+    // constantly. Measured, not argued: deleting every malformed generation
+    // mode and leaving only `well_formed` left this walk green with a *higher*
+    // refusal count than before. The check written specifically to stop a
+    // check from saying nothing was itself saying nothing.
+    //
+    // So the floors are on what the generator produced. Each mode is counted
+    // where it is built, and deleting any one of them takes its count to zero.
+    for (mode, count) in [
+        ("corrupted", totals.corrupted),
+        ("junk", totals.junk),
+        ("empty", totals.empty),
+        ("misdirected", totals.spoofed),
+    ] {
+        assert!(
+            count as u64 > floor,
+            "the search must keep generating {mode} lines; saw {count} of them \
+             over seeds {start}..{end}, wanted more than {floor}"
+        );
+    }
+
+    // And that the obligation check has something to check. It is the only
+    // oracle here that reads the *request* rather than the log, so a search
+    // that never produced an unconditionally-refusable line would satisfy it
+    // vacuously — which is the shape of failure this whole block is about.
+    assert!(
+        totals.owed_refusals as u64 > floor,
+        "the search must produce requests the registry owes a refusal in every \
+         state; saw {} over seeds {start}..{end}, wanted more than {floor}",
+        totals.owed_refusals
+    );
+
+    // Depth, which the two counts above do not measure. Polls alone would
+    // satisfy both of them while the run never got as far as holding the
+    // actor, and every guard worth attacking is downstream of that. The first
+    // version of this generator reached *zero* writes over 1024 seeds and
+    // would have passed the checks above comfortably; four rounds of
+    // measurement fixed it, and this is what stops it regressing quietly.
+    assert!(
+        totals.writes as u64 > floor,
+        "the search must reach the states the guards are about; saw {} writes \
+         accepted over seeds {start}..{end}, wanted more than {floor}",
+        totals.writes
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The obligation itself
+// ---------------------------------------------------------------------------
+//
+// `owed_for` is the one oracle here that reads the *request* rather than the
+// log, so it is the one that can accuse a sound registry of a defect. Both
+// ways it has done so were found by running it rather than by reading it, and
+// both were the same mistake: dropping a refusal reason it could have known,
+// which turns "some refusal is owed" into "this exact refusal is owed".
+//
+// These pin the rule in both directions. Relaxing the obligation is only safe
+// while the strict cases stay strict, so they are tested together.
+
+use body::{agrees_with_log, is_a_reply_to, owed_for, Event, Owed, Peer, Standing};
+
+#[test]
+fn a_request_refusable_for_two_reasons_may_be_refused_either_way() {
+    // The case that was found first. `FORCE` is the registry's own verb, so a
+    // node sending it is unauthorised however badly the rest of the line is
+    // mangled — and a registry that refuses strangers before parsing their
+    // input is sound, not defective.
+    let owed = owed_for("FORCE 41.0", Peer::Node(1));
+    assert_eq!(owed, Owed { malformed: true, not_permitted: true });
+    assert_eq!(owed.exact(), None, "either `ERR` or `NO` must be acceptable");
+
+    // And the case that was one step further out, which the first fix missed.
+    // The *sender* field is legible even though the epoch is not, so the
+    // connection can be disbelieved without parsing the rest.
+    let owed = owed_for("WRITE 0 junk", Peer::Control);
+    assert_eq!(owed, Owed { malformed: true, not_permitted: true });
+    assert_eq!(owed.exact(), None, "either `ERR` or `NO` must be acceptable");
+}
+
+#[test]
+fn a_request_refusable_for_one_reason_must_be_refused_that_way() {
+    // The other half of the same rule, and the half that gives it teeth. A
+    // relaxation that swallowed these would accept any refusal for anything,
+    // which is the vacuity this whole file is about.
+
+    // Malformed and nothing else: the connection agrees with the line.
+    let owed = owed_for("WRITE 0 junk", Peer::Node(0));
+    assert_eq!(owed, Owed { malformed: true, not_permitted: false });
+    assert_eq!(owed.exact(), Some("ERR"));
+
+    // The surplus field the lenient parser used to drop, which is the shape
+    // that makes this obligation worth having at all.
+    let owed = owed_for("POLL junk 0", Peer::Node(0));
+    assert_eq!(owed, Owed { malformed: true, not_permitted: false });
+    assert_eq!(owed.exact(), Some("ERR"));
+
+    // Not permitted and nothing else: a well-formed line on the wrong wire.
+    let owed = owed_for("WRITE 0 41", Peer::Node(1));
+    assert_eq!(owed, Owed { malformed: false, not_permitted: true });
+    assert_eq!(owed.exact(), Some("NO"));
+}
+
+#[test]
+fn a_permission_check_reads_its_own_field_not_the_whole_line() {
+    // The third catch of one mistake, each a field further out, so it is
+    // pinned as the rule rather than as a third case: an illegible field must
+    // not hide the authority facts the legible ones carry.
+
+    // The successor is legible and names a node that does not exist; the
+    // sender field is not legible at all.
+    let owed = owed_for("BEGIN junk 99", Peer::Node(0));
+    assert_eq!(owed, Owed { malformed: true, not_permitted: true });
+    assert_eq!(owed.exact(), None);
+
+    // A forced revoke naming a successor that does not exist, with a surplus
+    // field after it that does not parse.
+    let owed = owed_for("FORCE 99 junk", Peer::Control);
+    assert_eq!(owed, Owed { malformed: true, not_permitted: true });
+    assert_eq!(owed.exact(), None);
+
+    // And the sender field legible while a later one is not, which is the
+    // case that was caught second.
+    let owed = owed_for("WRITE 0 junk", Peer::Control);
+    assert_eq!(owed, Owed { malformed: true, not_permitted: true });
+    assert_eq!(owed.exact(), None);
+}
+
+#[test]
+fn a_refusal_has_to_be_in_the_words_that_request_uses() {
+    // A wrong-vocabulary refusal leaves the log *unchanged*, which is exactly
+    // what a refusal is supposed to leave behind — so no log-reading oracle
+    // can see it. Measured: with a refused `RELEASE` answered `FENCED`, and
+    // again with a refused `ACQUIRE` answered `NONE`, the search passed 20 000
+    // seeds apiece while the registry spoke a protocol no node parses.
+    assert!(!is_a_reply_to("RELEASE 0 41", "FENCED"));
+    assert!(!is_a_reply_to("ACQUIRE 0 41", "NONE"));
+    assert!(!is_a_reply_to("POLL 0", "FENCED"));
+    assert!(!is_a_reply_to("BEGIN 0 1", "GRANT 41"));
+
+    // A write's `OK` carries the sequence number it landed at; nothing else's
+    // does, and that distinction is what lets the generator tell an epoch the
+    // registry named from a write's position in the log.
+    assert!(is_a_reply_to("WRITE 0 41", "OK 3"));
+    assert!(!is_a_reply_to("WRITE 0 41", "OK"));
+    assert!(is_a_reply_to("ACQUIRE 0 41", "OK"));
+    assert!(!is_a_reply_to("ACQUIRE 0 41", "OK 3"));
+
+    // What each request does ask for.
+    assert!(is_a_reply_to("POLL 0", "GRANT 41"));
+    assert!(is_a_reply_to("POLL 0", "REVOKE 42"));
+    assert!(is_a_reply_to("POLL 0", "NONE"));
+    assert!(is_a_reply_to("WRITE 0 41", "FENCED"));
+    assert!(is_a_reply_to("BEGIN 0 1", "OK"));
+    assert!(is_a_reply_to("FORCE 1", "OK"));
+
+    // Refusals are universal, including for a verb the protocol does not
+    // have. Which refusal is *owed* is `owed_for`'s business, not this one's.
+    for line in ["POLL 0", "WRITE 0 41", "RELEASE 0 41", "FORCE 1", "SHOUT 0"] {
+        assert!(is_a_reply_to(line, "NO"), "{line} must be refusable `NO`");
+        assert!(is_a_reply_to(line, "ERR"), "{line} must be refusable `ERR`");
+    }
+
+    // And a word the protocol does not have is never a reply to anything.
+    assert!(!is_a_reply_to("POLL 0", "MAYBE"));
+    assert!(!is_a_reply_to("SHOUT 0", "OK"));
+}
+
+#[test]
+fn a_refusal_that_logs_nothing_is_still_a_refusal() {
+    // The general form of the defect: **any correct behaviour whose absence
+    // leaves the log unchanged is invisible to an oracle that reads the log.**
+    // `may_mutate (refusals)` claims it for writes and fires on
+    // `Event::Fenced`; `NO` and `ERR` record nothing, and the floors are
+    // aggregate, so a selective defect clears them. Measured before the fix,
+    // one legitimate request in three refused unlogged: WRITE, ACQUIRE, BEGIN
+    // and RELEASE each passed 20 000 seeds.
+    //
+    // `Standing` is the reconstruction all of that runs on, shared with the
+    // oracle so the two cannot drift apart. Each case below is a transition's
+    // guard, and each is checked in both directions — a rule that says "yes"
+    // to everything would be as useless here as the floors it replaced.
+    let granted = vec![Event::Granted { node: 0, epoch: 41 }];
+    let s = Standing::from_log(&granted);
+    assert!(s.must_accept("ACQUIRE 0 41"), "the grant was issued and is current");
+    assert!(!s.must_accept("ACQUIRE 1 41"), "node 1 was not the intended owner");
+    assert!(!s.must_accept("ACQUIRE 0 42"), "no grant was issued at 42");
+    assert!(!s.must_accept("WRITE 0 41"), "nobody holds the actor yet");
+    assert!(!s.must_accept("RELEASE 0 41"), "no transfer is in progress");
+
+    let mut held = granted.clone();
+    held.push(Event::Acquired { node: 0, epoch: 41 });
+    let s = Standing::from_log(&held);
+    assert!(s.must_accept("WRITE 0 41"));
+    assert!(!s.must_accept("WRITE 0 42"), "not the epoch it holds");
+    assert!(!s.must_accept("WRITE 1 41"), "not the node that holds it");
+    assert!(s.must_accept("BEGIN 0 1"), "the owner may agree to hand over");
+    assert!(!s.must_accept("BEGIN 0 0"), "not to itself");
+    assert!(!s.must_accept("BEGIN 0 99"), "not to a node that does not exist");
+    assert!(!s.must_accept("BEGIN 1 0"), "node 1 is not the owner");
+    assert!(!s.must_accept("ACQUIRE 0 41"), "it is already held");
+
+    // A write does not end the hold: the owner may write again at the epoch.
+    let mut wrote = held.clone();
+    wrote.push(Event::Wrote { node: 0, epoch: 41, seq: 1 });
+    assert!(Standing::from_log(&wrote).must_accept("WRITE 0 41"));
+
+    // A cooperative burn puts it in `Transferring`, where only the outgoing
+    // owner's release at the new epoch is permitted.
+    let mut transferring = held.clone();
+    transferring.push(Event::EpochBurned {
+        from_epoch: 41, to_epoch: 42, next: 1, forced: false,
+    });
+    let s = Standing::from_log(&transferring);
+    assert!(s.must_accept("RELEASE 0 42"));
+    assert!(!s.must_accept("RELEASE 0 41"), "the transfer's epoch is 42");
+    assert!(!s.must_accept("RELEASE 1 42"), "node 1 is not handing over");
+    assert!(!s.must_accept("WRITE 0 41"), "the epoch was burned");
+
+    // And the release hands the actor to the node the transfer named.
+    let mut released = transferring.clone();
+    released.push(Event::Released { node: 0, new_epoch: 42 });
+    let s = Standing::from_log(&released);
+    assert!(!s.must_accept("ACQUIRE 1 42"), "no grant has been issued at 42");
+    assert!(!s.must_accept("WRITE 0 41"));
+
+    // A forced burn offers it to the named node from any state at all, which
+    // is why `FORCE` is total over the states.
+    for log in [&granted, &held, &transferring, &released] {
+        let s = Standing::from_log(log);
+        assert!(s.must_accept("FORCE 1"), "a forced revoke always takes effect");
+        assert!(!s.must_accept("FORCE 99"), "but not to a node that does not exist");
+    }
+
+    // `POLL` is deliberately absent: `NONE` answers any poll, and the model
+    // never requires `tr_issue_grant` to fire.
+    assert!(!Standing::from_log(&granted).must_accept("POLL 0"));
+}
+
+#[test]
+fn a_reply_and_the_log_must_describe_the_same_thing_happening() {
+    // The dual of the check above, and the half that was missing from it.
+    // That one catches a registry that does nothing and says no. This catches
+    // one that says *yes* and does nothing — and an unchanged log is a
+    // perfectly valid log, so no oracle handed the finished run can see it.
+    // Measured before this existed: an `ACQUIRE` answered `OK` with nothing
+    // acquired, a `BEGIN` answered `OK` with nothing transferred, and a `POLL`
+    // answered `GRANT 41` with no grant issued each passed 20 000 seeds.
+    let ok = |line: &str, reply: &str, appended: &[Event]| {
+        assert!(
+            agrees_with_log(line, reply, appended).is_ok(),
+            "{line} -> {reply} with {appended:?} should agree"
+        );
+    };
+    let bad = |line: &str, reply: &str, appended: &[Event]| {
+        assert!(
+            agrees_with_log(line, reply, appended).is_err(),
+            "{line} -> {reply} with {appended:?} should not agree"
+        );
+    };
+
+    // Saying yes means having done the thing.
+    ok("ACQUIRE 0 41", "OK", &[Event::Acquired { node: 0, epoch: 41 }]);
+    bad("ACQUIRE 0 41", "OK", &[]);
+    bad("ACQUIRE 0 41", "OK", &[Event::Acquired { node: 1, epoch: 41 }]);
+    bad("ACQUIRE 0 41", "OK", &[Event::Acquired { node: 0, epoch: 42 }]);
+
+    // Saying no means having done nothing.
+    ok("ACQUIRE 0 41", "NO", &[]);
+    bad("ACQUIRE 0 41", "NO", &[Event::Acquired { node: 0, epoch: 41 }]);
+    ok("POLL 0", "NONE", &[]);
+    bad("POLL 0", "NONE", &[Event::Granted { node: 0, epoch: 41 }]);
+
+    // A poll's two answers each name what was recorded.
+    ok("POLL 0", "GRANT 41", &[Event::Granted { node: 0, epoch: 41 }]);
+    bad("POLL 0", "GRANT 41", &[]);
+    bad("POLL 0", "GRANT 42", &[Event::Granted { node: 0, epoch: 41 }]);
+    ok("POLL 0", "REVOKE 42", &[Event::Revoked { node: 0, new_epoch: 42 }]);
+
+    // A write's `OK` carries the sequence number it actually landed at.
+    ok("WRITE 0 41", "OK 1", &[Event::Wrote { node: 0, epoch: 41, seq: 1 }]);
+    bad("WRITE 0 41", "OK 2", &[Event::Wrote { node: 0, epoch: 41, seq: 1 }]);
+    bad("WRITE 0 41", "OK", &[Event::Wrote { node: 0, epoch: 41, seq: 1 }]);
+    ok("WRITE 0 41", "FENCED", &[Event::Fenced { node: 0, epoch: 41 }]);
+    bad("WRITE 0 41", "FENCED", &[]);
+
+    // A handover burns the epoch toward the node the request named.
+    let burn = |next, forced| Event::EpochBurned {
+        from_epoch: 41, to_epoch: 42, next, forced,
+    };
+    ok("BEGIN 0 1", "OK", &[burn(1, false)]);
+    bad("BEGIN 0 1", "OK", &[]);
+    bad("BEGIN 0 1", "OK", &[burn(2, false)]);
+    bad("BEGIN 0 1", "OK", &[burn(1, true)], );
+    ok("RELEASE 0 42", "OK", &[Event::Released { node: 0, new_epoch: 42 }]);
+    bad("RELEASE 0 42", "OK", &[Event::Released { node: 0, new_epoch: 41 }]);
+
+    // A forced burn must be forced — but which successor it names is *not*
+    // checked against the request, because `tr_abort_transfer` deliberately
+    // returns the actor to the node it came from rather than to the one the
+    // coordinator asked for. Pinning it here would make this contradict the
+    // model it is supposed to be checking.
+    ok("FORCE 1", "OK", &[burn(1, true)]);
+    ok("FORCE 1", "OK", &[burn(0, true)]);
+    bad("FORCE 1", "OK", &[burn(1, false)]);
+    bad("FORCE 1", "OK", &[]);
+}
+
+#[test]
+fn an_unknown_verb_carries_no_opinion_about_who_sent_it() {
+    // The protocol has no rule about who may send a request it does not have,
+    // so the sender field of one is not a sender field — it is a number in a
+    // line that means nothing. Reading it as one would demand `NO` where only
+    // `ERR` is owed, which is the same mistake pointing the other way.
+    let owed = owed_for("SHOUT 0 41", Peer::Control);
+    assert_eq!(owed, Owed { malformed: true, not_permitted: false });
+    assert_eq!(owed.exact(), Some("ERR"));
+
+    let owed = owed_for("", Peer::Node(0));
+    assert_eq!(owed, Owed { malformed: true, not_permitted: false });
+    assert_eq!(owed.exact(), Some("ERR"));
+}

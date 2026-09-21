@@ -259,3 +259,65 @@ jobs:
       # for anyone who wants to search further.
       - name: Scenario search
         run: cargo test --test turmoil_scenarios -- --nocapture
+
+      # And the search over what *arrives* at the registry rather than over
+      # what a correct node would send. The two are not interchangeable: the
+      # action alphabet emits only well-formed requests, so every guard against
+      # a malformed one is unreachable from the search above however long it
+      # runs. Six of those guards had to be written by hand, one test each,
+      # after a reviewer pointed at each in turn.
+      #
+      # The window is fixed here for the same reason the scenario window is:
+      # a red result has to mean the change did it, not that the runner drew
+      # different seeds. `JETSTREAM_PROTOCOL_START` moves it for anyone
+      # searching further, and the fuzz job below is the arm that explores
+      # somewhere new on every run.
+      #
+      # It is set two orders of magnitude above the default because nothing
+      # here is simulated — the registry is driven directly, so this is ~11
+      # seconds for 100 000 seeds and 2.7 million requests, against ~50 for
+      # the 256 simulated ones above. The default stays at 1 024 so that a
+      # contributor's `cargo test` is instant; the depth belongs where the
+      # wall clock is already being spent. Leaving it at the default here was
+      # the whole argument for this search — that it is nearly free — being
+      # made and then not taken.
+      - name: Protocol-line search
+        run: cargo test --test protocol_lines -- --nocapture
+        env:
+          JETSTREAM_PROTOCOL_SEEDS: 100000
+
+  # The coverage-guided half of the protocol search.
+  #
+  # Separate from the job above because libFuzzer needs nightly, and
+  # `rust-toolchain.toml` pins the stable release Verus was built against.
+  # `fuzz/` is its own workspace so that pin is never in question for anything
+  # the other three jobs build.
+  #
+  # This runs the fuzzer for a minute rather than building it and stopping. A
+  # fuzz target that is only ever compiled is a check that says nothing, which
+  # is the failure mode the whole simulation suite exists to avoid.
+  fuzz:
+    name: Protocol fuzzing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install a nightly toolchain
+        run: rustup toolchain install nightly --profile minimal
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: fuzz
+          workspaces: fuzz
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      # `-max_total_time` rather than a run count, so the budget is what CI can
+      # actually afford rather than a number that means something different on
+      # every runner. `-rss_limit_mb=0` because the registry keeps its whole
+      # audit log and libFuzzer's default limit is about detecting leaks, which
+      # is not what this is looking for.
+      - name: Fuzz the protocol boundary
+        run: cargo +nightly fuzz run protocol -- -max_total_time=60 -rss_limit_mb=0

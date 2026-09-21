@@ -713,6 +713,195 @@ It is derived from a definition rather than from a proof, which is weaker
 provenance than the rest of the table, and it is the reason the table has a
 row the "claim it comes from" column cannot fill honestly.
 
+### The search over what arrives, not over what a correct node sends
+
+The largest category of defect this suite found was a guard the search
+*structurally could not reach*. `Action::from_pair` emits only well-formed
+requests, and a named story drives the same node agent, which sends what a
+correct node would send — so a guard against a handover to the sender itself,
+a release from the node receiving the actor, or a line that does not parse is
+invisible to the scenario walk however long it counts. Not "not yet found":
+unreachable. Six of them were written by hand, one test each, after a reviewer
+pointed at each in turn.
+
+`tests/protocol_lines.rs` makes the malformed request something the search
+produces rather than something somebody remembered. It generates a connection
+and a line — well formed, corrupted, or arbitrary bytes — and drives the
+registry directly, asserting that **no sequence of arbitrary lines from
+arbitrary peers can drive it into a state whose audit log the oracles reject**.
+That is the property each of those six tests checks a single instance of.
+
+Getting it to reach anything took four rounds of measurement, and the numbers
+are worth keeping because they are what a generator looks like when it is
+lying to you:
+
+| | requests served | acquires | writes | handovers completed |
+| --- | --- | --- | --- | --- |
+| first version | 122 | 15 | 0 | 0 |
+| node/epoch fields split | 1 387 | 31 | 4 | 0 |
+| verbs weighted, runs longer | 1 531 | 102 | 31 | 0 |
+| generator echoes what it was told | 2 934 | 370 | 265 | 5 |
+
+Every version passed the oracles. The first one passed them while reaching no
+write at all — it was refused at the parser 17 871 times out of 17 993 and
+would have looked like diligence. What caught it was a vacuity floor on
+requests that got *through*, and what caught the three after it was a floor on
+writes specifically, since polls alone satisfy the first floor while the run
+never gets as far as holding the actor.
+
+The last change is the one to understand. A generator that could not echo the
+epoch it was just granted could not reach a write, because reaching one means
+quoting an epoch something else has usually just burned — so a minority of
+fields are filled from the registry's last reply rather than from a table.
+That is what a node knows, not what the registry knows: giving the generator
+the actual state would make it emit only requests that succeed, which is the
+action alphabet again.
+
+**The floors are on what the generator produced, not on what came back.**
+The first version of this walk floored *refusals*, on the reasoning that a
+refusal is evidence of malformed input. It is not. `NONE`, `NO` and `FENCED`
+are ordinary answers to well-formed, authenticated requests — a poll when the
+actor is held, an acquire that was never offered, a write at a burned epoch.
+Deleting every malformed generation mode and leaving only `well_formed` left
+this walk green with a *higher* refusal count than before, over more served
+requests. The check written specifically to stop a check from saying nothing
+was itself saying nothing. Each mode is now counted where it is built, and
+deleting any one of them takes its count to zero and fails. The limit of that
+is worth stating: the counters measure the *label* a step was generated under,
+so they catch a mode being removed and would not catch one hollowed out while
+keeping its label.
+
+**The oracles cannot see a request, only a log.** They audit what the registry
+*did*, and a request that should have been refused and was executed instead
+leaves a perfectly legal log — it is a thing the registry is allowed to do, done
+for the wrong reason. So each step also carries an obligation, decided from the
+line and the connection alone: an unknown verb, the wrong field count, a field
+that is not a `u64`, or a `FORCE` off the control path must be refused *in every
+state*. Only unconditional refusals belong there; whether `ACQUIRE 0 41` should
+succeed depends on the registry's state and is the oracles' business.
+
+That obligation is the only thing in this walk that catches the parser defect
+`filter_map` was. It needed one generation mode to reach it. Every other
+corruption here changes the field *count*, which even the lenient parser
+rejected by accident; the shape that parser turned back into a valid request is
+a **surplus** non-number, inserted rather than substituted — `POLL junk 0`
+arriving as `POLL 0`, right arity, executed. Measured both ways: with that mode
+deleted and the parser regressed, 20 000 seeds stay green; with it present, the
+walk fails on seed 0.
+
+**A refusal also has to be in the words that request uses.** The reply check
+started as a flat set of the protocol's tokens, which accepts any of them for
+any request — and a wrong-vocabulary refusal leaves the log *unchanged*, which
+is exactly what a refusal is supposed to leave behind, so no log-reading oracle
+can see it. Measured: with a refused `RELEASE` answered `FENCED`, and again
+with a refused `ACQUIRE` answered `NONE`, this search passed 20 000 seeds
+apiece while the registry spoke a protocol no node parses. The vocabulary is
+now per verb, read off what each request *asks* rather than off the handler's
+branches: a poll is answered with a grant, a revocation or nothing; a write
+either lands carrying the sequence number it landed at or is stopped by the
+fence; everything else takes effect or does not. `NO` and `ERR` stay universal,
+because *when* a refusal is owed is the obligation's business, not the
+vocabulary's. **An unwarranted refusal is a separate question, and I got it wrong once.** A
+refusal moves no state and writes no log entry, and I concluded from that that
+no such refusal is judged anywhere — liveness, out of scope. That is wrong.
+`may_mutate (refusals)` judges exactly this for writes: a registry that refuses
+its own current owner, which is what `oracles_catch_an_overfencing_coordinator`
+exists for. The real distinction is not safety against liveness but **logged
+against unlogged** — that oracle fires on `Event::Fenced`, so the same refusal
+spelled `NO` or `ERR` walks straight past it, and the aggregate floors are no
+help against a defect that is selective rather than total.
+
+Which generalises, and the general form is the useful part:
+
+> Any correct behaviour whose absence leaves the log unchanged is invisible to
+> an oracle that reads the log.
+
+So the same hole existed in every transition, not just the write. Measured, one
+legitimate request in three refused with an unlogged `NO`, before the check
+existed — each of these passed **20 000 seeds, over half a million requests**,
+with every floor satisfied:
+
+| refused transition | seeds survived | now fails in |
+| --- | --- | --- |
+| `WRITE` — the current owner's write | 20 000 | 0.07s |
+| `ACQUIRE` — the intended owner taking an issued grant | 20 000 | 0.07s |
+| `BEGIN` — the owner agreeing to hand over | 20 000 | 0.07s |
+| `RELEASE` — the outgoing owner acknowledging | 20 000 | 0.09s |
+| `FORCE` — a forced revoke naming a node that exists | 20 000 | 0.08s |
+
+`Standing` reconstructs the registry's state from the audit log and answers
+whether the model permits a request. It is the same reconstruction
+`may_mutate (refusals)` was already doing for one question, made whole and
+shared with it rather than copied. After the check, 200 000 seeds pass with
+counts *identical* to before it — so it rejects nothing legitimate.
+
+**And the dual of it, which that fix was missing.** The check above catches a
+registry that *does nothing and says no*. It says nothing about one that **says
+yes and does nothing** — an `ACQUIRE` answered `OK` with no acquire logged, a
+`POLL` answered `GRANT 41` with no grant issued. An unchanged log is a
+perfectly *valid* log, so no oracle handed the finished run can see it, and
+each of those passed 20 000 seeds.
+
+Together the two halves say the whole thing:
+
+> **The reply and the log must agree.** Every reply names a transition or names
+> none, and the events the step appended have to be exactly that.
+
+That correspondence can only be checked *during* the run. An oracle handed a
+finished log cannot tell which entry belongs to which request — which is
+precisely the information a lie about success destroys. Five lies are checked
+both ways, including a write's `OK` carrying a sequence number one off from the
+one it landed at. It costs about eighteen per cent more wall clock, which is
+the only reason to mention it.
+
+**Provenance, stated because it is weaker than most of this file.** No Verus
+theorem says any request is ever accepted; the proofs are all of the form "this
+cannot happen", and liveness is not what they are about. `may_mutate
+(refusals)` already crossed that line deliberately, for writes, and this
+extends the same argument to the other transitions. It inherits the same weaker
+provenance rather than pretending otherwise.
+
+What is genuinely out of scope is a good `POLL` answered `NO`. `tr_issue_grant`
+being *enabled* is not the model requiring it to fire, and `NONE` answers any
+poll, so a registry that refused every one would satisfy every oracle here.
+
+Writing that obligation down went wrong three times, the same way each time,
+and none of the three was caught by reading it. The two refusal reasons are independent, so
+every one that *can* be established has to be: an obligation that drops a reason
+it could have known demands one exact refusal where two are defensible, and then
+reports a sound registry as defective for choosing the other. `FORCE 41.0` from
+a node is both unparseable and unauthorised, and deciding the fields first
+demanded `ERR` from a registry that refuses strangers before parsing their input
+— which is the better order, not a fault. Fixing that for `FORCE` and stopping
+there was one case short of the rule: `WRITE 0 junk` on the control connection
+is the same shape, because the *sender* field is legible even though the epoch
+is not. Fixing that for the *sender* field and stopping there was one field short
+again: `BEGIN junk 99` names a successor that does not exist and `FORCE 99
+junk` does too, and an all-or-nothing parse let one illegible field hide what
+the legible ones carried. Three catches of one mistake, each a field further
+out, so it is written down as the rule instead of as a third case: **a
+permission check uses its own field's parse result, never the whole line's.**
+Authority is decided from whatever is legible, before the line is judged well
+formed at all, and the tests pin it in both directions — relaxing an obligation
+is only safe while the strict cases stay strict.
+
+**Still thin.** Completed handovers are reached 5 times in 1 024 runs, so
+claim 4 is barely exercised here — it is covered by the scenario walk and the
+named stories instead. That count is reported and deliberately not asserted
+on: a floor on a rate that low would be a flaky test rather than an
+informative one.
+
+CI walks 100 000 of these seeds — 2.7 million requests in twelve seconds,
+against forty-six for the 256 simulated scenarios in the same job. The window is fixed so
+a red result means the change did it; `JETSTREAM_PROTOCOL_START` moves it. The
+default stays at 1 024 so a contributor's `cargo test` is instant.
+
+`fuzz/` is the coverage-guided front end to the same generator, registry and
+oracles, run for a minute on every pull request, and is the arm that explores
+somewhere new on every run. It needs nightly, so it is
+its own workspace and its own job; the pinned stable toolchain the proofs are
+built with is never in question for it.
+
 Two searches reach them. `turmoil_ownership.rs` holds named stories, each of
 which asserts what it was supposed to *reach* — the headline one is A owning
 the actor at epoch 41, being cut off, the coordinator handing the actor to B at
@@ -721,7 +910,9 @@ the actor at epoch 41, being cut off, the coordinator handing the actor to B at
 no opinion about, and replays every seed in `tests/seeds/scenarios.txt` first so
 a fixed bug stays fixed. Both drive the same runner and the same oracles.
 `Scenario::from_bytes` is the entry point a coverage-guided fuzzer would use to
-drive that same runner; no fuzz target is wired up yet.
+drive that same runner; the fuzz target that exists drives the protocol-line
+generator instead, for the reason given above — the action alphabet cannot
+express the inputs most of these guards are about.
 
 **What this is evidence of.** A divergence is one of two things: an
 implementation that does not follow the protocol, or a protocol whose proof

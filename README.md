@@ -809,8 +809,8 @@ named stories instead. That count is reported and deliberately not asserted
 on: a floor on a rate that low would be a flaky test rather than an
 informative one.
 
-CI walks 100 000 of these seeds — 2.7 million requests in about eleven seconds,
-against fifty for the 256 simulated scenarios beside it. The window is fixed so
+CI walks 100 000 of these seeds — 2.7 million requests in twelve seconds,
+against forty-six for the 256 simulated scenarios in the same job. The window is fixed so
 a red result means the change did it; `JETSTREAM_PROTOCOL_START` moves it. The
 default stays at 1 024 so a contributor's `cargo test` is instant.
 

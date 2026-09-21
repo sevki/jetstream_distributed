@@ -36,16 +36,28 @@ use turmoil::net::{TcpListener, TcpStream};
 
 const PORT: u16 = 9000;
 
-/// Open a lane to the registry and hand back a channel to call it on.
-async fn connect() -> OwnershipChannel {
-    let stream = TcpStream::connect(("registry", PORT))
-        .await
-        .expect("the registry is listening");
-    let session = SingleLaneSession::<OwnershipChannel, _, _>::client_io(stream);
-    let lane = Session::<OwnershipChannel>::open_lane(&session)
-        .await
-        .expect("the one lane is available");
-    OwnershipChannel::new(64, Box::new(lane))
+// Connecting is written out in each client rather than factored into a helper,
+// and that is deliberate: the `Session` owns the lane's I/O, so a helper that
+// builds one and returns only the channel drops it on the way out and the next
+// call fails with "session is closed". It has to outlive every request made on
+// the channel, which means living in the caller's scope.
+macro_rules! connect {
+    ($session:ident, $channel:ident) => {
+        let stream = TcpStream::connect(("registry", PORT))
+            .await
+            .expect("the registry is listening");
+        let $session = SingleLaneSession::<OwnershipChannel, _, _>::client_io(stream);
+        let lane = Session::<OwnershipChannel>::open_lane(&$session)
+            .await
+            .expect("the one lane is available");
+        let $channel = OwnershipChannel::new(64, Box::new(lane));
+        // "Must be called after `new()` and before any RPC calls", per the
+        // generated client. Every non-test client in jetstream does this.
+        $channel
+            .negotiate_version(u32::MAX)
+            .await
+            .expect("the server speaks this protocol version");
+    };
 }
 
 #[test]
@@ -95,7 +107,7 @@ fn a_handover_fences_the_outgoing_owner() {
     });
 
     sim.client("a", async move {
-        let ch = connect().await;
+        connect!(_session, ch);
 
         // The actor is offered to A at 41, and A takes it.
         assert_eq!(ch.poll(Context::default()).await.unwrap(), Offer::Grant(41));
@@ -127,7 +139,7 @@ fn a_handover_fences_the_outgoing_owner() {
     sim.client("b", async move {
         // After A has finished. Deterministic, because the clock is simulated.
         tokio::time::sleep(Duration::from_millis(500)).await;
-        let ch = connect().await;
+        connect!(_session, ch);
 
         assert_eq!(ch.poll(Context::default()).await.unwrap(), Offer::Grant(42));
         ch.acquire(Context::default(), 42).await.unwrap();

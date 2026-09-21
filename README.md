@@ -713,6 +713,61 @@ It is derived from a definition rather than from a proof, which is weaker
 provenance than the rest of the table, and it is the reason the table has a
 row the "claim it comes from" column cannot fill honestly.
 
+### The search over what arrives, not over what a correct node sends
+
+The largest category of defect this suite found was a guard the search
+*structurally could not reach*. `Action::from_pair` emits only well-formed
+requests, and a named story drives the same node agent, which sends what a
+correct node would send — so a guard against a handover to the sender itself,
+a release from the node receiving the actor, or a line that does not parse is
+invisible to the scenario walk however long it counts. Not "not yet found":
+unreachable. Six of them were written by hand, one test each, after a reviewer
+pointed at each in turn.
+
+`tests/protocol_lines.rs` makes the malformed request something the search
+produces rather than something somebody remembered. It generates a connection
+and a line — well formed, corrupted, or arbitrary bytes — and drives the
+registry directly, asserting that **no sequence of arbitrary lines from
+arbitrary peers can drive it into a state whose audit log the oracles reject**.
+That is the property each of those six tests checks a single instance of.
+
+Getting it to reach anything took four rounds of measurement, and the numbers
+are worth keeping because they are what a generator looks like when it is
+lying to you:
+
+| | requests served | acquires | writes | handovers completed |
+| --- | --- | --- | --- | --- |
+| first version | 122 | 15 | 0 | 0 |
+| node/epoch fields split | 1 387 | 31 | 4 | 0 |
+| verbs weighted, runs longer | 1 531 | 102 | 31 | 0 |
+| generator echoes what it was told | 2 934 | 370 | 265 | 5 |
+
+Every version passed the oracles. The first one passed them while reaching no
+write at all — it was refused at the parser 17 871 times out of 17 993 and
+would have looked like diligence. What caught it was a vacuity floor on
+requests that got *through*, and what caught the three after it was a floor on
+writes specifically, since polls alone satisfy the first floor while the run
+never gets as far as holding the actor.
+
+The last change is the one to understand. A generator that could not echo the
+epoch it was just granted could not reach a write, because reaching one means
+quoting an epoch something else has usually just burned — so a minority of
+fields are filled from the registry's last reply rather than from a table.
+That is what a node knows, not what the registry knows: giving the generator
+the actual state would make it emit only requests that succeed, which is the
+action alphabet again.
+
+**Still thin.** Completed handovers are reached 5 times in 1 024 runs, so
+claim 4 is barely exercised here — it is covered by the scenario walk and the
+named stories instead. That count is reported and deliberately not asserted
+on: a floor on a rate that low would be a flaky test rather than an
+informative one.
+
+`fuzz/` is the coverage-guided front end to the same generator, registry and
+oracles, run for a minute on every pull request. It needs nightly, so it is
+its own workspace and its own job; the pinned stable toolchain the proofs are
+built with is never in question for it.
+
 Two searches reach them. `turmoil_ownership.rs` holds named stories, each of
 which asserts what it was supposed to *reach* — the headline one is A owning
 the actor at epoch 41, being cut off, the coordinator handing the actor to B at

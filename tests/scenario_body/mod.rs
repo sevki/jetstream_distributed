@@ -265,6 +265,14 @@ impl Coord {
     /// which. Keeping them in step is the whole point: a transition the
     /// implementation has that the model does not is exactly the kind of thing
     /// this suite exists to find.
+    /// The audit log so far.
+    ///
+    /// Exposed for the protocol search, which drives this registry directly
+    /// rather than over a socket and so has nowhere else to read the log from.
+    pub fn log(&self) -> &[Event] {
+        &self.log
+    }
+
     pub fn handle(&mut self, line: &str, peer: Peer) -> String {
         let mut parts = line.split_whitespace();
         let verb = parts.next().unwrap_or("");
@@ -1392,6 +1400,570 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// The protocol boundary, driven by bytes
+// ---------------------------------------------------------------------------
+//
+// Why this exists at all is the largest finding of the review that built this
+// file. `Action::from_pair` emits only well-formed requests, and a named story
+// drives the same node agent, which sends what a correct node would send. So
+// every guard against a request the alphabet cannot express was invisible to
+// the seed walk — not "not yet found", but unreachable however long it counts.
+// Six of them had to be reached by hand, one test at a time.
+//
+// Hand-written tests are the right instrument for a guard somebody has already
+// thought of. They are no instrument at all for the next one. This generator
+// makes the malformed request a thing the search produces rather than a thing
+// somebody remembered, and the property it checks is the one those six tests
+// each check a single instance of: **no sequence of arbitrary lines from
+// arbitrary peers can drive the registry into a state whose audit log the
+// oracles reject.**
+//
+// Note what is *not* fuzzed here. `Scenario::from_bytes` would let a
+// coverage-guided fuzzer steer the action alphabet, which explores deeper
+// sequences of well-formed requests — a different axis, and not this one. A
+// fuzzer over that entry point would not have found any of the six.
+
+/// One thing that arrives at the registry: a connection, and a line on it.
+///
+/// The peer and the line are related but not determined by each other, and
+/// getting that balance right took a measurement. A peer drawn independently
+/// of the line is the spoof case — the registry must believe the connection
+/// rather than the request body — but if it is *always* independent then a
+/// well-formed request matches its sender only about a quarter of the time,
+/// the run never advances past the connection check, and the search spends
+/// itself proving that the registry refuses strangers.
+///
+/// So the peer usually matches the node the line claims to be, and
+/// deliberately does not in a minority of steps. Both halves are needed: the
+/// matching ones get the registry into a state worth attacking, and the
+/// mismatched ones are the attack.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Step {
+    pub peer: Peer,
+    pub line: String,
+}
+
+/// A run of arbitrary protocol lines against one registry.
+///
+/// Held as the words that generate the lines rather than as the lines
+/// themselves, because one generation mode quotes the epoch the registry last
+/// named and so cannot be resolved until the run reaches it. The run is still
+/// entirely determined by the words, which is what keeps a seed replayable.
+///
+/// That mode is not a convenience. Without it the search measurably could not
+/// get anywhere: over 1024 runs it reached 15 acquires, no writes, no releases
+/// and no revokes, because reaching a write means quoting an epoch that
+/// another step has usually just burned. A node that could not echo what it
+/// was told would be a strange node, and a generator that could not was a
+/// strange generator.
+#[derive(Debug, Clone)]
+pub struct ProtocolRun {
+    pub seed: u64,
+    pub words: Vec<[u64; 3]>,
+}
+
+/// What the registry last said, as far as the generator is concerned.
+///
+/// Not the registry's state — the generator cannot see that, and should not:
+/// a generator that knew the state would only ever send requests that succeed,
+/// which is the action alphabet again. This is what a *node* would know, which
+/// is what it was last told.
+#[derive(Debug, Default, Clone, Copy)]
+struct Offered {
+    node: Option<u64>,
+    epoch: Option<u64>,
+}
+
+/// Values for a field that names a node.
+///
+/// Weighted towards real node ids, with `NODES`, 99 and `u64::MAX` present so
+/// the off-the-end case is reached. One table for both fields was the first
+/// version and it was measurably wrong: a node field drawn from a table
+/// containing 40 through 44 is out of range most of the time, so most
+/// well-formed requests were refused before they reached the guard under test.
+/// The search reported 122 requests served against 17,871 refused, which its
+/// own vacuity floor of 64 barely cleared.
+const NODE_VALUES: [u64; 8] = [0, 0, 1, 1, 2, NODES, 99, u64::MAX];
+
+/// Values for a field that names an epoch.
+///
+/// Clustered around `INITIAL_EPOCH`, because an epoch that is off by one is a
+/// refusal worth reaching and an epoch of 3 is one the registry can dismiss
+/// without consulting anything. The two largest `u64`s are here because an
+/// epoch is a field that gets added to.
+const EPOCH_VALUES: [u64; 9] =
+    [40, 41, 41, 42, 42, 43, 44, u64::MAX - 1, u64::MAX];
+
+/// The verbs the registry has, weighted.
+///
+/// Repeated entries rather than a uniform choice, and `FORCE` appears once in
+/// fourteen for the same reason it does in `Action::from_pair`: it is the only
+/// verb that succeeds from *any* state, so a uniform sixth of the steps
+/// burning the epoch means no grant ever survives long enough to be acquired
+/// and written at. Measured over 1024 runs, uniform choice reached 31 acquires
+/// and 4 writes; the protocol's interesting states were all downstream of the
+/// ones it was demolishing.
+const VERBS: [&str; 14] = [
+    "POLL", "POLL", "POLL", "ACQUIRE", "ACQUIRE", "ACQUIRE", "WRITE", "WRITE", "WRITE", "WRITE",
+    "BEGIN", "RELEASE", "RELEASE", "FORCE",
+];
+
+/// Tokens that are not a `u64`, for the field-corruption case.
+///
+/// `1O24` is a capital O for a zero, which is the typo that motivated the
+/// strict parse in the first place. `41.0` and `-1` parse as numbers in most
+/// languages and not in this one. The empty string is what a doubled separator
+/// leaves behind.
+const NON_NUMBERS: [&str; 6] = ["x", "-1", "41.0", "1O24", "0x29", "١٤"];
+
+impl Step {
+    /// One step from three words, in the same spirit as `Action::from_pair`.
+    ///
+    /// The mode split is deliberate and load-bearing. A generator that emitted
+    /// only junk would spend the whole run being refused at the parser and
+    /// never reach a guard at all; one that emitted only well-formed lines
+    /// would be the action alphabet again. Most steps are well formed so the
+    /// registry advances, and a third of them are corrupted so the advance
+    /// keeps meeting malformed input from a state that took work to reach.
+    /// One step from three words and whatever the registry last offered.
+    ///
+    /// `offered` is the node the registry last dealt with and the epoch it
+    /// last named, if any.
+    ///
+    /// The epoch comes only from a `GRANT` or a `REVOKE`: an `OK 3` is a
+    /// write's sequence number, and quoting it as an epoch would be a
+    /// generator that had confused the protocol's two numeric fields with each
+    /// other. The node is whoever sent the request that was not refused,
+    /// because the node the registry just answered is the node that would
+    /// plausibly act next — which is a fact about the protocol, not a script.
+    fn from_words(a: u64, b: u64, c: u64, offered: Offered) -> Self {
+        let line = match b % 16 {
+            0..=8 => well_formed(b / 16, c, offered),
+            9..=13 => corrupt(&well_formed(b / 16, c, offered), c / 13),
+            14 => junk(c),
+            _ => String::new(),
+        };
+        Step { peer: peer_for(&line, a), line }
+    }
+}
+
+/// Who the line arrives from.
+///
+/// Three cases in seven. Most often the connection matches what the line
+/// claims, because that is the only way the run gets anywhere; `FORCE` is
+/// answered only on the control path, so a plausible `FORCE` comes from there;
+/// and the rest is an arbitrary peer, which is where the spoof lives.
+fn peer_for(line: &str, choice: u64) -> Peer {
+    let arbitrary = match (choice / 7) % 5 {
+        0..=2 => Peer::Node((choice / 35) % NODES),
+        3 => Peer::Control,
+        _ => Peer::Unknown,
+    };
+    if choice % 7 >= 5 {
+        return arbitrary;
+    }
+    let mut parts = line.split_whitespace();
+    match (parts.next(), parts.next().and_then(|f| f.parse::<u64>().ok())) {
+        (Some("FORCE"), _) => Peer::Control,
+        (Some(_), Some(node)) if node < NODES => Peer::Node(node),
+        _ => arbitrary,
+    }
+}
+
+/// A syntactically valid request. Whether the registry accepts it is its own
+/// business — the arguments come from `FIELD_VALUES` and are often wrong.
+fn well_formed(choice: u64, fields: u64, offered: Offered) -> String {
+    let verb = VERBS[(choice % VERBS.len() as u64) as usize];
+    // Mostly whoever the registry last answered. Drawing the node freshly each
+    // time was measurably why the transfer path was never reached: a handover
+    // is five consecutive steps at *one* node, and an independent draw put the
+    // right node there one time in eight.
+    let node = match offered.node {
+        Some(n) if fields % 4 != 0 => n,
+        _ => NODE_VALUES[(fields % NODE_VALUES.len() as u64) as usize],
+    };
+    match verb {
+        // `FORCE`'s one argument is the successor, which is a node.
+        "POLL" | "FORCE" => format!("{verb} {node}"),
+        // `BEGIN`'s second argument is a node too, not an epoch. It usually
+        // differs from the sender, because `tr_begin_transfer` requires that
+        // and a handover refused for naming itself teaches the search nothing
+        // about the transfer path beyond it. The collision is still reachable
+        // — `the_registry_refuses_a_handover_to_the_owner_itself` is a guard,
+        // and a guard nothing sends at is a guard nothing checks.
+        "BEGIN" => {
+            let pick = (fields / 8) % NODE_VALUES.len() as u64;
+            let to = if (fields / 8) % 5 == 0 {
+                NODE_VALUES[pick as usize]
+            } else {
+                // `node % NODES` first. Without it this overflowed on the very
+                // first run of the search, because `NODE_VALUES` contains
+                // `u64::MAX` precisely so that the off-the-end case is
+                // reached, and `u64::MAX + 1` is a panic in a debug build. The
+                // analogous line in `Action::from_pair` is safe only because
+                // its `from` was already reduced.
+                (node % NODES + 1 + pick % (NODES - 1)) % NODES
+            };
+            format!("{verb} {node} {to}")
+        }
+        _ => {
+            // Mostly the epoch the registry last named, because that is what a
+            // node would quote and the only way a run reaches a write. The
+            // table is still drawn from a third of the time, which is where
+            // the stale and impossible epochs come from — and those are half
+            // the point, since the fence exists for exactly them.
+            let epoch = match offered.epoch {
+                Some(e) if (fields / 8) % 3 != 0 => e,
+                _ => EPOCH_VALUES[((fields / 8) % EPOCH_VALUES.len() as u64) as usize],
+            };
+            format!("{verb} {node} {epoch}")
+        }
+    }
+}
+
+/// Break a valid line in one of the ways a real one breaks.
+fn corrupt(line: &str, how: u64) -> String {
+    let mut parts: Vec<String> = line.split(' ').map(str::to_string).collect();
+    match how % 7 {
+        // A field short. `filter_map` used to turn this into a shorter valid
+        // request rather than an error, which is the defect the strict parse
+        // replaced.
+        0 => {
+            parts.pop();
+            parts.join(" ")
+        }
+        // A field long.
+        1 => {
+            parts.push("7".to_string());
+            parts.join(" ")
+        }
+        // A field that is not a number. Placed at a varying position, because
+        // the first version of the parser dropped what it could not read and
+        // so cared very much which field it was.
+        2 => {
+            if !parts.is_empty() {
+                let at = 1 + (how / 7) as usize % parts.len().max(1);
+                if at < parts.len() {
+                    parts[at] =
+                        NON_NUMBERS[(how / 7) as usize % NON_NUMBERS.len()].to_string();
+                }
+            }
+            parts.join(" ")
+        }
+        // Wrong case. The verb match is exact, and a reader could reasonably
+        // assume otherwise.
+        3 => line.to_lowercase(),
+        // Padded. `split_whitespace` should absorb this; that it does is worth
+        // a search knowing rather than a comment claiming.
+        4 => format!("   {line}  "),
+        // Tabs and doubled spaces instead of single ones.
+        5 => parts.join("\t\t"),
+        // Truncated mid-token, which is what a short read looks like.
+        _ => {
+            let keep = line.len().saturating_sub(1 + (how / 7) as usize % 4);
+            line.chars().take(keep).collect()
+        }
+    }
+}
+
+/// Bytes with no structure at all.
+fn junk(seed: u64) -> String {
+    let mut rng = Lcg::new(seed);
+    let len = (seed % 12) as usize;
+    (0..len)
+        .map(|_| char::from_u32((rng.next() % 0x7f) as u32).unwrap_or('?'))
+        .collect()
+}
+
+impl ProtocolRun {
+    /// Build one from a seed, so a finding can be reported as a number.
+    pub fn from_seed(seed: u64) -> Self {
+        let mut rng = Lcg::new(seed);
+        // Longer than a scenario, because these runs cost microseconds rather
+        // than simulated seconds and a handover needs several steps to line up.
+        let len = 8 + (rng.next() % 40) as usize;
+        let words = (0..len).map(|_| [rng.next(), rng.next(), rng.next()]).collect();
+        ProtocolRun { seed, words }
+    }
+
+    /// Build one from an arbitrary byte string, for a coverage-guided fuzzer.
+    ///
+    /// Three bytes a step, and no header: unlike `Scenario::from_bytes` there
+    /// is no network schedule to seed, because nothing here is simulated. The
+    /// registry is driven directly, which is also why this half of the search
+    /// runs in milliseconds where the scenario walk takes half a minute.
+    pub fn from_bytes(data: &[u8]) -> Option<Self> {
+        let words: Vec<[u64; 3]> = data
+            .chunks_exact(3)
+            .take(MAX_STEPS)
+            .map(|w| [w[0] as u64, w[1] as u64, w[2] as u64])
+            .collect();
+        if words.is_empty() {
+            return None;
+        }
+        Some(ProtocolRun { seed: 0, words })
+    }
+}
+
+/// How long a generated run may get.
+const MAX_STEPS: usize = 64;
+
+/// What the registry did with a run of lines.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Served {
+    /// Requests the registry acted on rather than refused.
+    ///
+    /// The vacuity measure for this search, and it needs one badly: a
+    /// generator that produced nothing but garbage would be refused at the
+    /// parser every time, satisfy every oracle trivially and reach no guard at
+    /// all. Counting refusals would not notice. Counting what got through
+    /// does.
+    pub accepted: usize,
+    /// Requests refused — `NO`, `ERR` or `FENCED`.
+    pub refused: usize,
+    /// Writes the registry accepted.
+    ///
+    /// Counted separately from `accepted` because the two can move in
+    /// opposite directions, and the difference is where this search earns its
+    /// keep. A regression that made every `ACQUIRE` fail would leave
+    /// `accepted` almost unchanged — polls still succeed — while the run
+    /// stopped reaching the fence, the capability check and everything else
+    /// downstream of holding the actor. A write is the deepest state a run can
+    /// reach, so it is the one worth a floor.
+    pub writes: usize,
+    /// Handovers the registry completed.
+    ///
+    /// Reported and deliberately **not** asserted on. Measured over the
+    /// default window it lands at 5 runs in 1024: reaching it needs
+    /// `POLL → ACQUIRE → BEGIN → POLL → RELEASE` to line up at one node with
+    /// nothing burning the epoch in between, and a random walk finds that
+    /// rarely. A floor on a rate that low would be a flaky test rather than an
+    /// informative one — so this is stated as a thin spot rather than dressed
+    /// up as coverage. Claim 4's oracle is exercised properly by the scenario
+    /// walk and by named stories; here it is barely exercised at all.
+    pub transfers: usize,
+}
+
+/// Drive one registry with a run of arbitrary lines.
+///
+/// The oracles are checked after *every* step rather than once at the end, for
+/// two reasons. A log that violates an invariant and is then repaired by a
+/// later burn would pass an end-of-run check, and naming the step that broke
+/// it is most of the value of a finding. Runs are at most 64 steps, so the
+/// quadratic cost is nothing.
+pub fn run_protocol(run: &ProtocolRun) -> Result<Served, String> {
+    let mut coord = Coord::new(Fence::Checked);
+    let mut served = Served::default();
+    let mut offered = Offered::default();
+    for (i, w) in run.words.iter().enumerate() {
+        let step = Step::from_words(w[0], w[1], w[2], offered);
+        let reply = coord.handle(&step.line, step.peer);
+        offered = note_reply(offered, &step.line, &reply);
+        if !is_a_reply(&reply) {
+            return Err(format!(
+                "step {i}: `{}` from {:?} was answered `{reply}`, which is not \
+                 one of the protocol's replies",
+                step.line, step.peer
+            ));
+        }
+        if matches!(reply.as_str(), "NO" | "ERR" | "FENCED" | "NONE") {
+            served.refused += 1;
+        } else {
+            served.accepted += 1;
+        }
+        check_invariants(coord.log()).map_err(|e| {
+            format!(
+                "after step {i} (`{}` from {:?}, answered `{reply}`): {e}",
+                step.line, step.peer
+            )
+        })?;
+    }
+    served.writes = coord
+        .log()
+        .iter()
+        .filter(|e| matches!(e, Event::Wrote { .. }))
+        .count();
+    served.transfers = coord
+        .log()
+        .iter()
+        .filter(|e| matches!(e, Event::Released { .. }))
+        .count();
+    Ok(served)
+}
+
+/// Update what the generator knows from one exchange.
+///
+/// A refusal teaches a node nothing, so it leaves this untouched: `NO` does
+/// not say who the registry thinks the owner is, and pretending otherwise
+/// would give the generator information the protocol never sends.
+fn note_reply(prev: Offered, line: &str, reply: &str) -> Offered {
+    if matches!(reply, "NO" | "ERR" | "FENCED" | "NONE") {
+        return prev;
+    }
+    let claimed = line.split_whitespace().nth(1).and_then(|f| f.parse::<u64>().ok());
+    Offered {
+        node: claimed.filter(|n| *n < NODES).or(prev.node),
+        epoch: epoch_named_by(reply).or(prev.epoch),
+    }
+}
+
+/// The epoch a reply names, if it names one.
+///
+/// `GRANT` and `REVOKE` carry an epoch. `OK 3` carries a write's sequence
+/// number, which is a different quantity that happens to be a `u64`, and
+/// reading it as an epoch would be the same category error the protocol's two
+/// numeric fields invite everywhere else.
+fn epoch_named_by(reply: &str) -> Option<u64> {
+    let mut parts = reply.split(' ');
+    match (parts.next(), parts.next()) {
+        (Some("GRANT" | "REVOKE"), Some(n)) => n.parse().ok(),
+        _ => None,
+    }
+}
+
+/// Replay a run and hand back the audit log, for coverage measurement.
+pub fn replay_protocol(run: &ProtocolRun) -> Vec<Event> {
+    let mut coord = Coord::new(Fence::Checked);
+    let mut offered = Offered::default();
+    for w in &run.words {
+        let step = Step::from_words(w[0], w[1], w[2], offered);
+        let reply = coord.handle(&step.line, step.peer);
+        offered = note_reply(offered, &step.line, &reply);
+    }
+    coord.log().to_vec()
+}
+
+/// Every reply the registry is allowed to give.
+///
+/// Weaker than the oracles and worth having anyway: a handler that answered
+/// something outside this set would be speaking a protocol no node parses, and
+/// the audit log could be perfectly clean while it did.
+fn is_a_reply(reply: &str) -> bool {
+    let mut parts = reply.split(' ');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some("NONE" | "OK" | "NO" | "ERR" | "FENCED"), None, None) => true,
+        (Some("GRANT" | "REVOKE" | "OK"), Some(n), None) => n.parse::<u64>().is_ok(),
+        _ => false,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Reading a search window from the environment
+// ---------------------------------------------------------------------------
+//
+// Shared rather than copied, for the reason stated at the top of both search
+// files: a second copy of a rule is a second place for it to be wrong, and
+// every one of these four functions exists because the first version of that
+// rule was wrong somewhere. They are pure — no environment is touched except
+// by `env_u64` — so the tests that pin them live in the search files that use
+// them and run on the real toolchain.
+
+/// Read a `u64` from the environment, or fall back if it is not set.
+///
+/// A value that is present and unparsable is a failure, not a fallback. The
+/// comment here used to argue the opposite — that a nightly job dying on a typo
+/// in its own workflow finds nothing at all — which is true and beside the
+/// point: falling back to zero *also* finds nothing, and does it while
+/// reporting success. A typo in `JETSTREAM_SCENARIO_START` would re-run the
+/// default window every night, green forever, discovering exactly what the
+/// previous night discovered.
+///
+/// Absent is different from wrong. Absent means "no preference" and takes the
+/// default; wrong means somebody tried to say something and it did not arrive.
+pub fn env_u64(name: &str, fallback: u64) -> u64 {
+    window_bound(name, std::env::var(name), fallback)
+}
+
+/// The decision `env_u64` makes, separated from the process environment that
+/// supplies it.
+///
+/// Split out so it can be tested. Environment variables are process-global and
+/// this binary runs its tests on threads of one process, so a test that set
+/// `JETSTREAM_SCENARIO_START` to something bad would be setting it for the
+/// search running alongside it. Taking the `Result` as an argument is how the
+/// rule gets checked without the test and the thing it tests sharing state.
+pub fn window_bound(name: &str, raw: Result<String, std::env::VarError>, fallback: u64) -> u64 {
+    use std::env::VarError;
+    match raw {
+        Err(VarError::NotPresent) => fallback,
+        // Matching `Err(_)` here would have folded this case in with absent,
+        // which is the exact defect the doc comment above is about: the
+        // variable *is* set, somebody did try to say something, and it did not
+        // arrive. Bytes that are not UTF-8 are a wrong value, not a missing
+        // one.
+        Err(VarError::NotUnicode(bytes)) => panic!(
+            "{name} is set to {bytes:?}, which is not valid UTF-8 and so cannot \
+             be a u64. Refusing to fall back to {fallback}: the variable is \
+             set, so somebody meant something by it."
+        ),
+        Ok(raw) => raw.trim().parse().unwrap_or_else(|_| {
+            panic!(
+                "{name} is set to `{raw}`, which is not a u64. Refusing to fall \
+                 back to {fallback}: a search that silently runs the wrong \
+                 window is worse than one that stops, because it keeps \
+                 reporting success."
+            )
+        }),
+    }
+}
+
+/// The end of the window, or a failure if there isn't one.
+///
+/// This was `start.saturating_add(seeds)`, which is the arithmetic version of
+/// the `Err(_)` above: it turns a request the program cannot honour into a
+/// quietly different request it can. At the `u64` boundary the clamp shortens
+/// the window — at `u64::MAX` it empties it — and a window under
+/// `FLOOR_WINDOW` skips the coverage floor entirely. So a job asking for 256
+/// seeds would run none of them, apply no floor, and report success.
+///
+/// The doc comment on `env_u64` already states the rule this broke: a search
+/// that silently runs the wrong window is worse than one that stops, because
+/// it keeps reporting success. Saturating is silently running the wrong
+/// window.
+pub fn window_end(start: u64, seeds: u64) -> u64 {
+    start.checked_add(seeds).unwrap_or_else(|| {
+        panic!(
+            "a window of {seeds} seeds starting at {start} runs past u64::MAX. \
+             Refusing to search a truncated one: the shortened window would \
+             fall under the coverage floor and be exempted from it, so the \
+             run would report success having searched almost nothing."
+        )
+    })
+}
+
+/// The shortest window the coverage floor is applied to.
+pub const FLOOR_WINDOW: u64 = 32;
+
+/// How many accepted writes a window of this size must beat, or `None` if it
+/// is too short for a rate to mean anything.
+///
+/// An empty window is neither, and the distinction is the whole reason this is
+/// a function. Zero seeds is not a short window that the floor politely
+/// declines to judge; it is no search at all, and the exemption was swallowing
+/// it — `JETSTREAM_SCENARIO_SEEDS=0` ran nothing, asserted nothing and
+/// reported success.
+///
+/// I had already fixed exactly this failure one commit earlier, in
+/// `window_end`, and looked straight at this case while doing it. The
+/// reasoning for leaving it was that the run announces itself in the log, so
+/// the emptiness is visible. That is the same argument the overflow case
+/// makes — it also prints `searching scenario seeds X..X` — and I rejected it
+/// there. A log line is not an exit status. Two standards for one failure
+/// mode, four lines apart.
+pub fn coverage_floor(window: u64) -> Option<u64> {
+    assert!(
+        window != 0,
+        "a window of zero seeds searches nothing. Refusing to report success \
+         on it: the short-window exemption below is for a window too small to \
+         have a rate, not for one with nothing in it."
+    );
+    if window < FLOOR_WINDOW {
+        return None;
+    }
+    Some(window / 16)
 }
 
 // ---------------------------------------------------------------------------

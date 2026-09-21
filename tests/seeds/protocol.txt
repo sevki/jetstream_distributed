@@ -1,0 +1,8 @@
+# Protocol-line seeds that have failed before.
+#
+# One `u64` a line. A seed names a run only against this generator *and* this
+# registry, so a seed filed here is meaningful only alongside the commit that
+# filed it — which is why the dependency graph is pinned and `Cargo.lock` is
+# committed.
+#
+# Empty today. The first entry is the first finding this search makes.

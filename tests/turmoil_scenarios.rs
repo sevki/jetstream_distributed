@@ -16,7 +16,10 @@
 #[path = "scenario_body/mod.rs"]
 mod body;
 
-use body::{run_scenario, run_scenario_probed, Attempts, Event, Scenario};
+use body::{
+    coverage_floor, env_u64, run_scenario, run_scenario_probed, window_bound, window_end,
+    Attempts, Event, Scenario, FLOOR_WINDOW,
+};
 
 /// The seeds that have failed before, from `tests/seeds/scenarios.txt`.
 fn committed_seeds() -> Vec<u64> {
@@ -36,54 +39,6 @@ fn committed_seeds() -> Vec<u64> {
         .collect()
 }
 
-/// Read a `u64` from the environment, or fall back if it is not set.
-///
-/// A value that is present and unparsable is a failure, not a fallback. The
-/// comment here used to argue the opposite — that a nightly job dying on a typo
-/// in its own workflow finds nothing at all — which is true and beside the
-/// point: falling back to zero *also* finds nothing, and does it while
-/// reporting success. A typo in `JETSTREAM_SCENARIO_START` would re-run the
-/// default window every night, green forever, discovering exactly what the
-/// previous night discovered.
-///
-/// Absent is different from wrong. Absent means "no preference" and takes the
-/// default; wrong means somebody tried to say something and it did not arrive.
-fn env_u64(name: &str, fallback: u64) -> u64 {
-    window_bound(name, std::env::var(name), fallback)
-}
-
-/// The decision `env_u64` makes, separated from the process environment that
-/// supplies it.
-///
-/// Split out so it can be tested. Environment variables are process-global and
-/// this binary runs its tests on threads of one process, so a test that set
-/// `JETSTREAM_SCENARIO_START` to something bad would be setting it for the
-/// search running alongside it. Taking the `Result` as an argument is how the
-/// rule gets checked without the test and the thing it tests sharing state.
-fn window_bound(name: &str, raw: Result<String, std::env::VarError>, fallback: u64) -> u64 {
-    use std::env::VarError;
-    match raw {
-        Err(VarError::NotPresent) => fallback,
-        // Matching `Err(_)` here would have folded this case in with absent,
-        // which is the exact defect the doc comment above is about: the
-        // variable *is* set, somebody did try to say something, and it did not
-        // arrive. Bytes that are not UTF-8 are a wrong value, not a missing
-        // one.
-        Err(VarError::NotUnicode(bytes)) => panic!(
-            "{name} is set to {bytes:?}, which is not valid UTF-8 and so cannot \
-             be a u64. Refusing to fall back to {fallback}: the variable is \
-             set, so somebody meant something by it."
-        ),
-        Ok(raw) => raw.trim().parse().unwrap_or_else(|_| {
-            panic!(
-                "{name} is set to `{raw}`, which is not a u64. Refusing to fall \
-                 back to {fallback}: a search that silently runs the wrong \
-                 window is worse than one that stops, because it keeps \
-                 reporting success."
-            )
-        }),
-    }
-}
 
 #[test]
 fn an_absent_window_bound_takes_the_default() {
@@ -116,29 +71,6 @@ fn a_window_bound_that_is_not_utf8_stops_the_search() {
     window_bound("X", Err(std::env::VarError::NotUnicode(bytes)), 256);
 }
 
-/// The end of the window, or a failure if there isn't one.
-///
-/// This was `start.saturating_add(seeds)`, which is the arithmetic version of
-/// the `Err(_)` above: it turns a request the program cannot honour into a
-/// quietly different request it can. At the `u64` boundary the clamp shortens
-/// the window — at `u64::MAX` it empties it — and a window under
-/// `FLOOR_WINDOW` skips the coverage floor entirely. So a job asking for 256
-/// seeds would run none of them, apply no floor, and report success.
-///
-/// The doc comment on `env_u64` already states the rule this broke: a search
-/// that silently runs the wrong window is worse than one that stops, because
-/// it keeps reporting success. Saturating is silently running the wrong
-/// window.
-fn window_end(start: u64, seeds: u64) -> u64 {
-    start.checked_add(seeds).unwrap_or_else(|| {
-        panic!(
-            "a window of {seeds} seeds starting at {start} runs past u64::MAX. \
-             Refusing to search a truncated one: the shortened window would \
-             fall under the coverage floor and be exempted from it, so the \
-             run would report success having searched almost nothing."
-        )
-    })
-}
 
 #[test]
 fn an_ordinary_window_has_an_end() {
@@ -322,37 +254,6 @@ fn scenarios_hold_their_invariants() {
     );
 }
 
-/// The shortest window the coverage floor is applied to.
-const FLOOR_WINDOW: u64 = 32;
-
-/// How many accepted writes a window of this size must beat, or `None` if it
-/// is too short for a rate to mean anything.
-///
-/// An empty window is neither, and the distinction is the whole reason this is
-/// a function. Zero seeds is not a short window that the floor politely
-/// declines to judge; it is no search at all, and the exemption was swallowing
-/// it — `JETSTREAM_SCENARIO_SEEDS=0` ran nothing, asserted nothing and
-/// reported success.
-///
-/// I had already fixed exactly this failure one commit earlier, in
-/// `window_end`, and looked straight at this case while doing it. The
-/// reasoning for leaving it was that the run announces itself in the log, so
-/// the emptiness is visible. That is the same argument the overflow case
-/// makes — it also prints `searching scenario seeds X..X` — and I rejected it
-/// there. A log line is not an exit status. Two standards for one failure
-/// mode, four lines apart.
-fn coverage_floor(window: u64) -> Option<u64> {
-    assert!(
-        window != 0,
-        "a window of zero seeds searches nothing. Refusing to report success \
-         on it: the short-window exemption below is for a window too small to \
-         have a rate, not for one with nothing in it."
-    );
-    if window < FLOOR_WINDOW {
-        return None;
-    }
-    Some(window / 16)
-}
 
 #[test]
 #[should_panic(expected = "searches nothing")]

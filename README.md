@@ -803,21 +803,48 @@ fence; everything else takes effect or does not. `NO` and `ERR` stay universal,
 because *when* a refusal is owed is the obligation's business, not the
 vocabulary's. **An unwarranted refusal is a separate question, and I got it wrong once.** A
 refusal moves no state and writes no log entry, and I concluded from that that
-no such refusal is judged anywhere — liveness, out of scope. That is wrong for
-a write. `may_mutate (refusals)` judges exactly this: a registry that refuses
+no such refusal is judged anywhere — liveness, out of scope. That is wrong.
+`may_mutate (refusals)` judges exactly this for writes: a registry that refuses
 its own current owner, which is what `oracles_catch_an_overfencing_coordinator`
-exists for. The real distinction is not safety against liveness but *logged*
-against *unlogged* — the oracle fires on `Event::Fenced`, so the same refusal
-spelled `NO` or `ERR` walks straight past it, and the aggregate write floor is
-no help against a defect that is selective rather than total. Measured: a
-registry refusing one permitted write in three that way passed 20 000 seeds,
-550 000 requests, with 3 947 writes accepted. The search now checks it against
-the log directly, by the oracle's own rule, and all three spellings fail on the
-same seed and the same step.
+exists for. The real distinction is not safety against liveness but **logged
+against unlogged** — that oracle fires on `Event::Fenced`, so the same refusal
+spelled `NO` or `ERR` walks straight past it, and the aggregate floors are no
+help against a defect that is selective rather than total.
 
-What is genuinely out of scope is the rest of it — a good `POLL` answered `NO`.
-Nothing in the model says a poll must be answered, so a registry that refused
-every one would satisfy every oracle here.
+Which generalises, and the general form is the useful part:
+
+> Any correct behaviour whose absence leaves the log unchanged is invisible to
+> an oracle that reads the log.
+
+So the same hole existed in every transition, not just the write. Measured, one
+legitimate request in three refused with an unlogged `NO`, before the check
+existed — each of these passed **20 000 seeds, over half a million requests**,
+with every floor satisfied:
+
+| refused transition | seeds survived | now fails in |
+| --- | --- | --- |
+| `WRITE` — the current owner's write | 20 000 | 0.07s |
+| `ACQUIRE` — the intended owner taking an issued grant | 20 000 | 0.07s |
+| `BEGIN` — the owner agreeing to hand over | 20 000 | 0.07s |
+| `RELEASE` — the outgoing owner acknowledging | 20 000 | 0.09s |
+| `FORCE` — a forced revoke naming a node that exists | 20 000 | 0.08s |
+
+`Standing` reconstructs the registry's state from the audit log and answers
+whether the model permits a request. It is the same reconstruction
+`may_mutate (refusals)` was already doing for one question, made whole and
+shared with it rather than copied. After the check, 200 000 seeds pass with
+counts *identical* to before it — so it rejects nothing legitimate.
+
+**Provenance, stated because it is weaker than most of this file.** No Verus
+theorem says any request is ever accepted; the proofs are all of the form "this
+cannot happen", and liveness is not what they are about. `may_mutate
+(refusals)` already crossed that line deliberately, for writes, and this
+extends the same argument to the other transitions. It inherits the same weaker
+provenance rather than pretending otherwise.
+
+What is genuinely out of scope is a good `POLL` answered `NO`. `tr_issue_grant`
+being *enabled* is not the model requiring it to fire, and `NONE` answers any
+poll, so a registry that refused every one would satisfy every oracle here.
 
 Writing that obligation down went wrong three times, the same way each time,
 and none of the three was caught by reading it. The two refusal reasons are independent, so

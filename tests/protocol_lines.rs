@@ -171,7 +171,7 @@ fn arbitrary_protocol_lines_hold_their_invariants() {
 // These pin the rule in both directions. Relaxing the obligation is only safe
 // while the strict cases stay strict, so they are tested together.
 
-use body::{holder, is_a_reply_to, owed_for, Event, Owed, Peer};
+use body::{is_a_reply_to, owed_for, Event, Owed, Peer, Standing};
 
 #[test]
 fn a_request_refusable_for_two_reasons_may_be_refused_either_way() {
@@ -281,35 +281,73 @@ fn a_refusal_has_to_be_in_the_words_that_request_uses() {
 
 #[test]
 fn a_refusal_that_logs_nothing_is_still_a_refusal() {
-    // `may_mutate (refusals)` already claims that a registry may not refuse
-    // its own current owner. It reads the log, so it fires on `Event::Fenced`
-    // and never on `NO` or `ERR`, which log nothing at all — and the write
-    // floor is aggregate, so a selective defect clears it. Measured: refusing
-    // one permitted write in three that way passed 20 000 seeds with 3 947
-    // writes accepted.
+    // The general form of the defect: **any correct behaviour whose absence
+    // leaves the log unchanged is invisible to an oracle that reads the log.**
+    // `may_mutate (refusals)` claims it for writes and fires on
+    // `Event::Fenced`; `NO` and `ERR` record nothing, and the floors are
+    // aggregate, so a selective defect clears them. Measured before the fix,
+    // one legitimate request in three refused unlogged: WRITE, ACQUIRE, BEGIN
+    // and RELEASE each passed 20 000 seeds.
     //
-    // `holder` is the rule that check runs on, shared with the oracle so the
-    // two cannot drift apart.
-    let held = [
-        Event::Granted { node: 0, epoch: 41 },
-        Event::Acquired { node: 0, epoch: 41 },
-    ];
-    assert_eq!(holder(&held), Some((0, 41)));
+    // `Standing` is the reconstruction all of that runs on, shared with the
+    // oracle so the two cannot drift apart. Each case below is a transition's
+    // guard, and each is checked in both directions — a rule that says "yes"
+    // to everything would be as useless here as the floors it replaced.
+    let granted = vec![Event::Granted { node: 0, epoch: 41 }];
+    let s = Standing::from_log(&granted);
+    assert!(s.must_accept("ACQUIRE 0 41"), "the grant was issued and is current");
+    assert!(!s.must_accept("ACQUIRE 1 41"), "node 1 was not the intended owner");
+    assert!(!s.must_accept("ACQUIRE 0 42"), "no grant was issued at 42");
+    assert!(!s.must_accept("WRITE 0 41"), "nobody holds the actor yet");
+    assert!(!s.must_accept("RELEASE 0 41"), "no transfer is in progress");
 
-    // A burn ends it, cooperative or forced — neither leaves a state where a
-    // write is permitted.
-    let mut burned = held.to_vec();
-    burned.push(Event::EpochBurned { from_epoch: 41, to_epoch: 42, next: 1, forced: true });
-    assert_eq!(holder(&burned), None);
+    let mut held = granted.clone();
+    held.push(Event::Acquired { node: 0, epoch: 41 });
+    let s = Standing::from_log(&held);
+    assert!(s.must_accept("WRITE 0 41"));
+    assert!(!s.must_accept("WRITE 0 42"), "not the epoch it holds");
+    assert!(!s.must_accept("WRITE 1 41"), "not the node that holds it");
+    assert!(s.must_accept("BEGIN 0 1"), "the owner may agree to hand over");
+    assert!(!s.must_accept("BEGIN 0 0"), "not to itself");
+    assert!(!s.must_accept("BEGIN 0 99"), "not to a node that does not exist");
+    assert!(!s.must_accept("BEGIN 1 0"), "node 1 is not the owner");
+    assert!(!s.must_accept("ACQUIRE 0 41"), "it is already held");
 
-    let mut released = held.to_vec();
-    released.push(Event::Released { node: 0, new_epoch: 42 });
-    assert_eq!(holder(&released), None);
-
-    // A write does not end it: the owner may write again at the same epoch.
-    let mut wrote = held.to_vec();
+    // A write does not end the hold: the owner may write again at the epoch.
+    let mut wrote = held.clone();
     wrote.push(Event::Wrote { node: 0, epoch: 41, seq: 1 });
-    assert_eq!(holder(&wrote), Some((0, 41)));
+    assert!(Standing::from_log(&wrote).must_accept("WRITE 0 41"));
+
+    // A cooperative burn puts it in `Transferring`, where only the outgoing
+    // owner's release at the new epoch is permitted.
+    let mut transferring = held.clone();
+    transferring.push(Event::EpochBurned {
+        from_epoch: 41, to_epoch: 42, next: 1, forced: false,
+    });
+    let s = Standing::from_log(&transferring);
+    assert!(s.must_accept("RELEASE 0 42"));
+    assert!(!s.must_accept("RELEASE 0 41"), "the transfer's epoch is 42");
+    assert!(!s.must_accept("RELEASE 1 42"), "node 1 is not handing over");
+    assert!(!s.must_accept("WRITE 0 41"), "the epoch was burned");
+
+    // And the release hands the actor to the node the transfer named.
+    let mut released = transferring.clone();
+    released.push(Event::Released { node: 0, new_epoch: 42 });
+    let s = Standing::from_log(&released);
+    assert!(!s.must_accept("ACQUIRE 1 42"), "no grant has been issued at 42");
+    assert!(!s.must_accept("WRITE 0 41"));
+
+    // A forced burn offers it to the named node from any state at all, which
+    // is why `FORCE` is total over the states.
+    for log in [&granted, &held, &transferring, &released] {
+        let s = Standing::from_log(log);
+        assert!(s.must_accept("FORCE 1"), "a forced revoke always takes effect");
+        assert!(!s.must_accept("FORCE 99"), "but not to a node that does not exist");
+    }
+
+    // `POLL` is deliberately absent: `NONE` answers any poll, and the model
+    // never requires `tr_issue_grant` to fire.
+    assert!(!Standing::from_log(&granted).must_accept("POLL 0"));
 }
 
 #[test]

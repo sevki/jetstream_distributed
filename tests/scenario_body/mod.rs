@@ -1381,14 +1381,14 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
     // `held` is `Some` only between an acquire and the next burn: a
     // cooperative burn moves the actor to `Transferring` and a forced one to
     // `Unowned`, and neither is a state where a write is permitted.
-    let mut held: Option<(u64, u64)> = None;
+    // The state reconstruction is `Standing`, shared with the search's check on
+    // the refusals this oracle cannot see. A second copy of a rule is a second
+    // place for it to be wrong.
+    let mut standing = Standing::from_log(&[]);
     for ev in log {
-        // The holder rule itself is `track_holder`, shared with the search's
-        // check on refusals this oracle cannot see. A second copy of a rule is
-        // a second place for it to be wrong.
         if let Event::Fenced { node, epoch } = ev {
             {
-                if held == Some((*node, *epoch)) {
+                if standing.holder() == Some((*node, *epoch)) {
                     return Err(format!(
                         "may_mutate (refusals): node {node} was fenced at epoch \
                          {epoch} while the registry still held the actor \
@@ -1397,43 +1397,158 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
                 }
             }
         }
-        track_holder(&mut held, ev);
+        standing.apply(ev);
     }
 
     Ok(())
 }
 
-/// Advance "who the log says holds the actor" by one event.
+/// What the audit log says the registry's state is.
 ///
-/// `held` is `Some` only between an acquire and the next burn: a cooperative
-/// burn moves the actor to `Transferring` and a forced one to `Unowned`, and
-/// neither is a state where a write is permitted.
-fn track_holder(held: &mut Option<(u64, u64)>, ev: &Event) {
-    match ev {
-        Event::Acquired { node, epoch } => *held = Some((*node, *epoch)),
-        Event::EpochBurned { .. } | Event::Released { .. } => *held = None,
-        Event::Wrote { .. } | Event::Granted { .. } | Event::Revoked { .. }
-        | Event::Fenced { .. } => {}
-    }
+/// The log is the only thing a reader of a finished run has, so every check
+/// that wants to know "should this request have succeeded?" has to reconstruct
+/// the state from it. `may_mutate (refusals)` already did that for one
+/// question — who holds the actor — and this is the same reconstruction made
+/// whole, so that the four other transitions can be asked the same thing.
+///
+/// This reconstructs what the *log says happened*, not what the registry's
+/// own field holds. A registry whose state and log disagree is a defect the
+/// other oracles catch, and this must not quietly paper over it, so the
+/// uncertain cases below decline to judge rather than guess.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Standing {
+    state: Owned,
+    issued: Vec<(u64, u64)>,
+    /// Set when an event could not be interpreted against the state the log
+    /// had reached. Nothing is claimed about a run in that condition.
+    confused: bool,
 }
 
-/// Who the log says holds the actor, and at which epoch.
-pub fn holder(log: &[Event]) -> Option<(u64, u64)> {
-    let mut held = None;
-    for ev in log {
-        track_holder(&mut held, ev);
-    }
-    held
-}
-
-/// The node and epoch a `WRITE` names, if this line is one.
-fn write_target(line: &str) -> Option<(u64, u64)> {
-    let mut parts = line.split_whitespace();
-    match (parts.next(), parts.next(), parts.next(), parts.next()) {
-        (Some("WRITE"), Some(node), Some(epoch), None) => {
-            Some((node.parse().ok()?, epoch.parse().ok()?))
+impl Standing {
+    /// Replay a log from the start state the proofs use.
+    pub fn from_log(log: &[Event]) -> Self {
+        let mut standing = Standing {
+            state: Owned::Unowned { epoch: INITIAL_EPOCH, intended: INITIAL_OWNER },
+            issued: Vec::new(),
+            confused: false,
+        };
+        for ev in log {
+            standing.apply(ev);
         }
-        _ => None,
+        standing
+    }
+
+    pub fn apply(&mut self, ev: &Event) {
+        match *ev {
+            // A grant records that the offer was made. It is answered only
+            // from `Unowned` with this node intended, so it moves nothing.
+            Event::Granted { node, epoch } => self.issued.push((node, epoch)),
+            Event::Acquired { node, epoch } => {
+                self.state = Owned::Owned { owner: node, epoch };
+            }
+            Event::EpochBurned { from_epoch, to_epoch, next, forced } => {
+                if forced {
+                    self.state = Owned::Unowned { epoch: to_epoch, intended: next };
+                } else {
+                    // A cooperative burn is `tr_begin_transfer`, which only
+                    // fires from `Owned` — the outgoing owner is whoever the
+                    // log said held it.
+                    match self.state {
+                        Owned::Owned { owner, .. } => {
+                            self.state = Owned::Transferring {
+                                from: owner,
+                                to: next,
+                                old_epoch: from_epoch,
+                                new_epoch: to_epoch,
+                            };
+                        }
+                        _ => self.confused = true,
+                    }
+                }
+            }
+            Event::Released { node, new_epoch } => match self.state {
+                Owned::Transferring { to, .. } => {
+                    let _ = node;
+                    self.state = Owned::Unowned { epoch: new_epoch, intended: to };
+                }
+                _ => self.confused = true,
+            },
+            Event::Revoked { .. } | Event::Wrote { .. } | Event::Fenced { .. } => {}
+        }
+    }
+
+    /// Who the log says holds the actor, and at which epoch.
+    pub fn holder(&self) -> Option<(u64, u64)> {
+        match self.state {
+            Owned::Owned { owner, epoch } => Some((owner, epoch)),
+            _ => None,
+        }
+    }
+
+    /// Must this request be accepted, in the state the log describes?
+    ///
+    /// **Provenance, stated because it is weaker than most of this file.**
+    /// No Verus theorem says any request is ever accepted — the proofs are all
+    /// of the form "this cannot happen", and liveness is not what they are
+    /// about. `may_mutate (refusals)` already crossed this line for writes,
+    /// deliberately, because a registry that refuses its own current owner
+    /// satisfies seven of the eight oracles while doing nothing a client can
+    /// use. This extends that same argument to the other transitions, and
+    /// inherits the same weaker provenance rather than pretending otherwise.
+    ///
+    /// Each arm is a model transition's guard, read from the log:
+    /// `tr_acquire`, `can_mutate`, `tr_begin_transfer`, `tr_complete_release`,
+    /// and the three `FORCE` transitions, which are total over the states.
+    ///
+    /// **`POLL` is deliberately absent.** `tr_issue_grant` being *enabled* is
+    /// not the model requiring it to fire, and `NONE` is a legitimate answer
+    /// to any poll. So a poll answered `NO` stays invisible here, as recorded
+    /// on `is_a_reply_to`.
+    pub fn must_accept(&self, line: &str) -> bool {
+        if self.confused {
+            return false;
+        }
+        let mut parts = line.split_whitespace();
+        let verb = parts.next().unwrap_or("");
+        let a = parts.next().and_then(|f| f.parse::<u64>().ok());
+        let b = parts.next().and_then(|f| f.parse::<u64>().ok());
+        if parts.next().is_some() {
+            // Arity is `owed_for`'s business, and a line with a surplus field
+            // is owed a refusal rather than an acceptance.
+            return false;
+        }
+        match (verb, a, b) {
+            // `can_mutate`: the fence accepts exactly the current owner at the
+            // current epoch.
+            ("WRITE", Some(node), Some(epoch)) => self.holder() == Some((node, epoch)),
+            // `tr_acquire`: from `Unowned`, by the intended owner, at exactly
+            // that epoch, and the grant has to have been issued.
+            ("ACQUIRE", Some(node), Some(epoch)) => {
+                self.issued.contains(&(node, epoch))
+                    && matches!(
+                        self.state,
+                        Owned::Unowned { epoch: e, intended } if intended == node && e == epoch
+                    )
+            }
+            // `tr_begin_transfer`: the owner agrees to hand over, to a node
+            // that exists and is not itself.
+            ("BEGIN", Some(from), Some(to)) => {
+                to < NODES
+                    && from != to
+                    && matches!(self.state, Owned::Owned { owner, .. } if owner == from)
+            }
+            // `tr_complete_release`: the outgoing owner acknowledges, naming
+            // the transfer's current `new_epoch`.
+            ("RELEASE", Some(node), Some(epoch)) => matches!(
+                self.state,
+                Owned::Transferring { from, new_epoch, .. }
+                    if from == node && new_epoch == epoch
+            ),
+            // The three forced transitions are total: from any state, a
+            // `FORCE` naming a node that exists takes one of them.
+            ("FORCE", Some(next), None) => next < NODES,
+            _ => false,
+        }
     }
 }
 
@@ -2025,9 +2140,9 @@ pub fn run_protocol(run: &ProtocolRun) -> Result<Served, String> {
     let mut offered = Offered::default();
     for (i, w) in run.words.iter().enumerate() {
         let step = Step::from_words(w[0], w[1], w[2], offered);
-        // Who the log says holds the actor *before* this step, for the
-        // refusal check below.
-        let held = holder(coord.log());
+        // What the log says the registry's state is *before* this step, for
+        // the refusal check below.
+        let standing = Standing::from_log(coord.log());
         let reply = coord.handle(&step.line, step.peer);
         offered = note_reply(offered, &step.line, &reply);
         match step.shape {
@@ -2070,36 +2185,38 @@ pub fn run_protocol(run: &ProtocolRun) -> Result<Served, String> {
                 _ => {}
             }
         }
-        // A permitted write refused without saying so.
+        // A permitted request refused without saying so.
         //
-        // `may_mutate (refusals)` already claims this property — it is what
-        // `oracles_catch_an_overfencing_coordinator` exists for, a registry
-        // that refuses its own current owner — but it reads the log, and it
-        // fires only on `Event::Fenced`. `NO` and `ERR` log nothing, so the
-        // oracle never sees them, and the aggregate write floor is no help
-        // against a defect that is selective rather than total. That is not a
-        // hypothetical gap: a registry refusing one permitted write in three
-        // this way passed 20 000 seeds — 550 000 requests — with the write
-        // floor comfortably satisfied.
+        // The general form of a defect @codex found in the write path, and
+        // the general form is the point: **any correct behaviour whose
+        // absence leaves the log unchanged is invisible to an oracle that
+        // reads the log.** `may_mutate (refusals)` claims this property for
+        // writes, which is what `oracles_catch_an_overfencing_coordinator`
+        // exists for — but it fires on `Event::Fenced`, and a refusal spelled
+        // `NO` or `ERR` records nothing for it to read. The aggregate write
+        // floor is no help either, against a defect that is selective rather
+        // than total.
         //
-        // The condition is the oracle's own, read from the same log by the
-        // same rule: `may_mutate` is a biconditional where the handler is
-        // concerned, so a write naming the node and epoch the log says holds
-        // the actor has to be accepted. `owed_for` gates it, because a write
-        // that is malformed or arrives on the wrong connection is owed a
-        // refusal and this must not contradict that.
-        if matches!(reply.as_str(), "NO" | "ERR") && !owed.owes_anything() {
-            if let Some(target) = write_target(&step.line) {
-                if held == Some(target) {
-                    return Err(format!(
-                        "step {i}: `{}` from {:?} was refused `{reply}`, which \
-                         logs nothing, while the log says node {} still held \
-                         the actor at epoch {} — a refusal the model has no \
-                         state for, and one no oracle can see",
-                        step.line, step.peer, target.0, target.1
-                    ));
-                }
-            }
+        // Measured on all five transitions, each refusing one legitimate
+        // request in three, unlogged, before this check existed: `WRITE`,
+        // `ACQUIRE`, `BEGIN` and `RELEASE` every one passed 20 000 seeds —
+        // over half a million requests apiece — with every floor satisfied.
+        //
+        // `owed_for` gates it, because a request that is malformed or arrives
+        // on the wrong connection is owed a refusal and this must not
+        // contradict that. `Standing::must_accept` is the guard of the model
+        // transition the request would take, read from the log.
+        if matches!(reply.as_str(), "NO" | "ERR")
+            && !owed.owes_anything()
+            && standing.must_accept(&step.line)
+        {
+            return Err(format!(
+                "step {i}: `{}` from {:?} was refused `{reply}`, which logs \
+                 nothing, while the log says the model permits it — a refusal \
+                 the model has no state for, and one no log-reading oracle \
+                 can see",
+                step.line, step.peer
+            ));
         }
         if matches!(reply.as_str(), "NO" | "ERR" | "FENCED" | "NONE") {
             served.refused += 1;

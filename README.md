@@ -803,8 +803,14 @@ named stories instead. That count is reported and deliberately not asserted
 on: a floor on a rate that low would be a flaky test rather than an
 informative one.
 
+CI walks 100 000 of these seeds — 2.7 million requests in about eleven seconds,
+against fifty for the 256 simulated scenarios beside it. The window is fixed so
+a red result means the change did it; `JETSTREAM_PROTOCOL_START` moves it. The
+default stays at 1 024 so a contributor's `cargo test` is instant.
+
 `fuzz/` is the coverage-guided front end to the same generator, registry and
-oracles, run for a minute on every pull request. It needs nightly, so it is
+oracles, run for a minute on every pull request, and is the arm that explores
+somewhere new on every run. It needs nightly, so it is
 its own workspace and its own job; the pinned stable toolchain the proofs are
 built with is never in question for it.
 

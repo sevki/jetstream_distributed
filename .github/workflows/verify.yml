@@ -267,10 +267,24 @@ jobs:
       # runs. Six of those guards had to be written by hand, one test each,
       # after a reviewer pointed at each in turn.
       #
-      # It costs about a tenth of a second for four times the seeds, because
-      # nothing here is simulated — the registry is driven directly.
+      # The window is fixed here for the same reason the scenario window is:
+      # a red result has to mean the change did it, not that the runner drew
+      # different seeds. `JETSTREAM_PROTOCOL_START` moves it for anyone
+      # searching further, and the fuzz job below is the arm that explores
+      # somewhere new on every run.
+      #
+      # It is set two orders of magnitude above the default because nothing
+      # here is simulated — the registry is driven directly, so this is ~11
+      # seconds for 100 000 seeds and 2.7 million requests, against ~50 for
+      # the 256 simulated ones above. The default stays at 1 024 so that a
+      # contributor's `cargo test` is instant; the depth belongs where the
+      # wall clock is already being spent. Leaving it at the default here was
+      # the whole argument for this search — that it is nearly free — being
+      # made and then not taken.
       - name: Protocol-line search
         run: cargo test --test protocol_lines -- --nocapture
+        env:
+          JETSTREAM_PROTOCOL_SEEDS: 100000
 
   # The coverage-guided half of the protocol search.
   #

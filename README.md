@@ -757,6 +757,46 @@ That is what a node knows, not what the registry knows: giving the generator
 the actual state would make it emit only requests that succeed, which is the
 action alphabet again.
 
+**The floors are on what the generator produced, not on what came back.**
+The first version of this walk floored *refusals*, on the reasoning that a
+refusal is evidence of malformed input. It is not. `NONE`, `NO` and `FENCED`
+are ordinary answers to well-formed, authenticated requests — a poll when the
+actor is held, an acquire that was never offered, a write at a burned epoch.
+Deleting every malformed generation mode and leaving only `well_formed` left
+this walk green with a *higher* refusal count than before, over more served
+requests. The check written specifically to stop a check from saying nothing
+was itself saying nothing. Each mode is now counted where it is built, and
+deleting any one of them takes its count to zero and fails. The limit of that
+is worth stating: the counters measure the *label* a step was generated under,
+so they catch a mode being removed and would not catch one hollowed out while
+keeping its label.
+
+**The oracles cannot see a request, only a log.** They audit what the registry
+*did*, and a request that should have been refused and was executed instead
+leaves a perfectly legal log — it is a thing the registry is allowed to do, done
+for the wrong reason. So each step also carries an obligation, decided from the
+line and the connection alone: an unknown verb, the wrong field count, a field
+that is not a `u64`, or a `FORCE` off the control path must be refused *in every
+state*. Only unconditional refusals belong there; whether `ACQUIRE 0 41` should
+succeed depends on the registry's state and is the oracles' business.
+
+That obligation is the only thing in this walk that catches the parser defect
+`filter_map` was. It needed one generation mode to reach it. Every other
+corruption here changes the field *count*, which even the lenient parser
+rejected by accident; the shape that parser turned back into a valid request is
+a **surplus** non-number, inserted rather than substituted — `POLL junk 0`
+arriving as `POLL 0`, right arity, executed. Measured both ways: with that mode
+deleted and the parser regressed, 20 000 seeds stay green; with it present, the
+walk fails on seed 0.
+
+Writing the obligation down also got the *order* wrong the first time, and the
+search said so. `FORCE 41.0` from a node is both unparseable and unauthorised.
+Deciding the fields first recorded it as owing `ERR` exactly, which reports a
+registry that refuses strangers before parsing their input as defective for
+answering `NO` — and refusing on authority first is the better order, not a
+fault. An obligation that cannot say so is an obligation fitted to one
+implementation, which is the one thing it must not be.
+
 **Still thin.** Completed handovers are reached 5 times in 1 024 runs, so
 claim 4 is barely exercised here — it is covered by the scenario walk and the
 named stories instead. That count is reported and deliberately not asserted
@@ -776,7 +816,9 @@ the actor at epoch 41, being cut off, the coordinator handing the actor to B at
 no opinion about, and replays every seed in `tests/seeds/scenarios.txt` first so
 a fixed bug stays fixed. Both drive the same runner and the same oracles.
 `Scenario::from_bytes` is the entry point a coverage-guided fuzzer would use to
-drive that same runner; no fuzz target is wired up yet.
+drive that same runner; the fuzz target that exists drives the protocol-line
+generator instead, for the reason given above — the action alphabet cannot
+express the inputs most of these guards are about.
 
 **What this is evidence of.** A divergence is one of two things: an
 implementation that does not follow the protocol, or a protocol whose proof

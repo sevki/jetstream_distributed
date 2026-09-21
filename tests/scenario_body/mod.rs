@@ -1444,6 +1444,50 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
 pub struct Step {
     pub peer: Peer,
     pub line: String,
+    /// How the line was built.
+    ///
+    /// Recorded because counting *refusals* does not establish that malformed
+    /// input is being generated at all, and the first version of this search
+    /// believed otherwise. `NONE`, `NO` and `FENCED` are ordinary answers to
+    /// well-formed, authenticated requests — a poll when the actor is held, an
+    /// acquire that was never offered, a write at a burned epoch. Deleting
+    /// every malformed generation mode left the refusal count *higher* and the
+    /// search green.
+    ///
+    /// So the floors are on how the step was made, not on what came back. A
+    /// mode that stops being generated takes its counter to zero and fails.
+    ///
+    /// The limit of that is worth stating rather than leaving to be
+    /// discovered: this is the *label*, so the floors catch a mode being
+    /// removed and would not catch one hollowed out while the label stayed.
+    pub shape: Shape,
+    /// Whether the connection disagrees with the line about who is sending.
+    ///
+    /// Recorded for the same reason as `shape`, and separately from it,
+    /// because the spoof is orthogonal to the syntax: a perfectly well-formed
+    /// `WRITE 1 42` arriving on node 2's connection is the case the registry's
+    /// believe-the-connection rule exists for. Deriving this from the
+    /// registry's *obligations* instead would not hold: `BEGIN 1 99` is owed a
+    /// refusal for naming a node that does not exist, on any connection at
+    /// all, so a count of owed refusals stays comfortably positive with the
+    /// spoof generation deleted outright.
+    pub spoofed: bool,
+}
+
+/// How a generated line was built.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shape {
+    /// A syntactically valid request. Whether it is *permitted* is another
+    /// question — the peer may be wrong and the fields may be nonsense.
+    WellFormed,
+    /// A valid request then broken: a field dropped, added, replaced with a
+    /// non-number, the verb lowercased, the separators mangled, or the line
+    /// truncated mid-token.
+    Corrupted,
+    /// Bytes with no structure at all.
+    Junk,
+    /// Nothing, which is what a short read looks like.
+    Empty,
 }
 
 /// A run of arbitrary protocol lines against one registry.
@@ -1540,14 +1584,162 @@ impl Step {
     /// because the node the registry just answered is the node that would
     /// plausibly act next — which is a fact about the protocol, not a script.
     fn from_words(a: u64, b: u64, c: u64, offered: Offered) -> Self {
-        let line = match b % 16 {
-            0..=8 => well_formed(b / 16, c, offered),
-            9..=13 => corrupt(&well_formed(b / 16, c, offered), c / 13),
-            14 => junk(c),
-            _ => String::new(),
+        let (line, shape) = match b % 16 {
+            0..=8 => (well_formed(b / 16, c, offered), Shape::WellFormed),
+            9..=13 => (corrupt(&well_formed(b / 16, c, offered), c / 13), Shape::Corrupted),
+            14 => (junk(c), Shape::Junk),
+            _ => (String::new(), Shape::Empty),
         };
-        Step { peer: peer_for(&line, a), line }
+        let peer = peer_for(&line, a);
+        let spoofed = misdirected(&line, peer);
+        Step { peer, line, shape, spoofed }
     }
+}
+
+/// Did this line arrive somewhere a correct node would not have sent it?
+///
+/// True only when the line names a sender that exists and the connection is
+/// somebody else, or when it is a `FORCE` off the control path. A line whose
+/// node field is missing or out of range is not counted: nothing correct
+/// sends it on any connection, so calling it misdirected would let the
+/// mangled shapes stand in for a spoof this search had stopped generating.
+fn misdirected(line: &str, peer: Peer) -> bool {
+    let mut parts = line.split_whitespace();
+    match (parts.next(), parts.next().and_then(|f| f.parse::<u64>().ok())) {
+        (Some("FORCE"), _) => peer != Peer::Control,
+        (Some(_), Some(node)) if node < NODES => peer != Peer::Node(node),
+        _ => false,
+    }
+}
+
+/// What the registry owes a request, decided from the request and the
+/// connection alone.
+///
+/// Two *independent* reasons, not a sequence. Which one the registry reports
+/// when both apply is not a property worth pinning: the first version of this
+/// pinned it and was immediately wrong about `FORCE 0 7` from an unknown
+/// host, which `Coord::handle` refuses as unauthorised before it ever counts
+/// the fields — and refusing unauthorised input before parsing it further is
+/// the better order, not a defect. An obligation that encodes the handler's
+/// sequence is an obligation fitted to the implementation, which is exactly
+/// what this must not be.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Owed {
+    /// An unknown verb, the wrong number of fields, or a field that is not a
+    /// `u64`. Owed `ERR`.
+    pub malformed: bool,
+    /// Not something this peer may ask for, or naming a node that does not
+    /// exist. Owed `NO`.
+    pub not_permitted: bool,
+}
+
+impl Owed {
+    fn owes_anything(self) -> bool {
+        self.malformed || self.not_permitted
+    }
+
+    /// The exact reply owed, when only one reason applies. `None` when both
+    /// do and any refusal will serve.
+    fn exact(self) -> Option<&'static str> {
+        match (self.malformed, self.not_permitted) {
+            (true, false) => Some("ERR"),
+            (false, true) => Some("NO"),
+            _ => None,
+        }
+    }
+}
+
+/// The refusals the registry owes in *every* state.
+///
+/// This exists because the oracles cannot see the defect it catches. They
+/// audit the audit log, and the log records what the registry *did*, never
+/// what it was asked. So a request that should have been refused and was
+/// accepted instead leaves a perfectly legal log: restore the old
+/// `filter_map` parser and `POLL junk 0` executes as `POLL 0`, answering
+/// `GRANT 41` and writing `Granted { node: 0, epoch: 41 }` — which satisfies
+/// every invariant in `check_invariants`, because it *is* a thing the
+/// registry is allowed to do. It was merely allowed to do it for the wrong
+/// reason.
+///
+/// Measured rather than argued: with the parser regressed that way, this
+/// search passed 20 000 seeds — over half a million requests — while the
+/// single hand-written `the_registry_refuses_a_line_with_an_unparseable_field`
+/// caught it immediately. A search strictly weaker than the test it was
+/// written to generalise is not much of a search.
+///
+/// Only *unconditional* refusals belong here. Whether `ACQUIRE 0 41` should
+/// succeed depends on the registry's state and is the oracles' business; that
+/// `POLL junk 0` must be refused depends on nothing at all.
+pub fn owed_for(line: &str, peer: Peer) -> Owed {
+    let mut owed = Owed::default();
+    let mut parts = line.split_whitespace();
+    let verb = parts.next().unwrap_or("");
+    let args: Option<Vec<u64>> = parts.map(|p| p.parse::<u64>().ok()).collect();
+
+    // `FORCE` is the registry's own verb and no node may send it, which is
+    // knowable from the verb and the connection without reading a field. So
+    // it is decided before the fields are.
+    //
+    // The order matters, and getting it wrong was caught by the search rather
+    // than by reading: `FORCE 41.0` from a node is both unparseable and
+    // unauthorised, and deciding the fields first recorded it as owing `ERR`
+    // *exactly* — which would report a registry that refuses strangers before
+    // parsing their input as defective for answering `NO`. Refusing on
+    // authority first is the better order, not a fault, and an obligation
+    // that cannot say so is an obligation fitted to one implementation.
+    if verb == "FORCE" && peer != Peer::Control {
+        owed.not_permitted = true;
+    }
+
+    // Every field after the verb is a `u64`, or the line is malformed. This
+    // is the rule the strict parse replaced `filter_map` to enforce, stated
+    // independently of it.
+    let Some(args) = args else {
+        // Nothing further is knowable about a line whose fields do not parse
+        // — not even which node it claims to be from.
+        owed.malformed = true;
+        return owed;
+    };
+
+    let arity = match verb {
+        "POLL" | "FORCE" => Some(1),
+        "ACQUIRE" | "WRITE" | "BEGIN" | "RELEASE" => Some(2),
+        _ => None,
+    };
+    match arity {
+        None => {
+            // An unknown verb, which includes the empty line and the wrong
+            // case. Nothing further is knowable: the protocol has no opinion
+            // about who may send a request it does not have.
+            owed.malformed = true;
+            return owed;
+        }
+        Some(n) if args.len() != n => owed.malformed = true,
+        Some(_) => {}
+    }
+
+    // `FORCE`'s authority was settled above. What is left is its argument:
+    // the successor has to be a node that exists, on any connection.
+    if verb == "FORCE" {
+        if args.first().is_some_and(|next| *next >= NODES) {
+            owed.not_permitted = true;
+        }
+        return owed;
+    }
+
+    // Every other verb names its sender, and the registry believes the
+    // connection rather than the field. Only checkable when the field is
+    // there to be believed or disbelieved.
+    if let Some(&claimed) = args.first() {
+        if peer != Peer::Node(claimed) {
+            owed.not_permitted = true;
+        }
+    }
+    // `BEGIN`'s successor has to exist too.
+    if verb == "BEGIN" && args.get(1).is_some_and(|to| *to >= NODES) {
+        owed.not_permitted = true;
+    }
+    owed
 }
 
 /// Who the line arrives from.
@@ -1627,7 +1819,7 @@ fn well_formed(choice: u64, fields: u64, offered: Offered) -> String {
 /// Break a valid line in one of the ways a real one breaks.
 fn corrupt(line: &str, how: u64) -> String {
     let mut parts: Vec<String> = line.split(' ').map(str::to_string).collect();
-    match how % 7 {
+    match how % 8 {
         // A field short. `filter_map` used to turn this into a shorter valid
         // request rather than an error, which is the defect the strict parse
         // replaced.
@@ -1644,12 +1836,9 @@ fn corrupt(line: &str, how: u64) -> String {
         // the first version of the parser dropped what it could not read and
         // so cared very much which field it was.
         2 => {
-            if !parts.is_empty() {
-                let at = 1 + (how / 7) as usize % parts.len().max(1);
-                if at < parts.len() {
-                    parts[at] =
-                        NON_NUMBERS[(how / 7) as usize % NON_NUMBERS.len()].to_string();
-                }
+            if parts.len() > 1 {
+                let at = 1 + (how / 8) as usize % (parts.len() - 1);
+                parts[at] = NON_NUMBERS[(how / 8) as usize % NON_NUMBERS.len()].to_string();
             }
             parts.join(" ")
         }
@@ -1661,9 +1850,25 @@ fn corrupt(line: &str, how: u64) -> String {
         4 => format!("   {line}  "),
         // Tabs and doubled spaces instead of single ones.
         5 => parts.join("\t\t"),
+        // A *surplus* non-number, inserted rather than substituted, leaving
+        // every real field in place.
+        //
+        // This is the one shape the old `filter_map` parser turned back into a
+        // valid request. It dropped the field it could not read, so `POLL junk
+        // 0` arrived as `POLL 0`, with the right arity, and executed. Every
+        // other corruption above changes the field *count*, which that parser
+        // rejected by accident — so without this mode the strict parse could
+        // be reverted and this search would not object. It was not objecting:
+        // measured over 20 000 seeds with the parser regressed, the run was
+        // green.
+        6 => {
+            let at = 1 + (how / 8) as usize % parts.len();
+            parts.insert(at, NON_NUMBERS[(how / 8) as usize % NON_NUMBERS.len()].to_string());
+            parts.join(" ")
+        }
         // Truncated mid-token, which is what a short read looks like.
         _ => {
-            let keep = line.len().saturating_sub(1 + (how / 7) as usize % 4);
+            let keep = line.len().saturating_sub(1 + (how / 8) as usize % 4);
             line.chars().take(keep).collect()
         }
     }
@@ -1734,6 +1939,21 @@ pub struct Served {
     /// downstream of holding the actor. A write is the deepest state a run can
     /// reach, so it is the one worth a floor.
     pub writes: usize,
+    /// Steps generated as each shape, and steps whose connection did not
+    /// match what the line claimed.
+    ///
+    /// Floors go on these rather than on refusals, because a refusal does not
+    /// mean the request was malformed. See `Step::shape` and `Step::spoofed`.
+    pub corrupted: usize,
+    pub junk: usize,
+    pub empty: usize,
+    pub spoofed: usize,
+    /// Requests the registry was obliged to refuse in any state, and did.
+    ///
+    /// Reported so a reader can see the obligation check is doing work rather
+    /// than being vacuously satisfied by a search that never generates an
+    /// unconditionally-refusable request.
+    pub owed_refusals: usize,
     /// Handovers the registry completed.
     ///
     /// Reported and deliberately **not** asserted on. Measured over the
@@ -1762,12 +1982,45 @@ pub fn run_protocol(run: &ProtocolRun) -> Result<Served, String> {
         let step = Step::from_words(w[0], w[1], w[2], offered);
         let reply = coord.handle(&step.line, step.peer);
         offered = note_reply(offered, &step.line, &reply);
+        match step.shape {
+            Shape::WellFormed => {}
+            Shape::Corrupted => served.corrupted += 1,
+            Shape::Junk => served.junk += 1,
+            Shape::Empty => served.empty += 1,
+        }
+        if step.spoofed {
+            served.spoofed += 1;
+        }
         if !is_a_reply(&reply) {
             return Err(format!(
                 "step {i}: `{}` from {:?} was answered `{reply}`, which is not \
                  one of the protocol's replies",
                 step.line, step.peer
             ));
+        }
+        // The obligation check. This is the half the oracles cannot do: they
+        // read the log, and the log does not record what was asked.
+        let owed = owed_for(&step.line, step.peer);
+        if owed.owes_anything() {
+            served.owed_refusals += 1;
+            match owed.exact() {
+                Some(wanted) if reply != wanted => {
+                    return Err(format!(
+                        "step {i}: `{}` from {:?} must be refused `{wanted}` in \
+                         every state, and was answered `{reply}`",
+                        step.line, step.peer
+                    ));
+                }
+                None if !matches!(reply.as_str(), "NO" | "ERR") => {
+                    return Err(format!(
+                        "step {i}: `{}` from {:?} is both malformed and not \
+                         permitted, so it must be refused in every state, and \
+                         was answered `{reply}`",
+                        step.line, step.peer
+                    ));
+                }
+                _ => {}
+            }
         }
         if matches!(reply.as_str(), "NO" | "ERR" | "FENCED" | "NONE") {
             served.refused += 1;

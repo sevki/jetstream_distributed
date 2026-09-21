@@ -20,9 +20,7 @@
 #[path = "scenario_body/mod.rs"]
 mod body;
 
-use body::{
-    coverage_floor, env_u64, run_protocol, ProtocolRun, Served, FLOOR_WINDOW,
-};
+use body::{coverage_floor, env_u64, run_protocol, ProtocolRun, Served, FLOOR_WINDOW};
 
 /// The seeds that have failed before, from `tests/seeds/protocol.txt`.
 fn committed_seeds() -> Vec<u64> {
@@ -68,12 +66,22 @@ fn arbitrary_protocol_lines_hold_their_invariants() {
         totals.refused += served.refused;
         totals.writes += served.writes;
         totals.transfers += served.transfers;
+        totals.corrupted += served.corrupted;
+        totals.junk += served.junk;
+        totals.empty += served.empty;
+        totals.spoofed += served.spoofed;
+        totals.owed_refusals += served.owed_refusals;
     }
 
     println!(
         "searched protocol seeds {start}..{end}: {} requests served, {} refused, \
          {} writes accepted, {} handovers completed",
         totals.accepted, totals.refused, totals.writes, totals.transfers
+    );
+    println!(
+        "  of which generated: {} corrupted, {} junk, {} empty, {} misdirected; \
+         {} requests were owed a refusal in every state",
+        totals.corrupted, totals.junk, totals.empty, totals.spoofed, totals.owed_refusals
     );
 
     // The vacuity check, and this search needs one more than the other does.
@@ -97,15 +105,43 @@ fn arbitrary_protocol_lines_hold_their_invariants() {
         totals.accepted
     );
 
-    // And the other half of the same claim. A generator that only ever
-    // produced *valid* requests would be the action alphabet again, and would
-    // reach none of the guards this search exists for. Refusals are the
-    // evidence that malformed input is being generated at all.
+    // And the other half of the same claim: that malformed input is being
+    // generated at all.
+    //
+    // This used to be a floor on *refusals*, and that floor was worth nothing.
+    // `NONE`, `NO` and `FENCED` are ordinary answers to well-formed,
+    // authenticated requests — a poll when the actor is held, an acquire that
+    // was never offered, a write at a burned epoch — so a search that had
+    // stopped generating malformed input entirely would still be refused
+    // constantly. Measured, not argued: deleting every malformed generation
+    // mode and leaving only `well_formed` left this walk green with a *higher*
+    // refusal count than before. The check written specifically to stop a
+    // check from saying nothing was itself saying nothing.
+    //
+    // So the floors are on what the generator produced. Each mode is counted
+    // where it is built, and deleting any one of them takes its count to zero.
+    for (mode, count) in [
+        ("corrupted", totals.corrupted),
+        ("junk", totals.junk),
+        ("empty", totals.empty),
+        ("misdirected", totals.spoofed),
+    ] {
+        assert!(
+            count as u64 > floor,
+            "the search must keep generating {mode} lines; saw {count} of them \
+             over seeds {start}..{end}, wanted more than {floor}"
+        );
+    }
+
+    // And that the obligation check has something to check. It is the only
+    // oracle here that reads the *request* rather than the log, so a search
+    // that never produced an unconditionally-refusable line would satisfy it
+    // vacuously — which is the shape of failure this whole block is about.
     assert!(
-        totals.refused as u64 > floor,
-        "the generated lines must actually be malformed sometimes; saw \
-         {} refused over seeds {start}..{end}, wanted more than {floor}",
-        totals.refused
+        totals.owed_refusals as u64 > floor,
+        "the search must produce requests the registry owes a refusal in every \
+         state; saw {} over seeds {start}..{end}, wanted more than {floor}",
+        totals.owed_refusals
     );
 
     // Depth, which the two counts above do not measure. Polls alone would

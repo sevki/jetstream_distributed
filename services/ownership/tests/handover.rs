@@ -30,7 +30,7 @@ use jetstream::prelude::*;
 // OwnershipChannel`, not through inherent methods.
 use jetstream_distributed_ownership::{
     ownership_protocol::{OwnershipChannel, OwnershipService},
-    Event, Offer, Ownership, Registry,
+    Event, MemoryFloor, Offer, Ownership, Registry,
 };
 use jetstream_rpc::session::{Session, SingleLaneSession};
 use turmoil::net::{TcpListener, TcpStream};
@@ -71,9 +71,18 @@ fn a_handover_fences_the_outgoing_owner() {
     // shared back out so the audit log can be read once the run is over.
     let shared: Arc<OnceLock<Registry>> = Arc::new(OnceLock::new());
 
+    // Seeded at 40 so the registry's first epoch is 41 and the story below is
+    // the one the model's scenario tells. The number is the *floor's*, not the
+    // registry's: `Registry::new` reads it rather than being handed a starting
+    // epoch, which is what stops a restart rewinding the actor. See
+    // `tests/durability.rs`.
+    let floor = MemoryFloor::at(40);
+
     let built = shared.clone();
+    let seeded = floor.clone();
     sim.host("registry", move || {
         let built = built.clone();
+        let seeded = seeded.clone();
         async move {
             // Who is which node, by address. See the crate docs: an address is
             // not a credential, but in a simulated network nothing can spoof
@@ -85,7 +94,8 @@ fn a_handover_fences_the_outgoing_owner() {
                         (turmoil::lookup("a"), 0u64),
                         (turmoil::lookup("b"), 1u64),
                     ]);
-                    Registry::new(roster, 0, 41)
+                    Registry::new(roster, 0, Arc::new(seeded.clone()))
+                        .expect("the floor is readable and node 0 is on the roster")
                 })
                 .clone();
             let listener =

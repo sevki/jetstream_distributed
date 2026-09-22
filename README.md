@@ -674,6 +674,33 @@ can spoof one; on a real network it is worth very little. Replacing it with TLS
 identity is the first thing to do, and what does not change when it is replaced
 is the shape: identity arrives with the connection, never in an argument.
 
+**Neither durable nor replicated — and one of those is now fixed.** The
+registry's state lives in an `Arc<Mutex<..>>`, which supplies the *atomic* half
+of the model's strongest assumption and none of the *durable* half. That gap is
+not a tidiness problem: every fencing theorem assumes epochs only go up, and a
+registry that comes back not knowing where it was can offer an epoch it already
+burned. A partitioned owner still holding that epoch is then unfenced — not
+because the fence failed, but because it was asked about a world that had been
+rewound.
+
+So the starting epoch is no longer a number from the caller. It is read from an
+`EpochFloor`: a durable, monotone high-water mark of every epoch the registry
+has ever used. `Registry::new` starts strictly above it and writes that down
+before serving, and each later burn is recorded *before* the state depending on
+it is visible, so a registry that dies mid-decision skips an epoch — the safe
+direction, since epochs must not repeat but need not be consecutive.
+`services/ownership/tests/durability.rs` runs the same handover against a floor
+that remembers and against one that forgot, and asserts in the second case that
+the already-fenced owner writes again at the burned epoch while the node holding
+the *later* epoch is the one refused.
+
+What is still missing is replication. Two registries sharing one floor would
+both read it and both believe they had allocated the next epoch: durability and
+atomicity want to come from the same place, which is why the row above says a
+real deployment keeps the ownership record in a store with compare-and-swap.
+This is the same class of caveat as the address-identity one, and it breaks the
+same guarantee.
+
 **What is verified about it, precisely.** One thing: the fence. `write` builds a
 `FenceGuard` from the registry's own current state and asks `accepts`, which is
 proved to return exactly `may_mutate` for the generation the guard records.
@@ -683,10 +710,10 @@ as it was before.
 
 **Status.** The service is pinned to the Jetstream working tree rather than to a
 release — `16.3.1` is not on crates.io, which the dependency resolution caught.
-Its dependency graph resolves and both files parse, but the environment it was
-written in cannot reach crates.io's tarballs, so **CI is the first place it is
-compiled**. That is the same footing the fuzz target was on when it was added,
-and it is stated here rather than discovered.
+Its dependency graph resolves, but the environment it was written in cannot
+reach crates.io's tarballs, so **CI is the first place it is compiled**. That is
+the same footing the fuzz target was on when it was added, and it is stated here
+rather than discovered.
 
 ## Verifying locally
 

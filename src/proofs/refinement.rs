@@ -484,6 +484,155 @@ pub proof fn theorem_poll_step_offers_nothing_only_when_nothing_is_owed(
 }
 
 // ---------------------------------------------------------------------------
+// Are any of these vacuous?
+// ---------------------------------------------------------------------------
+//
+// Every theorem above is an implication under hypotheses, and an implication
+// whose hypotheses cannot all hold at once is true and says nothing. That is
+// the failure mode a reader cannot see and the verifier will not report: a
+// refinement suite can be green and empty.
+//
+// So the hypotheses are exhibited rather than argued about. The scenario below
+// builds one concrete system and walks a handover through the step functions,
+// invoking each theorem at the point its hypotheses hold and asserting what
+// came out. If any of those hypotheses were unsatisfiable the scenario would
+// stop verifying, which is the check the theorems cannot perform on themselves.
+
+/// A whole handover, through the verified steps, on a system written out in
+/// full.
+///
+/// `A` is offered actor 0 at epoch 41 and takes it; `A` agrees to hand it to
+/// `B`, which allocates 42 and fences `A` from that moment; `A` acknowledges
+/// and the actor is offered to `B` at 42. Each arrow is a theorem from this
+/// module applied to the state the previous one produced, so the run is one
+/// execution rather than three unrelated claims.
+pub proof fn scenario_a_handover_through_the_verified_steps() {
+    let actor: ActorId = 0;
+    let a: NodeId = 1;
+    let b: NodeId = 2;
+
+    let sys0 = System {
+        actors: Map::empty().insert(
+            actor,
+            OwnershipState::Unowned { epoch: 41, intended_owner: a },
+        ),
+        nodes: Set::empty().insert(a).insert(b),
+        live: Set::empty().insert(a).insert(b),
+        issued: Set::empty(),
+        network: Set::empty().insert(Message::Grant { actor: actor, to: a, epoch: 41 }),
+    };
+
+    assert(sys0.actors.contains_key(actor));
+    assert(sys0.actors[actor] == (OwnershipState::Unowned { epoch: 41, intended_owner: a }));
+    assert(sys0.live.contains(a));
+    assert(sys0.nodes.contains(b));
+    assert(sys0.network.contains(Message::Grant { actor: actor, to: a, epoch: 41 }));
+
+    // A poll would offer exactly this grant, at exactly this epoch.
+    let record = ExecState::Unowned { epoch: 41, intended: 1 };
+    assert(record.view() == sys0.actors[actor]);
+    assert(poll_answer(record, 1) == ExecOffer::Grant(41));
+    theorem_poll_step_refines_tr_issue_grant(sys0, actor, record, 1, 41);
+
+    // `A` takes it.
+    assert(acquire_fires(sys0.actors[actor], a, 41, true));
+    theorem_acquire_step_refines_tr_acquire(sys0, actor, a, 41, true);
+    let sys1 = acquire_post(sys0, actor, a);
+    assert(tr_acquire(sys0, sys1, actor, a));
+    assert(sys1.actors[actor] == (OwnershipState::Owned { owner: a, epoch: 41 }));
+
+    // Nobody else may write, and `A` may — the fence, on the system's record.
+    assert(may_mutate(sys1.actors[actor], a, 41));
+    assert(!may_mutate(sys1.actors[actor], b, 41));
+
+    // `A` agrees to hand the actor to `B`, which allocates 42.
+    assert(sys1.live.contains(a));
+    assert(sys1.nodes.contains(b));
+    assert(begin_transfer_fires(sys1.actors[actor], a, b, true));
+    theorem_begin_transfer_step_refines_tr_begin_transfer(sys1, actor, a, b);
+    let sys2 = begin_transfer_post(sys1, actor, a, b);
+    assert(tr_begin_transfer(sys1, sys2, actor, a, b));
+    assert(sys2.actors[actor] == (OwnershipState::Transferring {
+        from: a,
+        to: b,
+        old_epoch: 41,
+        new_epoch: 42,
+    }));
+
+    // And `A` is fenced from this moment, not from the acknowledgement.
+    assert(!may_mutate(sys2.actors[actor], a, 41));
+    assert(current_epoch(sys2.actors[actor]) == 42);
+
+    // `A` acknowledges. Two model transitions, one call.
+    assert(sys2.network.contains(Message::Revoke {
+        actor: actor,
+        target: a,
+        old_epoch: 41,
+        new_epoch: 42,
+    }));
+    theorem_release_step_refines_handle_revoke_then_complete_release(sys2, actor, a, b, 41, 42);
+    let mid = released_post(sys2, actor, a, 42);
+    let sys3 = release_post(sys2, actor, a, b, 42);
+    assert(tr_handle_revoke(sys2, mid, actor, a, 41, 42));
+    assert(tr_complete_release(mid, sys3, actor));
+    assert(sys3.actors[actor] == (OwnershipState::Unowned { epoch: 42, intended_owner: b }));
+
+    // The actor is now offered to `B` at 42, and to nobody at 41.
+    let after = ExecState::Unowned { epoch: 42, intended: 2 };
+    assert(after.view() == sys3.actors[actor]);
+    assert(poll_answer(after, 2) == ExecOffer::Grant(42));
+    assert(poll_answer(after, 1) == ExecOffer::Nothing);
+    theorem_poll_step_offers_nothing_only_when_nothing_is_owed(sys3, actor, after, 1);
+}
+
+/// The refusal theorems are not vacuous either.
+///
+/// Their hypotheses are the *negation* of a guard, so a run in which the guard
+/// holds says nothing about them. This is a system in which each one applies:
+/// no grant has been published, so an acquire is refused and provably not
+/// something the model could have done; and node `B`, which does not own the
+/// actor, cannot begin a transfer of it.
+pub proof fn scenario_the_refusals_are_refusals_of_something_real() {
+    let actor: ActorId = 0;
+    let a: NodeId = 1;
+    let b: NodeId = 2;
+
+    // The actor is held for `A` at 41 and no grant has been sent.
+    let ungranted = System {
+        actors: Map::empty().insert(
+            actor,
+            OwnershipState::Unowned { epoch: 41, intended_owner: a },
+        ),
+        nodes: Set::empty().insert(a).insert(b),
+        live: Set::empty().insert(a).insert(b),
+        issued: Set::empty(),
+        network: Set::empty(),
+    };
+    assert(!ungranted.network.contains(Message::Grant { actor: actor, to: a, epoch: 41 }));
+    assert(current_epoch(ungranted.actors[actor]) == 41);
+    assert(!acquire_fires(ungranted.actors[actor], a, 41, false));
+
+    // For *every* post state, not merely for one the server had in mind.
+    assert forall|post: System| !tr_acquire(ungranted, post, actor, a) by {
+        theorem_acquire_step_refuses_exactly_when_disabled(ungranted, post, actor, a, 41, false);
+    }
+
+    // And a node that does not own the actor cannot hand it on.
+    let held = System {
+        actors: Map::empty().insert(actor, OwnershipState::Owned { owner: a, epoch: 41 }),
+        nodes: Set::empty().insert(a).insert(b),
+        live: Set::empty().insert(a).insert(b),
+        issued: Set::empty(),
+        network: Set::empty(),
+    };
+    assert(held.nodes.contains(a));
+    assert(!begin_transfer_fires(held.actors[actor], b, a, true));
+    assert forall|post: System| !tr_begin_transfer(held, post, actor, b, a) by {
+        theorem_begin_transfer_step_refuses_exactly_when_disabled(held, post, actor, b, a, true);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The fence
 // ---------------------------------------------------------------------------
 

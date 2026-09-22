@@ -57,7 +57,7 @@
 //! owns the actor at 41, a handover moves it to 42, and A is partitioned away
 //! still believing it owns at 41. Restart a registry that begins wherever its
 //! caller says, and it offers 41 again — to A or to anyone. A's stale write now
-//! passes [`FenceGuard::accepts`], because 41 is current once more. Nothing was
+//! passes the fence, because 41 is current once more. Nothing was
 //! violated; the fence was simply asked about a world that had been rewound.
 //!
 //! So the starting epoch is no longer a number from the caller. It is read from
@@ -83,7 +83,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use distributed_ownership::exec::FenceGuard;
+use distributed_ownership::steps::{
+    acquire_step, begin_transfer_step, force_step, may_write_step, poll_step, release_step,
+    ExecOffer, ExecState, ForceOutcome, Outcome, Refusal,
+};
 use jetstream::prelude::*;
 // Not in the prelude's re-export list, and `jetstream_rpc` is not a direct
 // dependency of this crate — so it comes through the `pub extern crate` the
@@ -354,17 +357,40 @@ pub enum Event {
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
+//
+// There is no state type here. The actor's record is
+// `distributed_ownership::steps::ExecState`, and every decision made about it
+// is one of the step functions beside it — each with a postcondition stated in
+// terms of the model's `tr_*` transition and a theorem in
+// `proofs::refinement` discharging it.
+//
+// This used to be a local three-case enum with the transitions written out by
+// hand next to the model, which is how the service could be described as
+// "verified" while exactly one of its decisions was. What is still *not*
+// verified is named rather than left to be found: the lock, the identity
+// lookup, the durable floor and the audit log.
 
-/// The actor's ownership state: the model's three-case enum, at `u64`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Owned {
-    Unowned { epoch: u64, intended: u64 },
-    Transferring { from: u64, to: u64, new_epoch: u64 },
-    Owned { owner: u64, epoch: u64 },
+/// Turn a step's refusal into the line protocol's alphabet.
+///
+/// `NoSuchNode` is `ERR` rather than `NO` in both places it can arise. The two
+/// differed before — `begin_transfer` answered `ERR` and `force` answered `NO`
+/// to the identical condition — and `ERR` is the one the codes' own definitions
+/// pick: the request names something that does not exist, which is not a
+/// statement about the actor's state at all.
+fn refuse(why: Refusal) -> Error {
+    match why {
+        Refusal::NoGrant => refuse_no("no grant was issued"),
+        Refusal::NotOffered => refuse_no("not offered at that epoch"),
+        Refusal::NotOwner => refuse_no("not the owner"),
+        Refusal::SameNode => refuse_no("cannot hand over to yourself"),
+        Refusal::NoSuchNode => refuse_err("no such node"),
+        Refusal::NoTransfer => refuse_no("no transfer of yours at that epoch"),
+        Refusal::Exhausted => exhausted(),
+    }
 }
 
 struct Inner {
-    state: Owned,
+    state: ExecState,
     /// Grants actually issued. `tr_acquire`'s second conjunct: a grant has to
     /// have been *issued*, not merely be due.
     ///
@@ -435,7 +461,7 @@ impl Registry {
         floor.record(epoch)?;
         Ok(Registry {
             inner: Arc::new(Mutex::new(Inner {
-                state: Owned::Unowned { epoch, intended: first_owner },
+                state: ExecState::Unowned { epoch, intended: first_owner },
                 issued: HashSet::new(),
                 writes: 0,
                 log: Vec::new(),
@@ -519,23 +545,19 @@ impl Registry {
     /// node the transfer came from. Reporting the outcome costs the caller one
     /// comparison and costs the protocol nothing.
     pub fn force(&self, next: u64) -> Result<u64> {
-        if !self.is_node(next) {
-            return Err(refuse_no("no such node"));
-        }
         let mut g = self.inner.lock().expect("registry lock");
-        let (from_epoch, offered_to) = match g.state {
-            Owned::Owned { epoch, .. } => (epoch, next),
-            Owned::Unowned { epoch, .. } => (epoch, next),
-            // `tr_abort_transfer`: burn *another* epoch, so a grant for
-            // `new_epoch` still in flight is stale on arrival, and offer the
-            // actor back to the node it was being taken from.
-            Owned::Transferring { from, new_epoch, .. } => (new_epoch, from),
+        let from_epoch = g.state.current();
+        // Which of the three transitions this is, and where it sends the actor,
+        // is `force_step`'s to decide — see `proofs::refinement`, where it is
+        // `tr_revoke_owner` from `Owned`, `tr_reassign_unowned` from `Unowned`
+        // and `tr_abort_transfer` from `Transferring`.
+        let (moved, offered_to) = match force_step(g.state, next, self.is_node(next)) {
+            ForceOutcome::Moved(moved, offered_to) => (moved, offered_to),
+            ForceOutcome::Refused(why) => return Err(refuse(why)),
         };
-        let Some(to_epoch) = from_epoch.checked_add(1) else {
-            return Err(exhausted());
-        };
+        let to_epoch = moved.current();
         self.persist(to_epoch)?;
-        g.state = Owned::Unowned { epoch: to_epoch, intended: offered_to };
+        g.state = moved;
         g.log.push(Event::EpochBurned {
             from_epoch,
             to_epoch,
@@ -552,29 +574,31 @@ impl Ownership for Registry {
             return Err(refuse_no("unknown caller"));
         };
         let mut g = self.inner.lock().expect("registry lock");
-        match g.state {
+        match poll_step(g.state, node) {
             // `tr_issue_grant`. The offer is recorded as issued here, which is
             // what `acquire` later requires to have happened.
-            Owned::Unowned { epoch, intended } if intended == node => {
+            ExecOffer::Grant(epoch) => {
                 g.issued.insert((node, epoch));
                 // Logged on every poll, including a repeat of an offer already
-                // standing. That is noise, and it is deliberate: `agrees_with_log`
-                // — the oracle that checks a reply and the audit log describe the
-                // same event — pairs a `GRANT` reply with exactly one `Granted`
-                // entry, so a deduplicated log would make the service's second
-                // answer unwitnessed and the oracle unportable. No oracle counts
-                // grants; `Standing::issued` and P8's tracker both ask only
-                // whether a grant was issued. The set above is where the
-                // duplicate actually mattered.
+                // standing. That is noise, and it is deliberate:
+                // `agrees_with_log` — the oracle that checks a reply and the
+                // audit log describe the same event — pairs a `GRANT` reply
+                // with exactly one `Granted` entry, so a deduplicated log would
+                // make the service's second answer unwitnessed and the oracle
+                // unportable. No oracle counts grants; `Standing::issued` and
+                // P8's tracker both ask only whether a grant was issued. The
+                // set above is where the duplicate actually mattered.
                 g.log.push(Event::Granted { node, epoch });
                 Ok(Offer::Grant(epoch))
             }
-            // `tr_handle_revoke`: the outgoing owner is told to stop.
-            Owned::Transferring { from, new_epoch, .. } if from == node => {
+            // The outgoing owner is told to stop, with the message
+            // `begin_transfer` already recorded — which is what enables the
+            // node's own `tr_handle_revoke`.
+            ExecOffer::Revoke(new_epoch) => {
                 g.log.push(Event::Revoked { node, new_epoch });
                 Ok(Offer::Revoke(new_epoch))
             }
-            _ => Ok(Offer::Nothing),
+            ExecOffer::Nothing => Ok(Offer::Nothing),
         }
     }
 
@@ -583,19 +607,19 @@ impl Ownership for Registry {
             return Err(refuse_no("unknown caller"));
         };
         let mut g = self.inner.lock().expect("registry lock");
-        // The grant has to have been issued, not merely be due. This is
-        // `tr_acquire`'s second conjunct, and it is easy to lose: a node agent
-        // that always polls before acquiring never exercises it.
-        if !g.issued.contains(&(node, epoch)) {
-            return Err(refuse_no("no grant was issued"));
-        }
-        match g.state {
-            Owned::Unowned { epoch: e, intended } if intended == node && e == epoch => {
-                g.state = Owned::Owned { owner: node, epoch: e };
-                g.log.push(Event::Acquired { node, epoch: e });
+        // `tr_acquire`'s second conjunct, supplied to the step: the grant has to
+        // have been *issued*, not merely be due. It is easy to lose — a node
+        // agent that always polls before acquiring never exercises it — which is
+        // why it is an argument the step demands rather than a check the caller
+        // may forget.
+        let granted = g.issued.contains(&(node, epoch));
+        match acquire_step(g.state, node, epoch, granted) {
+            Outcome::Moved(next) => {
+                g.state = next;
+                g.log.push(Event::Acquired { node, epoch });
                 Ok(())
             }
-            _ => Err(refuse_no("not offered at that epoch")),
+            Outcome::Refused(why) => Err(refuse(why)),
         }
     }
 
@@ -607,19 +631,17 @@ impl Ownership for Registry {
 
         // The fence, at the point where the effect lands.
         //
-        // This is the one check in the service with a machine-checked
-        // justification: `FenceGuard::accepts` is proved to return exactly
-        // `may_mutate` for the generation the guard records. Building the guard
-        // from the registry's *own* current state — not from anything the
-        // caller sent — is what makes that the authoritative check rather than
-        // the node-local staleness test the guard performs for a node. See the
-        // module docs of `distributed_ownership::exec` for why the distinction
-        // matters: a node cannot fence itself.
-        let permitted = match g.state {
-            Owned::Owned { owner, epoch: e } => FenceGuard::new(owner, e).accepts(node, epoch),
-            _ => false,
-        };
-        if !permitted {
+        // `may_write_step` is proved to return exactly the model's `may_mutate`
+        // for the record it is handed — all three cases of it, including the
+        // two in which the answer is `false`. Asking it about the registry's
+        // *own* current record, rather than about anything the caller sent, is
+        // what makes this the authoritative check: see
+        // `proofs::refinement::theorem_may_write_step_is_the_system_fence`,
+        // which is `can_mutate` — authority as the system sees it — rather than
+        // the node-local staleness test a `FenceGuard` performs for a node.
+        // The distinction is the whole of `distributed_ownership::exec`'s module
+        // docs: a node cannot fence itself, but the registry can fence it.
+        if !may_write_step(g.state, node, epoch) {
             g.log.push(Event::Fenced { node, epoch });
             return Err(refuse_fenced("not the owner at that epoch"));
         }
@@ -633,40 +655,32 @@ impl Ownership for Registry {
         let Some(from) = self.caller(&ctx) else {
             return Err(refuse_no("unknown caller"));
         };
-        // `pre.nodes.contains(to)`. The model requires the successor to exist,
-        // and a precondition enforced only by well-behaved callers is not a
-        // precondition the registry has.
-        if !self.is_node(to) {
-            return Err(refuse_err("no such node"));
-        }
-        if to == from {
-            return Err(refuse_no("cannot hand over to yourself"));
-        }
         let mut g = self.inner.lock().expect("registry lock");
-        match g.state {
-            Owned::Owned { owner, epoch } if owner == from => {
-                let Some(new_epoch) = epoch.checked_add(1) else {
-                    return Err(exhausted());
-                };
-                // Durable before visible. A registry that dies here comes back
-                // at `new_epoch + 1` with the handover never having happened,
-                // which loses a handover and no safety; a registry that burned
-                // the epoch without writing it down comes back at `epoch` with
-                // the outgoing owner unfenced.
-                self.persist(new_epoch)?;
-                // The epoch is burned immediately, which fences the outgoing
-                // owner from here on rather than at some later acknowledgement.
-                g.state = Owned::Transferring { from: owner, to, new_epoch };
-                g.log.push(Event::EpochBurned {
-                    from_epoch: epoch,
-                    to_epoch: new_epoch,
-                    next: to,
-                    forced: false,
-                });
-                Ok(())
-            }
-            _ => Err(refuse_no("not the owner")),
-        }
+        let from_epoch = g.state.current();
+        // `pre.nodes.contains(to)` is the roster's answer, handed to the step.
+        // The model requires the successor to exist, and a precondition
+        // enforced only by well-behaved callers is not a precondition at all.
+        let moved = match begin_transfer_step(g.state, from, to, self.is_node(to)) {
+            Outcome::Moved(moved) => moved,
+            Outcome::Refused(why) => return Err(refuse(why)),
+        };
+        // The epoch is burned immediately, which fences the outgoing owner from
+        // here on rather than at some later acknowledgement.
+        let new_epoch = moved.current();
+        // Durable before visible. A registry that dies here comes back at
+        // `new_epoch + 1` with the handover never having happened, which loses a
+        // handover and no safety; a registry that burned the epoch without
+        // writing it down comes back at `from_epoch` with the outgoing owner
+        // unfenced.
+        self.persist(new_epoch)?;
+        g.state = moved;
+        g.log.push(Event::EpochBurned {
+            from_epoch,
+            to_epoch: new_epoch,
+            next: to,
+            forced: false,
+        });
+        Ok(())
     }
 
     async fn release(&self, ctx: Context, epoch: u64) -> Result<()> {
@@ -674,13 +688,13 @@ impl Ownership for Registry {
             return Err(refuse_no("unknown caller"));
         };
         let mut g = self.inner.lock().expect("registry lock");
-        match g.state {
-            Owned::Transferring { from, to, new_epoch } if from == node && new_epoch == epoch => {
-                g.state = Owned::Unowned { epoch: new_epoch, intended: to };
-                g.log.push(Event::Released { node, new_epoch });
+        match release_step(g.state, node, epoch) {
+            Outcome::Moved(next) => {
+                g.state = next;
+                g.log.push(Event::Released { node, new_epoch: epoch });
                 Ok(())
             }
-            _ => Err(refuse_no("no transfer of yours at that epoch")),
+            Outcome::Refused(why) => Err(refuse(why)),
         }
     }
 }

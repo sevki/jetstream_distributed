@@ -211,6 +211,14 @@ verifying, the build fails.
 | 6b | Stale physical tokens confer no authority | `proofs::tokens::theorem_stale_token_has_no_authority` | none |
 | 6c | No token is ever minted for a future epoch | `proofs::tokens::theorem_no_future_tokens` | reachability |
 | E | The runtime `u64` check returns exactly the model's verdict **for the generation the guard records**, and rejects any epoch superseded *within that record* | `exec::FenceGuard::accepts`, `exec::FenceGuard::rejects_stale` | the guard is the node's own belief, immutable after `FenceGuard::new`. **This is node-local staleness rejection, not fencing**: a partitioned `A` still holding `FenceGuard::new(A, 41)` accepts `(A, 41)` while the system is at `Owned { B, 42 }`. A node cannot fence itself — see below |
+| E1 | **Acquire refines `tr_acquire`** — when the step fires the model fires, to exactly the record the step computed; when it refuses a request naming the actor's current epoch, *no* post state satisfies `tr_acquire`; and however the model acquires, the record it lands on is the one the step computes | `proofs::refinement::theorem_acquire_step_refines_tr_acquire`, `..._refuses_exactly_when_disabled`, `..._outcome_is_the_step` | the couplings (see the module docs of `proofs::refinement`); the refusal direction additionally assumes the request named the current epoch, which is the one place the executable step is narrower than the model |
+| E2 | **Begin-transfer refines `tr_begin_transfer`**, in the same three parts. Refusal is exactly disablement *or* epoch exhaustion, and the refusal says which | `proofs::refinement::theorem_begin_transfer_step_refines_tr_begin_transfer`, `..._refuses_exactly_when_disabled`, `..._outcome_is_the_step` | the couplings; `u64` exhaustion is the implementation's, not the model's |
+| E3 | **Release refines `tr_handle_revoke` followed by `tr_complete_release`** — two model transitions, one method, with the middle state exhibited rather than assumed to exist. A refused release is provably not the handover the model would complete | `proofs::refinement::theorem_release_step_refines_handle_revoke_then_complete_release`, `theorem_refused_release_is_not_the_models_release` | the couplings, and that the `Revoke` being acknowledged is on the network — which `tr_begin_transfer` put there |
+| E4 | **Forced revocation refines all three of its transitions**: `tr_revoke_owner` from `Owned`, `tr_reassign_unowned` from `Unowned`, `tr_abort_transfer` from `Transferring` — and in the last case the actor provably goes back to the node the transfer came from, whatever successor the coordinator named | `proofs::refinement::theorem_force_step_refines_tr_revoke_owner`, `..._tr_reassign_unowned`, `..._tr_abort_transfer` | the roster answers `pre.nodes.contains(next)` |
+| E5 | **A poll is `tr_issue_grant` or the delivery of a `Revoke`**, and the epoch it offers is the actor's current one — so a poll can never hand out a generation the registry has already left. `Nothing` is returned only to a node that is owed nothing | `proofs::refinement::theorem_poll_step_refines_tr_issue_grant`, `..._tr_handle_revoke`, `theorem_poll_step_offers_nothing_only_when_nothing_is_owed` | the couplings |
+| E6 | **The registry's fence is the *system's* fence** — `may_write_step` on the registry's own record is `can_mutate`, not a node's belief about it. Same postcondition as E, different thing, bought entirely by where it is called | `steps::may_write_step`, `proofs::refinement::theorem_may_write_step_is_the_system_fence` | the record the step is handed is the actor's |
+| E7 | **The refinement theorems are not vacuous.** Each is an implication under hypotheses, and hypotheses that cannot all hold make a theorem true and empty — a refinement suite can be green and say nothing. So one concrete system is written out in full and a whole handover walked through it, each theorem applied to the state the previous one produced, with what came out asserted | `proofs::refinement::scenario_a_handover_through_the_verified_steps` | none: the system is exhibited |
+| E7a | The same for the *refusal* theorems, whose hypotheses are the negation of a guard and so are untouched by a run in which the guard holds. In a system where no grant was published, **no** post state satisfies `tr_acquire` — quantified over all of them, not over one the server had in mind | `proofs::refinement::scenario_the_refusals_are_refusals_of_something_real` | none |
 | P1 | **Issued tokens never disappear** — no crash, partition or recovery retracts a capability, which is why stale tokens must be fenced rather than revoked | `proofs::properties::theorem_issued_monotone` | none |
 | P2 | **Sent messages never disappear** — the fact that makes duplication, reordering and unbounded delay free in the model | `proofs::properties::theorem_network_monotone` | none |
 | P3 | **The actor population is constant** — no transition creates or destroys an actor | `proofs::properties::theorem_actor_domain_constant` | none |
@@ -593,7 +601,8 @@ distributed-ownership/
 │   ├── transfer.rs     the multi-step handover and its lemmas
 │   ├── raymond.rs      Raymond routing layer + the coupling predicate
 │   ├── composed.rs     both layers as one machine; coupling enforced by guards
-│   ├── exec.rs         the only executable code: the u64 fence check
+│   ├── steps.rs        the transitions as executable u64 functions
+│   ├── exec.rs         the u64 fence check a node runs on its own belief
 │   └── proofs/
 │       ├── mod.rs
 │       ├── invariant.rs    init ==> inv, inv /\ next ==> inv, reachable ==> inv
@@ -606,12 +615,15 @@ distributed-ownership/
 │       ├── raymond.rs      claim 7
 │       ├── composed.rs     the coupling as a composed-machine invariant
 │       ├── composed_scenario.rs  an end-to-end handover across both layers
-│       └── raymond_routing.rs  the D → B → A → C routing execution
+│       ├── raymond_routing.rs  the D → B → A → C routing execution
+│       └── refinement.rs   steps.rs agrees with the model's tr_* transitions
 ├── tests/
 │   ├── scenario_body/mod.rs    the executable protocol + the runtime oracles
 │   ├── turmoil_ownership.rs    named stories, each with an expected ending
 │   ├── turmoil_scenarios.rs    the blind seed search + the regression replay
 │   └── seeds/scenarios.txt     seeds that once broke something
+├── services/
+│   └── ownership/              the protocol as a Jetstream service
 └── .github/workflows/verify.yml
 ```
 
@@ -620,24 +632,134 @@ verifies a *crate*, so every proof file has to be a module of that crate. Keepin
 them under `src/proofs/` is the ordinary Rust way to express that; a top-level
 `proofs/` would need `#[path = "../proofs/..."]` attributes for no benefit.
 
-Executable code *in the crate* is confined to `src/exec.rs`, which holds the
-`u64`-valued fence check a node actually runs, proved to return exactly the
-model's verdict. The one other piece of executable code in the repository lives
-under `tests/`, where it is simulation rather than library — see
-[Network resiliency](#network-resiliency-the-model-run-for-real).
-It offers **queries only**: a `FenceGuard` has private fields, a single
+Executable code *in the crate* is confined to two modules. `src/steps.rs` holds
+the protocol's transitions as small `u64`-valued functions — one per request a
+server answers — each with a postcondition stated in terms of the model and a
+theorem in `src/proofs/refinement.rs` discharging it. `src/exec.rs` holds the
+fence check a node runs against its own belief, which is a different thing from
+the fence a registry runs and says so at length. Other executable code in the
+repository lives under `tests/` and `services/`, where it is simulation and
+service rather than library — see
+[Network resiliency](#network-resiliency-the-model-run-for-real)
+and [The protocol as a Jetstream service](#the-protocol-as-a-jetstream-service).
+`exec` offers **queries only**: a `FenceGuard` has private fields, a single
 constructor and no setter, so its ghost view is fixed at construction. Were it
 mutable — by a `bump` method or by assigning to a public field — its view could
 drift from `Owned(A, e)` to `Owned(B, e + 1)`, exactly the atomic ownership
 assignment this model refuses to admit. Observing a new generation means
 constructing a new guard. Making a
-guard follow the protocol needs the refinement relation listed under future work.
+guard follow the protocol needs a refinement of the *node* side; the registry
+side is `src/steps.rs`.
 Everything else in the crate is specification or proof.
 
 Specification and proof code are kept apart from the model: `src/model.rs`
 defines only the state space and the transition relation and does not import the
 specification layer, so a specification cannot be quietly weakened to fit the
 model.
+
+## The protocol as a Jetstream service
+
+Everything above is a model and a simulation of it. `services/ownership/` is the
+protocol served over [Jetstream](https://github.com/sevki/jetstream) RPC — a
+`#[service] trait Ownership` with `poll`, `acquire`, `write`, `begin_transfer`
+and `release`, implemented by a `Registry` that performs the fence with
+`exec::FenceGuard`.
+
+**The service form removes a class of defect rather than guarding against it.**
+The line protocol in `tests/` carries the sender as a field — `WRITE 0 41`
+*claims* to be node 0 — so the registry has to be told to believe the connection
+rather than the claim, and every request is a place to get that wrong. Four
+rounds of review on that suite were spent hardening exactly that rule. Here no
+method takes a node number at all. Who is calling is the `Context`, which
+Jetstream fills in from the transport: *"The context is the transport's, not the
+frame's"* (`jetstream_rpc::server`). A caller cannot forge it, so "the line lied
+about who sent it" is not defended against — it is unrepresentable.
+
+`force` is absent from the trait for the same reason. It is the coordinator's
+own transition, and the line protocol needed a dedicated control connection to
+stop a node sending it; a node-facing service simply does not offer it.
+
+**The assumption, stated rather than assumed.** `Context::peer()` is the
+authenticated identity and is `None` over plain TCP — jetstream's own comment
+says a plain stream authenticates nothing. The authenticated forms are a TLS
+certificate or an iroh `NodeId`, and `NodeId`'s value is private with no
+accessor outside `jetstream_rpc`, so neither is usable yet. The service
+therefore identifies a caller by address, against a roster fixed at
+construction. **An address is not a credential.** In a simulated network nothing
+can spoof one; on a real network it is worth very little. Replacing it with TLS
+identity is the first thing to do, and what does not change when it is replaced
+is the shape: identity arrives with the connection, never in an argument.
+
+**Neither durable nor replicated — and one of those is now fixed.** The
+registry's state lives in an `Arc<Mutex<..>>`, which supplies the *atomic* half
+of the model's strongest assumption and none of the *durable* half. That gap is
+not a tidiness problem: every fencing theorem assumes epochs only go up, and a
+registry that comes back not knowing where it was can offer an epoch it already
+burned. A partitioned owner still holding that epoch is then unfenced — not
+because the fence failed, but because it was asked about a world that had been
+rewound.
+
+So the starting epoch is no longer a number from the caller. It is read from an
+`EpochFloor`: a durable, monotone high-water mark of every epoch the registry
+has ever used. `Registry::new` starts strictly above it and writes that down
+before serving, and each later burn is recorded *before* the state depending on
+it is visible, so a registry that dies mid-decision skips an epoch — the safe
+direction, since epochs must not repeat but need not be consecutive.
+`services/ownership/tests/durability.rs` runs the same handover against a floor
+that remembers and against one that forgot, and asserts in the second case that
+the already-fenced owner writes again at the burned epoch while the node holding
+the *later* epoch is the one refused.
+
+What is still missing is replication. Two registries sharing one floor would
+both read it and both believe they had allocated the next epoch: durability and
+atomicity want to come from the same place, which is why the row above says a
+real deployment keeps the ownership record in a store with compare-and-swap.
+This is the same class of caveat as the address-identity one, and it breaks the
+same guarantee.
+
+**What is verified about it, precisely.** Every decision the service makes about
+the actor, and nothing else. `poll`, `acquire`, `write`, `begin_transfer`,
+`release` and `force` each look the actor's record up, hand it to a function in
+`distributed_ownership::steps`, and store what comes back; those functions are
+executable `u64` code with postconditions stated in terms of the model, and
+`proofs::refinement` is where the postconditions are tied to `tr_acquire`,
+`tr_begin_transfer`, `tr_handle_revoke`, `tr_complete_release`,
+`tr_revoke_owner`, `tr_reassign_unowned`, `tr_abort_transfer` and
+`tr_issue_grant` — rows E1 to E6 above.
+
+Two things are worth being exact about. First, the refinement is stated in both
+directions where the notion makes sense: a step function that refused everything
+would satisfy "whenever it fires, the model steps" perfectly, so the theorems
+also say that a refusal means the model's step is *not enabled*. Second, what is
+left outside is named rather than left to be discovered: **the lock, the identity
+lookup, the durable epoch floor and the audit log are not verified.** They are
+the server's business, and a step function that also resolved identity would
+have quietly folded an unverified lookup inside a verified transition.
+
+The couplings that connect one actor's `u64` record to a whole `System` are
+hypotheses of the theorems rather than silent assumptions — the registry's
+issued-grant set stands for `network.contains(Grant { .. })`, its roster for
+`nodes.contains(..)`, an open connection for `live.contains(..)` — and the
+module docs of `proofs::refinement` tabulate which part of the service
+discharges each one.
+
+The grant coupling is the one a server can *break*, and one did. `granted` is
+an **input** to the verified acquire step, so the registry's set has to hold
+every grant the model's network would — and **four** transitions publish one,
+not just the poll: `tr_complete_release`, `tr_revoke_owner`,
+`tr_reassign_unowned` and `tr_abort_transfer` each offer the actor on as part of
+moving it. A registry that recorded only the poll's grant was applying the
+refusal theorem under a hypothesis that did not hold, which is worth nothing at
+all. The visible symptom was much smaller than the real one: a node that took
+the actor without polling first was refused, although the model had already
+published its grant.
+
+**Status.** The service is pinned to the Jetstream working tree rather than to a
+release — `16.3.1` is not on crates.io, which the dependency resolution caught.
+Its dependency graph resolves, but the environment it was written in cannot
+reach crates.io's tarballs, so **CI is the first place it is compiled**. That is
+the same footing the fuzz target was on when it was added, and it is stated here
+rather than discovered.
 
 ## Verifying locally
 
@@ -918,9 +1040,11 @@ express the inputs most of these guards are about.
 implementation that does not follow the protocol, or a protocol whose proof
 rests on something the network does not give you. Both are findings. What it is
 *not* is a check on the proofs — those are static, and no simulation can
-contradict them. It is also not a substitute for the refinement listed under
-future work: the coordinator here is hand-written to match the model, and
-nothing machine-checks that it does.
+contradict them. It is also not a substitute for a refinement: the coordinator
+*in `tests/`* is hand-written to match the model and nothing machine-checks that
+it does — which is exactly the gap `src/steps.rs` closes for the Jetstream
+service in `services/ownership/`, and the reason the two coordinators are worth
+keeping side by side.
 
 **Would the oracles notice?** A suite that cannot fail is indistinguishable
 from one that passes, so `oracles_catch_an_unfenced_coordinator` runs one story
@@ -1113,10 +1237,12 @@ invariant preservation):
   and Raymond's "every request is eventually served". These need assumptions
   (reliable FIFO links, eventual failure detection) that this model does not
   make.
-* a refinement from the `nat`-valued model to an executable `u64` implementation,
-  with the epoch-exhaustion case handled. Until that exists, `src/exec.rs`
-  deliberately offers no way to *advance* a node's fence guard - only to consult
-  it - so that no executable API can perform a handover the model does not;
+* **done, for the registry's transitions**: the refinement from the `nat`-valued
+  model to an executable `u64` implementation, with the epoch-exhaustion case
+  handled, is `src/steps.rs` and `src/proofs/refinement.rs` — see rows E1 to E6.
+  What remains unrefined is the *node* side: `src/exec.rs` still offers no way
+  to advance a node's fence guard, only to consult it, so that no executable API
+  can perform a handover the model does not;
 * the actual actor runtime: networking, persistence, and the code that obeys the
   protocol. Verifying the protocol says nothing about whether an implementation
   follows it. `tests/` now exercises a hand-written one against the model's own

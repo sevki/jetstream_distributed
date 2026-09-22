@@ -23,8 +23,9 @@
 //! * [`composed`]  - the two layers as one state machine, where the coupling
 //!                   between them is a guard rather than an assumption.
 //! * [`proofs`]    - the theorems. Everything claimed in `README.md` lives here.
-//! * [`exec`]      - the only executable code: the `u64` fence check, proved to
-//!                   agree with the model.
+//! * [`steps`]     - the protocol's transitions as executable `u64` functions,
+//!                   each proved to agree with the model's `tr_*` step.
+//! * [`exec`]      - the `u64` fence check, proved to agree with the model.
 #![allow(unused_imports)]
 
 pub mod composed;
@@ -34,4 +35,5 @@ pub mod model;
 pub mod ownership;
 pub mod proofs;
 pub mod raymond;
+pub mod steps;
 pub mod transfer;

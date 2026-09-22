@@ -11,9 +11,10 @@
 //! — the one function in this repository proved to agree with the model's
 //! `may_mutate`.
 //!
-//! Sequencing is by the simulated clock. turmoil's time is deterministic, so
-//! "B starts after A has finished" is a fact about the run rather than a hope
-//! about scheduling.
+//! Sequencing is on the audit log, not on the clock. B waits until the log
+//! shows A's `Released` before taking the actor, so "B starts after A has
+//! finished" is a condition the run establishes rather than a duration it
+//! hopes is long enough.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};

@@ -318,11 +318,20 @@ impl EpochFloor for FileFloor {
             f.sync_all()?;
         }
         fs::rename(&tmp, &self.path)?;
-        // An empty parent is `Path::parent` reporting the current directory for
-        // a bare filename, which `File::open("")` cannot open.
-        if let Some(dir) = self.path.parent().filter(|d| !d.as_os_str().is_empty()) {
-            fs::File::open(dir)?.sync_all()?;
-        }
+        // The directory sync is what makes the rename itself durable, so it is
+        // never skipped.
+        //
+        // `Path::parent` of a bare filename is the empty path — it *names* the
+        // current directory but `File::open("")` cannot open it — and the first
+        // version of this took that as licence to skip the sync. That made the
+        // guarantee depend on how the caller spelled the path: `FileFloor::new(
+        // "epoch-floor")` lost the rename on a power cut, the old floor came
+        // back, and a restarted registry reissued a burned epoch. The exact
+        // failure this type exists to prevent, arrived at one level down and
+        // reachable only through a spelling.
+        let dir = self.path.parent().unwrap_or_else(|| Path::new(""));
+        let dir = if dir.as_os_str().is_empty() { Path::new(".") } else { dir };
+        fs::File::open(dir)?.sync_all()?;
         Ok(())
     }
 }
@@ -552,6 +561,12 @@ impl Registry {
     /// this method whenever the coordinator's preferred successor was not the
     /// node the transfer came from. Reporting the outcome costs the caller one
     /// comparison and costs the protocol nothing.
+    /// `next` has to be a real node **except when a transfer is in flight**,
+    /// where the model does not consult it: `tr_abort_transfer` mentions no
+    /// successor at all. Refusing there would make the one transition that
+    /// recovers an interrupted handover unreachable whenever the coordinator
+    /// named a stranger, leaving the actor stuck mid-transfer — a liveness bug
+    /// produced by a validity check on an argument that is not used.
     pub fn force(&self, next: u64) -> Result<u64> {
         let mut g = self.inner.lock().expect("registry lock");
         let from_epoch = g.state.current();
@@ -572,8 +587,44 @@ impl Registry {
             next: offered_to,
             forced: true,
         });
+        // All three of the transitions this can be publish a `Grant` for the
+        // node they offer the actor to. See `publish_grant`.
+        publish_grant(&mut g, offered_to, to_epoch);
         Ok(offered_to)
     }
+}
+
+/// Record a grant the registry has published, the way the model's transitions
+/// publish one.
+///
+/// **Four of the model's transitions put a `Grant` on the network**, not one:
+/// `tr_issue_grant` (a poll), and also `tr_complete_release`, `tr_revoke_owner`,
+/// `tr_reassign_unowned` and `tr_abort_transfer`, each of which offers the
+/// actor on as part of moving it. For a long time only the poll recorded
+/// anything here, and that was not a missing convenience — it broke the
+/// coupling the refinement rests on.
+///
+/// `acquire_step` takes `granted` as an *input*, standing for
+/// `sys.network.contains(Grant { .. })`. If the registry's set says `false`
+/// where the model's network says `true`, then
+/// `theorem_acquire_step_refuses_exactly_when_disabled` is being applied with a
+/// hypothesis that does not hold, and its conclusion — that the model could not
+/// have stepped either — is worth nothing. The visible symptom was smaller than
+/// the real one: a node that took the actor without polling first was refused,
+/// although the model had already published its grant.
+///
+/// The initial state is deliberately *not* published: `init` gives every actor
+/// an `Unowned` record and an **empty** network, which is exactly why
+/// `tr_issue_grant` exists. So a registry's first grant is still made by a poll,
+/// and every later one by the transition that moved the actor.
+fn publish_grant(g: &mut Inner, to: u64, epoch: u64) {
+    g.issued.insert((to, epoch));
+    // Logged as well as recorded. The audit log is the only record an auditor
+    // has, and `Standing` and the P8 tracker both rebuild "which grants were
+    // issued" from `Granted` events — so a grant recorded but not logged would
+    // make a later, entirely legal `Acquired` look like an acquire of something
+    // never offered.
+    g.log.push(Event::Granted { node: to, epoch });
 }
 
 impl Ownership for Registry {
@@ -620,6 +671,13 @@ impl Ownership for Registry {
         // agent that always polls before acquiring never exercises it — which is
         // why it is an argument the step demands rather than a check the caller
         // may forget.
+        //
+        // This is the coupling `theorem_acquire_step_refines_tr_acquire` and its
+        // refusal counterpart are stated against, so the set has to hold every
+        // grant the model's network would: see `publish_grant`. A node may
+        // therefore acquire without polling first, when a release or a forced
+        // revoke has already offered it the actor — which is what the model
+        // says, `tr_complete_release` having published the grant itself.
         let granted = g.issued.contains(&(node, epoch));
         match acquire_step(g.state, node, epoch, granted) {
             Outcome::Moved(next) => {
@@ -700,6 +758,12 @@ impl Ownership for Registry {
             Outcome::Moved(next) => {
                 g.state = next;
                 g.log.push(Event::Released { node, new_epoch: epoch });
+                // `tr_complete_release` publishes `Grant { to, new_epoch }` as
+                // part of the same step. See `publish_grant`: without this the
+                // registry's idea of which grants exist stops matching the
+                // model's, and the incoming owner is refused an acquire the
+                // model permits.
+                publish_grant(&mut g, next.intended(), epoch);
                 Ok(())
             }
             Outcome::Refused(why) => Err(refuse(why)),

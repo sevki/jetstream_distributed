@@ -130,6 +130,35 @@ impl ExecState {
         }
     }
 
+    /// Is a handover in flight?
+    ///
+    /// The one case in which a forced revoke needs no successor from its
+    /// caller, because the model supplies one. See [`force_fires`].
+    pub fn is_mid_transfer(&self) -> (r: bool)
+        ensures
+            r == is_transferring(self.view()),
+    {
+        match *self {
+            ExecState::Transferring { from: _, to: _, old_epoch: _, new_epoch: _ } => true,
+            _ => false,
+        }
+    }
+
+    /// The node an `Unowned` actor is being held for.
+    ///
+    /// Only meaningful under `is_unowned`, exactly as [`intended_owner`] is —
+    /// the other cases return the same placeholder. Callers here use it on
+    /// states a step function has just produced, where the case is known.
+    pub fn intended(&self) -> (r: u64)
+        ensures
+            r as nat == intended_owner(self.view()),
+    {
+        match *self {
+            ExecState::Unowned { epoch: _, intended } => intended,
+            _ => 0,
+        }
+    }
+
     /// Which node a forced revoke would offer the actor to. See
     /// [`force_offers_to`].
     pub fn offered_to_on_force(&self, next: u64) -> (r: u64)
@@ -237,6 +266,24 @@ pub open spec fn release_next(s: OwnershipState) -> OwnershipState {
             OwnershipState::Unowned { epoch: new_epoch, intended_owner: to },
         _ => s,
     }
+}
+
+/// A forced revoke needs a real successor only where the model asks for one.
+///
+/// `tr_revoke_owner` and `tr_reassign_unowned` both require
+/// `pre.nodes.contains(next)`. `tr_abort_transfer` does not mention `next` at
+/// all — it offers the actor back to the node the transfer came from — so
+/// refusing an abort because the coordinator named a stranger would make the
+/// one transition that recovers an interrupted handover unreachable exactly
+/// when it is needed, leaving the actor stuck mid-transfer.
+///
+/// Checking `to_is_node` unconditionally was how this was first written, and
+/// it contradicted both the doc comment beside it (*"whatever `next` says"*)
+/// and `theorem_force_step_refines_tr_abort_transfer`, which asks for no such
+/// hypothesis. Nothing caught it, because the theorem says what happens when
+/// the step fires and this was a case where it wrongly did not.
+pub open spec fn force_fires(s: OwnershipState, next_is_node: bool) -> bool {
+    next_is_node || is_transferring(s)
 }
 
 /// Which node a forced revoke offers the actor to. Not always `next`: from
@@ -417,15 +464,14 @@ pub fn release_step(st: ExecState, node: u64, epoch: u64) -> (r: Outcome)
 pub fn force_step(st: ExecState, next: u64, next_is_node: bool) -> (r: ForceOutcome)
     ensures
         match r {
-            ForceOutcome::Moved(moved, offered_to) => next_is_node && moved.view()
-                == force_next(st.view(), next as nat) && offered_to as nat == force_offers_to(
-                st.view(),
-                next as nat,
-            ),
-            ForceOutcome::Refused(why) => !next_is_node || (why is Exhausted),
+            ForceOutcome::Moved(moved, offered_to) => force_fires(st.view(), next_is_node)
+                && moved.view() == force_next(st.view(), next as nat) && offered_to as nat
+                == force_offers_to(st.view(), next as nat),
+            ForceOutcome::Refused(why) => !force_fires(st.view(), next_is_node) || (why
+                is Exhausted),
         },
 {
-    if !next_is_node {
+    if !next_is_node && !st.is_mid_transfer() {
         return ForceOutcome::Refused(Refusal::NoSuchNode);
     }
     let from_epoch = st.current();

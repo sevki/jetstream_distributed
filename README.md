@@ -743,6 +743,17 @@ issued-grant set stands for `network.contains(Grant { .. })`, its roster for
 module docs of `proofs::refinement` tabulate which part of the service
 discharges each one.
 
+The grant coupling is the one a server can *break*, and one did. `granted` is
+an **input** to the verified acquire step, so the registry's set has to hold
+every grant the model's network would — and **four** transitions publish one,
+not just the poll: `tr_complete_release`, `tr_revoke_owner`,
+`tr_reassign_unowned` and `tr_abort_transfer` each offer the actor on as part of
+moving it. A registry that recorded only the poll's grant was applying the
+refusal theorem under a hypothesis that did not hold, which is worth nothing at
+all. The visible symptom was much smaller than the real one: a node that took
+the actor without polling first was refused, although the model had already
+published its grant.
+
 **Status.** The service is pinned to the Jetstream working tree rather than to a
 release — `16.3.1` is not on crates.io, which the dependency resolution caught.
 Its dependency graph resolves, but the environment it was written in cannot

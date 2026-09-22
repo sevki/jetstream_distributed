@@ -259,6 +259,102 @@ fn a_registry_cannot_be_started_holding_the_actor_for_a_stranger() {
     assert!(Registry::new(roster(), 7, Arc::new(floor)).is_err());
 }
 
+/// A grant the registry published by *moving* the actor is a grant it has
+/// issued.
+///
+/// Four of the model's transitions put a `Grant` on the network, not one:
+/// `tr_issue_grant` and the four that offer the actor on as part of moving it.
+/// The registry recorded only the first, so its idea of which grants existed
+/// disagreed with the model's — and `granted` is an *input* to the verified
+/// acquire step, so the disagreement was not a missing convenience. It meant
+/// the refusal theorem was being applied under a hypothesis that did not hold.
+#[tokio::test]
+async fn a_release_publishes_the_grant_the_model_says_it_publishes() {
+    let floor = MemoryFloor::at(40);
+    let reg = registry(&floor);
+
+    // The initial state has no published grant, and that is the model rather
+    // than an omission: `init` gives every actor an `Unowned` record and an
+    // **empty** network, which is the whole reason `tr_issue_grant` exists. So
+    // the first offer still has to be asked for.
+    let refused = reg
+        .acquire(from(A), 41)
+        .await
+        .expect_err("the actor is held for A at 41, but nothing has been offered yet");
+    assert_eq!(refused.code(), Some("NO"), "{refused:?}");
+
+    assert_eq!(reg.poll(from(A)).await.unwrap(), Offer::Grant(41));
+    reg.acquire(from(A), 41).await.unwrap();
+    reg.begin_transfer(from(A), 1).await.unwrap();
+    reg.release(from(A), 42).await.unwrap();
+
+    // `tr_complete_release` publishes `Grant { to, new_epoch }` in the same
+    // step, so B does not have to ask. Refusing here was the registry's own
+    // bookkeeping contradicting the transition it had just taken.
+    reg.acquire(from(B), 42)
+        .await
+        .expect("the release published B's grant, so B may take the actor");
+    assert_eq!(reg.write(from(B), 42).await.unwrap(), 1);
+
+    // And an auditor can see it, because a grant recorded but not logged makes
+    // a perfectly legal `Acquired` look like an acquire of something that was
+    // never offered — `Standing` and the P8 tracker both rebuild "which grants
+    // were issued" from `Granted` alone.
+    assert!(
+        reg.log().contains(&Event::Granted { node: 1, epoch: 42 }),
+        "the published grant has to be in the log, not only in the registry's \
+         head: {:?}",
+        reg.log()
+    );
+}
+
+/// The same for a forced revoke, whose three transitions all publish one.
+#[tokio::test]
+async fn a_forced_revoke_publishes_the_grant_too() {
+    let floor = MemoryFloor::at(40);
+    let reg = registry(&floor);
+    assert_eq!(reg.poll(from(A)).await.unwrap(), Offer::Grant(41));
+    reg.acquire(from(A), 41).await.unwrap();
+
+    assert_eq!(reg.force(1).unwrap(), 1);
+    reg.acquire(from(B), 42)
+        .await
+        .expect("tr_revoke_owner publishes the successor's grant as it moves the actor");
+}
+
+/// An interrupted transfer is recoverable even when the coordinator names a
+/// node that does not exist.
+///
+/// `tr_abort_transfer` does not mention `next` at all — the actor goes back to
+/// the node the transfer came from — so validating it was a check on an
+/// argument the transition never reads, and it refused the one step that
+/// unsticks a half-finished handover. A liveness bug produced entirely by an
+/// unnecessary validity check.
+#[tokio::test]
+async fn an_abort_does_not_need_a_successor_it_will_not_use() {
+    let floor = MemoryFloor::at(40);
+    let reg = registry(&floor);
+    assert_eq!(reg.poll(from(A)).await.unwrap(), Offer::Grant(41));
+    reg.acquire(from(A), 41).await.unwrap();
+    reg.begin_transfer(from(A), 1).await.unwrap();
+
+    // Node 9 is not on the roster.
+    assert_eq!(
+        reg.force(9).unwrap(),
+        0,
+        "an interrupted transfer goes back to node 0, and the successor the \
+         coordinator named is never consulted"
+    );
+    assert_eq!(reg.poll(from(A)).await.unwrap(), Offer::Grant(43));
+
+    // And from a state where the successor *is* consulted, a stranger is still
+    // refused — so the change is about which transition is being taken rather
+    // than about giving up on the roster.
+    reg.acquire(from(A), 43).await.unwrap();
+    let refused = reg.force(9).unwrap_err();
+    assert_eq!(refused.code(), Some("ERR"), "{refused:?}");
+}
+
 /// The file-backed floor: monotone, and absent means zero rather than an error.
 #[test]
 fn the_file_floor_is_a_high_water_mark() {
@@ -292,4 +388,29 @@ fn the_file_floor_is_a_high_water_mark() {
     assert_eq!(floor.read().unwrap(), 42);
 
     let _ = std::fs::remove_file(&path);
+}
+
+/// A floor named by a bare filename still works.
+///
+/// `Path::parent` of `"floor"` is the empty path — it names the current
+/// directory but cannot be opened — and the first version of `record` took that
+/// as licence to skip the directory `fsync`, which is what makes the rename
+/// durable. Syncing `.` instead is the fix, and this is its regression guard.
+///
+/// Be clear about what it does and does not show: it cannot demonstrate
+/// durability, because that needs a power cut. What it demonstrates is that the
+/// path which previously *skipped* the sync now *takes* it without failing —
+/// the way the fix could have been wrong.
+#[test]
+fn a_floor_named_by_a_bare_filename_still_records() {
+    let name = format!("jetstream-bare-floor-{}", std::process::id());
+    let _ = std::fs::remove_file(&name);
+
+    let floor = FileFloor::new(&name);
+    assert_eq!(floor.read().unwrap(), 0);
+    floor.record(41).unwrap();
+    assert_eq!(floor.read().unwrap(), 41);
+    assert_eq!(FileFloor::new(&name).read().unwrap(), 41);
+
+    let _ = std::fs::remove_file(&name);
 }

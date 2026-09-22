@@ -25,11 +25,25 @@
 //! | `sys.live.contains(n)` | `n` is connected and asking |
 //! | `sys.network.contains(Revoke { .. })` | `begin_transfer` put it there |
 //!
-//! The first four are discharged by construction in `services/ownership`. The
-//! fifth is the one worth reading twice: the registry answers a poll with
-//! `Revoke` only from a `Transferring` record that its own `begin_transfer`
-//! wrote, and `tr_begin_transfer` is the transition that puts that exact
-//! message on the network.
+//! The first four are discharged by construction in `services/ownership`. Two
+//! of them are worth reading twice, because they are discharged in quite
+//! different ways.
+//!
+//! The **grant** coupling is an *equality*, and it is maintained by the server
+//! doing work: `granted` is an input to `acquire_step`, so the server's set has
+//! to hold every grant the model's network would. Four transitions publish one
+//! — `tr_issue_grant`, `tr_complete_release`, `tr_revoke_owner`,
+//! `tr_reassign_unowned` and `tr_abort_transfer` — and a server that recorded
+//! only the first would be applying the refusal theorem under a hypothesis that
+//! does not hold, which is worth nothing at all. That is a coupling a server can
+//! *break*, and one did.
+//!
+//! The **revoke** coupling is structural and cannot be broken the same way:
+//! nothing reads it, and the registry can only be in a `Transferring` record
+//! because its own `begin_transfer` put it there, which is the transition that
+//! puts that exact message on the network. It is a hypothesis about how the
+//! state was reached rather than about a second set kept in step with the
+//! first.
 //!
 //! What no theorem here covers is equally worth naming: the lock, the identity
 //! lookup, the durable epoch floor and the audit log. Those are the server's,

@@ -409,8 +409,16 @@ struct Inner {
 /// The service implementation.
 ///
 /// Cloneable and shared: Jetstream constructs one service per accepted lane, and
-/// every lane has to see the same actor. The lock is held only across a single
-/// transition, all of which are pure arithmetic over a few words.
+/// every lane has to see the same actor.
+///
+/// The lock is held across a single transition — which is pure arithmetic over
+/// a few words — **and, on the three that advance the epoch, across the write
+/// that makes it durable.** That second part is not an oversight: deciding to
+/// move to an epoch and recording that it was used must not be separable, or a
+/// second caller could allocate the same epoch in the gap. It is the cost of
+/// taking atomicity from a mutex and durability from a file; a store with
+/// compare-and-swap on the ownership record gives both from one operation and
+/// holds no lock at all. See `Registry::persist`.
 #[derive(Clone)]
 pub struct Registry {
     inner: Arc<Mutex<Inner>>,

@@ -136,9 +136,34 @@ fn a_handover_fences_the_outgoing_owner() {
         Ok(())
     });
 
+    let watched = shared.clone();
     sim.client("b", async move {
-        // After A has finished. Deterministic, because the clock is simulated.
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Wait for the *fact*, not for the clock.
+        //
+        // This was a fixed 500ms sleep, on the reasoning that turmoil's time is
+        // simulated and deterministic — which is true, and is why it would have
+        // failed identically every run rather than flakily. But elapsed time is
+        // still not a completion barrier: it says a duration passed, not that A
+        // acknowledged the revocation, and anything that lengthened A's half of
+        // the story would have moved B ahead of it. The condition B actually
+        // depends on is observable, so B waits on that instead.
+        let mut waited = Duration::ZERO;
+        loop {
+            let released = watched.get().is_some_and(|r| {
+                r.log()
+                    .iter()
+                    .any(|e| matches!(e, Event::Released { node: 0, new_epoch: 42 }))
+            });
+            if released {
+                break;
+            }
+            assert!(
+                waited < Duration::from_secs(5),
+                "A never released the actor, so B has nothing to take"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            waited += Duration::from_millis(10);
+        }
         connect!(_session, ch);
 
         assert_eq!(ch.poll(Context::default()).await.unwrap(), Offer::Grant(42));

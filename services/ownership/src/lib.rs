@@ -132,6 +132,21 @@ fn refuse_err(what: &str) -> Error {
     Error::new(what).set_code("ERR")
 }
 
+/// The epoch cannot be burned again without wrapping.
+///
+/// The model counts epochs in `nat`, which does not run out; this
+/// implementation counts them in `u64`, which does. That gap is the
+/// implementation's to close, and the only safe way to close it is to refuse:
+/// wrapping would take the epoch *backwards*, which is precisely the ordering
+/// every fencing proof in `src/proofs` rests on. It is unreachable in any real
+/// run — a registry would have to burn an epoch every nanosecond for six
+/// hundred years — but `Registry::new` takes the starting epoch from its
+/// caller, so it is reachable in a test, and a panic in debug or a silent wrap
+/// in release are both worse than a refusal.
+fn exhausted() -> Error {
+    Error::new("the epoch space is exhausted").set_code("NO")
+}
+
 /// The fence stopped it: the caller is not the current owner at the current
 /// epoch.
 fn refuse_fenced(what: &str) -> Error {
@@ -197,16 +212,12 @@ pub struct Registry {
     /// Connection address to node number. See the module docs: this is the
     /// stated assumption, and the first thing to replace with TLS identity.
     roster: Arc<HashMap<IpAddr, u64>>,
-    /// How many nodes exist. `tr_begin_transfer` and `tr_revoke_owner` both
-    /// require the successor they name to be one of them.
-    nodes: u64,
 }
 
 impl Registry {
     /// A registry offering the actor to `first_owner` at `epoch`, with `roster`
     /// naming which address is which node.
     pub fn new(roster: HashMap<IpAddr, u64>, first_owner: u64, epoch: u64) -> Self {
-        let nodes = roster.len() as u64;
         Registry {
             inner: Arc::new(Mutex::new(Inner {
                 state: Owned::Unowned { epoch, intended: first_owner },
@@ -215,8 +226,20 @@ impl Registry {
                 log: Vec::new(),
             })),
             roster: Arc::new(roster),
-            nodes,
         }
+    }
+
+    /// Is this one of the nodes the registry knows about?
+    ///
+    /// Membership in the roster's *values*. This was a range check against the
+    /// roster's **size**, which is only the same question when the node
+    /// numbers happen to be `0..len`. For a roster of `{a: 10, b: 20}` it was
+    /// exactly backwards: it admitted 0 and 1, which no connection can ever
+    /// be, and refused 10 and 20, which are the only two nodes there are. A
+    /// forced revoke could then hand the actor to a node that cannot take it,
+    /// leaving it offered to nobody.
+    fn is_node(&self, node: u64) -> bool {
+        self.roster.values().any(|&n| n == node)
     }
 
     /// The audit log so far.
@@ -255,17 +278,20 @@ impl Registry {
     /// `Transferring` the actor goes back to the node it came from and `next`
     /// is ignored.
     pub fn force(&self, next: u64) -> Result<()> {
-        if next >= self.nodes {
+        if !self.is_node(next) {
             return Err(refuse_no("no such node"));
         }
         let mut g = self.inner.lock().expect("registry lock");
-        let (from_epoch, to_epoch, offered_to) = match g.state {
-            Owned::Owned { epoch, .. } => (epoch, epoch + 1, next),
-            Owned::Unowned { epoch, .. } => (epoch, epoch + 1, next),
+        let (from_epoch, offered_to) = match g.state {
+            Owned::Owned { epoch, .. } => (epoch, next),
+            Owned::Unowned { epoch, .. } => (epoch, next),
             // `tr_abort_transfer`: burn *another* epoch, so a grant for
             // `new_epoch` still in flight is stale on arrival, and offer the
             // actor back to the node it was being taken from.
-            Owned::Transferring { from, new_epoch, .. } => (new_epoch, new_epoch + 1, from),
+            Owned::Transferring { from, new_epoch, .. } => (new_epoch, from),
+        };
+        let Some(to_epoch) = from_epoch.checked_add(1) else {
+            return Err(exhausted());
         };
         g.state = Owned::Unowned { epoch: to_epoch, intended: offered_to };
         g.log.push(Event::EpochBurned {
@@ -359,7 +385,7 @@ impl Ownership for Registry {
         // `pre.nodes.contains(to)`. The model requires the successor to exist,
         // and a precondition enforced only by well-behaved callers is not a
         // precondition the registry has.
-        if to >= self.nodes {
+        if !self.is_node(to) {
             return Err(refuse_err("no such node"));
         }
         if to == from {
@@ -368,12 +394,15 @@ impl Ownership for Registry {
         let mut g = self.inner.lock().expect("registry lock");
         match g.state {
             Owned::Owned { owner, epoch } if owner == from => {
+                let Some(new_epoch) = epoch.checked_add(1) else {
+                    return Err(exhausted());
+                };
                 // The epoch is burned immediately, which fences the outgoing
                 // owner from here on rather than at some later acknowledgement.
-                g.state = Owned::Transferring { from: owner, to, new_epoch: epoch + 1 };
+                g.state = Owned::Transferring { from: owner, to, new_epoch };
                 g.log.push(Event::EpochBurned {
                     from_epoch: epoch,
-                    to_epoch: epoch + 1,
+                    to_epoch: new_epoch,
                     next: to,
                     forced: false,
                 });

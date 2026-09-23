@@ -380,6 +380,28 @@ pub open spec fn raft_execution(tr: Seq<Cluster>) -> bool {
         0 <= i < tr.len() - 1 ==> raft_next(tr[i], tr[i + 1]))
 }
 
+/// A **labelled** finite run: `tr` holds the states and `labels[i]` is the step
+/// that takes `tr[i]` to `tr[i + 1]`.
+///
+/// `raft_execution` quantifies over `raft_next`, which hides *which* step was
+/// taken. That is the right notion for a safety theorem — whatever the cluster
+/// did, this holds — and the wrong one for a scenario, whose entire content is
+/// which steps were taken. See `model::run` for the same distinction and the
+/// same reason.
+pub open spec fn raft_run(tr: Seq<Cluster>, labels: Seq<RaftStep>) -> bool {
+    &&& tr.len() > 0
+    &&& labels.len() == tr.len() - 1
+    &&& (forall|i: int|
+        #![trigger tr[i], tr[i + 1], labels[i]]
+        0 <= i < labels.len() ==> raft_step(tr[i], tr[i + 1], labels[i]))
+}
+
+/// A labelled run that starts at initialisation.
+pub open spec fn raft_labelled_execution(tr: Seq<Cluster>, labels: Seq<RaftStep>) -> bool {
+    &&& raft_run(tr, labels)
+    &&& raft_init(tr[0])
+}
+
 /// `c` is reachable if some finite execution ends in it.
 pub open spec fn raft_reachable(c: Cluster) -> bool {
     exists|tr: Seq<Cluster>| raft_execution(tr) && tr[tr.len() - 1] == c

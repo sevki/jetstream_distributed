@@ -76,7 +76,7 @@ pub proof fn lemma_start_is_init()
         by {
         assert(n == 0 || n == 1 || n == 2);
     }
-    assert forall|n: ServerId| start().servers.contains_key(n) implies !is_leader(
+    assert forall|n: ServerId| start().servers.contains_key(n) implies is_follower(
         start().servers[n],
     ) && start().servers[n].current_term == 0 && start().servers[n].log.len() == 0
         && start().servers[n].commit == 0 by {

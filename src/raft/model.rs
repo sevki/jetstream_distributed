@@ -240,6 +240,13 @@ pub open spec fn is_leader(s: Server) -> bool {
     }
 }
 
+pub open spec fn is_follower(s: Server) -> bool {
+    match s.role {
+        Role::Follower => true,
+        _ => false,
+    }
+}
+
 pub open spec fn is_candidate(s: Server) -> bool {
     match s.role {
         Role::Candidate => true,
@@ -726,11 +733,22 @@ pub open spec fn raft_next(pre: Cluster, post: Cluster) -> bool {
 
 /// Initial states: everybody a follower at term 0 with an empty log, nothing
 /// voted, nothing committed, nothing sent.
+///
+/// **A follower, not merely "not a leader".** This clause used to say
+/// `!is_leader`, which admitted a cluster starting with a *candidate* at term 0
+/// — a state Raft never starts in (figure 2: *"when servers start up, they
+/// begin as followers"*) and one this file's own summary line already ruled
+/// out. It also cannot be made sense of: a candidate has, by construction, voted
+/// for itself, and an initial state has no votes.
+///
+/// Tightening it narrows `raft_reachable`, so it is a change to what the
+/// reachability theorems quantify over and not a cosmetic one. It narrows it to
+/// the states Raft actually has.
 pub open spec fn raft_init(c: Cluster) -> bool {
     &&& (forall|n: ServerId| #[trigger] c.members.contains(n) ==> c.servers.contains_key(n))
     &&& (forall|n: ServerId|
         #![trigger c.servers[n]]
-        c.servers.contains_key(n) ==> !is_leader(c.servers[n]) && c.servers[n].current_term == 0
+        c.servers.contains_key(n) ==> is_follower(c.servers[n]) && c.servers[n].current_term == 0
             && c.servers[n].log.len() == 0 && c.servers[n].commit == 0)
     &&& (forall|v: Vote| !(#[trigger] c.votes.contains(v)))
     &&& (forall|m: RaftMessage| !(#[trigger] c.messages.contains(m)))

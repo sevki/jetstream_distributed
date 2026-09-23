@@ -144,22 +144,66 @@ pub proof fn theorem_history_does_not_gate_the_protocol(
             s,
         ),
 {
+    // Each arm says what the two history functions reduce to there. Everything
+    // else in the step's definition mentions only `members`, `servers`, `votes`
+    // and `messages`, which `with_history` carries across unchanged — so those
+    // conjuncts are the same proposition on both sides and need nothing said
+    // about them. The two that are *not* the same proposition are these.
     match s {
-        RaftStep::Timeout { server: _ } => {},
+        RaftStep::Timeout { server: _ } => {
+            assert(created_after(pre, cr, s) == cr);
+            assert(led_after(pre, l, s) == l);
+        },
         RaftStep::GrantVote {
             voter: _,
             candidate: _,
             term: _,
             cand_last_term: _,
             cand_last_index: _,
-        } => {},
-        RaftStep::BecomeLeader { server: _, term: _ } => {},
-        RaftStep::StepDown { server: _, term: _ } => {},
-        RaftStep::ClientRequest { server: _, value: _ } => {},
-        RaftStep::AppendEntries { leader: _, follower: _, prefix: _ } => {},
-        RaftStep::AdvanceCommit { server: _, upto: _ } => {},
-        RaftStep::Replay { msg: _ } => {},
-        RaftStep::Stutter => {},
+        } => {
+            assert(created_after(pre, cr, s) == cr);
+            assert(led_after(pre, l, s) == l);
+        },
+        RaftStep::BecomeLeader { server, term } => {
+            assert(created_after(pre, cr, s) == cr);
+            assert(led_after(pre, l, s) == l.insert(Led { server: server, term: term }));
+        },
+        RaftStep::StepDown { server: _, term: _ } => {
+            assert(created_after(pre, cr, s) == cr);
+            assert(led_after(pre, l, s) == l);
+        },
+        RaftStep::ClientRequest { server, value } => {
+            assert(created_after(pre, cr, s) == cr.insert(
+                Slot {
+                    term: pre.servers[server].current_term,
+                    index: pre.servers[server].log.len(),
+                },
+                Creation {
+                    value: value,
+                    prev_term: term_before(
+                        pre.servers[server].log,
+                        pre.servers[server].log.len(),
+                    ),
+                },
+            ));
+            assert(led_after(pre, l, s) == l);
+        },
+        RaftStep::AppendEntries { leader: _, follower: _, prefix: _ } => {
+            assert(created_after(pre, cr, s) == cr);
+            assert(led_after(pre, l, s) == l);
+        },
+        RaftStep::AdvanceCommit { server: _, upto: _ } => {
+            assert(created_after(pre, cr, s) == cr);
+            assert(led_after(pre, l, s) == l);
+        },
+        RaftStep::Replay { msg: _ } => {
+            assert(created_after(pre, cr, s) == cr);
+            assert(led_after(pre, l, s) == l);
+        },
+        RaftStep::Stutter => {
+            assert(created_after(pre, cr, s) == cr);
+            assert(led_after(pre, l, s) == l);
+        },
     }
 }
 

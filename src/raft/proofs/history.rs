@@ -1620,10 +1620,10 @@ pub proof fn theorem_log_matching_prefixes(c: Cluster, a: ServerId, b: ServerId,
         i < c.servers[b].log.len(),
         c.servers[a].log[i as int].term == c.servers[b].log[i as int].term,
     ensures
-        c.servers[a].log.take(i + 1) == c.servers[b].log.take(i + 1),
+        c.servers[a].log.take((i + 1) as int) == c.servers[b].log.take((i + 1) as int),
 {
     theorem_log_matching(c, a, b, i);
-    assert(c.servers[a].log.take(i + 1) =~= c.servers[b].log.take(i + 1));
+    assert(c.servers[a].log.take((i + 1) as int) =~= c.servers[b].log.take((i + 1) as int));
 }
 
 /// **Log Matching, in any reachable cluster.**
@@ -1636,7 +1636,7 @@ pub proof fn theorem_log_matching_reachable(c: Cluster, a: ServerId, b: ServerId
         i < c.servers[b].log.len(),
         c.servers[a].log[i as int].term == c.servers[b].log[i as int].term,
     ensures
-        c.servers[a].log.take(i + 1) == c.servers[b].log.take(i + 1),
+        c.servers[a].log.take((i + 1) as int) == c.servers[b].log.take((i + 1) as int),
 {
     theorem_reachable_hist_inv(c);
     theorem_log_matching_prefixes(c, a, b, i);

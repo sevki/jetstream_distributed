@@ -144,27 +144,45 @@ pub proof fn lemma_quorum_survives(pre: Cluster, post: Cluster, cand: ServerId, 
     assert(voters_for(post, cand, term).subset_of(post.members));
 }
 
-/// Every leader other than the one this step touched is untouched, so its
-/// majority survives.
-proof fn lemma_other_leaders_keep_quorums(pre: Cluster, post: Cluster, touched: ServerId)
+/// Every transition rewrites exactly one server's record, and leaves the
+/// membership alone while the votes only grow. Under those conditions the
+/// leaders' majorities all survive.
+///
+/// Stated in terms of the `insert` each transition performs rather than as a
+/// `forall` over the servers it did not touch. The `forall` version was the
+/// first attempt and it left a hole at `m == touched`: the hypothesis said
+/// nothing there, and a separate clause about `post.servers[touched]` could not
+/// establish that `touched` was in the map at all. An `insert` says both things
+/// at once and says them about a key that is known to exist.
+proof fn lemma_one_server_changed_keeps_quorums(
+    pre: Cluster,
+    post: Cluster,
+    touched: ServerId,
+    fresh: Server,
+)
     requires
         raft_inv(pre),
         post.members == pre.members,
         pre.votes.subset_of(post.votes),
-        forall|m: ServerId|
-            #![trigger post.servers[m]]
-            m != touched ==> post.servers.contains_key(m) == pre.servers.contains_key(m)
-                && post.servers[m] == pre.servers[m],
-        !is_leader(post.servers[touched]) || post.servers[touched] == pre.servers[touched],
+        pre.servers.contains_key(touched),
+        post.servers == pre.servers.insert(touched, fresh),
+        // Either the rewritten server is not a leader — in which case the
+        // clause is vacuous for it — or the step already knows it won.
+        !is_leader(fresh) || won_election(pre, touched, fresh.current_term),
     ensures
         inv_leader_quorum(post),
 {
     assert forall|m: ServerId| post.servers.contains_key(m) && is_leader(post.servers[m]) implies
     won_election(post, m, post.servers[m].current_term) by {
-        assert(pre.servers.contains_key(m));
-        assert(pre.servers[m] == post.servers[m]);
-        assert(won_election(pre, m, pre.servers[m].current_term));
-        lemma_quorum_survives(pre, post, m, pre.servers[m].current_term);
+        if m == touched {
+            assert(post.servers[m] == fresh);
+            lemma_quorum_survives(pre, post, touched, fresh.current_term);
+        } else {
+            assert(pre.servers.contains_key(m));
+            assert(pre.servers[m] == post.servers[m]);
+            assert(won_election(pre, m, pre.servers[m].current_term));
+            lemma_quorum_survives(pre, post, m, pre.servers[m].current_term);
+        }
     }
 }
 
@@ -225,8 +243,12 @@ proof fn lemma_timeout_preserves_inv(pre: Cluster, post: Cluster, n: ServerId)
     }
 
     // Leaders. `n` is a candidate now, so it is not one of them.
-    assert(!is_leader(post.servers[n]));
-    lemma_other_leaders_keep_quorums(pre, post, n);
+    lemma_one_server_changed_keeps_quorums(
+        pre,
+        post,
+        n,
+        Server { role: Role::Candidate, current_term: t },
+    );
 }
 
 proof fn lemma_grant_vote_preserves_inv(
@@ -291,8 +313,12 @@ proof fn lemma_grant_vote_preserves_inv(
     }
 
     // Leaders. The voter is a follower now.
-    assert(!is_leader(post.servers[voter]));
-    lemma_other_leaders_keep_quorums(pre, post, voter);
+    lemma_one_server_changed_keeps_quorums(
+        pre,
+        post,
+        voter,
+        Server { role: Role::Follower, current_term: term },
+    );
 }
 
 proof fn lemma_become_leader_preserves_inv(
@@ -319,18 +345,12 @@ proof fn lemma_become_leader_preserves_inv(
     }
 
     // The new leader's majority is the step's own guard.
-    assert forall|m: ServerId| post.servers.contains_key(m) && is_leader(post.servers[m]) implies
-    won_election(post, m, post.servers[m].current_term) by {
-        if m == n {
-            assert(won_election(pre, n, term));
-            lemma_quorum_survives(pre, post, n, term);
-            assert(post.servers[n].current_term == term);
-        } else {
-            assert(pre.servers[m] == post.servers[m]);
-            assert(won_election(pre, m, pre.servers[m].current_term));
-            lemma_quorum_survives(pre, post, m, pre.servers[m].current_term);
-        }
-    }
+    lemma_one_server_changed_keeps_quorums(
+        pre,
+        post,
+        n,
+        Server { role: Role::Leader, current_term: term },
+    );
 }
 
 proof fn lemma_step_down_preserves_inv(pre: Cluster, post: Cluster, n: ServerId, term: Term)
@@ -351,8 +371,12 @@ proof fn lemma_step_down_preserves_inv(pre: Cluster, post: Cluster, n: ServerId,
         }
     }
 
-    assert(!is_leader(post.servers[n]));
-    lemma_other_leaders_keep_quorums(pre, post, n);
+    lemma_one_server_changed_keeps_quorums(
+        pre,
+        post,
+        n,
+        Server { role: Role::Follower, current_term: term },
+    );
 }
 
 /// Every transition preserves the invariant.

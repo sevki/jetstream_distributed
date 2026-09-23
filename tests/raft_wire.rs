@@ -8,6 +8,12 @@
 //! So this runs a real candidacy across three hosts, and then the case the
 //! quorum threshold exists for: a candidate that cannot reach a majority does
 //! not get to lead, however sure of itself it is.
+//!
+//! The replies get the same treatment. A `Ballot`, a `Standing` and an
+//! `Appended` are protocol steps in their own right — Raft's term rule is about
+//! responses as much as requests — so the last two tests read real ones off the
+//! wire and hand them to the `Peer` that asked, which is the only path into its
+//! tally and out of a term it has lost.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
@@ -15,7 +21,7 @@ use std::sync::{Arc, OnceLock};
 
 use distributed_ownership::raft::service::{
     consensus_protocol::{ConsensusChannel, ConsensusService},
-    Ballot, Consensus, MemoryLog, MemoryLogStore, Peer,
+    Appended, Ballot, Consensus, LogEntry, MemoryLog, MemoryLogStore, Peer, Standing,
 };
 use jetstream::prelude::*;
 use jetstream_rpc::session::{Session, SingleLaneSession};
@@ -127,7 +133,9 @@ fn a_candidate_wins_an_election_over_the_wire() {
                 Ballot::Granted(1)
             );
         }
-        let leads = me.count_vote(1, term).expect("node 1 is on the roster");
+        let leads = me
+            .count_ballot(1, term, Ballot::Granted(term))
+            .expect("node 1 is on the roster");
         assert!(leads, "two of three is a majority");
 
         // The third vote is not needed, which is the whole point of a majority —
@@ -201,4 +209,132 @@ fn a_partitioned_minority_does_not_elect_a_leader() {
     sim.run().expect("the simulation runs to completion");
     let me = shared.get().expect("the client built its peer");
     assert!(!me.standing_now().leading);
+}
+
+/// **A leader's heartbeats, appends and their replies, over the wire.**
+///
+/// `request_vote` was the only method a simulated network had ever carried, so
+/// `heartbeat`, `standing` and `append_entries` were generated, compiled and
+/// never spoken. This elects `a` and then has it lead: a heartbeat, an entry,
+/// and the replies fed back through the methods that read them.
+#[test]
+fn a_leader_leads_over_the_wire() {
+    let mut sim = turmoil::Builder::new().build();
+    serve!(sim, "b", 1);
+    serve!(sim, "c", 2);
+
+    let shared: Arc<OnceLock<Peer>> = Arc::new(OnceLock::new());
+    let built = shared.clone();
+
+    sim.client("a", async move {
+        let me = built
+            .get_or_init(|| {
+                Peer::new(
+                    roster(),
+                    0,
+                    Arc::new(MemoryLog::new()),
+                    Arc::new(MemoryLogStore::new()),
+                )
+                .expect("on the roster")
+            })
+            .clone();
+
+        let term = me.stand_for_election().expect("a fresh server may stand");
+        connect!("b", _sb, chb);
+        let ballot = chb.request_vote(Context::default(), term, 0, 0).await.unwrap();
+        assert_eq!(ballot, Ballot::Granted(1));
+        assert!(me.count_ballot(1, term, ballot).unwrap(), "two of three is a majority");
+
+        // A heartbeat, and the reply read back. B is behind nobody, so this
+        // tells the leader nothing — which is the case that has to be silent.
+        let seen = chb.heartbeat(Context::default(), term).await.unwrap();
+        assert_eq!(seen, Standing { term: 1, leading: false });
+        assert!(me.observe_standing(seen).unwrap(), "still the leader of term 1");
+
+        // An entry, replicated to B and then acknowledged back to the leader.
+        assert_eq!(me.append_command(7).unwrap(), 0, "the first entry lands at index 0");
+        let reply = chb
+            .append_entries(Context::default(), term, 0, 0, LogEntry { term, value: 7 }, 0)
+            .await
+            .unwrap();
+        assert_eq!(reply, Appended::Accepted(1));
+        assert_eq!(
+            me.observe_appended(1, reply).unwrap(),
+            Some(1),
+            "the leader and one follower are a majority of three, and the entry is \
+             of the leader's own term"
+        );
+
+        // And `standing` answers the same question without changing anything.
+        assert_eq!(
+            chb.standing(Context::default()).await.unwrap(),
+            Standing { term: 1, leading: false }
+        );
+        Ok(())
+    });
+
+    sim.run().expect("the simulation runs to completion");
+    let me = shared.get().expect("the client built its peer");
+    assert_eq!(me.standing_now(), Standing { term: 1, leading: true });
+    assert_eq!(me.commit(), 1, "one entry committed by a majority of three");
+}
+
+/// **A leader that has been overtaken finds out from a reply.**
+///
+/// The partition case, after the partition heals. `a` leads term 1; while it
+/// was away `c` moved to term 5, which `a` can only learn from the answer to
+/// something it sent. Without a path for that answer a stale leader goes on
+/// leading a term the cluster has left, and the fact that the news is *on the
+/// wire* is precisely what makes a reply-reading method necessary rather than
+/// tidy.
+#[test]
+fn a_reply_from_the_wire_deposes_a_stale_leader() {
+    let mut sim = turmoil::Builder::new().build();
+    serve!(sim, "b", 1);
+    serve!(sim, "c", 2);
+
+    let shared: Arc<OnceLock<Peer>> = Arc::new(OnceLock::new());
+    let built = shared.clone();
+
+    sim.client("a", async move {
+        let me = built
+            .get_or_init(|| {
+                Peer::new(
+                    roster(),
+                    0,
+                    Arc::new(MemoryLog::new()),
+                    Arc::new(MemoryLogStore::new()),
+                )
+                .expect("on the roster")
+            })
+            .clone();
+
+        let term = me.stand_for_election().expect("a fresh server may stand");
+        connect!("b", _sb, chb);
+        let ballot = chb.request_vote(Context::default(), term, 0, 0).await.unwrap();
+        assert!(me.count_ballot(1, term, ballot).unwrap());
+        assert!(me.standing_now().leading);
+
+        // C is moved to term 5 by a request that is not this leader's business:
+        // it stands in for the election `a` slept through.
+        connect!("c", _sc, chc);
+        assert_eq!(
+            chc.request_vote(Context::default(), 5, 0, 0).await.unwrap(),
+            Ballot::Granted(5)
+        );
+
+        // The leader heartbeats at its own stale term and reads the answer.
+        let seen = chc.heartbeat(Context::default(), term).await.unwrap();
+        assert_eq!(seen, Standing { term: 5, leading: false });
+        assert!(!me.observe_standing(seen).unwrap(), "term 5 has already happened");
+        Ok(())
+    });
+
+    sim.run().expect("the simulation runs to completion");
+    let me = shared.get().expect("the client built its peer");
+    assert_eq!(
+        me.standing_now(),
+        Standing { term: 5, leading: false },
+        "a leader deposed by a reply, not by a request"
+    );
 }

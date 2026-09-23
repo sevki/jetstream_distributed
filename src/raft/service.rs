@@ -1,15 +1,15 @@
-//! Raft leader election, as a Jetstream service.
+//! Raft, as a Jetstream service.
 //!
-//! `services/ownership` serves a protocol whose exclusivity is *assumed*: the
-//! ownership model's registry is updated atomically, which rules out two
-//! coordinators by construction, and the README's failure-model table says a
-//! real deployment has to buy that from consensus. This is the service that
-//! starts buying it.
+//! [`crate::ownership::service`] serves a protocol whose exclusivity is
+//! *assumed*: the ownership model's registry is updated atomically, which rules
+//! out two coordinators by construction, and the README's failure-model table
+//! says a real deployment has to buy that from consensus. This is the service
+//! that starts buying it.
 //!
 //! Every decision this server makes about its own record goes through a step
-//! function in `distributed_ownership::raft_steps`, each proved in
-//! `proofs::raft_refinement` to agree with the model's transition — and the
-//! model's `theorem_election_safety` says at most one server leads a term.
+//! function in [`crate::raft::steps`], each proved in
+//! `crate::raft::proofs::refinement` to agree with the model's transition — and
+//! the model's `theorem_election_safety` says at most one server leads a term.
 //!
 //! # Identity comes from the connection, again
 //!
@@ -37,21 +37,45 @@
 //! again has voted twice in one term. Two candidates can then each collect a
 //! majority, and Election Safety is gone — not because the proof is wrong, but
 //! because `already_voted` was reported `false` when the model's `has_voted`
-//! was true. That is the coupling `proofs::raft_refinement` names, and
+//! was true. That is the coupling `crate::raft::proofs::refinement` names, and
 //! [`Durable`] is what discharges it.
 //!
 //! So the order is: decide, **persist**, then reply. A server that dies between
 //! the persist and the reply has lost a message, which the protocol handles. A
 //! server that dies between the reply and the persist has broken the protocol.
 //!
-//! # What is not here
+//! # What is here, and what it is worth
 //!
-//! Logs. No `AppendEntries`, no commitment, no state machine — so this is a
-//! leader *election* service, not a consensus service, and it cannot yet make
-//! the ownership registry's contents a single agreed fact. `heartbeat` carries
-//! a term and nothing else: it is how a leader keeps followers from timing out
-//! and how everyone learns of a higher term, which is all a leader can do
-//! without a log.
+//! The election, the log and the commit point: `request_vote` with the
+//! up-to-date comparison, `append_entries` with the consistency check and the
+//! truncation, `heartbeat`, and — inherent rather than on the wire, because
+//! they are a server acting on itself — [`Peer::stand_for_election`],
+//! [`Peer::append_command`] and [`Peer::record_match`], whose commit rule is
+//! figure 8's.
+//!
+//! **What it is worth is the model's line, not more.** Election Safety is
+//! proved; Log Matching, Leader Completeness and State Machine Safety are not,
+//! for the reason `crate::raft::model`'s docs give. So this service replicates a
+//! log and can tell you what a majority holds, and it does *not* yet come with a
+//! proof that two servers agree on what that log says. It cannot make the
+//! ownership registry's contents a single agreed fact until it does.
+//!
+//! # Replies are a protocol step too
+//!
+//! A server does not only answer RPCs, it *reads the answers to its own* — and
+//! Raft's term rule is about both directions: *"if RPC request or response
+//! contains term T > currentTerm, set currentTerm = T, convert to follower"*.
+//! A `Ballot::Refused(2)` reaching a term-1 candidate, or a `Standing { term: 2,
+//! .. }` reaching a term-1 leader, carries exactly the same news as an inbound
+//! request would.
+//!
+//! [`Peer::count_ballot`], [`Peer::observe_standing`] and
+//! [`Peer::observe_appended`] are that side of the protocol. They take the
+//! reply itself rather than a summary of it, which is what stops a caller
+//! tallying a vote nobody granted: **there is no way to add to the tally except
+//! by handing over a `Ballot::Granted` for the term being stood in**, and the
+//! coupling `has_quorum == won_election` that the proof rests on is only as good
+//! as that.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -61,8 +85,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::raft::steps::{
-    become_leader_step, grant_vote_step, is_majority, step_down_step, timeout_step, ExecRole,
-    ExecServer, RaftOutcome, RaftRefusal,
+    become_leader_step, follow_step, grant_vote_step, is_majority, step_down_step, timeout_step,
+    ExecRole, ExecServer, RaftOutcome, RaftRefusal,
 };
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
@@ -311,6 +335,23 @@ pub struct Persisted {
 /// returns early satisfies the type and breaks Election Safety, which is the
 /// usual shape of this kind of interface and is stated here rather than left
 /// to be inferred.
+///
+/// # A failed `save` is not a `save` that did not happen
+///
+/// **This is part of the system model, not a caveat.** `save` installs a value
+/// and then makes the installation durable, and those are two operations: the
+/// write-to-temporary, rename, fsync-the-directory sequence [`FileLog`] uses
+/// can fail on the *last* step with the new value already visible to any later
+/// `load`. So an `Err` from `save` means *"this value may or may not be
+/// there"*, never *"it is not there"*.
+///
+/// The [`Peer`] handles that by never advancing its own record on a failed
+/// `save` — so what it has acted on is always something it wrote down
+/// successfully — and by asking the store what it actually holds, which is what
+/// its `persist` does. Durable state may then be *ahead* of a running
+/// server's memory, and that direction is the safe one: a server that restarts
+/// believing it spent a vote it never cast refuses more than it had to, while
+/// the converse votes twice.
 pub trait Durable: Send + Sync + 'static {
     fn load(&self) -> io::Result<Persisted>;
     fn save(&self, state: Persisted) -> io::Result<()>;
@@ -557,10 +598,44 @@ impl Peer {
     }
 
     /// Write the decision down before acting on it.
-    fn persist(&self, term: u64, voted_for: Option<u64>) -> Result<()> {
-        self.store
-            .save(Persisted { current_term: term, voted_for })
-            .map_err(|e| refuse_down(&format!("could not persist term {term}: {e}")))
+    ///
+    /// **A failure here re-reads the store**, for the reason [`Durable`]'s docs
+    /// give: `save` can fail with the value installed, and a server that went
+    /// on as if nothing had happened could later write an *older* term over it.
+    /// That older term is one this server did act on, so it is not unsafe — but
+    /// it makes the durable record non-monotone, and a durable record that can
+    /// go backwards is a thing no later reader can reason about. Asking the
+    /// store settles it immediately: whatever is really there is adopted if it
+    /// is ahead, and the caller still gets its error.
+    fn persist(&self, g: &mut Inner, term: u64, voted_for: Option<u64>) -> Result<()> {
+        let Err(e) = self.store.save(Persisted { current_term: term, voted_for }) else {
+            return Ok(());
+        };
+        self.resync(g);
+        Err(refuse_down(&format!("could not persist term {term}: {e}")))
+    }
+
+    /// Adopt whatever the store holds, if it is ahead of this server.
+    ///
+    /// A best-effort repair, and deliberately silent about its own failure: it
+    /// runs on a path that is already returning an error, and a store that
+    /// cannot be read leaves the server exactly where a store that was never
+    /// read would — which is the state it is in anyway.
+    fn resync(&self, g: &mut Inner) {
+        let Ok(found) = self.store.load() else {
+            return;
+        };
+        if found.current_term <= g.server.current_term {
+            return;
+        }
+        let from_term = g.server.current_term;
+        // A follower, for the same reason recovery produces one: there is no
+        // durable role, and a term this server did not reach under its own
+        // power is not a term it can be leading.
+        g.server = ExecServer { role: ExecRole::Follower, current_term: found.current_term };
+        g.voted_for = found.voted_for;
+        g.tally = HashSet::new();
+        g.log.push(Event::SteppedDown { from_term, to_term: found.current_term });
     }
 
     /// The audit log so far.
@@ -592,7 +667,7 @@ impl Peer {
         // Durable before anything else, and the self-vote goes down with the
         // term: they are one decision, and a server that recorded the term
         // without the vote could vote again in it after a restart.
-        self.persist(term, Some(self.me))?;
+        self.persist(&mut g, term, Some(self.me))?;
         g.server = next;
         g.voted_for = Some(self.me);
         g.tally = HashSet::new();
@@ -601,15 +676,42 @@ impl Peer {
         Ok(term)
     }
 
-    /// Count a vote granted to this server, and take the term if that was the
-    /// one that made a majority.
+    /// **Read a peer's reply to `request_vote`.**
     ///
     /// Returns whether this server now leads.
-    pub fn count_vote(&self, from: u64, term: u64) -> Result<bool> {
+    ///
+    /// The `Ballot` itself is the argument, not a summary of it, and that is
+    /// the point rather than an interface preference. A method that took only
+    /// `(from, term)` would let a caller tally a peer that refused — or that
+    /// was never asked — and a majority assembled that way elects a leader the
+    /// model never elected, which breaks the `has_quorum == won_election`
+    /// coupling that `crate::raft::proofs::refinement` names and with it
+    /// Election Safety itself. The one way into the tally is a
+    /// `Ballot::Granted` for the term being stood in.
+    ///
+    /// A `Ballot::Refused` carrying a higher term is the other half of Raft's
+    /// term rule — *"if RPC request **or response** contains term T >
+    /// currentTerm"* — and is adopted here, durably, exactly as an inbound
+    /// request carrying it would be.
+    pub fn count_ballot(&self, from: u64, term: u64, ballot: Ballot) -> Result<bool> {
         if !self.is_member(from) {
             return Err(refuse_err("no such server"));
         }
         let mut g = self.inner.lock().expect("peer lock");
+        let granted = match ballot {
+            Ballot::Granted(t) => t,
+            Ballot::Refused(t) => {
+                // Nothing to count, and possibly a term to learn. `step_down_to`
+                // refuses a term that is not ahead, which is the common case.
+                self.step_down_to(&mut g, t)?;
+                return Ok(matches!(g.server.role, ExecRole::Leader));
+            },
+        };
+        if granted != term {
+            // A ballot granted for some other term. Whatever it is, it is not a
+            // vote in this one.
+            return Err(refuse_no("that ballot is for another term"));
+        }
         let my_len = self
             .entries
             .len()
@@ -712,6 +814,46 @@ impl Peer {
         Ok(g.commit)
     }
 
+    /// **Read a peer's reply to `heartbeat`, or an answer to `standing`.**
+    ///
+    /// The term rule again, from the direction a leader learns it has been
+    /// deposed: a partitioned leader that reconnects finds out from the replies
+    /// to its own heartbeats, and without this there is no way to tell it.
+    ///
+    /// Returns whether this server still believes it leads.
+    pub fn observe_standing(&self, seen: Standing) -> Result<bool> {
+        let mut g = self.inner.lock().expect("peer lock");
+        self.step_down_to(&mut g, seen.term)?;
+        Ok(matches!(g.server.role, ExecRole::Leader))
+    }
+
+    /// **Read a follower's reply to `append_entries`.**
+    ///
+    /// `Accepted` is replication progress, so it goes to [`Peer::record_match`]
+    /// and may advance the commit point. `Rejected` is one of two different
+    /// things wearing one name, and telling them apart is the caller's next
+    /// move:
+    ///
+    /// * the term it carries is **ahead** — this server is a stale leader and
+    ///   steps down here;
+    /// * the term is not ahead — the follower failed the consistency check, and
+    ///   the leader retries at a shorter prefix. That retry is the caller's, not
+    ///   this method's: it is a decision about what to send next, and sending is
+    ///   not something a `Peer` does.
+    ///
+    /// Returns `Some(commit)` when the reply advanced replication and `None`
+    /// when it did not.
+    pub fn observe_appended(&self, from: u64, reply: Appended) -> Result<Option<u64>> {
+        match reply {
+            Appended::Accepted(len) => self.record_match(from, len).map(Some),
+            Appended::Rejected(term) => {
+                let mut g = self.inner.lock().expect("peer lock");
+                self.step_down_to(&mut g, term)?;
+                Ok(None)
+            },
+        }
+    }
+
     /// Adopt a strictly higher term, durably, and drop to follower.
     ///
     /// Shared by `request_vote` and `heartbeat`, because Raft's rule is about
@@ -725,12 +867,37 @@ impl Peer {
         };
         let from_term = g.server.current_term;
         // The vote is cleared as the term advances, and both go down together.
-        self.persist(term, None)?;
+        self.persist(g, term, None)?;
         g.server = next;
         g.voted_for = None;
         g.tally = HashSet::new();
         g.log.push(Event::SteppedDown { from_term, to_term: term });
         Ok(())
+    }
+
+    /// **Stop standing, because somebody else won the term you are standing
+    /// in.**
+    ///
+    /// `step_down_to`'s blind spot, and figure 2's rule for candidates: an
+    /// append or a heartbeat at an *equal* term comes from the server that won
+    /// it, so a candidate that lost a split vote learns it lost. Without this
+    /// the loser stays a candidate in a term already decided and times out into
+    /// terms nobody needed, which is a liveness defect rather than a safety one
+    /// — but it is the defect that makes a split vote expensive.
+    ///
+    /// **Nothing is persisted, because nothing durable changes.** The term does
+    /// not move and the vote is kept: this server voted in this term, and a
+    /// restart must still find that vote. `Follower` is the role a restart
+    /// produces anyway.
+    ///
+    /// A leader is left alone; [`crate::raft::steps::follow_fires`] says why.
+    fn yield_at(&self, g: &mut Inner, term: u64) {
+        if let RaftOutcome::Moved(next) = follow_step(g.server, term) {
+            let from_term = g.server.current_term;
+            g.server = next;
+            g.tally = HashSet::new();
+            g.log.push(Event::SteppedDown { from_term, to_term: term });
+        }
     }
 }
 
@@ -788,7 +955,7 @@ impl Consensus for Peer {
                 // Decide, persist, *then* reply. A server that replies first and
                 // dies has voted twice in one term as far as the cluster is
                 // concerned, and two candidates can then each hold a majority.
-                self.persist(term, Some(candidate))?;
+                self.persist(&mut g, term, Some(candidate))?;
                 g.server = next;
                 g.voted_for = Some(candidate);
                 g.log.push(Event::Granted { term, to: candidate });
@@ -838,6 +1005,12 @@ impl Consensus for Peer {
             return Ok(Appended::Rejected(g.server.current_term));
         }
 
+        // The term is this server's own, so the sender won it: a candidate
+        // stops standing. This is the role change `tr_append_entries` makes on
+        // its follower, and `theorem_an_append_makes_its_receiver_a_follower`
+        // is the sentence saying the model makes it too.
+        self.yield_at(&mut g, term);
+
         // **The consistency check.** The follower takes the entry only if it
         // already agrees with the leader on the one before it — which is what
         // makes agreement at one index imply agreement at every earlier one,
@@ -881,6 +1054,9 @@ impl Consensus for Peer {
         };
         let mut g = self.inner.lock().expect("peer lock");
         self.step_down_to(&mut g, term)?;
+        // A heartbeat is an `append_entries` with nothing in it, so it demotes
+        // a candidate of its own term for the same reason and by the same step.
+        self.yield_at(&mut g, term);
         Ok(Standing {
             term: g.server.current_term,
             leading: matches!(g.server.role, ExecRole::Leader),

@@ -43,7 +43,10 @@ fn peer_with(me: u64, log: &MemoryLogStore) -> Peer {
 /// Make `p` the leader of term 1 in a three-server cluster.
 fn make_leader(p: &Peer) -> u64 {
     let term = p.stand_for_election().expect("may stand");
-    assert!(p.count_vote(1, term).expect("node 1 is a member"), "two of three leads");
+    assert!(
+        p.count_ballot(1, term, Ballot::Granted(term)).expect("node 1 is a member"),
+        "two of three leads"
+    );
     term
 }
 
@@ -171,7 +174,7 @@ async fn an_old_entry_is_committed_only_under_one_of_the_leaders_own() {
     let a = peer_with(0, &la);
     assert_eq!(a.stand_for_election().unwrap(), 1);
     assert_eq!(a.stand_for_election().unwrap(), 2, "standing again burns a term");
-    assert!(a.count_vote(1, 2).unwrap(), "two of three leads term 2");
+    assert!(a.count_ballot(1, 2, Ballot::Granted(2)).unwrap(), "two of three leads term 2");
 
     // Everyone holds the term-1 entry. That is a majority, and it is not
     // enough.

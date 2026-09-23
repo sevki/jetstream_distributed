@@ -1,4 +1,4 @@
-//! **Raft leader election**: terms, votes, quorums.
+//! **Raft**: terms, votes, quorums, and the log.
 //!
 //! The same exclusivity statement as [`crate::ownership`] — at most one
 //! authoritative party per generation — bought a completely different way.
@@ -6,11 +6,17 @@
 //! exclusivity out of counting, because any two majorities share a voter and a
 //! voter votes once per term.
 //!
-//! * [`model`]   — state space and transition relation.
+//! * [`model`]   — state space and transition relation, election and log.
 //! * [`steps`]   — the election decisions as executable `u64` functions.
-//! * [`proofs`]  — Election Safety, and a run in which an election happens.
+//! * [`proofs`]  — Election Safety, a run in which an election happens, and
+//!                 what one replication step gives you.
 //! * `service`   — the protocol over Jetstream RPC, behind the `service`
 //!                 feature.
+//!
+//! **Election Safety is proved; Log Matching, Leader Completeness and State
+//! Machine Safety are not.** The log's transitions are modelled and exercised,
+//! and [`model`]'s docs say exactly where that line falls and why it is where
+//! it is.
 
 pub mod model;
 pub mod proofs;

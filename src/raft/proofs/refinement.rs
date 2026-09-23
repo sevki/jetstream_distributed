@@ -300,6 +300,84 @@ pub proof fn theorem_step_down_step_refuses_exactly_when_disabled(
 }
 
 // ---------------------------------------------------------------------------
+// Yielding to a leader of your own term
+// ---------------------------------------------------------------------------
+
+/// **`tr_append_entries` makes its follower a follower.**
+///
+/// Read off the transition, and worth stating because it is the only place the
+/// model demotes a server without advancing its term — the case
+/// `tr_step_down` cannot reach. It is what justifies
+/// [`crate::raft::steps::follow_step`]: a candidate that accepts an append from
+/// the leader of the term it is standing in stops standing, and its term does
+/// not move.
+pub proof fn theorem_an_append_makes_its_receiver_a_follower(
+    c: Cluster,
+    post: Cluster,
+    leader: ServerId,
+    follower: ServerId,
+    prefix: nat,
+)
+    requires
+        tr_append_entries(c, post, leader, follower, prefix),
+    ensures
+        post.servers[follower].role == Role::Follower,
+        post.servers[follower].current_term == c.servers[follower].current_term,
+{
+}
+
+/// The step computes exactly that role change.
+///
+/// Stated against the transition rather than against a post-state of its own:
+/// `follow_step` does not construct a cluster, it reports the `(role, term)`
+/// the model's follower ends up with, and this is the sentence saying so.
+pub proof fn theorem_follow_step_agrees_with_tr_append_entries(
+    c: Cluster,
+    post: Cluster,
+    leader: ServerId,
+    follower: ServerId,
+    prefix: nat,
+    term: Term,
+)
+    requires
+        tr_append_entries(c, post, leader, follower, prefix),
+        term == c.servers[follower].current_term,
+        follow_fires(c.servers[follower].role, c.servers[follower].current_term, term),
+    ensures
+        post.servers[follower].role == Role::Follower,
+        post.servers[follower].current_term == term,
+{
+}
+
+/// **A refused yield is a demotion the model would not have made either — for
+/// the one role the model can demote.**
+///
+/// The asymmetry is deliberate and is the whole content of the theorem. When
+/// the term does not match, `tr_append_entries` is not enabled at all, so the
+/// refusal is exact. When the role is `Leader` at an equal term the transition
+/// *is* enabled in the raw relation, and the step still refuses — which is why
+/// the hypothesis here excludes that case rather than pretending it does not
+/// exist. Election Safety is what rules it out of any reachable cluster: a
+/// leader of `term` receiving an append from another leader of `term` would be
+/// two leaders in one term.
+pub proof fn theorem_follow_step_refuses_exactly_when_disabled(
+    c: Cluster,
+    post: Cluster,
+    leader: ServerId,
+    follower: ServerId,
+    prefix: nat,
+    term: Term,
+)
+    requires
+        !follow_fires(c.servers[follower].role, c.servers[follower].current_term, term),
+        term != c.servers[follower].current_term,
+    ensures
+        !(tr_append_entries(c, post, leader, follower, prefix) && c.servers[leader].current_term
+            == term),
+{
+}
+
+// ---------------------------------------------------------------------------
 // Counting
 // ---------------------------------------------------------------------------
 

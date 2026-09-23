@@ -22,7 +22,7 @@
 //! include a lookup that no theorem covers. What is left outside is therefore
 //! named rather than left to be discovered: **the lock, the identity lookup,
 //! the durable epoch floor and the audit log are not verified**, and
-//! `services/ownership` says so too.
+//! [`crate::ownership::service`] says so too.
 //!
 //! # The two places the executable steps are narrower than the model
 //!

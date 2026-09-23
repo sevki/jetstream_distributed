@@ -53,7 +53,7 @@
 //! process-local `Mutex` buys the first and none of the second.
 //!
 //! A registry that forgets can move epochs *backwards*, and every fencing
-//! theorem in `distributed_ownership::proofs` assumes they only go up. Say A
+//! theorem in `crate::ownership::proofs` assumes they only go up. Say A
 //! owns the actor at 41, a handover moves it to 42, and A is partitioned away
 //! still believing it owns at 41. Restart a registry that begins wherever its
 //! caller says, and it offers 41 again — to A or to anyone. A's stale write now
@@ -368,7 +368,7 @@ pub enum Event {
 // ---------------------------------------------------------------------------
 //
 // There is no state type here. The actor's record is
-// `distributed_ownership::steps::ExecState`, and every decision made about it
+// `crate::ownership::steps::ExecState`, and every decision made about it
 // is one of the step functions beside it — each with a postcondition stated in
 // terms of the model's `tr_*` transition and a theorem in
 // `proofs::refinement` discharging it.
@@ -705,7 +705,7 @@ impl Ownership for Registry {
         // `proofs::refinement::theorem_may_write_step_is_the_system_fence`,
         // which is `can_mutate` — authority as the system sees it — rather than
         // the node-local staleness test a `FenceGuard` performs for a node.
-        // The distinction is the whole of `distributed_ownership::exec`'s module
+        // The distinction is the whole of `crate::ownership::exec`'s module
         // docs: a node cannot fence itself, but the registry can fence it.
         if !may_write_step(g.state, node, epoch) {
             g.log.push(Event::Fenced { node, epoch });

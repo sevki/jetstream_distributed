@@ -21,7 +21,7 @@
 //! * [`raymond`]   — Raymond's mutual-exclusion routing layer.
 //! * [`composed`]  — the two above as one machine, with the coupling between
 //!                   them proved rather than assumed.
-//! * [`raft`]      — leader election, where exclusivity is bought by counting
+//! * [`raft`]      — consensus, where exclusivity is bought by counting
 //!                   instead of by assuming an atomic registry.
 //!
 //! Within each, `model` defines only the state space and the transition

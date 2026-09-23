@@ -25,7 +25,8 @@
 //! | `sys.live.contains(n)` | `n` is connected and asking |
 //! | `sys.network.contains(Revoke { .. })` | `begin_transfer` put it there |
 //!
-//! The first four are discharged by construction in `services/ownership`. Two
+//! The first four are discharged by construction in [`crate::ownership::service`].
+//! Two
 //! of them are worth reading twice, because they are discharged in quite
 //! different ways.
 //!
@@ -47,7 +48,7 @@
 //!
 //! What no theorem here covers is equally worth naming: the lock, the identity
 //! lookup, the durable epoch floor and the audit log. Those are the server's,
-//! and `services/ownership` says so in the same words.
+//! and [`crate::ownership::service`] says so in the same words.
 #![allow(unused_imports)]
 
 use vstd::prelude::*;

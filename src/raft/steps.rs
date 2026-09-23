@@ -21,8 +21,9 @@
 //!
 //! Terms, like epochs, are unbounded in the model and bounded here. A server
 //! that cannot advance its term refuses rather than wrapping, for the reason
-//! `steps::Refusal::Exhausted` gives: wrapping would take the term *backwards*,
-//! and every argument in `proofs::raft` rests on terms only going up.
+//! [`RaftRefusal::Exhausted`] gives: wrapping would take the term *backwards*,
+//! and every argument in `crate::raft::proofs::election` rests on terms only
+//! going up.
 #![allow(unused_imports)]
 
 use vstd::prelude::*;
@@ -122,14 +123,18 @@ pub fn is_majority(votes: u64, members: u64) -> (r: bool)
 //
 // Stated over a server's `(role, current_term)` rather than over the whole
 // `Server`, and that is not a simplification — it is the honest scope. A
-// `Server` also carries a log, and **none of these four transitions reads it**:
-// standing for election, granting a vote, taking a term and stepping down are
-// decisions about who you are and which term you are in. Writing the guards
-// over the whole record would have implied the log was consulted, and would
-// have forced the executable type to carry a copy of a log it never looks at.
+// `Server` also carries a log, and **none of these guards reads it**: standing
+// for election, granting a vote, taking a term, stepping down and yielding to a
+// leader of your own term are decisions about who you are and which term you
+// are in. Writing the guards over the whole record would have implied the log
+// was consulted, and would have forced the executable type to carry a copy of a
+// log it never looks at.
 //
 // The log's own decisions are a separate matter, and `tr_append_entries` is
-// guarded by the log rather than by the role.
+// guarded by the log rather than by the role. [`follow_fires`] is the one guard
+// here that comes *from* that transition: it is the role change
+// `tr_append_entries` performs on the follower, split out because a server
+// makes it without touching its log.
 
 /// `tr_timeout`'s guard: anyone not already leading may stand.
 pub open spec fn timeout_fires(role: Role) -> bool {
@@ -168,6 +173,29 @@ pub open spec fn become_leader_fires(
 /// `tr_step_down`'s guard: the term really is ahead.
 pub open spec fn step_down_fires(current_term: Term, term: Term) -> bool {
     term > current_term
+}
+
+/// **Yield to a leader of the term you are already in.**
+///
+/// The role change `tr_append_entries` makes on its follower, at an *equal*
+/// term — the case [`step_down_fires`] cannot cover, because the term is not
+/// ahead. Figure 2 puts it under "Candidates": *"If AppendEntries RPC received
+/// from new leader: convert to follower"*. Without it a candidate that lost a
+/// split vote goes on standing in a term somebody else has already won, and
+/// keeps timing out into terms nobody needed.
+///
+/// **A leader is deliberately not moved.** `tr_append_entries` sets the
+/// follower's role to `Follower` whatever it was, which at an equal term would
+/// include a leader — but that case is exactly the one Election Safety rules
+/// out, so it is unreachable in the model and a step that fired on it would be
+/// letting any peer unseat a leader by naming its term. The executable step
+/// refuses instead, which is a refusal of a transition the model cannot reach.
+pub open spec fn follow_fires(role: Role, current_term: Term, term: Term) -> bool {
+    &&& match role {
+        Role::Candidate => true,
+        _ => false,
+    }
+    &&& term == current_term
 }
 
 // ---------------------------------------------------------------------------
@@ -277,6 +305,39 @@ pub fn step_down_step(st: ExecServer, term: u64) -> (r: RaftOutcome)
         RaftOutcome::Moved(ExecServer { role: ExecRole::Follower, current_term: term })
     } else {
         RaftOutcome::Refused(RaftRefusal::NotHigher)
+    }
+}
+
+/// Yield to a leader of the term you are already in. See [`follow_fires`].
+pub fn follow_step(st: ExecServer, term: u64) -> (r: RaftOutcome)
+    ensures
+        match r {
+            RaftOutcome::Moved(next) => follow_fires(
+                st.role.view(),
+                st.current_term as nat,
+                term as nat,
+            ) && next.role.view() == Role::Follower && next.current_term == st.current_term,
+            RaftOutcome::Refused(_) => !follow_fires(
+                st.role.view(),
+                st.current_term as nat,
+                term as nat,
+            ),
+        },
+{
+    match st.role {
+        ExecRole::Candidate => {
+            if term == st.current_term {
+                RaftOutcome::Moved(
+                    ExecServer { role: ExecRole::Follower, current_term: st.current_term },
+                )
+            } else {
+                // A higher term is `step_down_step`'s business and the caller
+                // has already offered it there, so what is left here is a term
+                // behind this server's own.
+                RaftOutcome::Refused(RaftRefusal::TermBehind)
+            }
+        },
+        _ => RaftOutcome::Refused(RaftRefusal::NotCandidate),
     }
 }
 

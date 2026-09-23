@@ -1,4 +1,4 @@
-//! Raft leader election: the state space and the transition relation.
+//! Raft: the state space and the transition relation.
 //!
 //! Like [`crate::ownership::model`], this module defines *only* the state and the
 //! transitions. It does not import the specification layer, so a specification
@@ -31,14 +31,15 @@
 //! **Be exact about what this does and does not discharge.** A single leader per
 //! term is *not* an atomic registry. The registry's contents — which node owns
 //! which actor at which epoch — become a single agreed fact only once entries
-//! are replicated and committed, and log replication is not modelled here. What
-//! is here is the election, in full, with the safety property that every later
-//! Raft argument rests on.
+//! are replicated *and the replication is proved to agree*. The transitions that
+//! replicate are here; the theorems that would make agreement a fact are not.
+//! See "What is modelled but not yet proved" below, which is the honest line
+//! between the two.
 //!
 //! # What is modelled
 //!
-//! * A fixed set of `members`, each with a [`Server`] record: a [`Role`] and a
-//!   `current_term`.
+//! * A fixed set of `members`, each with a [`Server`] record: a [`Role`], a
+//!   `current_term`, a `log` and a `commit` count.
 //! * `votes`: every vote ever granted, as a `(voter, term, candidate)` triple.
 //!   This set never shrinks. A vote is a *physical* fact in the same sense as
 //!   `model::System::issued`: a crash does not un-cast it, so a server that
@@ -46,17 +47,41 @@
 //! * `messages`: every message ever sent, never shrinking, delivery not
 //!   consuming — which gives duplication, reordering, delay and loss for free,
 //!   exactly as `model::System::network` does.
+//! * The election: [`tr_timeout`], [`tr_grant_vote`] — with the
+//!   `lastLogIndex`/`lastLogTerm` up-to-date comparison, see
+//!   [`at_least_as_up_to_date`] — [`tr_become_leader`] and [`tr_step_down`].
+//! * The log: [`tr_client_request`] stamps an entry with its leader's term,
+//!   [`tr_append_entries`] carries one entry under the consistency check and
+//!   truncates whatever diverged, and [`tr_advance_commit`] advances the commit
+//!   point under **figure 8's restriction** — a majority holding a prefix is not
+//!   enough unless the last entry of that prefix is of the committing leader's
+//!   own term.
+//!
+//! # What is modelled but not yet proved
+//!
+//! The log transitions above are in `raft_next`, so every run of
+//! [`raft_reachable`] may use them and every theorem in
+//! `crate::raft::proofs::election` holds across them. What does **not** yet
+//! exist is the log's own safety argument: **Log Matching, Leader Completeness
+//! and State Machine Safety are not proved.** `crate::raft::proofs::log` proves
+//! what follows from a single step — that elections do not touch logs, that a
+//! leader only appends, that a follower agrees before it accepts, that a commit
+//! needs a majority of the committing leader's own term, that two commits share
+//! a holder — and says in its own module docs why the rest does not close over
+//! the state alone: ruling out a second entry at the same `(index, term)`
+//! is a fact about the *run's history*, not about any one state, and needs ghost
+//! history the model does not carry.
+//!
+//! So: the transition system includes replication; the verified guarantees stop
+//! at Election Safety plus the single-step log properties. Read any claim about
+//! this module against that line.
 //!
 //! # What is deliberately not modelled
 //!
-//! Logs, `AppendEntries`, commitment, and therefore Log Matching, Leader
-//! Completeness and State Machine Safety. A leader here is a server that won an
-//! election, nothing more. The `lastLogIndex`/`lastLogTerm` comparison in the
-//! real `RequestVote` — the up-to-date check — is part of log replication and
-//! is absent with it: **its absence cannot make an election unsafe**, because it
-//! only ever refuses votes that this model grants, so every run here is a run of
-//! the fuller protocol. It is what makes elections *useful* rather than safe,
-//! and it is the first thing the log work adds.
+//! Reconfiguration. Membership is fixed at `members` and no transition changes
+//! it, which is not an oversight: joint consensus is a separate protocol with
+//! its own well-known unsafety, and modelling it half-way would be worse than
+//! not modelling it.
 #![allow(unused_imports)]
 
 use vstd::prelude::*;

@@ -1,6 +1,6 @@
 //! An election that actually happens.
 //!
-//! `proofs::raft::theorem_election_safety` says at most one server leads a
+//! [`crate::raft::proofs::election::theorem_election_safety`] says at most one server leads a
 //! term. A protocol in which nobody can ever be elected satisfies that
 //! perfectly, and so does one whose transitions are all unreachable — the
 //! theorem would be true, machine-checked, and empty.

@@ -791,6 +791,9 @@ pub proof fn lemma_timeout_preserves_hist(pre: Cluster, post: Cluster, n: Server
 
     // No log moved and nothing was created; `n` became a candidate, not a
     // leader.
+    // `insert` over a key the map already has, so the domains match —
+    // extensionally, which is not a step Verus takes on its own.
+    assert(post.servers.dom() =~= pre.servers.dom());
     lemma_untouched_logs_keep_log_hist(pre, post);
 }
 
@@ -880,6 +883,9 @@ pub proof fn lemma_grant_vote_preserves_hist(
     }
 
     // The voter became a follower, so no log moved and nobody was promoted.
+    // `insert` over a key the map already has, so the domains match —
+    // extensionally, which is not a step Verus takes on its own.
+    assert(post.servers.dom() =~= pre.servers.dom());
     lemma_untouched_logs_keep_log_hist(pre, post);
 }
 
@@ -1063,6 +1069,7 @@ pub proof fn lemma_step_down_preserves_hist(pre: Cluster, post: Cluster, n: Serv
         }
     }
 
+    assert(post.servers.dom() =~= pre.servers.dom());
     lemma_untouched_logs_keep_log_hist(pre, post);
 }
 
@@ -1133,8 +1140,16 @@ pub proof fn lemma_client_request_writes_a_fresh_slot(
     assert forall|s: Slot| post.created.contains_key(s) implies exists|w: ServerId|
         #[trigger] post.led.contains(Led { server: w, term: s.term }) by {
         if s == fresh {
+            // The leader of `t` is on the record as having led `t`.
+            assert(pre.led.contains(Led { server: n, term: t }));
             assert(post.led.contains(Led { server: n, term: t }));
         } else {
+            // `post.created` is `pre.created` plus the one fresh slot, so any
+            // other slot was already there — which is what lets
+            // `inv_created_implies_led` be instantiated at it at all. Without
+            // this the `choose` below has no existential to choose from and
+            // picks an arbitrary server.
+            assert(pre.created.contains_key(s));
             let w = choose|w: ServerId| pre.led.contains(Led { server: w, term: s.term });
             assert(post.led.contains(Led { server: w, term: s.term }));
         }
@@ -1191,8 +1206,8 @@ pub proof fn lemma_advance_commit_preserves_hist(
         raft_hist_inv(post),
 {
     lemma_raft_step_preserves_inv(pre, post, RaftStep::AdvanceCommit { server: n, upto: upto });
-    lemma_untouched_logs_keep_log_hist(pre, post);
     assert(post.servers.dom() =~= pre.servers.dom());
+    lemma_untouched_logs_keep_log_hist(pre, post);
     assert forall|m: ServerId|
         #![trigger post.servers[m]]
         post.servers.contains_key(m) implies post.servers[m].role == pre.servers[m].role

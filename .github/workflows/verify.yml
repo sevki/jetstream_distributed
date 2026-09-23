@@ -370,4 +370,5 @@ jobs:
             --test ownership_durability \
             --test raft_election \
             --test raft_wire \
+            --test raft_log \
             -- --nocapture

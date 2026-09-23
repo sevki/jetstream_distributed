@@ -18,7 +18,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
 use distributed_ownership::raft::service::{
-    Ballot, Consensus, Durable, Event, MemoryLog, Peer, Persisted, Standing,
+    Ballot, Consensus, Durable, Event, MemoryLog, MemoryLogStore, Peer, Persisted, Standing,
 };
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
@@ -37,8 +37,12 @@ fn from(addr: IpAddr) -> Context {
     Context::new(Some(RemoteAddr::IpAddr(addr)), None)
 }
 
+/// Every server in this file starts with an empty log, so the up-to-date check
+/// is satisfied by `(0, 0)` everywhere and these tests stay about *elections*.
+/// `tests/raft_log.rs` is where the log does the deciding.
 fn peer(me: u64, log: &MemoryLog) -> Peer {
-    Peer::new(roster(), me, Arc::new(log.clone())).expect("the server is on the roster")
+    Peer::new(roster(), me, Arc::new(log.clone()), Arc::new(MemoryLogStore::new()))
+        .expect("the server is on the roster")
 }
 
 /// A candidate that persuades one peer leads a cluster of three.
@@ -52,7 +56,7 @@ async fn a_candidate_with_two_of_three_leads() {
     assert!(!a.standing_now().leading, "one vote of three is not a majority");
 
     // A asks B, which has no reason to refuse.
-    assert_eq!(b.request_vote(from(A), term).await.unwrap(), Ballot::Granted(1));
+    assert_eq!(b.request_vote(from(A), term, 0, 0).await.unwrap(), Ballot::Granted(1));
     let leads = a.count_vote(1, term).unwrap();
     assert!(leads, "two of three is a majority");
     assert_eq!(a.standing_now(), Standing { term: 1, leading: true });
@@ -78,17 +82,17 @@ async fn two_candidates_cannot_both_win_a_term() {
     assert_eq!(b.stand_for_election().unwrap(), 1);
 
     // A gets to C first.
-    assert_eq!(c.request_vote(from(A), 1).await.unwrap(), Ballot::Granted(1));
+    assert_eq!(c.request_vote(from(A), 1, 0, 0).await.unwrap(), Ballot::Granted(1));
     assert!(a.count_vote(2, 1).unwrap(), "A has its own vote and C's");
 
     // B now has nowhere to go. C has spent its vote...
     assert_eq!(
-        c.request_vote(from(B), 1).await.unwrap(),
+        c.request_vote(from(B), 1, 0, 0).await.unwrap(),
         Ballot::Refused(1),
         "a server votes once per term — this is the guard the whole argument rests on"
     );
     // ...and A spent its own on itself.
-    assert_eq!(a.request_vote(from(B), 1).await.unwrap(), Ballot::Refused(1));
+    assert_eq!(a.request_vote(from(B), 1, 0, 0).await.unwrap(), Ballot::Refused(1));
 
     assert!(a.standing_now().leading);
     assert!(
@@ -108,7 +112,7 @@ async fn a_restarted_voter_does_not_vote_twice() {
 
     {
         let c = peer(2, &lc);
-        assert_eq!(c.request_vote(from(A), 1).await.unwrap(), Ballot::Granted(1));
+        assert_eq!(c.request_vote(from(A), 1, 0, 0).await.unwrap(), Ballot::Granted(1));
     }
     assert_eq!(
         lc.load().unwrap(),
@@ -120,14 +124,14 @@ async fn a_restarted_voter_does_not_vote_twice() {
     let c = peer(2, &lc);
     assert_eq!(c.standing_now().term, 1, "a recovered server resumes its term");
     assert_eq!(
-        c.request_vote(from(B), 1).await.unwrap(),
+        c.request_vote(from(B), 1, 0, 0).await.unwrap(),
         Ballot::Refused(1),
         "the restart must not hand B a vote C already gave A"
     );
 
     // And the same candidate asking again is answered the same way, because a
     // repeated request is a retransmission rather than a second vote.
-    assert_eq!(c.request_vote(from(A), 1).await.unwrap(), Ballot::Granted(1));
+    assert_eq!(c.request_vote(from(A), 1, 0, 0).await.unwrap(), Ballot::Granted(1));
 }
 
 /// The same run against a voter that forgot, so the defect is on the record
@@ -140,14 +144,14 @@ async fn a_restarted_voter_does_not_vote_twice() {
 async fn a_forgetful_voter_votes_twice_and_elects_two_leaders() {
     {
         let c = peer(2, &MemoryLog::new());
-        assert_eq!(c.request_vote(from(A), 1).await.unwrap(), Ballot::Granted(1));
+        assert_eq!(c.request_vote(from(A), 1, 0, 0).await.unwrap(), Ballot::Granted(1));
     }
 
     // A fresh log, standing in for a server that wrote nothing down.
     let c = peer(2, &MemoryLog::new());
     assert_eq!(c.standing_now().term, 0, "it has forgotten the term as well as the vote");
     assert_eq!(
-        c.request_vote(from(B), 1).await.unwrap(),
+        c.request_vote(from(B), 1, 0, 0).await.unwrap(),
         Ballot::Granted(1),
         "the same server votes a second time in the same term"
     );
@@ -169,7 +173,8 @@ async fn a_forgetful_voter_votes_twice_and_elects_two_leaders() {
 /// cluster, and a vote cannot be counted from one.
 #[tokio::test]
 async fn strangers_are_not_servers() {
-    assert!(Peer::new(roster(), 7, Arc::new(MemoryLog::new())).is_err());
+    assert!(Peer::new(roster(), 7, Arc::new(MemoryLog::new()), Arc::new(MemoryLogStore::new()))
+            .is_err());
 
     let a = peer(0, &MemoryLog::new());
     a.stand_for_election().unwrap();
@@ -181,7 +186,7 @@ async fn strangers_are_not_servers() {
         Some(RemoteAddr::IpAddr(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 9)))),
         None,
     );
-    let refused = a.request_vote(stranger, 5).await.unwrap_err();
+    let refused = a.request_vote(stranger, 5, 0, 0).await.unwrap_err();
     assert_eq!(refused.code(), Some("NO"), "{refused:?}");
 }
 

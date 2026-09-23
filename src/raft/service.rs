@@ -90,6 +90,115 @@ pub struct Standing {
     pub leading: bool,
 }
 
+/// One log entry, on the wire and in storage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, JetStreamWireFormat)]
+pub struct LogEntry {
+    /// The term of the leader that created it. This is what makes an entry's
+    /// `(index, term)` pair name a leader: Election Safety says there was only
+    /// one leader of that term.
+    pub term: u64,
+    /// The command. Opaque here, as it is in the model: the safety argument is
+    /// about the order entries are applied in, not about what they mean.
+    pub value: u64,
+}
+
+/// The reply to `append_entries`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, JetStreamWireFormat)]
+pub enum Appended {
+    /// Taken. This is the follower's log length afterwards, which is what the
+    /// leader tracks to decide what is replicated.
+    Accepted(u64),
+    /// Refused. This is the follower's term, so a stale leader finds out.
+    Rejected(u64),
+}
+
+/// **The replicated log.**
+///
+/// A trait, and mockable, for two reasons that pull the same way. A real log is
+/// a file with a format, a fsync policy and a truncation story, and none of
+/// that belongs in the protocol; and the protocol's own behaviour — the
+/// consistency check, the truncation, the up-to-date comparison — is exactly
+/// what you want to test without a disk in the way.
+///
+/// Every mutating method **must be durable before it returns**, for the reason
+/// `Durable` gives about votes: a log that forgets an entry it acknowledged has
+/// told the leader something untrue, and the leader may have committed on the
+/// strength of it.
+pub trait LogStore: Send + Sync + 'static {
+    /// How many entries there are.
+    fn len(&self) -> io::Result<u64>;
+
+    /// The entry at `index`, or `None` past the end.
+    fn entry_at(&self, index: u64) -> io::Result<Option<LogEntry>>;
+
+    /// Append one entry, returning the new length.
+    fn append(&self, entry: LogEntry) -> io::Result<u64>;
+
+    /// Keep the first `prefix` entries, drop the rest, append `entry`.
+    ///
+    /// The truncation is the part that matters and the part a naive
+    /// implementation gets wrong: a follower that appends without dropping the
+    /// divergent tail keeps entries no leader ever committed.
+    fn overwrite(&self, prefix: u64, entry: LogEntry) -> io::Result<()>;
+
+    /// The term of the entry at `index`, or `None` past the end.
+    fn term_at(&self, index: u64) -> io::Result<Option<u64>> {
+        Ok(self.entry_at(index)?.map(|e| e.term))
+    }
+
+    /// The `(last term, length)` pair a `RequestVote` carries.
+    ///
+    /// An empty log reports term 0, which is safe as a floor because no entry
+    /// is ever created at term 0: entries come from leaders, and a leader's
+    /// term is at least 1.
+    fn summary(&self) -> io::Result<(u64, u64)> {
+        let n = self.len()?;
+        if n == 0 {
+            Ok((0, 0))
+        } else {
+            Ok((self.term_at(n - 1)?.unwrap_or(0), n))
+        }
+    }
+}
+
+/// An in-memory log. The mock, and the thing the tests run against.
+#[derive(Clone, Debug, Default)]
+pub struct MemoryLogStore(Arc<Mutex<Vec<LogEntry>>>);
+
+impl MemoryLogStore {
+    pub fn new() -> Self {
+        MemoryLogStore(Arc::new(Mutex::new(Vec::new())))
+    }
+
+    /// The whole log, for tests to compare against.
+    pub fn entries(&self) -> Vec<LogEntry> {
+        self.0.lock().expect("log lock").clone()
+    }
+}
+
+impl LogStore for MemoryLogStore {
+    fn len(&self) -> io::Result<u64> {
+        Ok(self.0.lock().expect("log lock").len() as u64)
+    }
+
+    fn entry_at(&self, index: u64) -> io::Result<Option<LogEntry>> {
+        Ok(self.0.lock().expect("log lock").get(index as usize).copied())
+    }
+
+    fn append(&self, entry: LogEntry) -> io::Result<u64> {
+        let mut g = self.0.lock().expect("log lock");
+        g.push(entry);
+        Ok(g.len() as u64)
+    }
+
+    fn overwrite(&self, prefix: u64, entry: LogEntry) -> io::Result<()> {
+        let mut g = self.0.lock().expect("log lock");
+        g.truncate(prefix as usize);
+        g.push(entry);
+        Ok(())
+    }
+}
+
 /// The node-facing protocol.
 ///
 /// Three methods, and none of them takes a server number — see the module docs.
@@ -97,10 +206,38 @@ pub struct Standing {
 /// are things a server does to itself, and putting them on the wire would let a
 /// peer declare somebody leader. They are inherent methods on [`Peer`], for the
 /// same reason `force` is inherent on the ownership registry.
-#[service(uses(super::{Ballot, Standing}))]
+#[service(uses(super::{Appended, Ballot, LogEntry, Standing}))]
 pub trait Consensus {
     /// `RequestVote`. The candidate is the caller.
-    async fn request_vote(&self, ctx: Context, term: u64) -> Result<Ballot>;
+    ///
+    /// `last_term` and `last_index` are the candidate's log summary, and the
+    /// voter judges them against its own. They are arguments rather than
+    /// something the voter looks up, because a vote has to be decided on what
+    /// was true when it was asked for — and because the voter cannot see the
+    /// candidate's log at all.
+    async fn request_vote(
+        &self,
+        ctx: Context,
+        term: u64,
+        last_term: u64,
+        last_index: u64,
+    ) -> Result<Ballot>;
+
+    /// `AppendEntries`, one entry at a time. The leader is the caller.
+    ///
+    /// `prefix` is how many entries the leader believes the follower already
+    /// agrees on, and `prev_term` is the term of the entry before that — the
+    /// **consistency check**. A follower that accepts drops whatever it had
+    /// beyond `prefix`.
+    async fn append_entries(
+        &self,
+        ctx: Context,
+        term: u64,
+        prefix: u64,
+        prev_term: u64,
+        entry: LogEntry,
+        leader_commit: u64,
+    ) -> Result<Appended>;
 
     /// A leader asserting its term. The leader is the caller.
     ///
@@ -284,6 +421,14 @@ pub enum Event {
     Led { term: u64, votes: u64 },
     /// Learned of a higher term and stepped down into it.
     SteppedDown { from_term: u64, to_term: u64 },
+    /// The leader appended a client command at its own term.
+    Appended { term: u64, index: u64 },
+    /// A follower accepted an entry, and this is its log length afterwards.
+    Accepted { term: u64, prefix: u64, len: u64 },
+    /// A follower refused one — the consistency check, or a stale term.
+    RefusedAppend { term: u64, prefix: u64 },
+    /// The leader advanced the commit point.
+    Committed { term: u64, upto: u64 },
 }
 
 // ---------------------------------------------------------------------------
@@ -294,6 +439,13 @@ struct Inner {
     server: ExecServer,
     /// Who this server voted for in `server.current_term`.
     voted_for: Option<u64>,
+    /// How many entries are committed. A count, not an index — the same choice
+    /// the model makes, and for the same reason.
+    commit: u64,
+    /// Per-follower replication progress, kept by a leader: how many entries
+    /// each is known to hold. This is what a majority is counted over when the
+    /// commit point advances.
+    match_len: HashMap<u64, u64>,
     /// Votes collected for this server's own candidacy at
     /// `server.current_term`. A **set**, because `is_majority`'s precondition
     /// is that the tally does not exceed the membership, and a list would let
@@ -312,6 +464,9 @@ pub struct Peer {
     /// This server's own number.
     me: u64,
     store: Arc<dyn Durable>,
+    /// The replicated log. A trait so that the protocol can be exercised
+    /// without a disk, and so that a real one can be a real one.
+    entries: Arc<dyn LogStore>,
 }
 
 impl Peer {
@@ -325,6 +480,7 @@ impl Peer {
         roster: HashMap<IpAddr, u64>,
         me: u64,
         store: Arc<dyn Durable>,
+        entries: Arc<dyn LogStore>,
     ) -> io::Result<Self> {
         if !roster.values().any(|&n| n == me) {
             return Err(io::Error::new(
@@ -349,7 +505,24 @@ impl Peer {
             roster: Arc::new(roster),
             me,
             store,
+            entries,
         })
+    }
+
+    /// The log, for a caller that needs to read it (a leader deciding what to
+    /// send, a test checking what landed).
+    pub fn log_store(&self) -> &Arc<dyn LogStore> {
+        &self.entries
+    }
+
+    /// The `(last term, length)` pair a vote request carries.
+    pub fn summary(&self) -> Result<(u64, u64)> {
+        self.entries.summary().map_err(|e| refuse_down(&format!("could not read the log: {e}")))
+    }
+
+    /// How many entries this server considers committed.
+    pub fn commit(&self) -> u64 {
+        self.inner.lock().expect("peer lock").commit
     }
 
     /// How many servers are in the cluster.
@@ -431,6 +604,10 @@ impl Peer {
             return Err(refuse_err("no such server"));
         }
         let mut g = self.inner.lock().expect("peer lock");
+        let my_len = self
+            .entries
+            .len()
+            .map_err(|e| refuse_down(&format!("could not read the log: {e}")))?;
         if g.server.current_term != term {
             // A vote for a term this server has left. Not an error on anyone's
             // part — it is what a reply delayed past a new election looks like
@@ -450,6 +627,9 @@ impl Peer {
         match become_leader_step(g.server, term, has_quorum) {
             RaftOutcome::Moved(next) => {
                 g.server = next;
+                // A leader holds its own whole log, which is where the
+                // replication tally starts from.
+                g.match_len.insert(self.me, my_len);
                 g.log.push(Event::Led { term, votes });
                 Ok(true)
             }
@@ -457,6 +637,73 @@ impl Peer {
             // failure of the caller's, so neither is reported as one.
             RaftOutcome::Refused(_) => Ok(false),
         }
+    }
+
+    /// **A client command**, appended by a leader at its own term.
+    ///
+    /// Inherent rather than on the trait for the reason `stand_for_election` is:
+    /// it is the leader acting, not a peer asking. Returns the index the entry
+    /// landed at.
+    pub fn append_command(&self, value: u64) -> Result<u64> {
+        // The lock is held across the append, and that is the point rather than
+        // an oversight: "am I the leader" and "what index does this land at"
+        // must not be separable, or two concurrent appends both read the same
+        // length and one of them is wrong about where its entry went.
+        let mut g = self.inner.lock().expect("peer lock");
+        if !matches!(g.server.role, ExecRole::Leader) {
+            return Err(refuse_no("not the leader"));
+        }
+        let term = g.server.current_term;
+        let len = self
+            .entries
+            .append(LogEntry { term, value })
+            .map_err(|e| refuse_down(&format!("could not append: {e}")))?;
+        g.log.push(Event::Appended { term, index: len - 1 });
+        // A leader trivially holds its own entries.
+        g.match_len.insert(self.me, len);
+        Ok(len - 1)
+    }
+
+    /// Record that `from` holds `len` entries, and advance the commit point if
+    /// that made a majority.
+    ///
+    /// **The commit rule is the figure-8 one**: a majority holding the prefix is
+    /// not enough on its own — the last entry of that prefix has to be from this
+    /// leader's own term. A majority *holding* an entry is not a majority having
+    /// *voted* on it, and committing on replica count alone lets a later leader
+    /// overwrite the entry.
+    pub fn record_match(&self, from: u64, len: u64) -> Result<u64> {
+        if !self.is_member(from) {
+            return Err(refuse_err("no such server"));
+        }
+        let mut g = self.inner.lock().expect("peer lock");
+        if !matches!(g.server.role, ExecRole::Leader) {
+            return Err(refuse_no("not the leader"));
+        }
+        let term = g.server.current_term;
+        let best = g.match_len.get(&from).copied().unwrap_or(0);
+        if len > best {
+            g.match_len.insert(from, len);
+        }
+
+        // Try each candidate length from the longest down. Small clusters and
+        // short logs; clarity beats cleverness here.
+        let mut upto = g.match_len.values().copied().max().unwrap_or(0);
+        while upto > g.commit {
+            let holders = g.match_len.values().filter(|&&l| l >= upto).count() as u64;
+            let of_my_term = self
+                .entries
+                .term_at(upto - 1)
+                .map_err(|e| refuse_down(&format!("could not read the log: {e}")))?
+                == Some(term);
+            if of_my_term && is_majority(holders.min(self.members()), self.members()) {
+                g.commit = upto;
+                g.log.push(Event::Committed { term, upto });
+                break;
+            }
+            upto -= 1;
+        }
+        Ok(g.commit)
     }
 
     /// Adopt a strictly higher term, durably, and drop to follower.
@@ -482,15 +729,37 @@ impl Peer {
 }
 
 impl Consensus for Peer {
-    async fn request_vote(&self, ctx: Context, term: u64) -> Result<Ballot> {
+    async fn request_vote(
+        &self,
+        ctx: Context,
+        term: u64,
+        last_term: u64,
+        last_index: u64,
+    ) -> Result<Ballot> {
         let Some(candidate) = self.caller(&ctx) else {
             return Err(refuse_no("unknown caller"));
         };
         let mut g = self.inner.lock().expect("peer lock");
+        // Read under the lock, with everything else this decision depends on: a
+        // summary taken before the lock is an answer about a log that may have
+        // moved by the time the vote is granted.
+        let (my_last_term, my_len) = self.summary()?;
 
         // A higher term is adopted before the request is judged, so the vote is
         // considered in the term it was asked about.
         self.step_down_to(&mut g, term)?;
+
+        // **The up-to-date check**, and the one guard that exists for the log
+        // rather than for the election: a later last term wins, and at equal
+        // last terms the longer log wins. Without it a server missing committed
+        // entries could be elected and then overwrite them — the reason the log
+        // restricts elections rather than the other way round.
+        let up_to_date =
+            last_term > my_last_term || (last_term == my_last_term && last_index >= my_len);
+        if !up_to_date {
+            g.log.push(Event::RefusedVote { term, to: candidate });
+            return Ok(Ballot::Refused(g.server.current_term));
+        }
 
         // Re-granting the *same* vote to the *same* candidate is a
         // retransmission, not a second vote.
@@ -524,6 +793,80 @@ impl Consensus for Peer {
                 Ok(Ballot::Refused(g.server.current_term))
             }
         }
+    }
+
+    async fn append_entries(
+        &self,
+        ctx: Context,
+        term: u64,
+        prefix: u64,
+        prev_term: u64,
+        entry: LogEntry,
+        leader_commit: u64,
+    ) -> Result<Appended> {
+        let Some(_leader) = self.caller(&ctx) else {
+            return Err(refuse_no("unknown caller"));
+        };
+        let mut g = self.inner.lock().expect("peer lock");
+        // The consistency check reads the log, and the write that follows
+        // depends on what it read, so both happen under the one lock.
+        let my_len = self
+            .entries
+            .len()
+            .map_err(|e| refuse_down(&format!("could not read the log: {e}")))?;
+        let prev = if prefix == 0 {
+            None
+        } else {
+            self.entries
+                .term_at(prefix - 1)
+                .map_err(|e| refuse_down(&format!("could not read the log: {e}")))?
+        };
+
+        // A higher term is adopted first, so the request is judged in its own
+        // term.
+        self.step_down_to(&mut g, term)?;
+
+        // A stale leader is refused and told the current term.
+        if term < g.server.current_term {
+            g.log.push(Event::RefusedAppend { term, prefix });
+            return Ok(Appended::Rejected(g.server.current_term));
+        }
+
+        // **The consistency check.** The follower takes the entry only if it
+        // already agrees with the leader on the one before it — which is what
+        // makes agreement at one index imply agreement at every earlier one,
+        // and is the whole mechanism Log Matching is about.
+        let agrees = if prefix == 0 {
+            true
+        } else {
+            prefix <= my_len && prev == Some(prev_term)
+        };
+        if !agrees {
+            g.log.push(Event::RefusedAppend { term, prefix });
+            return Ok(Appended::Rejected(g.server.current_term));
+        }
+
+        // Accepting means dropping whatever was beyond `prefix`. A follower
+        // that appended without truncating would keep entries no leader ever
+        // committed.
+        //
+        // Written under the lock. The consistency check read the log, and a
+        // second request that interleaved between the check and the write would
+        // be truncating against an answer that was true a moment ago — which is
+        // exactly the class of bug the check exists to prevent.
+        self.entries
+            .overwrite(prefix, entry)
+            .map_err(|e| refuse_down(&format!("could not write the log: {e}")))?;
+        let new_len = prefix + 1;
+
+        // `min(leaderCommit, index of the last new entry)`, and never
+        // backwards.
+        let learned = if leader_commit < new_len { leader_commit } else { new_len };
+        if learned > g.commit {
+            g.commit = learned;
+        }
+        g.log.push(Event::Accepted { term, prefix, len: new_len });
+        Ok(Appended::Accepted(new_len))
     }
 
     async fn heartbeat(&self, ctx: Context, term: u64) -> Result<Standing> {

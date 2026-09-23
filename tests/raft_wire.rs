@@ -15,7 +15,7 @@ use std::sync::{Arc, OnceLock};
 
 use distributed_ownership::raft::service::{
     consensus_protocol::{ConsensusChannel, ConsensusService},
-    Ballot, Consensus, MemoryLog, Peer,
+    Ballot, Consensus, MemoryLog, MemoryLogStore, Peer,
 };
 use jetstream::prelude::*;
 use jetstream_rpc::session::{Session, SingleLaneSession};
@@ -63,8 +63,13 @@ macro_rules! connect {
 macro_rules! serve {
     ($sim:expr, $name:expr, $id:expr) => {
         $sim.host($name, move || async move {
-            let peer = Peer::new(roster(), $id, Arc::new(MemoryLog::new()))
-                .expect("the server is on its own roster");
+            let peer = Peer::new(
+                roster(),
+                $id,
+                Arc::new(MemoryLog::new()),
+                Arc::new(MemoryLogStore::new()),
+            )
+            .expect("the server is on its own roster");
             let listener =
                 TcpListener::bind((IpAddr::from(Ipv4Addr::UNSPECIFIED), PORT)).await?;
             loop {
@@ -101,7 +106,13 @@ fn a_candidate_wins_an_election_over_the_wire() {
     sim.client("a", async move {
         let me = built
             .get_or_init(|| {
-                Peer::new(roster(), 0, Arc::new(MemoryLog::new())).expect("on the roster")
+                Peer::new(
+                    roster(),
+                    0,
+                    Arc::new(MemoryLog::new()),
+                    Arc::new(MemoryLogStore::new()),
+                )
+                .expect("on the roster")
             })
             .clone();
 
@@ -112,7 +123,7 @@ fn a_candidate_wins_an_election_over_the_wire() {
         {
             connect!("b", _sb, chb);
             assert_eq!(
-                chb.request_vote(Context::default(), term).await.unwrap(),
+                chb.request_vote(Context::default(), term, 0, 0).await.unwrap(),
                 Ballot::Granted(1)
             );
         }
@@ -124,7 +135,7 @@ fn a_candidate_wins_an_election_over_the_wire() {
         {
             connect!("c", _sc, chc);
             assert_eq!(
-                chc.request_vote(Context::default(), term).await.unwrap(),
+                chc.request_vote(Context::default(), term, 0, 0).await.unwrap(),
                 Ballot::Granted(1)
             );
         }
@@ -155,7 +166,13 @@ fn a_partitioned_minority_does_not_elect_a_leader() {
     sim.client("a", async move {
         let me = built
             .get_or_init(|| {
-                Peer::new(roster(), 0, Arc::new(MemoryLog::new())).expect("on the roster")
+                Peer::new(
+                    roster(),
+                    0,
+                    Arc::new(MemoryLog::new()),
+                    Arc::new(MemoryLogStore::new()),
+                )
+                .expect("on the roster")
             })
             .clone();
 

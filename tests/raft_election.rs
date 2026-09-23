@@ -308,7 +308,7 @@ async fn a_stale_leader_steps_down_on_the_reply_to_its_own_heartbeat() {
     for _ in 0..3 {
         b.stand_for_election().unwrap();
     }
-    let seen = b.heartbeat(from(A), 1).await.unwrap();
+    let seen = b.heartbeat(from(A), 1, 0).await.unwrap();
     assert_eq!(seen, Standing { term: 3, leading: false }, "B is a candidate at 3");
 
     assert!(!a.observe_standing(seen).unwrap(), "A is not the leader any more");
@@ -331,7 +331,7 @@ async fn a_candidate_yields_to_the_winner_of_its_own_term() {
     assert_eq!(b.stand_for_election().unwrap(), 1, "a split vote: both stand at 1");
 
     // A wins term 1 elsewhere and heartbeats B.
-    let seen = b.heartbeat(from(A), 1).await.unwrap();
+    let seen = b.heartbeat(from(A), 1, 0).await.unwrap();
     assert_eq!(seen, Standing { term: 1, leading: false });
     assert!(
         b.log().contains(&Event::SteppedDown { from_term: 1, to_term: 1 }),
@@ -363,7 +363,7 @@ async fn a_leader_is_not_deposed_by_its_own_term() {
     assert_eq!(a.stand_for_election().unwrap(), 1);
     assert!(a.count_ballot(1, 1, Ballot::Granted(1)).unwrap());
 
-    let seen = a.heartbeat(from(B), 1).await.unwrap();
+    let seen = a.heartbeat(from(B), 1, 0).await.unwrap();
     assert_eq!(seen, Standing { term: 1, leading: true }, "still the leader of term 1");
 }
 

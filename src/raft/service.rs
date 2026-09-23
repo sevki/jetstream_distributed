@@ -76,6 +76,14 @@
 //! by handing over a `Ballot::Granted` for the term being stood in**, and the
 //! coupling `has_quorum == won_election` that the proof rests on is only as good
 //! as that.
+//!
+//! Two of the three also take **the term the request went out in**, and drop
+//! replies that do not name the term this server is in now. A reply carries no
+//! clock: an `Accepted(3)` looks the same whenever it was sent, and one that
+//! crossed a leadership boundary would be counted against a log the terms in
+//! between may have rewritten. Every stale-reply hazard in this file is the same
+//! shape — state that outlives the leadership it was collected for — which is
+//! also what `crate::raft::proofs::history` is about on the other side.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -265,9 +273,14 @@ pub trait Consensus {
 
     /// A leader asserting its term. The leader is the caller.
     ///
-    /// Carries no entries, because there is no log yet. What it does carry is
-    /// the term, which is how a stale leader finds out it is one.
-    async fn heartbeat(&self, ctx: Context, term: u64) -> Result<Standing>;
+    /// **An `append_entries` with nothing in it**, which is what figure 2 makes
+    /// it, and that is why it carries `leader_commit`. A leader commits only
+    /// once a majority has acknowledged, so the request that *caused* the
+    /// commit carried the commit point from before it; if no further command
+    /// arrives, heartbeats are the only traffic left and a follower that
+    /// learned nothing from them would hold an entry it never found out was
+    /// committed, and so never apply it.
+    async fn heartbeat(&self, ctx: Context, term: u64, leader_commit: u64) -> Result<Standing>;
 
     /// What term is this server in, and does it think it leads?
     async fn standing(&self, ctx: Context) -> Result<Standing>;
@@ -673,6 +686,18 @@ impl Peer {
         g.tally = HashSet::new();
         g.tally.insert(self.me);
         g.log.push(Event::Stood { term });
+
+        // **A cluster of one is already a majority of itself.** No ballot can
+        // ever arrive — there is nobody to ask — so a server that only took the
+        // term when a reply came back would stand for ever. The check belongs
+        // here rather than in a caller faking a ballot from itself, which would
+        // be a caller putting a vote into the tally that nobody cast.
+        let my_len = self
+            .entries
+            .len()
+            .map_err(|e| refuse_down(&format!("could not read the log: {e}")))?;
+        let votes = g.tally.len() as u64;
+        self.take_the_term(&mut g, term, votes, my_len)?;
         Ok(term)
     }
 
@@ -730,20 +755,41 @@ impl Peer {
         // so the count cannot exceed the membership — which is exactly
         // `is_majority`'s precondition.
         let votes = g.tally.len() as u64;
-        let has_quorum = is_majority(votes, self.members());
+        self.take_the_term(&mut g, term, votes, my_len)
+    }
 
+    /// Become leader of `term` if `votes` is a majority, and report whether
+    /// this server leads either way.
+    ///
+    /// **`match_len` is rebuilt, not added to.** Figure 2 lists `matchIndex[]`
+    /// under "volatile state on leaders" and says *reinitialized after
+    /// election*, and the word is load-bearing: an acknowledgement collected
+    /// during an earlier leadership says a peer held `n` entries *then*, and in
+    /// the terms since, that peer's log and this one may both have been
+    /// overwritten. Carried forward, those stale lengths can form a majority on
+    /// their own and commit a current-term entry at a reused index that no peer
+    /// ever acknowledged — a commit with nothing behind it.
+    ///
+    /// The refusal path returns whether this server leads *now*, which is not
+    /// always `false`: a second ballot arriving after the election is won
+    /// refuses because the role is no longer `Candidate`, and reporting that as
+    /// "does not lead" would tell a caller draining its vote replies that it
+    /// had lost an election it won.
+    fn take_the_term(&self, g: &mut Inner, term: u64, votes: u64, my_len: u64) -> Result<bool> {
+        let has_quorum = is_majority(votes, self.members());
         match become_leader_step(g.server, term, has_quorum) {
             RaftOutcome::Moved(next) => {
                 g.server = next;
+                g.match_len = HashMap::new();
                 // A leader holds its own whole log, which is where the
                 // replication tally starts from.
                 g.match_len.insert(self.me, my_len);
                 g.log.push(Event::Led { term, votes });
                 Ok(true)
-            }
-            // Not yet a majority, or not standing any more. Neither is a
-            // failure of the caller's, so neither is reported as one.
-            RaftOutcome::Refused(_) => Ok(false),
+            },
+            // Not a majority yet, or not standing any more — and the second of
+            // those includes already having won.
+            RaftOutcome::Refused(_) => Ok(matches!(g.server.role, ExecRole::Leader)),
         }
     }
 
@@ -841,14 +887,40 @@ impl Peer {
     ///   this method's: it is a decision about what to send next, and sending is
     ///   not something a `Peer` does.
     ///
+    /// **`term` is the term the request went out in**, and a success that does
+    /// not name this server's current term is dropped.
+    ///
+    /// Without that check a reply is indistinguishable from any other: an
+    /// `Accepted(3)` carries a length and nothing that says *when*. A leader
+    /// that stepped down and was later re-elected could receive an
+    /// acknowledgement sent during its earlier leadership, count it against the
+    /// log it has now — which the terms in between may have rewritten — and
+    /// commit a current-term entry at a reused index that the acknowledging
+    /// follower has never held.
+    ///
+    /// The term is the caller's own record of what it sent, exactly as
+    /// [`Peer::count_ballot`]'s is. The alternative is to put it on the wire,
+    /// which would be better and is a protocol change; this is the same check
+    /// in the only place that already knows the answer.
+    ///
     /// Returns `Some(commit)` when the reply advanced replication and `None`
     /// when it did not.
-    pub fn observe_appended(&self, from: u64, reply: Appended) -> Result<Option<u64>> {
+    pub fn observe_appended(&self, from: u64, term: u64, reply: Appended) -> Result<Option<u64>> {
         match reply {
-            Appended::Accepted(len) => self.record_match(from, len).map(Some),
-            Appended::Rejected(term) => {
+            Appended::Accepted(len) => {
+                {
+                    let g = self.inner.lock().expect("peer lock");
+                    if g.server.current_term != term || !matches!(g.server.role, ExecRole::Leader) {
+                        // An acknowledgement of a log this server no longer has,
+                        // or one it is no longer entitled to count.
+                        return Ok(None);
+                    }
+                }
+                self.record_match(from, len).map(Some)
+            },
+            Appended::Rejected(seen) => {
                 let mut g = self.inner.lock().expect("peer lock");
-                self.step_down_to(&mut g, term)?;
+                self.step_down_to(&mut g, seen)?;
                 Ok(None)
             },
         }
@@ -1025,18 +1097,47 @@ impl Consensus for Peer {
             return Ok(Appended::Rejected(g.server.current_term));
         }
 
-        // Accepting means dropping whatever was beyond `prefix`. A follower
-        // that appended without truncating would keep entries no leader ever
-        // committed.
+        // **Delete the suffix only if the entry there conflicts.** Figure 2's
+        // rule 3 says *if an existing entry conflicts with a new one (same
+        // index, different terms), delete it and all that follow* — and the
+        // conditional is the whole of it. An unconditional truncation loses
+        // entries to a request that told the follower nothing new: replaying an
+        // append for index 0 against a log of `[e0, e1]` would leave `[e0]`,
+        // throwing away `e1` because a duplicate packet arrived late.
         //
-        // Written under the lock. The consistency check read the log, and a
-        // second request that interleaved between the check and the write would
-        // be truncating against an answer that was true a moment ago — which is
-        // exactly the class of bug the check exists to prevent.
-        self.entries
-            .overwrite(prefix, entry)
-            .map_err(|e| refuse_down(&format!("could not write the log: {e}")))?;
-        let new_len = prefix + 1;
+        // The read and the write are under the one lock, because a second
+        // request interleaving between them would be truncating against an
+        // answer that was true a moment ago — the class of bug the consistency
+        // check exists to prevent.
+        let occupant = if prefix < my_len {
+            self.entries
+                .term_at(prefix)
+                .map_err(|e| refuse_down(&format!("could not read the log: {e}")))?
+        } else {
+            None
+        };
+        let new_len = if occupant == Some(entry.term) {
+            // Already there. By Log Matching an entry is determined by its
+            // `(index, term)`, so this is the same entry and everything after
+            // it stays.
+            my_len
+        } else {
+            self.entries
+                .overwrite(prefix, entry)
+                .map_err(|e| refuse_down(&format!("could not write the log: {e}")))?;
+            prefix + 1
+        };
+
+        // **The commit point cannot exceed the log.** Raft forbids commit going
+        // backwards, and a truncation below it would be a committed entry being
+        // deleted — the thing Leader Completeness is supposed to rule out and
+        // which this repository does not yet prove. So the clamp is a guard
+        // against a state the protocol says is unreachable and the proofs do
+        // not yet say so: better a commit point that retreats than one naming
+        // entries that are not there.
+        if g.commit > new_len {
+            g.commit = new_len;
+        }
 
         // `min(leaderCommit, index of the last new entry)`, and never
         // backwards.
@@ -1048,15 +1149,29 @@ impl Consensus for Peer {
         Ok(Appended::Accepted(new_len))
     }
 
-    async fn heartbeat(&self, ctx: Context, term: u64) -> Result<Standing> {
+    async fn heartbeat(&self, ctx: Context, term: u64, leader_commit: u64) -> Result<Standing> {
         let Some(_leader) = self.caller(&ctx) else {
             return Err(refuse_no("unknown caller"));
         };
         let mut g = self.inner.lock().expect("peer lock");
+        let my_len = self
+            .entries
+            .len()
+            .map_err(|e| refuse_down(&format!("could not read the log: {e}")))?;
         self.step_down_to(&mut g, term)?;
         // A heartbeat is an `append_entries` with nothing in it, so it demotes
         // a candidate of its own term for the same reason and by the same step.
         self.yield_at(&mut g, term);
+
+        // And it carries the commit point for the same reason an append does.
+        // A stale leader's is ignored: its term lost, and so did what it
+        // believed was decided.
+        if term == g.server.current_term {
+            let learned = if leader_commit < my_len { leader_commit } else { my_len };
+            if learned > g.commit {
+                g.commit = learned;
+            }
+        }
         Ok(Standing {
             term: g.server.current_term,
             leading: matches!(g.server.role, ExecRole::Leader),

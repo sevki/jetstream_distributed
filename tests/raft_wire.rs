@@ -247,7 +247,7 @@ fn a_leader_leads_over_the_wire() {
 
         // A heartbeat, and the reply read back. B is behind nobody, so this
         // tells the leader nothing — which is the case that has to be silent.
-        let seen = chb.heartbeat(Context::default(), term).await.unwrap();
+        let seen = chb.heartbeat(Context::default(), term, 0).await.unwrap();
         assert_eq!(seen, Standing { term: 1, leading: false });
         assert!(me.observe_standing(seen).unwrap(), "still the leader of term 1");
 
@@ -259,7 +259,7 @@ fn a_leader_leads_over_the_wire() {
             .unwrap();
         assert_eq!(reply, Appended::Accepted(1));
         assert_eq!(
-            me.observe_appended(1, reply).unwrap(),
+            me.observe_appended(1, term, reply).unwrap(),
             Some(1),
             "the leader and one follower are a majority of three, and the entry is \
              of the leader's own term"
@@ -324,7 +324,7 @@ fn a_reply_from_the_wire_deposes_a_stale_leader() {
         );
 
         // The leader heartbeats at its own stale term and reads the answer.
-        let seen = chc.heartbeat(Context::default(), term).await.unwrap();
+        let seen = chc.heartbeat(Context::default(), term, 0).await.unwrap();
         assert_eq!(seen, Standing { term: 5, leading: false });
         assert!(!me.observe_standing(seen).unwrap(), "term 5 has already happened");
         Ok(())

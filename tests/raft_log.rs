@@ -18,7 +18,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
 use distributed_ownership::raft::service::{
-    Appended, Ballot, Consensus, LogEntry, LogStore, MemoryLog, MemoryLogStore, Peer,
+    Appended, Ballot, Consensus, LogEntry, LogStore, MemoryLog, MemoryLogStore, Peer, Standing,
 };
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
@@ -216,5 +216,182 @@ async fn a_follower_commits_no_further_than_its_own_log() {
         b.commit(),
         1,
         "a follower cannot commit an entry it does not have, whatever the leader says"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Six findings from a review, each with the run that shows the defect
+// ---------------------------------------------------------------------------
+
+/// **A replayed append does not throw away the entries after it.**
+///
+/// Figure 2's rule 3 deletes the suffix *only on a conflict*. An unconditional
+/// truncation loses entries to a packet that told the follower nothing new: a
+/// duplicate of the append for index 0, arriving after index 1 was accepted,
+/// would leave the follower one entry shorter than it was.
+#[tokio::test]
+async fn a_replayed_append_keeps_the_entries_after_it() {
+    let store = MemoryLogStore::new();
+    let f = peer_with(1, &store);
+
+    let e0 = LogEntry { term: 1, value: 10 };
+    let e1 = LogEntry { term: 1, value: 11 };
+    assert_eq!(f.append_entries(from(A), 1, 0, 0, e0, 0).await.unwrap(), Appended::Accepted(1));
+    assert_eq!(f.append_entries(from(A), 1, 1, 1, e1, 0).await.unwrap(), Appended::Accepted(2));
+
+    // The network redelivers the first one.
+    assert_eq!(
+        f.append_entries(from(A), 1, 0, 0, e0, 0).await.unwrap(),
+        Appended::Accepted(2),
+        "the entry at 0 is already there, so nothing is deleted and the reply \
+         reports the log the follower really has"
+    );
+    assert_eq!(store.len().unwrap(), 2, "entry 1 survived the duplicate");
+    assert_eq!(store.entry_at(1).unwrap(), Some(e1));
+}
+
+/// A genuine conflict still truncates, which is the other half of the rule.
+#[tokio::test]
+async fn a_conflicting_append_still_drops_the_tail() {
+    let store = MemoryLogStore::new();
+    let f = peer_with(1, &store);
+
+    assert_eq!(
+        f.append_entries(from(A), 1, 0, 0, LogEntry { term: 1, value: 10 }, 0).await.unwrap(),
+        Appended::Accepted(1)
+    );
+    assert_eq!(
+        f.append_entries(from(A), 1, 1, 1, LogEntry { term: 1, value: 11 }, 0).await.unwrap(),
+        Appended::Accepted(2)
+    );
+
+    // A later leader overwrites index 1 with an entry of its own term.
+    assert_eq!(
+        f.append_entries(from(A), 2, 1, 1, LogEntry { term: 2, value: 99 }, 0).await.unwrap(),
+        Appended::Accepted(2)
+    );
+    assert_eq!(store.entry_at(1).unwrap(), Some(LogEntry { term: 2, value: 99 }));
+}
+
+/// **A re-elected leader does not inherit its own past acknowledgements.**
+///
+/// `matchIndex[]` is volatile leader state and figure 2 says *reinitialized
+/// after election*. Carried across a leadership, a peer's recorded length can
+/// form a majority on its own and commit an entry at a reused index that the
+/// peer has never held.
+///
+/// The run needs the leader's own log to have *shrunk* while it was away, which
+/// is what makes the reused index reachable at all — and a truncation below the
+/// commit point is the thing Leader Completeness would forbid and this
+/// repository does not yet prove. So this is a test of the bookkeeping being
+/// robust rather than of a state known to be reachable, which is the right
+/// posture for a rule the paper states and the proof does not yet cover. It
+/// doubles as the witness for the commit-point clamp.
+#[tokio::test]
+async fn a_new_leadership_starts_its_replication_tally_empty() {
+    let la = MemoryLogStore::new();
+    let a = peer_with(0, &la);
+
+    // Term 1: A leads with three entries and both peers acknowledge all three.
+    assert_eq!(a.stand_for_election().unwrap(), 1);
+    assert!(a.count_ballot(1, 1, Ballot::Granted(1)).unwrap());
+    for v in [7u64, 8, 9] {
+        a.append_command(v).unwrap();
+    }
+    a.record_match(1, 3).unwrap();
+    assert_eq!(a.record_match(2, 3).unwrap(), 3);
+
+    // A is deposed by a leader of term 2, which overwrites index 0 — so A's log
+    // is one entry long, and its commit point cannot still be 3.
+    assert_eq!(
+        a.append_entries(from(B), 2, 0, 0, LogEntry { term: 2, value: 50 }, 0).await.unwrap(),
+        Appended::Accepted(1)
+    );
+    assert_eq!(a.commit(), 1, "the commit point cannot name entries that are gone");
+
+    // A wins term 3 and appends at index 1 — the index the term-1
+    // acknowledgements claim both peers already hold.
+    assert_eq!(a.stand_for_election().unwrap(), 3);
+    assert!(a.count_ballot(1, 3, Ballot::Granted(3)).unwrap());
+    assert_eq!(a.append_command(99).unwrap(), 1);
+
+    // Peer 1 says, truthfully, that it holds one entry.
+    a.record_match(1, 1).unwrap();
+    assert_eq!(
+        a.commit(),
+        1,
+        "with the term-1 lengths carried forward this would be 2 — a term-3 \
+         entry committed on the strength of acknowledgements for a log that no \
+         longer exists"
+    );
+}
+
+/// **A reply that crossed a leadership boundary is not counted.**
+///
+/// `Appended::Accepted(1)` carries a length and nothing that says *when*. Read
+/// in a later term it would be an acknowledgement of a log that may since have
+/// been rewritten.
+#[tokio::test]
+async fn an_acknowledgement_from_an_earlier_term_is_dropped() {
+    let la = MemoryLogStore::new();
+    let a = peer_with(0, &la);
+
+    assert_eq!(a.stand_for_election().unwrap(), 1);
+    assert!(a.count_ballot(1, 1, Ballot::Granted(1)).unwrap());
+    assert_eq!(a.append_command(7).unwrap(), 0);
+
+    // A hears of a higher term from a reply and steps down, then wins term 3.
+    assert!(!a.observe_standing(Standing { term: 2, leading: false }).unwrap());
+    assert_eq!(a.stand_for_election().unwrap(), 3);
+    assert!(a.count_ballot(1, 3, Ballot::Granted(3)).unwrap());
+    assert_eq!(a.append_command(8).unwrap(), 1);
+
+    // A reply to something sent in term 1, arriving now.
+    assert_eq!(
+        a.observe_appended(1, 1, Appended::Accepted(2)).unwrap(),
+        None,
+        "a term-1 acknowledgement says nothing about the term-3 log"
+    );
+    assert_eq!(a.commit(), 0);
+
+    // The same reply, correctly attributed, does count.
+    assert_eq!(a.observe_appended(1, 3, Appended::Accepted(2)).unwrap(), Some(2));
+    assert_eq!(a.commit(), 2);
+}
+
+/// **A heartbeat carries the commit point**, because a leader commits only
+/// after the acknowledgement that caused it — so the append that did the work
+/// carried the *old* commit value, and if no further command arrives the
+/// heartbeat is the only thing left to tell the follower.
+#[tokio::test]
+async fn a_heartbeat_tells_a_follower_what_is_committed() {
+    let store = MemoryLogStore::new();
+    let f = peer_with(1, &store);
+
+    assert_eq!(
+        f.append_entries(from(A), 1, 0, 0, LogEntry { term: 1, value: 7 }, 0).await.unwrap(),
+        Appended::Accepted(1)
+    );
+    assert_eq!(f.commit(), 0, "the append that carried it was sent before the commit");
+
+    f.heartbeat(from(A), 1, 1).await.unwrap();
+    assert_eq!(f.commit(), 1, "and the heartbeat is what says so");
+}
+
+/// A cluster of one elects its only member on its own vote.
+#[tokio::test]
+async fn a_cluster_of_one_elects_itself() {
+    let alone = Peer::new(
+        HashMap::from([(A, 0u64)]),
+        0,
+        Arc::new(MemoryLog::new()),
+        Arc::new(MemoryLogStore::new()),
+    )
+    .expect("on its own roster");
+
+    assert_eq!(alone.stand_for_election().unwrap(), 1);
+    assert!(
+        alone.standing_now().leading,
+        "one vote of one is a majority, and no ballot can ever arrive to say so"
     );
 }

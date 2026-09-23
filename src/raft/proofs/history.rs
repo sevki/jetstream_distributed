@@ -118,6 +118,43 @@ pub open spec fn led_after(pre: Cluster, l: Set<Led>, s: RaftStep) -> Set<Led> {
     }
 }
 
+/// Changing the history leaves the set of voters alone.
+///
+/// Needed, and not obvious. `voters_for` is `members.filter(..)` and the
+/// closure it filters by **captures the cluster**, so the two sides are
+/// `filter(m, f_1)` and `filter(m, f_2)` for two closure terms the solver has
+/// no reason to identify — even though `f_1` and `f_2` test the same votes.
+/// Set equality across them is extensional, which Verus does not apply on its
+/// own, so it is applied here.
+pub proof fn lemma_history_keeps_voters(
+    c: Cluster,
+    cr: Map<Slot, Creation>,
+    l: Set<Led>,
+    cand: ServerId,
+    term: Term,
+)
+    ensures
+        voters_for(with_history(c, cr, l), cand, term) == voters_for(c, cand, term),
+        won_election(with_history(c, cr, l), cand, term) == won_election(c, cand, term),
+{
+    assert(voters_for(with_history(c, cr, l), cand, term) =~= voters_for(c, cand, term));
+}
+
+/// The same for `replicated_on`, which is the same shape for the same reason:
+/// a filter of the membership by a closure over the cluster's logs.
+pub proof fn lemma_history_keeps_replication(
+    c: Cluster,
+    cr: Map<Slot, Creation>,
+    l: Set<Led>,
+    log: Seq<Entry>,
+    n: nat,
+)
+    ensures
+        replicated_on(with_history(c, cr, l), log, n) == replicated_on(c, log, n),
+{
+    assert(replicated_on(with_history(c, cr, l), log, n) =~= replicated_on(c, log, n));
+}
+
 /// **The history neither enables nor disables anything.**
 ///
 /// For *any* `cr` and `l` — not the ones the run actually produced, any at all
@@ -167,6 +204,8 @@ pub proof fn theorem_history_does_not_gate_the_protocol(
         RaftStep::BecomeLeader { server, term } => {
             assert(created_after(pre, cr, s) == cr);
             assert(led_after(pre, l, s) == l.insert(Led { server: server, term: term }));
+            // `won_election` is a filter of the membership; see the lemma.
+            lemma_history_keeps_voters(pre, cr, l, server, term);
         },
         RaftStep::StepDown { server: _, term: _ } => {
             assert(created_after(pre, cr, s) == cr);
@@ -192,9 +231,11 @@ pub proof fn theorem_history_does_not_gate_the_protocol(
             assert(created_after(pre, cr, s) == cr);
             assert(led_after(pre, l, s) == l);
         },
-        RaftStep::AdvanceCommit { server: _, upto: _ } => {
+        RaftStep::AdvanceCommit { server, upto } => {
             assert(created_after(pre, cr, s) == cr);
             assert(led_after(pre, l, s) == l);
+            // And so is `replicated_on`.
+            lemma_history_keeps_replication(pre, cr, l, pre.servers[server].log, upto);
         },
         RaftStep::Replay { msg: _ } => {
             assert(created_after(pre, cr, s) == cr);

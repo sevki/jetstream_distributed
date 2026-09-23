@@ -11,6 +11,7 @@ pub mod exclusivity;
 pub mod fencing;
 pub mod invariant;
 pub mod properties;
+pub mod raft;
 pub mod raymond;
 pub mod raymond_routing;
 pub mod refinement;

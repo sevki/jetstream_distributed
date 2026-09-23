@@ -20,6 +20,9 @@
 //! * [`transfer`]  - the multi-step ownership handover and its lemmas.
 //! * [`raymond`]   - Raymond's mutual-exclusion routing layer, kept strictly
 //!                   separate from ownership semantics.
+//! * [`raft`]      - Raft leader election: terms, votes, quorums. The same
+//!                   exclusivity statement as [`ownership`], bought by counting
+//!                   rather than by assuming an atomic registry.
 //! * [`composed`]  - the two layers as one state machine, where the coupling
 //!                   between them is a guard rather than an assumption.
 //! * [`proofs`]    - the theorems. Everything claimed in `README.md` lives here.
@@ -34,6 +37,7 @@ pub mod fencing;
 pub mod model;
 pub mod ownership;
 pub mod proofs;
+pub mod raft;
 pub mod raymond;
 pub mod steps;
 pub mod transfer;

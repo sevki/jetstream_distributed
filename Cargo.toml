@@ -2,7 +2,7 @@
 name = "distributed-ownership"
 version = "0.1.0"
 edition = "2021"
-description = "A formally verified (Verus) model of distributed exclusive ownership with epoch fencing"
+description = "Machine-checked distributed protocols, and the Jetstream services that speak them"
 license = "MIT OR Apache-2.0"
 publish = false
 
@@ -10,13 +10,39 @@ publish = false
 name = "distributed_ownership"
 path = "src/lib.rs"
 
+# The services live in `src/{algorithm}/service.rs`, in this crate, behind a
+# feature that is **off by default**.
+#
+# That is not tidiness. The proofs are checked by `verus --crate-type=lib
+# src/lib.rs` and by `cargo verus verify`, both of which run with default
+# features, so the verified build's dependency graph is `vstd` and nothing else
+# — no Jetstream, no tokio, no async runtime for Verus to be asked about. Turn
+# the feature on and the same modules compile against the same verified step
+# functions.
+#
+# It also keeps the toolchain question honest. `rust-toolchain.toml` pins the
+# Rust release the Verus build was made against, and that pin exists so the
+# proofs verify, not so a service is stuck on it. The services build with
+# `cargo +stable`, which is what Jetstream tracks.
+[features]
+default = []
+service = ["dep:jetstream", "dep:tokio"]
+
+[dependencies]
 # `vstd` is the Verus standard library. This is the version that ships with
 # Verus release 0.2026.09.13.671956e (per the cargo-verus toolchain manifest).
 # It is only used when driving verification through `cargo verus`; the primary
 # CI entry point (`verus --crate-type=lib src/lib.rs`) uses the prebuilt vstd
 # inside the Verus release archive instead.
-[dependencies]
 vstd = "=0.0.0-2026-09-06-0133"
+
+# Not `"16.3.1"` from crates.io — that version is not published there (16.0.0 is
+# the latest release), and the services are written against the working tree,
+# whose `Context` carries the peer identity their design depends on. Pinned to
+# the exact commit the API was read from rather than to a branch, so a service
+# is checked against a tree that cannot move under it.
+jetstream = { git = "https://github.com/sevki/jetstream", rev = "9761e74f69c792c28885eaac934d0f070a66281c", optional = true }
+tokio = { version = "1", features = ["rt", "sync", "time"], optional = true }
 
 # Opt this crate into verification.
 #
@@ -40,22 +66,50 @@ unexpected_cfgs = { level = "warn", check-cfg = [
   'cfg(verus_only)',
 ] }
 
-# Simulation only. Nothing in `src/` depends on these, and nothing here is
-# verified: `tests/` is where the executable protocol lives, for the reason
-# `tests/scenario_body/mod.rs` gives — CI rejects unverified code in `src/`, so
-# putting a coordinator there would need an escape hatch and fail the build by
-# design.
 [dev-dependencies]
 # A deterministic, simulated network: seeded schedule, simulated clock, and
 # `partition`/`repair` as ordinary calls. That determinism is what lets a
 # failure be reported as a seed rather than as a story about a flaky afternoon —
 # and it is a claim about the whole dependency graph, not just this crate. A
 # caret requirement lets the simulator drift within 0.7, which would silently
-# reinterpret every committed seed without a change in this repository, so both
+# reinterpret every committed seed without a change in this repository, so the
 # simulation dependencies are pinned exactly and `Cargo.lock` is committed to
 # pin what they in turn pull in.
 turmoil = "=0.7.2"
-# The features the simulation actually uses, rather than `full`: `rt` because
-# the coordinator spawns a task per connection, `time` because every wait in
-# here is on turmoil's simulated clock, and `io-util` for the line protocol.
-tokio = { version = "=1.47.1", features = ["io-util", "rt", "time"] }
+tokio = { version = "=1.47.1", features = ["io-util", "macros", "rt", "time"] }
+# The `turmoil` support lives on `jetstream_rpc` and the `jetstream` facade does
+# not pass it through, so the service tests depend on the component directly —
+# which is exactly what jetstream's own dev-dependencies do for its turmoil
+# suite. A dev-dependency rather than an optional one: `cargo verus verify`
+# does not build dev-dependencies, so this never reaches the verified build.
+jetstream_rpc = { git = "https://github.com/sevki/jetstream", rev = "9761e74f69c792c28885eaac934d0f070a66281c", default-features = false, features = ["turmoil"] }
+
+# The simulation suite, which needs no service.
+[[test]]
+name = "turmoil_ownership"
+path = "tests/turmoil_ownership.rs"
+
+[[test]]
+name = "turmoil_scenarios"
+path = "tests/turmoil_scenarios.rs"
+
+[[test]]
+name = "protocol_lines"
+path = "tests/protocol_lines.rs"
+
+# The service suites. `required-features` is what stops `cargo test` from trying
+# to build them against a crate that has no `service` module.
+[[test]]
+name = "ownership_handover"
+path = "tests/ownership_handover.rs"
+required-features = ["service"]
+
+[[test]]
+name = "ownership_durability"
+path = "tests/ownership_durability.rs"
+required-features = ["service"]
+
+[[test]]
+name = "raft_election"
+path = "tests/raft_election.rs"
+required-features = ["service"]

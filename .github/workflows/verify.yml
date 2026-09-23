@@ -322,45 +322,51 @@ jobs:
       - name: Fuzz the protocol boundary
         run: cargo +nightly fuzz run protocol -- -max_total_time=60 -rss_limit_mb=0
 
-  # The protocol as a Jetstream service, rather than as a stand-in.
+  # The services, which are modules of the same crate behind a non-default
+  # feature rather than crates of their own.
   #
-  # Its own job and its own workspace, for the reason the fuzz job is: the root
-  # crate pins the toolchain the Verus release was built against, and that pin
-  # exists so the proofs verify — not so a service is stuck on it. Jetstream
+  # Its own job and its own toolchain, and the feature is what makes that
+  # coherent: the two verification jobs above build this crate with default
+  # features, so their dependency graph is `vstd` and nothing else — no
+  # Jetstream for Verus to be asked about, and no async runtime in a crate being
+  # checked for ghost code. Turn the feature on and the same modules compile
+  # against the same verified step functions.
+  #
+  # `+stable` rather than the pinned toolchain for the same reason the feature
+  # exists: `rust-toolchain.toml` pins the Rust release the Verus build was made
+  # against so the *proofs* verify, not so a service is stuck on it. Jetstream
   # declares no MSRV and tracks stable.
-  #
-  # This is the first place the service is compiled at all. Jetstream's
-  # tarballs are unreachable from the environment the service was written in
-  # (crates.io serves the index there but not the crates), so unlike everything
-  # else in this workflow the service rests on reading the API rather than on
-  # having built against it. The dependency graph was resolved — which is what
-  # caught the version being unpublished — but resolving is not compiling.
   service:
-    name: Ownership service
+    name: Services
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
-      # Stable, named. The other jobs state their toolchain in `VERUS_TOOLCHAIN`
-      # because it has to match Verus; this one has no such constraint and says
-      # so rather than leaving a reader to guess which compiler it means.
       - name: Install a stable toolchain
         run: rustup toolchain install stable --profile minimal
 
       - uses: Swatinem/rust-cache@v2
         with:
           key: service
-          workspaces: services/ownership
 
-      # Build before test, so a compile failure is reported as a compile
-      # failure rather than as a test that mysteriously did not run.
-      - name: Build the service
-        run: cargo +stable build --manifest-path services/ownership/Cargo.toml --locked
+      # Built before tested, so a compile failure is reported as one.
+      - name: Build the services
+        run: cargo +stable build --features service --locked
 
-      # The headline story: A writes at 41, hands the actor to B, and is fenced
-      # when it writes at 41 again. Driven over Jetstream's own RPC on turmoil's
-      # simulated network, with the fence performed by the verified
-      # `FenceGuard::accepts`.
-      - name: The handover story
-        run: cargo +stable test --manifest-path services/ownership/Cargo.toml --locked -- --nocapture
+      # Named explicitly rather than as a bare `cargo test --features service`:
+      # the simulation suite already runs under the pinned toolchain in the job
+      # above, and running it twice under two compilers would make a failure
+      # ambiguous about which one it belonged to.
+      #
+      # The ownership stories: the handover that fences its outgoing owner, and
+      # the restart that must not rewind the actor. The Raft stories: an
+      # election, a split vote that elects exactly one leader, and a voter that
+      # must not vote twice across a restart.
+      - name: The service stories
+        run: |
+          cargo +stable test --features service --locked \
+            --test ownership_handover \
+            --test ownership_durability \
+            --test raft_election \
+            -- --nocapture

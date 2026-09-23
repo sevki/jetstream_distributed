@@ -562,7 +562,7 @@ pub open spec fn inv_created_implies_led(c: Cluster) -> bool {
     forall|s: Slot|
         #[trigger]
         c.created.contains_key(s) ==> exists|n: ServerId|
-            c.led.contains(#[trigger] Led { server: n, term: s.term })
+            #[trigger] c.led.contains(Led { server: n, term: s.term })
 }
 
 /// **A leader of a term holds everything created at that term.**
@@ -641,7 +641,7 @@ pub proof fn lemma_untouched_logs_keep_log_hist(pre: Cluster, post: Cluster)
         inv_logs_follow_created(post),
 {
     assert forall|s: Slot| post.created.contains_key(s) implies exists|n: ServerId|
-        post.led.contains(#[trigger] Led { server: n, term: s.term }) by {
+        #[trigger] post.led.contains(Led { server: n, term: s.term }) by {
         let w = choose|w: ServerId| pre.led.contains(Led { server: w, term: s.term });
         assert(post.led.contains(Led { server: w, term: s.term }));
     }
@@ -985,7 +985,7 @@ pub proof fn lemma_become_leader_finds_its_term_unwritten(
         inv_logs_follow_created(post),
 {
     assert forall|s: Slot| post.created.contains_key(s) implies exists|w: ServerId|
-        post.led.contains(#[trigger] Led { server: w, term: s.term }) by {
+        #[trigger] post.led.contains(Led { server: w, term: s.term }) by {
         let w = choose|w: ServerId| pre.led.contains(Led { server: w, term: s.term });
         assert(post.led.contains(Led { server: w, term: s.term }));
     }
@@ -1131,7 +1131,7 @@ pub proof fn lemma_client_request_writes_a_fresh_slot(
     assert(!pre.created.contains_key(fresh));
 
     assert forall|s: Slot| post.created.contains_key(s) implies exists|w: ServerId|
-        post.led.contains(#[trigger] Led { server: w, term: s.term }) by {
+        #[trigger] post.led.contains(Led { server: w, term: s.term }) by {
         if s == fresh {
             assert(post.led.contains(Led { server: n, term: t }));
         } else {
@@ -1369,7 +1369,7 @@ pub proof fn lemma_the_consistency_check_preserves_the_record(
     assert(nl.len() == prefix + 1);
 
     assert forall|s: Slot| post.created.contains_key(s) implies exists|w: ServerId|
-        post.led.contains(#[trigger] Led { server: w, term: s.term }) by {
+        #[trigger] post.led.contains(Led { server: w, term: s.term }) by {
         let w = choose|w: ServerId| pre.led.contains(Led { server: w, term: s.term });
         assert(post.led.contains(Led { server: w, term: s.term }));
     }

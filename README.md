@@ -235,6 +235,17 @@ verifying, the build fails.
 | R14 | **Reconciliation repairs the belief**: the stale holder drops it, leaves the critical section it thought it was in, and re-points at the real holder | `raymond::proofs::routing_layer::lemma_reconcile_preserves_inv` | Raymond invariant |
 | R11 | **The holder pointers are acyclic** — part of `ray_inv`, preserved by every transition. A handover rewrites two pointers and needs a new rank (the old one shifted up by one, new root at zero); a seizure only makes the new holder point at itself, which *removes* a constraint, so the old rank still works | `raymond::proofs::routing_layer::lemma_frame_acyclic`, `lemma_repoint_acyclic` | Raymond invariant |
 | R12 | **Every node reaches the privilege holder by following holder pointers** — what makes "requests travel hop-by-hop towards the token" a checked claim. Two hypotheses, both load-bearing: R11 says the walk terminates rather than circling, and `ray_no_stale_holders` says it terminates at the real holder rather than at somebody who merely thinks so. The second was free when authority *was* belief; it is not free now, and it should not be — after a seizure a node whose belief-path leads to the seized holder genuinely cannot route to the privilege | `raymond::proofs::routing_layer::theorem_every_node_reaches_the_token` | Raymond invariant, `ray_no_stale_holders` |
+| C1 | **Election Safety — at most one leader per term.** The headline. Three sentences: a leader won a majority; any two majorities share a member; a member votes once per term | `raft::proofs::election::theorem_election_safety`, `..._reachable` | the Raft invariant, discharged for reachable states by `theorem_reachable_raft_inv` |
+| C2 | **Any two majorities of a cluster share a member.** The one piece of real mathematics, and the reason Raft needs no coordinator: two disjoint subsets whose sizes sum past the whole would make a union larger than a set containing it | `raft::proofs::election::lemma_quorums_intersect` | none |
+| C3 | **A server votes at most once per term** — sentence three, and the clause `tr_grant_vote`'s guard exists to maintain | `raft::proofs::election::inv_votes_unique`, preserved by `lemma_raft_step_preserves_inv` | the Raft invariant |
+| C4 | **A cast vote is never ahead of its voter's term.** Not in the headline argument and the clause without which it does not survive induction: it is what makes a fresh candidacy safe, because a server timing out into term `t + 1` can only be voting there for the first time | `raft::proofs::election::inv_vote_implies_term` | the Raft invariant |
+| C5 | **The Raft invariant holds in every reachable state** (`raft_init ==> inv`, `inv /\ raft_next ==> inv`) | `raft::proofs::election::theorem_reachable_raft_inv` | the model's transition relation |
+| C6 | **A majority, once won, stays won** — votes only accumulate and the cluster does not change size, so a leader elected at term 7 remains, as a matter of record, the winner of term 7 | `raft::proofs::election::lemma_quorum_survives` | none |
+| C7 | **Terms never decrease, and votes are never retracted.** The Raft counterparts of epoch monotonicity (claim 5) and token permanence (P1) — and a vote is physical in the same sense a token is, which is exactly why a returning server must not vote again in a term it has already voted in | `raft::proofs::election::theorem_term_monotone_step`, `theorem_votes_monotone_step` | none |
+| C8 | **A lone self-vote is not a majority** in a cluster of more than one. The check that the `>` in the quorum threshold is load-bearing rather than decorative: with `>=` a single server could elect itself | `raft::proofs::election::theorem_a_lone_vote_is_not_a_majority` | a cluster of at least two |
+| C9 | **An election actually happens.** A concrete three-server cluster walked from initialisation through a real election, exported with every step named, so C1 is not a safety property of a protocol that never elects anybody | `raft::proofs::scenario::scenario_a_leader_is_elected` | none: the cluster is exhibited |
+| C10 | **The election steps refine the model**, in both directions: each executable step fires exactly when the model's transition is enabled, and lands where the model lands | `raft::proofs::refinement::theorem_timeout_step_refines_tr_timeout`, `..._grant_vote_...`, `..._become_leader_...`, `..._step_down_...`, and the four `..._refuses_exactly_when_disabled` | the couplings, tabulated in `raft::proofs::refinement`'s module docs |
+| C11 | **The `u64` tally answers the model's question about the set.** `is_majority` computes `votes + votes > members` with no multiplication to overflow and no subtraction that can go below zero; this is what makes that the same question as `is_quorum` | `raft::steps::is_majority`, `raft::proofs::refinement::theorem_majority_count_is_a_quorum`, `theorem_a_tally_fits_in_the_membership` | that the tally does not double-count a voter and the membership count is not stale — neither of which a step function can check, so both are named |
 | I | The inductive invariant holds in every reachable state (`init ==> inv`, `inv /\ next ==> inv`) | `ownership::proofs::invariant::theorem_reachable_inv` | the model's transition relation |
 | S | **The headline scenario**: `A` owns X@41, a transfer and a crash/recovery occur, `B` owns X@42, `A` returns still holding its epoch-41 token - and cannot perform an authoritative mutation. The postcondition exports the whole nine-step run, so the crash, the recovery and the outcome are the same execution — exported as separate existentials they need not have been, and an ordinary live handover could supply the outcome | `ownership::proofs::adversarial::scenario_stale_owner_returns` | `A != B` |
 | S1 | A stale `Grant` cannot resurrect a superseded epoch | `ownership::proofs::adversarial::theorem_stale_grant_cannot_be_used` | none |
@@ -585,6 +596,73 @@ reachable. Two executions close that off, both built from `composed_init` via
 Raymond's **liveness** (every request is eventually served) needs FIFO,
 reliable links and no crashes. None of those are assumed here and none of it is
 claimed.
+
+## Raft: the same statement, bought by counting
+
+The failure-model table's first row is the strongest assumption this repository
+makes — **ownership records are updated atomically** — and it says outright that
+a real deployment has to buy that from consensus, or from a store with
+compare-and-swap. `src/raft/` is the first half of buying it.
+
+Raft's **Election Safety** is the exclusivity theorem with two words changed,
+and it is bought a completely different way:
+
+```text
+ownership:  at most one authoritative owner per epoch, because a single
+            atomic registry hands the epoch out
+raft:       at most one leader per term, because any two quorums share a
+            voter and a voter votes once per term
+```
+
+The difference is worth dwelling on, because it is the whole reason both are
+here. `ownership::proofs::exclusivity` is **structural**: `may_mutate` is true in
+exactly one shape, `Owned { owner, epoch }`, so two owners is not a state the
+model can represent, and all the work is in showing the transitions never reach
+a bad one. In `raft::model` nothing is structural. A `Cluster` can perfectly well
+hold two servers both believing they lead term 7 — that state is representable,
+and ruling it out is a **counting** argument over a set that no single
+participant can see. Side by side, the two say what a coordinator costs.
+
+The argument is three sentences (C1–C3), and the interesting clause is the one
+that is *not* in it. `inv_vote_implies_term` (C4) says a cast vote is never
+ahead of its voter's term, and without it the induction fails at the most
+ordinary step in the protocol: a server timing out into term `t + 1` votes for
+itself there, and only this clause rules out an earlier vote of its own already
+sitting in that term.
+
+**What Raft here does not do.** A single leader per term is **not** an atomic
+registry. The registry's contents become a single agreed fact only once entries
+are replicated and committed, and there are no logs: no `AppendEntries`, no
+commitment, and therefore no Log Matching, no Leader Completeness and **no State
+Machine Safety**. There is also no reconfiguration, which is a real and
+well-known source of Raft unsafety. The `lastLogIndex`/`lastLogTerm` comparison
+in the real `RequestVote` is absent with the log — and its absence cannot make an
+election *unsafe*, because it only ever refuses votes this model grants, so every
+run here is a run of the fuller protocol. It is what makes elections useful
+rather than safe, and it is the first thing the log work adds.
+
+### The election service
+
+`src/raft/service.rs` serves it: `request_vote`, `heartbeat`, `standing`. As in
+the ownership service, **no method takes a server number** — the candidate asking
+for a vote is whoever opened the connection — and that matters more here, because
+a protocol whose entire safety argument is "a server votes once per term" is
+exactly the one you do not want taking the voter's or the candidate's identity
+from a field. Standing for election, tallying and taking a term are inherent
+methods rather than RPCs, for the reason `force` is inherent on the ownership
+registry: a peer that could trigger them could keep the cluster in a permanent
+election.
+
+**And the same durability finding, arrived at from the other end.** Raft's own
+figure 2 requires `currentTerm` and `votedFor` on stable storage *before
+responding to RPCs*. That is the requirement the ownership registry's epoch floor
+turned out to have, and it is load-bearing for the same reason: a server that
+grants a vote, replies, restarts having forgotten, and grants again has voted
+twice in one term — two candidates can then each hold a majority, and Election
+Safety is gone. Not because the proof is wrong, but because `already_voted` was
+reported `false` when the model's `has_voted` was true. `tests/raft_election.rs`
+runs that in both directions: a restarted voter that refuses the second request,
+and a forgetful one that grants it and elects two leaders.
 
 ## Repository layout
 
@@ -1274,7 +1352,16 @@ invariant preservation):
   theorems on a simulated network (see
   [Network resiliency](#network-resiliency-the-model-run-for-real)), which is
   evidence rather than proof: nothing machine-checks that the coordinator in
-  `tests/` refines the transition relation in `src/`.
+  `tests/` refines the transition relation in `src/`;
+* **Raft's log.** `src/raft/` proves Election Safety (C1) and nothing about
+  replication. `AppendEntries`, commitment, Log Matching, Leader Completeness
+  and State Machine Safety are all absent, and so is reconfiguration. Until they
+  exist, Raft here elects a leader and cannot yet make the ownership registry's
+  *contents* a single agreed fact — which is the half of the atomicity
+  assumption that is actually load-bearing for `System::actors`. The
+  `lastLogIndex`/`lastLogTerm` comparison belongs with that work; its absence
+  cannot make an election unsafe, only useless, because it refuses votes this
+  model grants.
 
 ### The holder graph is a tree, and now says so
 

@@ -500,6 +500,12 @@ impl Peer {
                 },
                 voted_for: recovered.voted_for,
                 tally: HashSet::new(),
+                // Volatile, per figure 2: a recovered server recomputes what is
+                // committed from the leader rather than trusting a number it
+                // wrote down. Starting at 0 costs a round trip and cannot be
+                // wrong.
+                commit: 0,
+                match_len: HashMap::new(),
                 log: Vec::new(),
             })),
             roster: Arc::new(roster),

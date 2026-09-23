@@ -13,10 +13,9 @@
 //! * `service`   — the protocol over Jetstream RPC, behind the `service`
 //!                 feature.
 //!
-//! **Election Safety is proved; Log Matching, Leader Completeness and State
-//! Machine Safety are not.** The log's transitions are modelled and exercised,
-//! and [`model`]'s docs say exactly where that line falls and why it is where
-//! it is.
+//! **Election Safety and Log Matching are proved; Leader Completeness and State
+//! Machine Safety are not.** [`model`]'s docs say exactly where that line falls
+//! and why it is where it is.
 
 pub mod model;
 pub mod proofs;

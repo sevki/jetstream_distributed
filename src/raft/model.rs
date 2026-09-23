@@ -57,24 +57,30 @@
 //!   enough unless the last entry of that prefix is of the committing leader's
 //!   own term.
 //!
+//! * The history: [`Cluster::created`] and [`Cluster::led`], two **ghost**
+//!   fields recording what the state cannot — every entry any leader ever made,
+//!   and every `(server, term)` ever led. Written and never read, which
+//!   `crate::raft::proofs::history` proves rather than promises.
+//!
+//! # What is proved
+//!
+//! Election Safety, in `crate::raft::proofs::election`. The single-step log
+//! properties, in `crate::raft::proofs::log`. And **Log Matching**, in
+//! `crate::raft::proofs::history`: two logs that agree on an entry's term at an
+//! index agree on every entry at and below it.
+//!
 //! # What is modelled but not yet proved
 //!
-//! The log transitions above are in `raft_next`, so every run of
-//! [`raft_reachable`] may use them and every theorem in
-//! `crate::raft::proofs::election` holds across them. What does **not** yet
-//! exist is the log's own safety argument: **Log Matching, Leader Completeness
-//! and State Machine Safety are not proved.** `crate::raft::proofs::log` proves
-//! what follows from a single step — that elections do not touch logs, that a
-//! leader only appends, that a follower agrees before it accepts, that a commit
-//! needs a majority of the committing leader's own term, that two commits share
-//! a holder — and says in its own module docs why the rest does not close over
-//! the state alone: ruling out a second entry at the same `(index, term)`
-//! is a fact about the *run's history*, not about any one state, and needs ghost
-//! history the model does not carry.
+//! **Leader Completeness and State Machine Safety.** They need Log Matching plus
+//! an induction over terms relating [`at_least_as_up_to_date`] — the guard that
+//! restricts elections by the log — to what has been committed. A follower here
+//! will still truncate entries it had committed, which is faithful Raft; the
+//! protection against that is supposed to come from the election restriction,
+//! and the election restriction's proof is what is missing.
 //!
-//! So: the transition system includes replication; the verified guarantees stop
-//! at Election Safety plus the single-step log properties. Read any claim about
-//! this module against that line.
+//! So: the transition system includes replication; the verified guarantees now
+//! reach agreement between logs, and stop short of agreement surviving a leader
+//! change. Read any claim about this module against that line.
 //!
 //! # What is deliberately not modelled
 //!

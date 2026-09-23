@@ -255,6 +255,12 @@ verifying, the build fails.
 | C18 | **Two commits of the same length share a holder.** As far as quorum intersection reaches without Log Matching: it produces a server holding both prefixes, which is the first line of a Leader Completeness proof and not a substitute for one | `raft::proofs::log::theorem_two_commits_share_a_holder` | none |
 | C19 | **One log is extended per term**, because the leader of a term is unique. A corollary of C1, stated because it is the shape every later log argument leans on | `raft::proofs::log::theorem_one_log_is_extended_per_term` | the Raft invariant |
 | C20 | **An append makes its receiver a follower, and the executable step computes that** — the role change at an *equal* term, which `tr_step_down` cannot reach and which figure 2 gives candidates. The refusal side is stated asymmetrically on purpose: a leader at an equal term is the state Election Safety rules out, and a step that fired on it would let any peer depose a leader by naming its term | `raft::proofs::refinement::theorem_an_append_makes_its_receiver_a_follower`, `theorem_follow_step_agrees_with_tr_append_entries`, `theorem_follow_step_refuses_exactly_when_disabled` | none |
+| C21 | **The ghost history neither enables nor disables anything.** For *any* history whatsoever — not the one the run produced, any at all — every step still fires from the same real state and lands in the same real state. This is the soundness condition for an auxiliary variable, and it is what makes `Cluster::created` and `Cluster::led` a record rather than an assumption: no guard reads them | `raft::proofs::history::theorem_history_does_not_gate_the_protocol`, `theorem_history_is_monotone` | none |
+| C22 | **At most one server *ever* leads a term** — across the whole run, not merely at one instant. Strictly stronger than C1, which compares two servers that are leaders *now*: a leader that stepped down an hour ago is outside C1 and its entries are still in logs. The sentence the log argument needs, and it cannot be stated without history | `raft::proofs::history::theorem_at_most_one_server_ever_leads_a_term`, `..._reachable` | the history invariant |
+| C23 | **Having led a term, you are still leading it or you have moved past it.** The load-bearing history invariant. The ways to stop leading either raise the term or cannot fire: a leader of `t` is refused a vote in `t` because it spent that vote on itself, and an append demoting it at an equal term would be two leaders in one term | `raft::proofs::history::inv_led_means_at_or_past`, with `inv_standing_implies_voted`, `inv_leader_is_led`, `inv_led_implies_won` | the Raft invariant (Election Safety) |
+| C24 | **A leader of a term holds everything created at that term** — the freshness clause. A leader appends at the end of its own log, and this says every slot already written at its term is inside that log, so the slot it is about to write is not one of them. At `tr_become_leader` it holds because a term being won *now* has never been led, which is C22 | `raft::proofs::history::inv_creator_holds`, `lemma_become_leader_finds_its_term_unwritten`, `lemma_client_request_writes_a_fresh_slot` | the history invariant |
+| C25 | **The consistency check is exactly the guard that keeps the creation record true.** A follower taking the leader's entry at `prefix` records a predecessor that is now *its own* entry at `prefix - 1`, not the leader's — and those agree precisely because `tr_append_entries` will not fire unless they do | `raft::proofs::history::lemma_the_consistency_check_preserves_the_record` | the history invariant |
+| C26 | **Log Matching — two logs that agree on an entry's term at an index agree on every entry at and below it.** The headline of the log half. One slot gives one recorded value and one recorded predecessor, so agreement at an index is agreement one index down, and repeating reaches zero | `raft::proofs::history::theorem_log_matching`, `theorem_log_matching_prefixes`, `theorem_log_matching_values`, `theorem_log_matching_reachable` | `inv_logs_follow_created`, discharged for reachable states by `theorem_reachable_hist_inv` |
 | I | The inductive invariant holds in every reachable state (`init ==> inv`, `inv /\ next ==> inv`) | `ownership::proofs::invariant::theorem_reachable_inv` | the model's transition relation |
 | S | **The headline scenario**: `A` owns X@41, a transfer and a crash/recovery occur, `B` owns X@42, `A` returns still holding its epoch-41 token - and cannot perform an authoritative mutation. The postcondition exports the whole nine-step run, so the crash, the recovery and the outcome are the same execution — exported as separate existentials they need not have been, and an ordinary live handover could supply the outcome | `ownership::proofs::adversarial::scenario_stale_owner_returns` | `A != B` |
 | S1 | A stale `Grant` cannot resurrect a superseded epoch | `ownership::proofs::adversarial::theorem_stale_grant_cannot_be_used` | none |
@@ -648,25 +654,45 @@ whatever diverged, `tr_advance_commit` advances the commit point under figure
 up-to-date comparison. All four are in `raft_next`, so every run of
 `raft_reachable` may use them and every theorem above holds across them.
 
-**What the log does not yet have is its own safety argument.** C12–C19 are what
-follows from a *single step* — a leader only appends, a follower agrees before it
-accepts, an entry is copied rather than invented, a commit needs a majority of
-the committing leader's own term. **Log Matching, Leader Completeness and State
-Machine Safety are not proved**, and the reason is worth stating because it is
-not "we ran out of time":
+C12–C19 are what follows from a *single step* — a leader only appends, a follower
+agrees before it accepts, an entry is copied rather than invented, a commit needs
+a majority of the committing leader's own term. **Log Matching is proved too**
+(C26), and getting there needed something the model did not have.
 
 > Ruling out a second entry at the same `(index, term)` is a fact about the
 > **run's history**, not about any one state. At `tr_client_request` the leader
 > appends at the end of its own log, and nothing in the *state* says no leader of
-> that term ever appended at that index before. Closing it needs ghost history —
-> which leader created which entry at which index — plus a chain of auxiliary
-> invariants, with an induction over terms on top for Leader Completeness.
+> that term ever appended at that index before.
 
-So the honest summary is: the transition system replicates; the verified
-guarantees stop at Election Safety plus the single-step log properties. A
-follower here will truncate entries it had committed, which is faithful Raft —
-the protection against that is supposed to come from the election restriction,
-and the election restriction's proof is exactly what is missing.
+So `Cluster` carries two ghost fields: `led`, every `(server, term)` ever led,
+and `created`, every entry any leader ever made — keyed by the slot naming it,
+recording its value **and the term of the entry before it**. That second
+component is what makes Log Matching an induction rather than a wish: two
+servers whose entries at an index carry the same term are reading the same slot,
+so they agree on the value *and* on the recorded predecessor, which is the same
+question one index down. Repeat to zero.
+
+**Two moments are worth pointing at.** At `tr_become_leader` the freshness clause
+(C24) holds because a term being won now has never been led — that is C22, and
+the middle of its chain is a fact about a server that may have stepped down long
+ago, which is where the history earns its keep. And at `tr_append_entries` the
+record survives because the follower's entry at `prefix - 1` has the same term as
+the leader's: that is the **consistency check**, already in the protocol since
+the log went in, and it turns out to be exactly the guard the proof wants rather
+than something added for it (C25).
+
+**The ghost state is not an escape hatch, and that is a theorem** (C21): for any
+history whatsoever, every step still fires from the same real state and lands in
+the same real state. A guard that read the history could not satisfy that. The
+fields are written and never read, which is what makes them auxiliary variables
+in the standard sense.
+
+**Leader Completeness and State Machine Safety are still not proved**, and the
+reason is not "we ran out of time": they need this plus an induction over terms
+relating the up-to-date vote guard to what has been committed. A follower here
+will still truncate entries it had committed, which is faithful Raft — the
+protection against that is supposed to come from the election restriction, and
+the election restriction's proof is what is still missing.
 
 **There is no reconfiguration**, deliberately: membership is fixed and no
 transition changes it. Joint consensus is a separate protocol with its own
@@ -750,6 +776,7 @@ distributed-ownership/
 │       ├── service.rs      the protocol over Jetstream RPC   [feature = "service"]
 │       └── proofs/
 │           ├── election.rs     Election Safety, via quorum intersection
+│           ├── history.rs      the ghost record, and Log Matching out of it
 │           ├── log.rs          what one replication step gives you (and what it does not)
 │           ├── refinement.rs   steps.rs agrees with the model's tr_* transitions
 │           └── scenario.rs     a run in which an election actually happens
@@ -1405,15 +1432,14 @@ invariant preservation):
   [Network resiliency](#network-resiliency-the-model-run-for-real)), which is
   evidence rather than proof: nothing machine-checks that the coordinator in
   `tests/` refines the transition relation in `src/`;
-* **Raft's log matching.** `src/raft/` models replication and proves what
-  follows from a single step (C12–C19), but **Log Matching, Leader Completeness
-  and State Machine Safety are not proved** — they need ghost history, for the
-  reason given in [The log, and the line between modelled and
-  proved](#the-log-and-the-line-between-modelled-and-proved). Until they exist,
-  Raft here replicates a log without a machine-checked guarantee that two
-  servers agree on what it says, so it cannot yet make the ownership registry's
-  *contents* a single agreed fact — which is the half of the atomicity
-  assumption that is actually load-bearing for `System::actors`;
+* **Raft's Leader Completeness and State Machine Safety.** Log Matching is
+  proved (C26), so two servers that agree on an entry agree on everything below
+  it. What is missing is the argument that a leader's log contains every
+  *committed* entry, which needs an induction over terms relating the up-to-date
+  vote guard to what has been committed, and State Machine Safety on top of
+  that. Until they exist the registry's contents agree *where servers overlap*
+  but are not yet guaranteed to survive a leader change — which is the half of
+  the atomicity assumption that is load-bearing for `System::actors`;
 * **reconfiguration.** Membership is fixed. Joint consensus is a real and
   well-known source of Raft unsafety and is not attempted here.
 

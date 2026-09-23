@@ -17,15 +17,16 @@
 //! * **Commitment needs a majority *and* an entry of the committing leader's
 //!   own term** — figure 8 of the Raft paper, made citable.
 //!
-//! # What is **not** proved here, and why
+//! # What is not proved *here*, and where it went
 //!
-//! **Log Matching**, **Leader Completeness** and therefore **State Machine
-//! Safety** are absent. That is not an oversight and it is not a small gap, so
-//! it is worth being exact about where the difficulty is.
+//! **Log Matching is not in this module, and it is not missing** — it is in
+//! [`crate::raft::proofs::history`], because it needed something this module
+//! does not have.
 //!
-//! The natural statement of Log Matching — *if two logs hold entries with the
-//! same term at the same index, their prefixes up to that index are identical*
-//! — **is not inductive over this model's state alone**. Consider
+//! The reasoning is worth keeping, since the shape of the answer came out of
+//! it. The natural statement of Log Matching — *if two logs hold entries with
+//! the same term at the same index, their prefixes up to that index are
+//! identical* — **is not inductive over this model's state alone**. Consider
 //! `tr_client_request`: a leader `L` appends an entry at index `k` with term
 //! `T`. To know that no other server already holds a *different* entry at
 //! `(k, T)`, you have to know that no leader of term `T` ever appended at index
@@ -33,20 +34,25 @@
 //! the question is whether `L` has ever had a log shorter than it has now. That
 //! is a fact about the *history* of the run, and the state does not record it.
 //!
-//! Closing it means carrying ghost history — which leader created which entry
-//! at which index — and proving a chain of auxiliary invariants (a
-//! leader/candidate has voted in its own term; at most one server is ever
-//! leader of a term, not merely at one moment; having led a term, you are
-//! either still leading it or past it; a leader holds every entry it created).
-//! Leader Completeness then needs an induction over terms on top of that.
-//! This is the part of Raft that took Verdi a person-scale Coq development, and
-//! writing something that merely *looks* like it — or assuming the missing
-//! lemma and calling the rest proved — is the failure mode this repository
-//! exists to avoid.
+//! So the state records it now. `Cluster` carries ghost history, and the chain
+//! of auxiliary invariants this module predicted it would need turned out to be
+//! very nearly the chain it does need: a candidate or leader has voted in its
+//! own term; at most one server is *ever* leader of a term, not merely at one
+//! moment; having led a term you are either still leading it or past it; and a
+//! leader holds everything created at its term.
+//!
+//! **Leader Completeness and State Machine Safety are still absent**, and still
+//! for a stated reason rather than an unstated one: they need an induction over
+//! terms relating [`at_least_as_up_to_date`] to what has been committed. This is
+//! the part of Raft that took Verdi a person-scale Coq development, and writing
+//! something that merely *looks* like it — or assuming the missing lemma and
+//! calling the rest proved — is the failure mode this repository exists to
+//! avoid.
 //!
 //! So the honest position is: the log is modelled faithfully, the properties
-//! that follow from one step are proved, and the two that need history are
-//! named, located, and left undone.
+//! that follow from one step are proved here, Log Matching is proved next door,
+//! and the two that need an induction over terms are named, located, and left
+//! undone.
 #![allow(unused_imports)]
 
 use vstd::prelude::*;

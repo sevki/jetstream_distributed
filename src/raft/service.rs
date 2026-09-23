@@ -53,12 +53,12 @@
 //! [`Peer::append_command`] and [`Peer::record_match`], whose commit rule is
 //! figure 8's.
 //!
-//! **What it is worth is the model's line, not more.** Election Safety is
-//! proved; Log Matching, Leader Completeness and State Machine Safety are not,
-//! for the reason `crate::raft::model`'s docs give. So this service replicates a
-//! log and can tell you what a majority holds, and it does *not* yet come with a
-//! proof that two servers agree on what that log says. It cannot make the
-//! ownership registry's contents a single agreed fact until it does.
+//! **What it is worth is the model's line, not more.** Election Safety and Log
+//! Matching are proved; Leader Completeness and State Machine Safety are not,
+//! for the reason `crate::raft::model`'s docs give. So two servers that agree on
+//! an entry agree on everything below it — but that agreement is not yet proved
+//! to survive a leader change, and until it is this service cannot make the
+//! ownership registry's contents a single agreed fact.
 //!
 //! # Replies are a protocol step too
 //!

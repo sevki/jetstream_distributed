@@ -99,28 +99,50 @@ async fn a_follower_refuses_an_entry_it_cannot_place() {
     );
 }
 
-/// Accepting an entry drops whatever the follower had beyond the agreed prefix.
+/// Accepting a **conflicting** entry drops whatever the follower had beyond the
+/// agreed prefix.
 ///
-/// A follower that appended without truncating would keep entries no leader
-/// ever committed — which is the whole reason `overwrite` and not `append` is
-/// what `LogStore` demands here.
+/// A follower that appended without truncating would keep entries no leader ever
+/// committed — which is why `LogStore` demands `overwrite` and not `append`.
+///
+/// **The divergence has to be a difference of *term*.** This test used to build
+/// the follower's tail as `{term: 1, value: 77}` against the leader's
+/// `{term: 1, value: 2}` — same index, same term, different value — and assert
+/// that the follower truncated. Figure 2's rule 3 says an entry conflicts when
+/// it has the *same index but a different term*, and that rule is sound
+/// precisely because of Log Matching: one `(index, term)` names one entry. So
+/// the old shape asserted behaviour on a state the protocol cannot reach, and
+/// which `raft::proofs::history::theorem_log_matching` now says is impossible.
+/// It passed only because the implementation truncated unconditionally, which
+/// was the bug.
+///
+/// So the tail here is from an older term, which is the only kind of divergence
+/// there is and the one figure 7 draws.
 #[tokio::test]
 async fn an_accepted_entry_truncates_a_divergent_tail() {
     let (la, lb) = (MemoryLogStore::new(), MemoryLogStore::new());
     let (a, b) = (peer_with(0, &la), peer_with(1, &lb));
-    let term = make_leader(&a);
-    a.append_command(1).unwrap();
-    a.append_command(2).unwrap();
 
-    // The follower agrees on entry 0 and then has two entries of its own that
-    // the leader never had.
+    // A leads term 1 and appends one entry, then loses the term and wins 3.
+    assert_eq!(a.stand_for_election().unwrap(), 1);
+    assert!(a.count_ballot(1, 1, Ballot::Granted(1)).unwrap());
+    a.append_command(1).unwrap();
+    assert!(!a.observe_standing(Standing { term: 2, leading: false }).unwrap());
+    assert_eq!(a.stand_for_election().unwrap(), 3);
+    assert!(a.count_ballot(1, 3, Ballot::Granted(3)).unwrap());
+    a.append_command(2).unwrap();
+    assert_eq!(la.entries().len(), 2);
+    assert_eq!(la.entries()[1].term, 3);
+
+    // The follower agrees on entry 0 and then has two term-1 entries that the
+    // leader of term 3 never had.
     lb.append(la.entries()[0]).unwrap();
     lb.append(LogEntry { term: 1, value: 77 }).unwrap();
     lb.append(LogEntry { term: 1, value: 88 }).unwrap();
     assert_eq!(lb.entries().len(), 3);
 
     assert_eq!(
-        b.append_entries(from(A), term, 1, term, la.entries()[1], 0).await.unwrap(),
+        b.append_entries(from(A), 3, 1, 1, la.entries()[1], 0).await.unwrap(),
         Appended::Accepted(2)
     );
     assert_eq!(lb.entries(), la.entries(), "the divergent tail is gone, not appended past");

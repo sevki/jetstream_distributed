@@ -870,6 +870,24 @@ pub proof fn lemma_init_hist_inv(c: Cluster)
     lemma_raft_init_inv(c);
 }
 
+/// The unlabelled version, which is where the step is chosen.
+///
+/// Its own lemma rather than a `choose` inside the walk below, for the reason
+/// `lemma_raft_next_preserves_inv` is: trigger inference for
+/// `choose|s: RaftStep| raft_step(a, b, s)` needs `a` and `b` to be plain
+/// variables. Written inline over `tr[i - 1]` and `tr[i]` the sequence
+/// indexing gets in the way and Verus cannot infer a trigger at all.
+pub proof fn lemma_raft_next_preserves_hist(pre: Cluster, post: Cluster)
+    requires
+        raft_hist_inv(pre),
+        raft_next(pre, post),
+    ensures
+        raft_hist_inv(post),
+{
+    let s = choose|s: RaftStep| raft_step(pre, post, s);
+    lemma_raft_step_preserves_hist(pre, post, s);
+}
+
 /// Walking an execution.
 pub proof fn lemma_raft_execution_hist_inv(tr: Seq<Cluster>, i: int)
     requires
@@ -882,10 +900,13 @@ pub proof fn lemma_raft_execution_hist_inv(tr: Seq<Cluster>, i: int)
     if i == 0 {
         lemma_init_hist_inv(tr[0]);
     } else {
-        lemma_raft_execution_hist_inv(tr, i - 1);
-        assert(raft_next(tr[i - 1], tr[i]));
-        let s = choose|s: RaftStep| raft_step(tr[i - 1], tr[i], s);
-        lemma_raft_step_preserves_hist(tr[i - 1], tr[i], s);
+        let j = i - 1;
+        lemma_raft_execution_hist_inv(tr, j);
+        // `raft_execution`'s multi-trigger needs a `tr[_ + 1]` term, which
+        // `tr[i]` on its own does not provide.
+        assert(raft_next(tr[j], tr[j + 1]));
+        assert(tr[j + 1] == tr[i]);
+        lemma_raft_next_preserves_hist(tr[j], tr[i]);
     }
 }
 

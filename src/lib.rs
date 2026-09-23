@@ -38,6 +38,7 @@ pub mod model;
 pub mod ownership;
 pub mod proofs;
 pub mod raft;
+pub mod raft_steps;
 pub mod raymond;
 pub mod steps;
 pub mod transfer;

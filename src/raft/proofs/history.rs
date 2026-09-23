@@ -54,9 +54,32 @@
 //! strictly stronger than the state-only version — which is exactly why it
 //! needed history to state.
 //!
-//! The `created` half — and Log Matching with it — is the next piece of work.
-//! The record is kept here; the theorems about it are not yet written, and this
-//! module claims nothing about it.
+//! Then the `created` half, which is what the record was for. Three more
+//! invariants:
+//!
+//! 5. [`inv_created_implies_led`] — nothing is created at a term nobody led.
+//! 6. [`inv_creator_holds`] — **a leader of a term holds everything created at
+//!    that term.** The freshness clause: a leader appends at the end of its own
+//!    log, and this says every slot already written at its term is inside that
+//!    log, so the slot it is about to write is not one of them.
+//! 7. [`inv_logs_follow_created`] — every entry in every log agrees with the
+//!    record of its creation: its value, and the term of the entry before it.
+//!
+//! and out of them [`theorem_log_matching`]: **two logs that agree on an
+//! entry's term at an index agree on every entry at and below it.**
+//!
+//! Two moments in that are worth pointing at. At `tr_become_leader` the
+//! freshness clause holds because a term being won now has never been led —
+//! which takes all four election invariants and is the first place the history
+//! actually earns its keep. And at `tr_append_entries` the record survives
+//! because the follower's entry at `prefix - 1` has the same term as the
+//! leader's; that is the **consistency check**, already in the protocol, and it
+//! turns out to be exactly the guard the proof needs rather than something
+//! added for it.
+//!
+//! Leader Completeness and State Machine Safety are still not proved. They need
+//! this plus an induction over terms relating the up-to-date vote guard to what
+//! has been committed, and that is the next piece of work rather than this one.
 #![allow(unused_imports)]
 
 use vstd::prelude::*;
@@ -529,14 +552,99 @@ pub open spec fn inv_led_means_at_or_past(c: Cluster) -> bool {
         }
 }
 
-/// The history invariant, which carries `raft_inv` with it because two of its
-/// clauses need Election Safety to survive a step.
+/// The slot naming the entry at `i`.
+pub open spec fn slot_of(log: Seq<Entry>, i: nat) -> Slot {
+    Slot { term: log[i as int].term, index: i }
+}
+
+/// Nothing is created at a term nobody has led.
+pub open spec fn inv_created_implies_led(c: Cluster) -> bool {
+    forall|s: Slot|
+        #[trigger]
+        c.created.contains_key(s) ==> exists|n: ServerId|
+            c.led.contains(#[trigger] Led { server: n, term: s.term })
+}
+
+/// **A leader of a term holds everything created at that term.**
+///
+/// The freshness clause, in the only form that is inductive, and the reason
+/// `tr_client_request` cannot quietly overwrite a record. A leader of `t`
+/// appends at the end of its own log; this says every slot already created at
+/// `t` is *inside* that log, so the slot about to be written is not one of
+/// them. Without it a second append at one slot would overwrite the record and
+/// every log still holding the old entry would stop agreeing with it — which is
+/// to say, Log Matching would be false.
+pub open spec fn inv_creator_holds(c: Cluster) -> bool {
+    forall|n: ServerId, s: Slot|
+        #![trigger c.servers[n], c.created.contains_key(s)]
+        c.servers.contains_key(n) && is_leader(c.servers[n]) && c.servers[n].current_term == s.term
+            && c.created.contains_key(s) ==> s.index < c.servers[n].log.len()
+}
+
+/// **Every entry in every log agrees with the record of its creation** — its
+/// value, and the term of the entry before it.
+///
+/// This is the whole of Log Matching in one clause. Two servers whose entries
+/// at index `i` carry the same term are reading the same slot, so they agree on
+/// the value; and they agree on the *term before*, which is the same question
+/// one index down. Repeat to zero.
+pub open spec fn inv_logs_follow_created(c: Cluster) -> bool {
+    forall|n: ServerId, i: nat|
+        #![trigger c.servers[n].log[i as int]]
+        c.servers.contains_key(n) && i < c.servers[n].log.len() ==> {
+            &&& c.created.contains_key(slot_of(c.servers[n].log, i))
+            &&& c.created[slot_of(c.servers[n].log, i)].value == c.servers[n].log[i as int].value
+            &&& c.created[slot_of(c.servers[n].log, i)].prev_term == term_before(
+                c.servers[n].log,
+                i,
+            )
+        }
+}
+
+/// The history invariant, which carries `raft_inv` with it because several of
+/// its clauses need Election Safety to survive a step.
 pub open spec fn raft_hist_inv(c: Cluster) -> bool {
     &&& raft_inv(c)
     &&& inv_standing_implies_voted(c)
     &&& inv_leader_is_led(c)
     &&& inv_led_implies_won(c)
     &&& inv_led_means_at_or_past(c)
+    &&& inv_created_implies_led(c)
+    &&& inv_creator_holds(c)
+    &&& inv_logs_follow_created(c)
+}
+
+/// **The three log-side clauses survive any step that touches no log, adds
+/// nothing to the record, and promotes nobody to leader.**
+///
+/// Six of the nine transitions are of that shape. The last hypothesis is the
+/// one with content: `inv_creator_holds` is a statement about leaders, so a
+/// step that *demotes* one only makes it weaker — but a step that promotes one
+/// has to show the new leader holds everything already created at its term, and
+/// that is `tr_become_leader`'s own business below.
+pub proof fn lemma_untouched_logs_keep_log_hist(pre: Cluster, post: Cluster)
+    requires
+        inv_created_implies_led(pre),
+        inv_creator_holds(pre),
+        inv_logs_follow_created(pre),
+        post.created == pre.created,
+        pre.led.subset_of(post.led),
+        post.servers.dom() == pre.servers.dom(),
+        forall|m: ServerId|
+            #![trigger post.servers[m]]
+            post.servers.contains_key(m) ==> post.servers[m].log == pre.servers[m].log && (
+            is_leader(post.servers[m]) ==> is_leader(pre.servers[m])
+                && pre.servers[m].current_term == post.servers[m].current_term),
+    ensures
+        inv_created_implies_led(post),
+        inv_creator_holds(post),
+        inv_logs_follow_created(post),
+{
+    assert forall|s: Slot| post.created.contains_key(s) implies exists|n: ServerId|
+        post.led.contains(#[trigger] Led { server: n, term: s.term }) by {
+        let w = choose|w: ServerId| pre.led.contains(Led { server: w, term: s.term });
+        assert(post.led.contains(Led { server: w, term: s.term }));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -680,6 +788,10 @@ pub proof fn lemma_timeout_preserves_hist(pre: Cluster, post: Cluster, n: Server
             assert(post.servers[l.server] == pre.servers[l.server]);
         }
     }
+
+    // No log moved and nothing was created; `n` became a candidate, not a
+    // leader.
+    lemma_untouched_logs_keep_log_hist(pre, post);
 }
 
 /// Granting a vote. **The interesting case**: a leader of `term` cannot reach
@@ -766,6 +878,9 @@ pub proof fn lemma_grant_vote_preserves_hist(
             assert(post.servers[l.server] == pre.servers[l.server]);
         }
     }
+
+    // The voter became a follower, so no log moved and nobody was promoted.
+    lemma_untouched_logs_keep_log_hist(pre, post);
 }
 
 /// Taking the term. The new leadership is recorded in the same step.
@@ -833,6 +948,63 @@ pub proof fn lemma_become_leader_preserves_hist(
             assert(post.servers[l.server] == pre.servers[l.server]);
         }
     }
+
+    lemma_become_leader_finds_its_term_unwritten(pre, post, n, term);
+}
+
+/// **A server taking a term finds nothing created at it.**
+///
+/// The clause `inv_creator_holds` needs at the one transition that promotes a
+/// leader, and the first place the history actually earns its keep. The
+/// argument is a chain of three of the invariants above, and every link needs
+/// the *record* rather than the state:
+///
+/// 1. if something was created at `term`, somebody led `term`
+///    ([`inv_created_implies_led`]) — and that somebody may have stepped down
+///    long ago, which is exactly what the state does not say;
+/// 2. whoever led it won it ([`inv_led_implies_won`]), and this server is
+///    winning it now, so by [`lemma_one_winner_per_term`] they are the same
+///    server;
+/// 3. so this server led `term` — and by [`inv_led_means_at_or_past`] it would
+///    still be leading it, because its term has not moved. It is a candidate.
+///
+/// A contradiction, so nothing was created at `term`, so the clause holds
+/// vacuously for the new leader.
+pub proof fn lemma_become_leader_finds_its_term_unwritten(
+    pre: Cluster,
+    post: Cluster,
+    n: ServerId,
+    term: Term,
+)
+    requires
+        raft_hist_inv(pre),
+        tr_become_leader(pre, post, n, term),
+    ensures
+        inv_created_implies_led(post),
+        inv_creator_holds(post),
+        inv_logs_follow_created(post),
+{
+    assert forall|s: Slot| post.created.contains_key(s) implies exists|w: ServerId|
+        post.led.contains(#[trigger] Led { server: w, term: s.term }) by {
+        let w = choose|w: ServerId| pre.led.contains(Led { server: w, term: s.term });
+        assert(post.led.contains(Led { server: w, term: s.term }));
+    }
+
+    assert forall|m: ServerId, s: Slot|
+        post.servers.contains_key(m) && is_leader(post.servers[m]) && post.servers[m].current_term
+            == s.term && post.created.contains_key(s) implies s.index
+        < post.servers[m].log.len() by {
+        if m == n {
+            // `s.term == term`, and the three steps above.
+            let w = choose|w: ServerId| pre.led.contains(Led { server: w, term: s.term });
+            lemma_one_winner_per_term(pre, w, n, s.term);
+            assert(pre.led.contains(Led { server: n, term: s.term }));
+            assert(is_leader(pre.servers[n]));
+            assert(false);
+        } else {
+            assert(post.servers[m] == pre.servers[m]);
+        }
+    }
 }
 
 /// Stepping down. Strictly higher, so every record stays strictly in the past.
@@ -890,6 +1062,8 @@ pub proof fn lemma_step_down_preserves_hist(pre: Cluster, post: Cluster, n: Serv
             assert(post.servers[l.server] == pre.servers[l.server]);
         }
     }
+
+    lemma_untouched_logs_keep_log_hist(pre, post);
 }
 
 /// Appending a client command. Roles, terms, votes and `led` are all untouched.
@@ -920,6 +1094,87 @@ pub proof fn lemma_client_request_preserves_hist(
         }
     }
     lemma_roles_and_terms_unchanged_keep_hist(pre, post, n);
+    lemma_client_request_writes_a_fresh_slot(pre, post, n, value);
+}
+
+/// **The slot a leader appends at has never been written.**
+///
+/// `inv_creator_holds` says every slot already created at this leader's term is
+/// *inside* its log; the leader appends at the end of that log; so the slot it
+/// is about to write is not one of them. One line of arithmetic, and the whole
+/// reason the creation record is a function rather than a pile of claims.
+///
+/// What follows is the other half: no *other* server's log can hold an entry at
+/// that slot either, because by [`inv_logs_follow_created`] every entry's slot
+/// is in the record and this one is not. So inserting it disturbs nothing, and
+/// every log that agreed with the record before still agrees with it.
+pub proof fn lemma_client_request_writes_a_fresh_slot(
+    pre: Cluster,
+    post: Cluster,
+    n: ServerId,
+    value: nat,
+)
+    requires
+        raft_hist_inv(pre),
+        tr_client_request(pre, post, n, value),
+    ensures
+        inv_created_implies_led(post),
+        inv_creator_holds(post),
+        inv_logs_follow_created(post),
+{
+    let t = pre.servers[n].current_term;
+    let len = pre.servers[n].log.len();
+    let fresh = Slot { term: t, index: len };
+
+    // The slot is new: if the record already had it, `inv_creator_holds` would
+    // put it strictly inside a log of exactly that length.
+    assert(!pre.created.contains_key(fresh));
+
+    assert forall|s: Slot| post.created.contains_key(s) implies exists|w: ServerId|
+        post.led.contains(#[trigger] Led { server: w, term: s.term }) by {
+        if s == fresh {
+            assert(post.led.contains(Led { server: n, term: t }));
+        } else {
+            let w = choose|w: ServerId| pre.led.contains(Led { server: w, term: s.term });
+            assert(post.led.contains(Led { server: w, term: s.term }));
+        }
+    }
+
+    assert forall|m: ServerId, s: Slot|
+        post.servers.contains_key(m) && is_leader(post.servers[m]) && post.servers[m].current_term
+            == s.term && post.created.contains_key(s) implies s.index
+        < post.servers[m].log.len() by {
+        if m != n {
+            assert(post.servers[m] == pre.servers[m]);
+            if s == fresh {
+                // Two leaders of `t`, which Election Safety rules out.
+                theorem_election_safety(pre, m, n);
+                assert(false);
+            }
+        }
+    }
+
+    assert forall|m: ServerId, i: nat|
+        post.servers.contains_key(m) && i < post.servers[m].log.len() implies {
+        &&& post.created.contains_key(slot_of(post.servers[m].log, i))
+        &&& post.created[slot_of(post.servers[m].log, i)].value
+            == post.servers[m].log[i as int].value
+        &&& post.created[slot_of(post.servers[m].log, i)].prev_term == term_before(
+            post.servers[m].log,
+            i,
+        )
+    } by {
+        if m == n {
+            if i < len {
+                assert(post.servers[n].log[i as int] == pre.servers[n].log[i as int]);
+                assert(slot_of(post.servers[n].log, i) != fresh);
+            }
+        } else {
+            assert(post.servers[m] == pre.servers[m]);
+            // An entry at the fresh slot would have put it in the record.
+            assert(slot_of(post.servers[m].log, i) != fresh);
+        }
+    }
 }
 
 /// Advancing the commit point. Likewise.
@@ -936,6 +1191,7 @@ pub proof fn lemma_advance_commit_preserves_hist(
         raft_hist_inv(post),
 {
     lemma_raft_step_preserves_inv(pre, post, RaftStep::AdvanceCommit { server: n, upto: upto });
+    lemma_untouched_logs_keep_log_hist(pre, post);
     assert(post.servers.dom() =~= pre.servers.dom());
     assert forall|m: ServerId|
         #![trigger post.servers[m]]
@@ -1068,6 +1324,92 @@ pub proof fn lemma_append_entries_preserves_hist(
             assert(post.servers[l.server] == pre.servers[l.server]);
         }
     }
+
+    lemma_the_consistency_check_preserves_the_record(pre, post, leader, follower, prefix);
+}
+
+/// **The consistency check is exactly the guard that keeps the record true.**
+///
+/// The one place in this development where a thing already in the protocol
+/// turns out to be precisely what the proof needs, rather than something added
+/// for it. A follower accepts the leader's entry at `prefix` and keeps its own
+/// first `prefix` entries. For the record to stay true of the result:
+///
+/// * below `prefix` the entries are the follower's own and so is the term
+///   before each of them, so nothing changed;
+/// * **at `prefix` the entry is the leader's**, so its value and its slot come
+///   from the leader's log, where the record already holds — but the *term
+///   before it* is now the follower's entry at `prefix - 1`, not the leader's.
+///   Those have to agree, or the record would claim a predecessor the follower
+///   does not have.
+///
+/// And they do agree, because `tr_append_entries` will not fire unless
+/// `follower.log[prefix - 1].term == leader.log[prefix - 1].term`. That is the
+/// consistency check, and this is what it is for.
+pub proof fn lemma_the_consistency_check_preserves_the_record(
+    pre: Cluster,
+    post: Cluster,
+    leader: ServerId,
+    follower: ServerId,
+    prefix: nat,
+)
+    requires
+        raft_hist_inv(pre),
+        tr_append_entries(pre, post, leader, follower, prefix),
+    ensures
+        inv_created_implies_led(post),
+        inv_creator_holds(post),
+        inv_logs_follow_created(post),
+{
+    let fl = pre.servers[follower].log;
+    let ll = pre.servers[leader].log;
+    let nl = appended_log(fl, ll, prefix);
+
+    assert(post.servers[follower].log == nl);
+    assert(nl.len() == prefix + 1);
+
+    assert forall|s: Slot| post.created.contains_key(s) implies exists|w: ServerId|
+        post.led.contains(#[trigger] Led { server: w, term: s.term }) by {
+        let w = choose|w: ServerId| pre.led.contains(Led { server: w, term: s.term });
+        assert(post.led.contains(Led { server: w, term: s.term }));
+    }
+
+    assert forall|m: ServerId, s: Slot|
+        post.servers.contains_key(m) && is_leader(post.servers[m]) && post.servers[m].current_term
+            == s.term && post.created.contains_key(s) implies s.index
+        < post.servers[m].log.len() by {
+        // The receiver is a follower afterwards, so it is not one of these.
+        assert(m != follower);
+        assert(post.servers[m] == pre.servers[m]);
+    }
+
+    assert forall|m: ServerId, i: nat|
+        post.servers.contains_key(m) && i < post.servers[m].log.len() implies {
+        &&& post.created.contains_key(slot_of(post.servers[m].log, i))
+        &&& post.created[slot_of(post.servers[m].log, i)].value
+            == post.servers[m].log[i as int].value
+        &&& post.created[slot_of(post.servers[m].log, i)].prev_term == term_before(
+            post.servers[m].log,
+            i,
+        )
+    } by {
+        if m == follower {
+            if i < prefix {
+                // The follower's own entries, and its own predecessors.
+                assert(nl[i as int] == fl[i as int]);
+                assert(term_before(nl, i) == term_before(fl, i));
+            } else {
+                assert(i == prefix);
+                // The leader's entry, where the record already holds.
+                assert(nl[prefix as int] == ll[prefix as int]);
+                assert(slot_of(nl, prefix) == slot_of(ll, prefix));
+                // And the predecessors agree — the consistency check.
+                assert(term_before(nl, prefix) == term_before(ll, prefix));
+            }
+        } else {
+            assert(post.servers[m] == pre.servers[m]);
+        }
+    }
 }
 
 /// Replay and stutter. Nothing about a server or the history moves.
@@ -1078,6 +1420,7 @@ pub proof fn lemma_quiet_steps_preserve_hist(pre: Cluster, post: Cluster, s: Raf
         post.members == pre.members,
         post.servers == pre.servers,
         post.votes == pre.votes,
+        post.created == pre.created,
         post.led == pre.led,
     ensures
         raft_hist_inv(post),
@@ -1090,6 +1433,7 @@ pub proof fn lemma_quiet_steps_preserve_hist(pre: Cluster, post: Cluster, s: Raf
     ) by {
         lemma_quorum_survives(pre, post, l.server, l.term);
     }
+    lemma_untouched_logs_keep_log_hist(pre, post);
 }
 
 /// **Every transition preserves the history invariant.**
@@ -1207,6 +1551,95 @@ pub proof fn theorem_reachable_hist_inv(c: Cluster)
 {
     let tr = choose|tr: Seq<Cluster>| raft_execution(tr) && tr[tr.len() - 1] == c;
     lemma_raft_execution_hist_inv(tr, tr.len() - 1);
+}
+
+// ---------------------------------------------------------------------------
+// Log Matching
+// ---------------------------------------------------------------------------
+
+/// Two logs that agree on an entry's term at an index agree on its value.
+///
+/// Both are reading the same slot of the same record, so this is one step, and
+/// it is the easy half.
+pub proof fn theorem_log_matching_values(c: Cluster, a: ServerId, b: ServerId, i: nat)
+    requires
+        inv_logs_follow_created(c),
+        c.servers.contains_key(a),
+        c.servers.contains_key(b),
+        i < c.servers[a].log.len(),
+        i < c.servers[b].log.len(),
+        c.servers[a].log[i as int].term == c.servers[b].log[i as int].term,
+    ensures
+        c.servers[a].log[i as int].value == c.servers[b].log[i as int].value,
+{
+    assert(slot_of(c.servers[a].log, i) == slot_of(c.servers[b].log, i));
+}
+
+/// **Log Matching.** Two logs that agree on an entry's term at an index agree
+/// on every entry at and below it.
+///
+/// The hard half, and the induction the `prev_term` component of a creation
+/// record exists to carry: the same slot gives the same recorded predecessor,
+/// so the terms one index down agree — which is this theorem's own hypothesis,
+/// one smaller.
+pub proof fn theorem_log_matching(c: Cluster, a: ServerId, b: ServerId, i: nat)
+    requires
+        inv_logs_follow_created(c),
+        c.servers.contains_key(a),
+        c.servers.contains_key(b),
+        i < c.servers[a].log.len(),
+        i < c.servers[b].log.len(),
+        c.servers[a].log[i as int].term == c.servers[b].log[i as int].term,
+    ensures
+        forall|j: int| 0 <= j <= i ==> c.servers[a].log[j] == c.servers[b].log[j],
+    decreases i,
+{
+    theorem_log_matching_values(c, a, b, i);
+    assert(slot_of(c.servers[a].log, i) == slot_of(c.servers[b].log, i));
+
+    if i > 0 {
+        assert(term_before(c.servers[a].log, i) == term_before(c.servers[b].log, i));
+        theorem_log_matching(c, a, b, (i - 1) as nat);
+    }
+
+    assert forall|j: int| 0 <= j <= i implies c.servers[a].log[j] == c.servers[b].log[j] by {
+        if j == i {
+            assert(c.servers[a].log[j].term == c.servers[b].log[j].term);
+            assert(c.servers[a].log[j].value == c.servers[b].log[j].value);
+        }
+    }
+}
+
+/// The same on prefixes, which is how the paper states it.
+pub proof fn theorem_log_matching_prefixes(c: Cluster, a: ServerId, b: ServerId, i: nat)
+    requires
+        inv_logs_follow_created(c),
+        c.servers.contains_key(a),
+        c.servers.contains_key(b),
+        i < c.servers[a].log.len(),
+        i < c.servers[b].log.len(),
+        c.servers[a].log[i as int].term == c.servers[b].log[i as int].term,
+    ensures
+        c.servers[a].log.take(i + 1) == c.servers[b].log.take(i + 1),
+{
+    theorem_log_matching(c, a, b, i);
+    assert(c.servers[a].log.take(i + 1) =~= c.servers[b].log.take(i + 1));
+}
+
+/// **Log Matching, in any reachable cluster.**
+pub proof fn theorem_log_matching_reachable(c: Cluster, a: ServerId, b: ServerId, i: nat)
+    requires
+        raft_reachable(c),
+        c.servers.contains_key(a),
+        c.servers.contains_key(b),
+        i < c.servers[a].log.len(),
+        i < c.servers[b].log.len(),
+        c.servers[a].log[i as int].term == c.servers[b].log[i as int].term,
+    ensures
+        c.servers[a].log.take(i + 1) == c.servers[b].log.take(i + 1),
+{
+    theorem_reachable_hist_inv(c);
+    theorem_log_matching_prefixes(c, a, b, i);
 }
 
 } // verus!

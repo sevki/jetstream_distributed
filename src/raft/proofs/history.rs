@@ -155,6 +155,202 @@ pub proof fn lemma_history_keeps_replication(
     assert(replicated_on(with_history(c, cr, l), log, n) =~= replicated_on(c, log, n));
 }
 
+/// The nine below are one per transition, and they exist in that shape for a
+/// reason worth recording: proved as a single theorem over `raft_step` the
+/// failure message says only "postcondition not satisfied" and names the whole
+/// match, which is no help at all when eight arms are fine. Split, a failure
+/// names the transition.
+
+/// Standing for election.
+pub proof fn lemma_timeout_ignores_history(
+    pre: Cluster,
+    post: Cluster,
+    n: ServerId,
+    cr: Map<Slot, Creation>,
+    l: Set<Led>,
+)
+    requires
+        tr_timeout(pre, post, n),
+    ensures
+        tr_timeout(with_history(pre, cr, l), with_history(post, cr, l), n),
+{
+}
+
+/// Granting a vote. `has_voted` is an existential over `votes`, which
+/// `with_history` carries across whole.
+pub proof fn lemma_grant_vote_ignores_history(
+    pre: Cluster,
+    post: Cluster,
+    voter: ServerId,
+    cand: ServerId,
+    term: Term,
+    cand_last_term: Term,
+    cand_last_index: nat,
+    cr: Map<Slot, Creation>,
+    l: Set<Led>,
+)
+    requires
+        tr_grant_vote(pre, post, voter, cand, term, cand_last_term, cand_last_index),
+    ensures
+        tr_grant_vote(
+            with_history(pre, cr, l),
+            with_history(post, cr, l),
+            voter,
+            cand,
+            term,
+            cand_last_term,
+            cand_last_index,
+        ),
+{
+    assert forall|c0: ServerId| !with_history(pre, cr, l).votes.contains(
+        Vote { voter: voter, term: term, candidate: c0 },
+    ) by {
+        assert(!pre.votes.contains(Vote { voter: voter, term: term, candidate: c0 }));
+    }
+}
+
+/// Taking the term. `won_election` is a filter; see `lemma_history_keeps_voters`.
+pub proof fn lemma_become_leader_ignores_history(
+    pre: Cluster,
+    post: Cluster,
+    n: ServerId,
+    term: Term,
+    cr: Map<Slot, Creation>,
+    l: Set<Led>,
+)
+    requires
+        tr_become_leader(pre, post, n, term),
+    ensures
+        tr_become_leader(
+            with_history(pre, cr, l),
+            with_history(post, cr, l.insert(Led { server: n, term: term })),
+            n,
+            term,
+        ),
+{
+    lemma_history_keeps_voters(pre, cr, l, n, term);
+}
+
+/// Stepping down. `carries_term` is an existential over `messages`.
+pub proof fn lemma_step_down_ignores_history(
+    pre: Cluster,
+    post: Cluster,
+    n: ServerId,
+    term: Term,
+    cr: Map<Slot, Creation>,
+    l: Set<Led>,
+)
+    requires
+        tr_step_down(pre, post, n, term),
+    ensures
+        tr_step_down(with_history(pre, cr, l), with_history(post, cr, l), n, term),
+{
+    assert(with_history(pre, cr, l).messages =~= pre.messages);
+}
+
+/// Appending a client command — the one transition that writes `created`.
+pub proof fn lemma_client_request_ignores_history(
+    pre: Cluster,
+    post: Cluster,
+    n: ServerId,
+    value: nat,
+    cr: Map<Slot, Creation>,
+    l: Set<Led>,
+)
+    requires
+        tr_client_request(pre, post, n, value),
+    ensures
+        tr_client_request(
+            with_history(pre, cr, l),
+            with_history(
+                post,
+                cr.insert(
+                    Slot {
+                        term: pre.servers[n].current_term,
+                        index: pre.servers[n].log.len(),
+                    },
+                    Creation {
+                        value: value,
+                        prev_term: term_before(pre.servers[n].log, pre.servers[n].log.len()),
+                    },
+                ),
+                l,
+            ),
+            n,
+            value,
+        ),
+{
+}
+
+/// Replication.
+pub proof fn lemma_append_entries_ignores_history(
+    pre: Cluster,
+    post: Cluster,
+    leader: ServerId,
+    follower: ServerId,
+    prefix: nat,
+    cr: Map<Slot, Creation>,
+    l: Set<Led>,
+)
+    requires
+        tr_append_entries(pre, post, leader, follower, prefix),
+    ensures
+        tr_append_entries(
+            with_history(pre, cr, l),
+            with_history(post, cr, l),
+            leader,
+            follower,
+            prefix,
+        ),
+{
+}
+
+/// Committing. `replicated_on` is a filter; see `lemma_history_keeps_replication`.
+pub proof fn lemma_advance_commit_ignores_history(
+    pre: Cluster,
+    post: Cluster,
+    n: ServerId,
+    upto: nat,
+    cr: Map<Slot, Creation>,
+    l: Set<Led>,
+)
+    requires
+        tr_advance_commit(pre, post, n, upto),
+    ensures
+        tr_advance_commit(with_history(pre, cr, l), with_history(post, cr, l), n, upto),
+{
+    lemma_history_keeps_replication(pre, cr, l, pre.servers[n].log, upto);
+}
+
+/// Replay.
+pub proof fn lemma_replay_ignores_history(
+    pre: Cluster,
+    post: Cluster,
+    m: RaftMessage,
+    cr: Map<Slot, Creation>,
+    l: Set<Led>,
+)
+    requires
+        tr_replay(pre, post, m),
+    ensures
+        tr_replay(with_history(pre, cr, l), with_history(post, cr, l), m),
+{
+}
+
+/// Stutter.
+pub proof fn lemma_stutter_ignores_history(
+    pre: Cluster,
+    post: Cluster,
+    cr: Map<Slot, Creation>,
+    l: Set<Led>,
+)
+    requires
+        tr_stutter(pre, post),
+    ensures
+        tr_stutter(with_history(pre, cr, l), with_history(post, cr, l)),
+{
+}
+
 /// **The history neither enables nor disables anything.**
 ///
 /// For *any* `cr` and `l` — not the ones the run actually produced, any at all
@@ -181,35 +377,39 @@ pub proof fn theorem_history_does_not_gate_the_protocol(
             s,
         ),
 {
-    // Each arm says what the two history functions reduce to there. Everything
-    // else in the step's definition mentions only `members`, `servers`, `votes`
-    // and `messages`, which `with_history` carries across unchanged — so those
-    // conjuncts are the same proposition on both sides and need nothing said
-    // about them. The two that are *not* the same proposition are these.
+    // The lemmas are stated over the history each step actually produces; the
+    // postcondition is stated over `created_after` and `led_after`. Each arm
+    // says what those two come to there, which is the bridge between them.
     match s {
-        RaftStep::Timeout { server: _ } => {
+        RaftStep::Timeout { server } => {
             assert(created_after(pre, cr, s) == cr);
             assert(led_after(pre, l, s) == l);
+            lemma_timeout_ignores_history(pre, post, server, cr, l);
         },
-        RaftStep::GrantVote {
-            voter: _,
-            candidate: _,
-            term: _,
-            cand_last_term: _,
-            cand_last_index: _,
-        } => {
+        RaftStep::GrantVote { voter, candidate, term, cand_last_term, cand_last_index } => {
             assert(created_after(pre, cr, s) == cr);
             assert(led_after(pre, l, s) == l);
+            lemma_grant_vote_ignores_history(
+                pre,
+                post,
+                voter,
+                candidate,
+                term,
+                cand_last_term,
+                cand_last_index,
+                cr,
+                l,
+            );
         },
         RaftStep::BecomeLeader { server, term } => {
             assert(created_after(pre, cr, s) == cr);
             assert(led_after(pre, l, s) == l.insert(Led { server: server, term: term }));
-            // `won_election` is a filter of the membership; see the lemma.
-            lemma_history_keeps_voters(pre, cr, l, server, term);
+            lemma_become_leader_ignores_history(pre, post, server, term, cr, l);
         },
-        RaftStep::StepDown { server: _, term: _ } => {
+        RaftStep::StepDown { server, term } => {
             assert(created_after(pre, cr, s) == cr);
             assert(led_after(pre, l, s) == l);
+            lemma_step_down_ignores_history(pre, post, server, term, cr, l);
         },
         RaftStep::ClientRequest { server, value } => {
             assert(created_after(pre, cr, s) == cr.insert(
@@ -226,24 +426,27 @@ pub proof fn theorem_history_does_not_gate_the_protocol(
                 },
             ));
             assert(led_after(pre, l, s) == l);
+            lemma_client_request_ignores_history(pre, post, server, value, cr, l);
         },
-        RaftStep::AppendEntries { leader: _, follower: _, prefix: _ } => {
+        RaftStep::AppendEntries { leader, follower, prefix } => {
             assert(created_after(pre, cr, s) == cr);
             assert(led_after(pre, l, s) == l);
+            lemma_append_entries_ignores_history(pre, post, leader, follower, prefix, cr, l);
         },
         RaftStep::AdvanceCommit { server, upto } => {
             assert(created_after(pre, cr, s) == cr);
             assert(led_after(pre, l, s) == l);
-            // And so is `replicated_on`.
-            lemma_history_keeps_replication(pre, cr, l, pre.servers[server].log, upto);
+            lemma_advance_commit_ignores_history(pre, post, server, upto, cr, l);
         },
-        RaftStep::Replay { msg: _ } => {
+        RaftStep::Replay { msg } => {
             assert(created_after(pre, cr, s) == cr);
             assert(led_after(pre, l, s) == l);
+            lemma_replay_ignores_history(pre, post, msg, cr, l);
         },
         RaftStep::Stutter => {
             assert(created_after(pre, cr, s) == cr);
             assert(led_after(pre, l, s) == l);
+            lemma_stutter_ignores_history(pre, post, cr, l);
         },
     }
 }

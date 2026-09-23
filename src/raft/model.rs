@@ -158,6 +158,45 @@ pub enum RaftMessage {
     Heartbeat { term: Term, leader: ServerId },
 }
 
+/// **Ghost.** Which `(term, index)` an entry was created at.
+///
+/// The pair that names an entry in Raft's own argument: Election Safety says
+/// one leader per term, so a term and an index between them name a single act
+/// of creation by a single server.
+pub struct Slot {
+    pub term: Term,
+    pub index: nat,
+}
+
+/// **Ghost.** What a leader recorded when it created an entry.
+pub struct Creation {
+    pub value: nat,
+    /// The term of the entry immediately before this one, or `0` for the first.
+    ///
+    /// **This is the field that makes Log Matching an induction rather than a
+    /// wish.** Knowing two logs agree on an entry's value at some slot says
+    /// nothing about what came before it; knowing they agree on the *term
+    /// before it* steps the argument down one index, and repeating that reaches
+    /// index 0. `tr_append_entries`' consistency check is exactly the guard
+    /// that keeps this true — which is what that check is for.
+    pub prev_term: Term,
+}
+
+/// **Ghost.** A server has, at some point, been leader of a term.
+pub struct Led {
+    pub server: ServerId,
+    pub term: Term,
+}
+
+/// The term of the entry before index `i`, or `0` if there is none.
+pub open spec fn term_before(log: Seq<Entry>, i: nat) -> Term {
+    if i == 0 {
+        0
+    } else {
+        log[i - 1].term
+    }
+}
+
 /// The whole cluster.
 pub struct Cluster {
     /// The servers that exist. Fixed: this model has no reconfiguration, which
@@ -170,6 +209,21 @@ pub struct Cluster {
     pub votes: Set<Vote>,
     /// Every message ever sent. Monotonically grows (see the module docs).
     pub messages: Set<RaftMessage>,
+    /// **Ghost: every entry any leader has ever created.**
+    ///
+    /// History, not state. No server can see this and **no guard reads it** —
+    /// [`theorem_history_does_not_gate_the_protocol`] is the proof of that, and
+    /// it is what makes this an auxiliary variable rather than an assumption
+    /// smuggled into the model. What it buys is the one thing the state alone
+    /// cannot say: that nothing was *ever* created at a slot before.
+    pub created: Map<Slot, Creation>,
+    /// **Ghost: every `(server, term)` in which that server has led.**
+    ///
+    /// Same discipline, same proof. A server that has led a term has left a
+    /// mark that outlives its leadership, and that mark is what rules out a
+    /// second leader of the same term creating a second entry at the same
+    /// index.
+    pub led: Set<Led>,
 }
 
 // ---------------------------------------------------------------------------
@@ -344,6 +398,8 @@ pub open spec fn tr_timeout(pre: Cluster, post: Cluster, n: ServerId) -> bool {
             last_index: pre.servers[n].log.len(),
         },
     )
+    &&& post.created == pre.created
+    &&& post.led == pre.led
 }
 
 /// A member grants its vote for `term` to `cand`.
@@ -399,6 +455,8 @@ pub open spec fn tr_grant_vote(
     &&& post.messages == pre.messages.insert(
         RaftMessage::VoteGranted { term: term, voter: voter, candidate: cand },
     )
+    &&& post.created == pre.created
+    &&& post.led == pre.led
 }
 
 /// A candidate that has collected a quorum of votes for its own term declares
@@ -420,6 +478,12 @@ pub open spec fn tr_become_leader(pre: Cluster, post: Cluster, n: ServerId, term
     )
     &&& post.votes == pre.votes
     &&& post.messages == pre.messages.insert(RaftMessage::Heartbeat { term: term, leader: n })
+    &&& post.created == pre.created
+    // **The mark that outlives the leadership.** A server that steps down is
+    // no longer a leader of this term and nothing in `servers` remembers that
+    // it ever was — which is exactly the fact a later `tr_client_request`
+    // needs, so it is recorded here rather than reconstructed later.
+    &&& post.led == pre.led.insert(Led { server: n, term: term })
 }
 
 /// A server learns of a strictly higher term and steps down into it.
@@ -442,6 +506,8 @@ pub open spec fn tr_step_down(pre: Cluster, post: Cluster, n: ServerId, term: Te
     )
     &&& post.votes == pre.votes
     &&& post.messages == pre.messages
+    &&& post.created == pre.created
+    &&& post.led == pre.led
 }
 
 /// A client command reaches the leader, which appends it **at its own term**.
@@ -467,6 +533,24 @@ pub open spec fn tr_client_request(pre: Cluster, post: Cluster, n: ServerId, val
     )
     &&& post.votes == pre.votes
     &&& post.messages == pre.messages
+    // **The creation record.** Written at the slot the entry lands in, with
+    // the term of the entry before it. That second component is what
+    // `tr_append_entries`' consistency check preserves, and between them they
+    // are what makes two agreeing entries imply two agreeing prefixes.
+    //
+    // Note there is no guard saying the slot is fresh. A guard would *assume*
+    // that a leader never creates twice at one slot, which is the thing to be
+    // proved; `crate::raft::proofs::history` proves it instead, and an
+    // overwrite here would show up as a broken invariant rather than as a
+    // transition that quietly could not fire.
+    &&& post.created == pre.created.insert(
+        Slot { term: pre.servers[n].current_term, index: pre.servers[n].log.len() },
+        Creation {
+            value: value,
+            prev_term: term_before(pre.servers[n].log, pre.servers[n].log.len()),
+        },
+    )
+    &&& post.led == pre.led
 }
 
 /// The leader replicates the entry at `prefix` to a follower.
@@ -523,6 +607,8 @@ pub open spec fn tr_append_entries(
     )
     &&& post.votes == pre.votes
     &&& post.messages == pre.messages
+    &&& post.created == pre.created
+    &&& post.led == pre.led
 }
 
 /// The leader commits a prefix once a majority holds it.
@@ -552,6 +638,8 @@ pub open spec fn tr_advance_commit(pre: Cluster, post: Cluster, n: ServerId, upt
     )
     &&& post.votes == pre.votes
     &&& post.messages == pre.messages
+    &&& post.created == pre.created
+    &&& post.led == pre.led
 }
 
 /// Some message on the network names `term`.
@@ -576,6 +664,8 @@ pub open spec fn tr_replay(pre: Cluster, post: Cluster, m: RaftMessage) -> bool 
     &&& post.members == pre.members
     &&& post.servers == pre.servers
     &&& post.votes == pre.votes
+    &&& post.created == pre.created
+    &&& post.led == pre.led
 }
 
 /// Nothing happens (an arbitrary delay).
@@ -584,6 +674,8 @@ pub open spec fn tr_stutter(pre: Cluster, post: Cluster) -> bool {
     &&& post.servers == pre.servers
     &&& post.votes == pre.votes
     &&& post.messages == pre.messages
+    &&& post.created == pre.created
+    &&& post.led == pre.led
 }
 
 /// The labelled transitions.
@@ -642,6 +734,8 @@ pub open spec fn raft_init(c: Cluster) -> bool {
             && c.servers[n].log.len() == 0 && c.servers[n].commit == 0)
     &&& (forall|v: Vote| !(#[trigger] c.votes.contains(v)))
     &&& (forall|m: RaftMessage| !(#[trigger] c.messages.contains(m)))
+    &&& (forall|s: Slot| !(#[trigger] c.created.contains_key(s)))
+    &&& (forall|l: Led| !(#[trigger] c.led.contains(l)))
 }
 
 /// `tr` is a finite execution of the cluster.

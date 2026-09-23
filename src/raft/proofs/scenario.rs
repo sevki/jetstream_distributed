@@ -52,6 +52,8 @@ pub open spec fn start() -> Cluster {
         servers: all_followers(),
         votes: Set::empty(),
         messages: Set::empty(),
+        created: Map::empty(),
+        led: Set::empty(),
     }
 }
 
@@ -80,6 +82,10 @@ pub proof fn lemma_start_is_init()
         && start().servers[n].commit == 0 by {
         assert(n == 0 || n == 1 || n == 2);
     }
+    // Nothing has been created and nobody has led, which is what an empty
+    // history means.
+    assert forall|s: Slot| !(#[trigger] start().created.contains_key(s)) by {}
+    assert forall|l: Led| !(#[trigger] start().led.contains(l)) by {}
 }
 
 /// **An election happens.**
@@ -143,6 +149,8 @@ pub proof fn scenario_a_leader_is_elected()
                 last_index: c0.servers[0].log.len(),
             },
         ),
+        created: c0.created,
+        led: c0.led,
     };
     assert(c0.servers[0].current_term == 0);
     assert(!is_leader(c0.servers[0]));
@@ -165,6 +173,8 @@ pub proof fn scenario_a_leader_is_elected()
         messages: c1.messages.insert(
             RaftMessage::VoteGranted { term: 1, voter: 1, candidate: 0 },
         ),
+        created: c1.created,
+        led: c1.led,
     };
     assert(c1.messages.contains(
         RaftMessage::RequestVote { term: 1, candidate: 0, last_term: 0, last_index: 0 },
@@ -201,6 +211,8 @@ pub proof fn scenario_a_leader_is_elected()
         ),
         votes: c2.votes,
         messages: c2.messages.insert(RaftMessage::Heartbeat { term: 1, leader: 0 }),
+        created: c2.created,
+        led: c2.led.insert(Led { server: 0, term: 1 }),
     };
     assert(is_candidate(c2.servers[0]));
     assert(tr_become_leader(c2, c3, 0, 1));

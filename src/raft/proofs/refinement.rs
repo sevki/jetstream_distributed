@@ -63,6 +63,8 @@ pub open spec fn timeout_post(c: Cluster, n: ServerId) -> Cluster {
                 last_index: c.servers[n].log.len(),
             },
         ),
+        created: c.created,
+        led: c.led,
     }
 }
 
@@ -88,6 +90,8 @@ pub open spec fn grant_vote_post(
         messages: c.messages.insert(
             RaftMessage::VoteGranted { term: term, voter: voter, candidate: cand },
         ),
+        created: c.created,
+        led: c.led,
     }
 }
 
@@ -106,6 +110,8 @@ pub open spec fn become_leader_post(c: Cluster, n: ServerId, term: Term) -> Clus
         ),
         votes: c.votes,
         messages: c.messages.insert(RaftMessage::Heartbeat { term: term, leader: n }),
+        created: c.created,
+        led: c.led.insert(Led { server: n, term: term }),
     }
 }
 
@@ -124,6 +130,8 @@ pub open spec fn step_down_post(c: Cluster, n: ServerId, term: Term) -> Cluster 
         ),
         votes: c.votes,
         messages: c.messages,
+        created: c.created,
+        led: c.led,
     }
 }
 

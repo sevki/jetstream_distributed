@@ -37,11 +37,12 @@ pub open spec fn three() -> Set<ServerId> {
 }
 
 /// Everybody a follower at term 0.
+pub open spec fn fresh_server() -> Server {
+    Server { role: Role::Follower, current_term: 0, log: Seq::empty(), commit: 0 }
+}
+
 pub open spec fn all_followers() -> Map<ServerId, Server> {
-    Map::empty().insert(0, Server { role: Role::Follower, current_term: 0 }).insert(
-        1,
-        Server { role: Role::Follower, current_term: 0 },
-    ).insert(2, Server { role: Role::Follower, current_term: 0 })
+    Map::empty().insert(0, fresh_server()).insert(1, fresh_server()).insert(2, fresh_server())
 }
 
 /// The initial cluster.
@@ -75,7 +76,8 @@ pub proof fn lemma_start_is_init()
     }
     assert forall|n: ServerId| start().servers.contains_key(n) implies !is_leader(
         start().servers[n],
-    ) && start().servers[n].current_term == 0 by {
+    ) && start().servers[n].current_term == 0 && start().servers[n].log.len() == 0
+        && start().servers[n].commit == 0 by {
         assert(n == 0 || n == 1 || n == 2);
     }
 }
@@ -94,7 +96,13 @@ pub proof fn scenario_a_leader_is_elected()
                 &&& #[trigger] raft_labelled_execution(tr, labels)
                 &&& labels.len() == 3
                 &&& labels[0] == (RaftStep::Timeout { server: 0 })
-                &&& labels[1] == (RaftStep::GrantVote { voter: 1, candidate: 0, term: 1 })
+                &&& labels[1] == (RaftStep::GrantVote {
+                    voter: 1,
+                    candidate: 0,
+                    term: 1,
+                    cand_last_term: 0,
+                    cand_last_index: 0,
+                })
                 &&& labels[2] == (RaftStep::BecomeLeader { server: 0, term: 1 })
                 // ... and at the end, server 0 leads term 1.
                 &&& tr[3].servers.contains_key(0)
@@ -109,12 +117,32 @@ pub proof fn scenario_a_leader_is_elected()
 
     let c0 = start();
 
+    // Everybody starts with an empty log, so the candidate's summary is
+    // `(0, 0)` and the up-to-date check is satisfied by every voter.
+    assert(c0.servers[0].log.len() == 0);
+    assert(last_term(c0.servers[0].log) == 0);
+
     // 0 times out into term 1 and votes for itself.
     let c1 = Cluster {
         members: c0.members,
-        servers: c0.servers.insert(0, Server { role: Role::Candidate, current_term: 1 }),
+        servers: c0.servers.insert(
+            0,
+            Server {
+                role: Role::Candidate,
+                current_term: 1,
+                log: c0.servers[0].log,
+                commit: c0.servers[0].commit,
+            },
+        ),
         votes: c0.votes.insert(Vote { voter: 0, term: 1, candidate: 0 }),
-        messages: c0.messages.insert(RaftMessage::RequestVote { term: 1, candidate: 0 }),
+        messages: c0.messages.insert(
+            RaftMessage::RequestVote {
+                term: 1,
+                candidate: 0,
+                last_term: last_term(c0.servers[0].log),
+                last_index: c0.servers[0].log.len(),
+            },
+        ),
     };
     assert(c0.servers[0].current_term == 0);
     assert(!is_leader(c0.servers[0]));
@@ -124,21 +152,33 @@ pub proof fn scenario_a_leader_is_elected()
     // itself, and 0 is not 1.
     let c2 = Cluster {
         members: c1.members,
-        servers: c1.servers.insert(1, Server { role: Role::Follower, current_term: 1 }),
+        servers: c1.servers.insert(
+            1,
+            Server {
+                role: Role::Follower,
+                current_term: 1,
+                log: c1.servers[1].log,
+                commit: c1.servers[1].commit,
+            },
+        ),
         votes: c1.votes.insert(Vote { voter: 1, term: 1, candidate: 0 }),
         messages: c1.messages.insert(
             RaftMessage::VoteGranted { term: 1, voter: 1, candidate: 0 },
         ),
     };
-    assert(c1.messages.contains(RaftMessage::RequestVote { term: 1, candidate: 0 }));
+    assert(c1.messages.contains(
+        RaftMessage::RequestVote { term: 1, candidate: 0, last_term: 0, last_index: 0 },
+    ));
     assert(c1.servers[1].current_term == 0);
+    assert(c1.servers[1].log.len() == 0);
+    assert(at_least_as_up_to_date(0, 0, c1.servers[1].log));
     assert forall|cand: ServerId| !c1.votes.contains(
         Vote { voter: 1, term: 1, candidate: cand },
     ) by {
         assert(!c0.votes.contains(Vote { voter: 1, term: 1, candidate: cand }));
     }
     assert(!has_voted(c1, 1, 1));
-    assert(tr_grant_vote(c1, c2, 1, 0, 1));
+    assert(tr_grant_vote(c1, c2, 1, 0, 1, 0, 0));
 
     // Two of the three have now voted for 0 in term 1, which is a majority.
     assert(voters_for(c2, 0, 1) =~= Set::empty().insert(0).insert(1));
@@ -150,7 +190,15 @@ pub proof fn scenario_a_leader_is_elected()
     // So 0 takes the term.
     let c3 = Cluster {
         members: c2.members,
-        servers: c2.servers.insert(0, Server { role: Role::Leader, current_term: 1 }),
+        servers: c2.servers.insert(
+            0,
+            Server {
+                role: Role::Leader,
+                current_term: 1,
+                log: c2.servers[0].log,
+                commit: c2.servers[0].commit,
+            },
+        ),
         votes: c2.votes,
         messages: c2.messages.insert(RaftMessage::Heartbeat { term: 1, leader: 0 }),
     };
@@ -160,7 +208,13 @@ pub proof fn scenario_a_leader_is_elected()
     let tr = seq![c0, c1, c2, c3];
     let labels = seq![
         RaftStep::Timeout { server: 0 },
-        RaftStep::GrantVote { voter: 1, candidate: 0, term: 1 },
+        RaftStep::GrantVote {
+            voter: 1,
+            candidate: 0,
+            term: 1,
+            cand_last_term: 0,
+            cand_last_index: 0,
+        },
         RaftStep::BecomeLeader { server: 0, term: 1 },
     ];
 

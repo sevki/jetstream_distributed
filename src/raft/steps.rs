@@ -68,16 +68,13 @@ pub struct ExecServer {
     pub current_term: u64,
 }
 
-impl ExecServer {
-    /// The ghost record this stands for.
-    pub open spec fn view(self) -> Server {
-        Server {
-            role: match self.role {
-                ExecRole::Follower => Role::Follower,
-                ExecRole::Candidate => Role::Candidate,
-                ExecRole::Leader => Role::Leader,
-            },
-            current_term: self.current_term as nat,
+impl ExecRole {
+    /// The ghost role this stands for.
+    pub open spec fn view(self) -> Role {
+        match self {
+            ExecRole::Follower => Role::Follower,
+            ExecRole::Candidate => Role::Candidate,
+            ExecRole::Leader => Role::Leader,
         }
     }
 }
@@ -122,43 +119,55 @@ pub fn is_majority(votes: u64, members: u64) -> (r: bool)
 // ---------------------------------------------------------------------------
 // The guards and the results, at the model's level
 // ---------------------------------------------------------------------------
+//
+// Stated over a server's `(role, current_term)` rather than over the whole
+// `Server`, and that is not a simplification — it is the honest scope. A
+// `Server` also carries a log, and **none of these four transitions reads it**:
+// standing for election, granting a vote, taking a term and stepping down are
+// decisions about who you are and which term you are in. Writing the guards
+// over the whole record would have implied the log was consulted, and would
+// have forced the executable type to carry a copy of a log it never looks at.
+//
+// The log's own decisions are a separate matter, and `tr_append_entries` is
+// guarded by the log rather than by the role.
 
-/// `tr_timeout`'s guard on the server's own record.
-pub open spec fn timeout_fires(s: Server) -> bool {
-    !is_leader(s)
+/// `tr_timeout`'s guard: anyone not already leading may stand.
+pub open spec fn timeout_fires(role: Role) -> bool {
+    !match role {
+        Role::Leader => true,
+        _ => false,
+    }
 }
 
-/// Where standing for election leaves the server.
-pub open spec fn timeout_next(s: Server) -> Server {
-    Server { role: Role::Candidate, current_term: s.current_term + 1 }
-}
-
-/// `tr_grant_vote`'s guard on the voter: not behind, and not already spent.
-pub open spec fn grant_vote_fires(s: Server, term: Term, already_voted: bool) -> bool {
-    term >= s.current_term && !already_voted
-}
-
-/// Granting a vote adopts the term and drops to follower.
-pub open spec fn grant_vote_next(term: Term) -> Server {
-    Server { role: Role::Follower, current_term: term }
+/// `tr_grant_vote`'s guard *on the voter's term*: not behind, and not already
+/// spent.
+///
+/// The up-to-date comparison is the other half of that transition's guard and
+/// is deliberately not here: it is a question about two logs, which is
+/// `at_least_as_up_to_date`'s business, and the server answers it before
+/// reaching this step.
+pub open spec fn grant_vote_fires(current_term: Term, term: Term, already_voted: bool) -> bool {
+    term >= current_term && !already_voted
 }
 
 /// `tr_become_leader`'s guard.
-pub open spec fn become_leader_fires(s: Server, term: Term, has_quorum: bool) -> bool {
-    is_candidate(s) && s.current_term == term && has_quorum
-}
-
-pub open spec fn become_leader_next(term: Term) -> Server {
-    Server { role: Role::Leader, current_term: term }
+pub open spec fn become_leader_fires(
+    role: Role,
+    current_term: Term,
+    term: Term,
+    has_quorum: bool,
+) -> bool {
+    &&& match role {
+        Role::Candidate => true,
+        _ => false,
+    }
+    &&& current_term == term
+    &&& has_quorum
 }
 
 /// `tr_step_down`'s guard: the term really is ahead.
-pub open spec fn step_down_fires(s: Server, term: Term) -> bool {
-    term > s.current_term
-}
-
-pub open spec fn step_down_next(term: Term) -> Server {
-    Server { role: Role::Follower, current_term: term }
+pub open spec fn step_down_fires(current_term: Term, term: Term) -> bool {
+    term > current_term
 }
 
 // ---------------------------------------------------------------------------
@@ -169,10 +178,9 @@ pub open spec fn step_down_next(term: Term) -> Server {
 pub fn timeout_step(st: ExecServer) -> (r: RaftOutcome)
     ensures
         match r {
-            RaftOutcome::Moved(next) => timeout_fires(st.view()) && next.view() == timeout_next(
-                st.view(),
-            ),
-            RaftOutcome::Refused(why) => !timeout_fires(st.view()) || (why is Exhausted),
+            RaftOutcome::Moved(next) => timeout_fires(st.role.view()) && next.role.view()
+                == Role::Candidate && next.current_term as nat == st.current_term as nat + 1,
+            RaftOutcome::Refused(why) => !timeout_fires(st.role.view()) || (why is Exhausted),
         },
 {
     match st.role {
@@ -200,9 +208,16 @@ pub fn timeout_step(st: ExecServer) -> (r: RaftOutcome)
 pub fn grant_vote_step(st: ExecServer, term: u64, already_voted: bool) -> (r: RaftOutcome)
     ensures
         match r {
-            RaftOutcome::Moved(next) => grant_vote_fires(st.view(), term as nat, already_voted)
-                && next.view() == grant_vote_next(term as nat),
-            RaftOutcome::Refused(_) => !grant_vote_fires(st.view(), term as nat, already_voted),
+            RaftOutcome::Moved(next) => grant_vote_fires(
+                st.current_term as nat,
+                term as nat,
+                already_voted,
+            ) && next.role.view() == Role::Follower && next.current_term == term,
+            RaftOutcome::Refused(_) => !grant_vote_fires(
+                st.current_term as nat,
+                term as nat,
+                already_voted,
+            ),
         },
 {
     if term < st.current_term {
@@ -221,9 +236,18 @@ pub fn grant_vote_step(st: ExecServer, term: u64, already_voted: bool) -> (r: Ra
 pub fn become_leader_step(st: ExecServer, term: u64, has_quorum: bool) -> (r: RaftOutcome)
     ensures
         match r {
-            RaftOutcome::Moved(next) => become_leader_fires(st.view(), term as nat, has_quorum)
-                && next.view() == become_leader_next(term as nat),
-            RaftOutcome::Refused(_) => !become_leader_fires(st.view(), term as nat, has_quorum),
+            RaftOutcome::Moved(next) => become_leader_fires(
+                st.role.view(),
+                st.current_term as nat,
+                term as nat,
+                has_quorum,
+            ) && next.role.view() == Role::Leader && next.current_term == term,
+            RaftOutcome::Refused(_) => !become_leader_fires(
+                st.role.view(),
+                st.current_term as nat,
+                term as nat,
+                has_quorum,
+            ),
         },
 {
     match st.role {
@@ -244,9 +268,9 @@ pub fn become_leader_step(st: ExecServer, term: u64, has_quorum: bool) -> (r: Ra
 pub fn step_down_step(st: ExecServer, term: u64) -> (r: RaftOutcome)
     ensures
         match r {
-            RaftOutcome::Moved(next) => step_down_fires(st.view(), term as nat) && next.view()
-                == step_down_next(term as nat),
-            RaftOutcome::Refused(_) => !step_down_fires(st.view(), term as nat),
+            RaftOutcome::Moved(next) => step_down_fires(st.current_term as nat, term as nat)
+                && next.role.view() == Role::Follower && next.current_term == term,
+            RaftOutcome::Refused(_) => !step_down_fires(st.current_term as nat, term as nat),
         },
 {
     if term > st.current_term {

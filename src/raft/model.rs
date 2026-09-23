@@ -77,7 +77,18 @@ pub enum Role {
     Leader,
 }
 
-/// A server's election-relevant state.
+/// One log entry.
+///
+/// `value` is opaque on purpose. What a state machine does with a command is
+/// not this model's business, and keeping it opaque is what makes the safety
+/// argument about *ordering* — every server applies the same commands in the
+/// same order — rather than about what the commands mean.
+pub struct Entry {
+    pub term: Term,
+    pub value: nat,
+}
+
+/// A server's state.
 ///
 /// There is no `voted_for` field: the `votes` set already records every vote
 /// ever cast, and a second copy of the same fact is a second thing to keep in
@@ -86,6 +97,15 @@ pub enum Role {
 pub struct Server {
     pub role: Role,
     pub current_term: Term,
+    /// The replicated log. Index 0 is the first entry; the paper counts from 1.
+    pub log: Seq<Entry>,
+    /// **How many entries are committed**, not the index of the last one.
+    ///
+    /// A count rather than an index, so "nothing is committed" is `0` rather
+    /// than a sentinel, and `commit` is exactly the length of the committed
+    /// prefix. Off-by-one errors around `commitIndex` are a known hazard in
+    /// Raft implementations and this is the cheapest way not to have them.
+    pub commit: nat,
 }
 
 /// One vote, granted once and never retracted.
@@ -100,7 +120,13 @@ pub struct Vote {
 /// reordered message cannot by itself move the protocol forward.
 pub enum RaftMessage {
     /// Candidate -> everyone: stand for election at `term`.
-    RequestVote { term: Term, candidate: ServerId },
+    ///
+    /// Carries the candidate's log summary, because the voter's up-to-date
+    /// check is about the candidate's log and the voter cannot see it. Reading
+    /// the candidate's *current* log in the guard instead would be a model in
+    /// which a vote is decided on information that did not exist when it was
+    /// asked for.
+    RequestVote { term: Term, candidate: ServerId, last_term: Term, last_index: nat },
     /// Voter -> candidate: you have my vote for `term`.
     VoteGranted { term: Term, voter: ServerId, candidate: ServerId },
     /// Leader -> everyone: I won `term`.
@@ -184,6 +210,79 @@ pub open spec fn won_election(c: Cluster, n: ServerId, term: Term) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Logs
+// ---------------------------------------------------------------------------
+
+/// The term of a log's last entry, or 0 for an empty log.
+///
+/// 0 is safe as the empty case because no entry is ever created at term 0:
+/// entries are appended by leaders, and a leader's term is at least 1 because
+/// `tr_timeout` is the only way to become a candidate and it increments.
+pub open spec fn last_term(log: Seq<Entry>) -> Term {
+    if log.len() == 0 {
+        0
+    } else {
+        log[log.len() - 1].term
+    }
+}
+
+/// **Raft's up-to-date comparison**, and the reason the log restricts elections
+/// rather than the other way round.
+///
+/// A voter refuses a candidate whose log is behind its own: a later last term
+/// wins, and at equal last terms the longer log wins. This is what makes
+/// Leader Completeness possible at all — without it, a server missing committed
+/// entries could be elected and then overwrite them.
+pub open spec fn at_least_as_up_to_date(cand_term: Term, cand_len: nat, voter: Seq<Entry>) -> bool {
+    ||| cand_term > last_term(voter)
+    ||| (cand_term == last_term(voter) && cand_len >= voter.len())
+}
+
+/// `s` holds `p`'s first `n` entries.
+pub open spec fn has_prefix(s: Seq<Entry>, p: Seq<Entry>, n: nat) -> bool {
+    &&& s.len() >= n
+    &&& p.len() >= n
+    &&& (forall|i: int| #![trigger s[i], p[i]] 0 <= i < n ==> s[i] == p[i])
+}
+
+/// The members whose logs hold `log`'s first `n` entries.
+///
+/// A filter of the membership, for the reason [`voters_for`] is one: a filter is
+/// a subset of what it filters by construction, which is the hypothesis
+/// quorum intersection needs.
+pub open spec fn replicated_on(c: Cluster, log: Seq<Entry>, n: nat) -> Set<ServerId> {
+    c.members.filter(
+        |s: ServerId| c.servers.contains_key(s) && has_prefix(c.servers[s].log, log, n),
+    )
+}
+
+/// What a follower's log becomes when it accepts one entry at `prefix`: its own
+/// agreed prefix, then the leader's entry, and nothing else.
+///
+/// Written as "keep my first `prefix` entries" rather than "copy the leader's
+/// first `prefix` entries", which would bake Log Matching into the transition
+/// instead of leaving it to be proved.
+pub open spec fn appended_log(follower: Seq<Entry>, leader: Seq<Entry>, prefix: nat) -> Seq<Entry> {
+    follower.take(prefix as int).push(leader[prefix as int])
+}
+
+pub open spec fn min_nat(a: nat, b: nat) -> nat {
+    if a <= b {
+        a
+    } else {
+        b
+    }
+}
+
+pub open spec fn max_nat(a: nat, b: nat) -> nat {
+    if a >= b {
+        a
+    } else {
+        b
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Transitions
 // ---------------------------------------------------------------------------
 
@@ -193,7 +292,8 @@ pub open spec fn won_election(c: Cluster, n: ServerId, term: Term) -> bool {
 /// The self-vote is recorded in `votes` rather than merely implied, because the
 /// whole of Election Safety is a counting argument over that set: a candidate
 /// that did not appear in its own tally would be one vote short of the
-/// protocol's.
+/// protocol's. The `RequestVote` carries the candidate's log summary as it
+/// stood *at this moment*, which is what a voter later judges.
 pub open spec fn tr_timeout(pre: Cluster, post: Cluster, n: ServerId) -> bool {
     &&& pre.members.contains(n)
     &&& pre.servers.contains_key(n)
@@ -201,58 +301,76 @@ pub open spec fn tr_timeout(pre: Cluster, post: Cluster, n: ServerId) -> bool {
     &&& post.members == pre.members
     &&& post.servers == pre.servers.insert(
         n,
-        Server { role: Role::Candidate, current_term: pre.servers[n].current_term + 1 },
+        Server {
+            role: Role::Candidate,
+            current_term: pre.servers[n].current_term + 1,
+            log: pre.servers[n].log,
+            commit: pre.servers[n].commit,
+        },
     )
     &&& post.votes == pre.votes.insert(
-        Vote {
-            voter: n,
-            term: pre.servers[n].current_term + 1,
-            candidate: n,
-        },
+        Vote { voter: n, term: pre.servers[n].current_term + 1, candidate: n },
     )
     &&& post.messages == pre.messages.insert(
         RaftMessage::RequestVote {
             term: pre.servers[n].current_term + 1,
             candidate: n,
+            last_term: last_term(pre.servers[n].log),
+            last_index: pre.servers[n].log.len(),
         },
     )
 }
 
 /// A member grants its vote for `term` to `cand`.
 ///
-/// Three guards, and the middle one is the whole protocol:
+/// Four guards now, and each rules out a different way the protocol could go
+/// wrong:
 ///
-/// * a `RequestVote` for that term and candidate is on the network — a *hint*,
-///   and replaying it grants nothing extra because of the next guard;
+/// * a `RequestVote` for that term, candidate and log summary is on the network
+///   — a *hint*, and replaying it grants nothing extra because of the next
+///   guard;
 /// * **`voter` has not already voted in `term`**. One vote per server per term
-///   is what makes two quorums contradictory;
-/// * the request's term is not behind the voter's own, which is Raft's rule
-///   that a server never votes in a term it has already left.
-///
-/// Granting a vote also *adopts* the term and drops to follower, which is
-/// Raft's "if RPC request or response contains term T > currentTerm, set
-/// currentTerm = T, convert to follower".
+///   is what makes two quorums contradictory, and it is sentence three of
+///   Election Safety;
+/// * the request's term is not behind the voter's own;
+/// * **the candidate's log is at least as up to date as the voter's**. This one
+///   buys nothing for Election Safety and everything for Leader Completeness:
+///   it is what stops a server that is missing committed entries from being
+///   elected and then overwriting them.
 pub open spec fn tr_grant_vote(
     pre: Cluster,
     post: Cluster,
     voter: ServerId,
     cand: ServerId,
     term: Term,
+    cand_last_term: Term,
+    cand_last_index: nat,
 ) -> bool {
     &&& pre.members.contains(voter)
     &&& pre.members.contains(cand)
     &&& pre.servers.contains_key(voter)
-    &&& pre.messages.contains(RaftMessage::RequestVote { term: term, candidate: cand })
+    &&& pre.messages.contains(
+        RaftMessage::RequestVote {
+            term: term,
+            candidate: cand,
+            last_term: cand_last_term,
+            last_index: cand_last_index,
+        },
+    )
     &&& term >= pre.servers[voter].current_term
     &&& !has_voted(pre, voter, term)
+    &&& at_least_as_up_to_date(cand_last_term, cand_last_index, pre.servers[voter].log)
     &&& post.members == pre.members
     &&& post.servers == pre.servers.insert(
         voter,
-        Server { role: Role::Follower, current_term: term },
+        Server {
+            role: Role::Follower,
+            current_term: term,
+            log: pre.servers[voter].log,
+            commit: pre.servers[voter].commit,
+        },
     )
-    &&& post.votes == pre.votes.insert(
-        Vote { voter: voter, term: term, candidate: cand },
-    )
+    &&& post.votes == pre.votes.insert(Vote { voter: voter, term: term, candidate: cand })
     &&& post.messages == pre.messages.insert(
         RaftMessage::VoteGranted { term: term, voter: voter, candidate: cand },
     )
@@ -260,31 +378,29 @@ pub open spec fn tr_grant_vote(
 
 /// A candidate that has collected a quorum of votes for its own term declares
 /// itself leader.
-///
-/// Note what is *not* required: that the votes were delivered, or counted, or
-/// that anybody agrees. The guard is the votes themselves, which is what makes
-/// the safety argument about the protocol rather than about a tally kept
-/// correctly.
 pub open spec fn tr_become_leader(pre: Cluster, post: Cluster, n: ServerId, term: Term) -> bool {
     &&& pre.servers.contains_key(n)
     &&& is_candidate(pre.servers[n])
     &&& pre.servers[n].current_term == term
     &&& won_election(pre, n, term)
     &&& post.members == pre.members
-    &&& post.servers == pre.servers.insert(n, Server { role: Role::Leader, current_term: term })
-    &&& post.votes == pre.votes
-    &&& post.messages == pre.messages.insert(
-        RaftMessage::Heartbeat { term: term, leader: n },
+    &&& post.servers == pre.servers.insert(
+        n,
+        Server {
+            role: Role::Leader,
+            current_term: term,
+            log: pre.servers[n].log,
+            commit: pre.servers[n].commit,
+        },
     )
+    &&& post.votes == pre.votes
+    &&& post.messages == pre.messages.insert(RaftMessage::Heartbeat { term: term, leader: n })
 }
 
 /// A server learns of a strictly higher term and steps down into it.
 ///
-/// This is the transition that makes a leader stop being one, and it fires on
-/// evidence that is only a *hint* — any message carrying the term, from anyone,
-/// however old. That is deliberate and it is safe: stepping down never grants
-/// authority, and a leader that steps down for no good reason has lost nothing
-/// the protocol promised it.
+/// Note what it does *not* do: touch the log. Stepping down changes who you
+/// think you are, not what you have recorded.
 pub open spec fn tr_step_down(pre: Cluster, post: Cluster, n: ServerId, term: Term) -> bool {
     &&& pre.servers.contains_key(n)
     &&& term > pre.servers[n].current_term
@@ -292,7 +408,122 @@ pub open spec fn tr_step_down(pre: Cluster, post: Cluster, n: ServerId, term: Te
     &&& post.members == pre.members
     &&& post.servers == pre.servers.insert(
         n,
-        Server { role: Role::Follower, current_term: term },
+        Server {
+            role: Role::Follower,
+            current_term: term,
+            log: pre.servers[n].log,
+            commit: pre.servers[n].commit,
+        },
+    )
+    &&& post.votes == pre.votes
+    &&& post.messages == pre.messages
+}
+
+/// A client command reaches the leader, which appends it **at its own term**.
+///
+/// The term stamped on an entry is the term of the leader that created it, and
+/// that is the whole basis of Log Matching: an entry's `(index, term)` pair
+/// names the leader that made it, because Election Safety says there was only
+/// one leader of that term.
+pub open spec fn tr_client_request(pre: Cluster, post: Cluster, n: ServerId, value: nat) -> bool {
+    &&& pre.servers.contains_key(n)
+    &&& is_leader(pre.servers[n])
+    &&& post.members == pre.members
+    &&& post.servers == pre.servers.insert(
+        n,
+        Server {
+            role: pre.servers[n].role,
+            current_term: pre.servers[n].current_term,
+            log: pre.servers[n].log.push(
+                Entry { term: pre.servers[n].current_term, value: value },
+            ),
+            commit: pre.servers[n].commit,
+        },
+    )
+    &&& post.votes == pre.votes
+    &&& post.messages == pre.messages
+}
+
+/// The leader replicates the entry at `prefix` to a follower.
+///
+/// The **consistency check** is the guard `follower.log[prefix - 1].term ==
+/// leader.log[prefix - 1].term`: the follower accepts an entry only if it
+/// already agrees with the leader on the one before it. A follower that
+/// accepts truncates whatever it had beyond `prefix` — including, as far as
+/// this model is concerned, entries it had already committed. That is faithful
+/// Raft and it is deliberately not guarded against here: safety against it
+/// comes from the election restriction, which is a theorem, not from a
+/// side-condition that assumes the answer.
+///
+/// Accepting also makes the receiver a follower, which is Raft's rule and what
+/// makes Leader Append-Only provable: a leader's log can only be truncated by
+/// this transition, and a receiver of it is not a leader afterwards.
+pub open spec fn tr_append_entries(
+    pre: Cluster,
+    post: Cluster,
+    leader: ServerId,
+    follower: ServerId,
+    prefix: nat,
+) -> bool {
+    &&& pre.servers.contains_key(leader)
+    &&& pre.servers.contains_key(follower)
+    &&& leader != follower
+    &&& is_leader(pre.servers[leader])
+    &&& pre.servers[follower].current_term == pre.servers[leader].current_term
+    &&& prefix < pre.servers[leader].log.len()
+    &&& prefix <= pre.servers[follower].log.len()
+    &&& (prefix > 0 ==> pre.servers[follower].log[prefix - 1].term
+        == pre.servers[leader].log[prefix - 1].term)
+    &&& post.members == pre.members
+    &&& post.servers == pre.servers.insert(
+        follower,
+        Server {
+            role: Role::Follower,
+            current_term: pre.servers[follower].current_term,
+            log: appended_log(pre.servers[follower].log, pre.servers[leader].log, prefix),
+            // `min(leaderCommit, index of last new entry)`, and never
+            // backwards.
+            commit: max_nat(
+                pre.servers[follower].commit,
+                min_nat(
+                    pre.servers[leader].commit,
+                    appended_log(
+                        pre.servers[follower].log,
+                        pre.servers[leader].log,
+                        prefix,
+                    ).len(),
+                ),
+            ),
+        },
+    )
+    &&& post.votes == pre.votes
+    &&& post.messages == pre.messages
+}
+
+/// The leader commits a prefix once a majority holds it.
+///
+/// **And only if the last entry of that prefix is from the leader's own term.**
+/// That restriction is figure 8 of the Raft paper: a leader that committed an
+/// older entry on the strength of a majority alone could have that entry
+/// overwritten by a later leader, because a majority holding an entry is not
+/// the same as a majority having *voted* on it. Counting replicas is not
+/// enough; the entry has to belong to the term doing the counting.
+pub open spec fn tr_advance_commit(pre: Cluster, post: Cluster, n: ServerId, upto: nat) -> bool {
+    &&& pre.servers.contains_key(n)
+    &&& is_leader(pre.servers[n])
+    &&& upto > pre.servers[n].commit
+    &&& upto <= pre.servers[n].log.len()
+    &&& pre.servers[n].log[upto - 1].term == pre.servers[n].current_term
+    &&& is_quorum(pre, replicated_on(pre, pre.servers[n].log, upto))
+    &&& post.members == pre.members
+    &&& post.servers == pre.servers.insert(
+        n,
+        Server {
+            role: pre.servers[n].role,
+            current_term: pre.servers[n].current_term,
+            log: pre.servers[n].log,
+            commit: upto,
+        },
     )
     &&& post.votes == pre.votes
     &&& post.messages == pre.messages
@@ -300,8 +531,15 @@ pub open spec fn tr_step_down(pre: Cluster, post: Cluster, n: ServerId, term: Te
 
 /// Some message on the network names `term`.
 pub open spec fn carries_term(c: Cluster, term: Term) -> bool {
-    ||| exists|cand: ServerId|
-        #[trigger] c.messages.contains(RaftMessage::RequestVote { term: term, candidate: cand })
+    ||| exists|cand: ServerId, lt: Term, li: nat|
+        #[trigger] c.messages.contains(
+            RaftMessage::RequestVote {
+                term: term,
+                candidate: cand,
+                last_term: lt,
+                last_index: li,
+            },
+        )
     ||| exists|leader: ServerId|
         #[trigger] c.messages.contains(RaftMessage::Heartbeat { term: term, leader: leader })
 }
@@ -326,9 +564,18 @@ pub open spec fn tr_stutter(pre: Cluster, post: Cluster) -> bool {
 /// The labelled transitions.
 pub enum RaftStep {
     Timeout { server: ServerId },
-    GrantVote { voter: ServerId, candidate: ServerId, term: Term },
+    GrantVote {
+        voter: ServerId,
+        candidate: ServerId,
+        term: Term,
+        cand_last_term: Term,
+        cand_last_index: nat,
+    },
     BecomeLeader { server: ServerId, term: Term },
     StepDown { server: ServerId, term: Term },
+    ClientRequest { server: ServerId, value: nat },
+    AppendEntries { leader: ServerId, follower: ServerId, prefix: nat },
+    AdvanceCommit { server: ServerId, upto: nat },
     Replay { msg: RaftMessage },
     Stutter,
 }
@@ -337,15 +584,19 @@ pub enum RaftStep {
 pub open spec fn raft_step(pre: Cluster, post: Cluster, s: RaftStep) -> bool {
     match s {
         RaftStep::Timeout { server } => tr_timeout(pre, post, server),
-        RaftStep::GrantVote { voter, candidate, term } => tr_grant_vote(
-            pre,
-            post,
-            voter,
-            candidate,
-            term,
-        ),
+        RaftStep::GrantVote { voter, candidate, term, cand_last_term, cand_last_index } =>
+            tr_grant_vote(pre, post, voter, candidate, term, cand_last_term, cand_last_index),
         RaftStep::BecomeLeader { server, term } => tr_become_leader(pre, post, server, term),
         RaftStep::StepDown { server, term } => tr_step_down(pre, post, server, term),
+        RaftStep::ClientRequest { server, value } => tr_client_request(pre, post, server, value),
+        RaftStep::AppendEntries { leader, follower, prefix } => tr_append_entries(
+            pre,
+            post,
+            leader,
+            follower,
+            prefix,
+        ),
+        RaftStep::AdvanceCommit { server, upto } => tr_advance_commit(pre, post, server, upto),
         RaftStep::Replay { msg } => tr_replay(pre, post, msg),
         RaftStep::Stutter => tr_stutter(pre, post),
     }
@@ -356,13 +607,14 @@ pub open spec fn raft_next(pre: Cluster, post: Cluster) -> bool {
     exists|s: RaftStep| raft_step(pre, post, s)
 }
 
-/// Initial states: everybody a follower at term 0, nothing voted, nothing sent.
+/// Initial states: everybody a follower at term 0 with an empty log, nothing
+/// voted, nothing committed, nothing sent.
 pub open spec fn raft_init(c: Cluster) -> bool {
-    &&& (forall|n: ServerId| #[trigger]
-        c.members.contains(n) ==> c.servers.contains_key(n))
+    &&& (forall|n: ServerId| #[trigger] c.members.contains(n) ==> c.servers.contains_key(n))
     &&& (forall|n: ServerId|
         #![trigger c.servers[n]]
-        c.servers.contains_key(n) ==> !is_leader(c.servers[n]) && c.servers[n].current_term == 0)
+        c.servers.contains_key(n) ==> !is_leader(c.servers[n]) && c.servers[n].current_term == 0
+            && c.servers[n].log.len() == 0 && c.servers[n].commit == 0)
     &&& (forall|v: Vote| !(#[trigger] c.votes.contains(v)))
     &&& (forall|m: RaftMessage| !(#[trigger] c.messages.contains(m)))
 }

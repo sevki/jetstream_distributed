@@ -247,7 +247,12 @@ proof fn lemma_timeout_preserves_inv(pre: Cluster, post: Cluster, n: ServerId)
         pre,
         post,
         n,
-        Server { role: Role::Candidate, current_term: t },
+        Server {
+            role: Role::Candidate,
+            current_term: t,
+            log: pre.servers[n].log,
+            commit: pre.servers[n].commit,
+        },
     );
 }
 
@@ -257,10 +262,12 @@ proof fn lemma_grant_vote_preserves_inv(
     voter: ServerId,
     cand: ServerId,
     term: Term,
+    cand_last_term: Term,
+    cand_last_index: nat,
 )
     requires
         raft_inv(pre),
-        tr_grant_vote(pre, post, voter, cand, term),
+        tr_grant_vote(pre, post, voter, cand, term, cand_last_term, cand_last_index),
     ensures
         raft_inv(post),
 {
@@ -317,7 +324,12 @@ proof fn lemma_grant_vote_preserves_inv(
         pre,
         post,
         voter,
-        Server { role: Role::Follower, current_term: term },
+        Server {
+            role: Role::Follower,
+            current_term: term,
+            log: pre.servers[voter].log,
+            commit: pre.servers[voter].commit,
+        },
     );
 }
 
@@ -349,7 +361,12 @@ proof fn lemma_become_leader_preserves_inv(
         pre,
         post,
         n,
-        Server { role: Role::Leader, current_term: term },
+        Server {
+            role: Role::Leader,
+            current_term: term,
+            log: pre.servers[n].log,
+            commit: pre.servers[n].commit,
+        },
     );
 }
 
@@ -375,7 +392,134 @@ proof fn lemma_step_down_preserves_inv(pre: Cluster, post: Cluster, n: ServerId,
         pre,
         post,
         n,
-        Server { role: Role::Follower, current_term: term },
+        Server {
+            role: Role::Follower,
+            current_term: term,
+            log: pre.servers[n].log,
+            commit: pre.servers[n].commit,
+        },
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The log transitions
+// ---------------------------------------------------------------------------
+//
+// None of the three touches `votes` or any server's `current_term`, so the
+// first two clauses of the invariant are the same statement about the same
+// sets. What each has to establish is that the one server it rewrote still
+// satisfies the leader clause — and for the two that a *leader* takes, that is
+// the leader's own majority, which it already had.
+
+proof fn lemma_client_request_preserves_inv(
+    pre: Cluster,
+    post: Cluster,
+    n: ServerId,
+    value: nat,
+)
+    requires
+        raft_inv(pre),
+        tr_client_request(pre, post, n, value),
+    ensures
+        raft_inv(post),
+{
+    assert forall|v: Vote| post.votes.contains(v) && post.servers.contains_key(v.voter) implies
+    post.servers[v.voter].current_term >= v.term by {
+        if v.voter == n {
+            assert(post.servers[n].current_term == pre.servers[n].current_term);
+        } else {
+            assert(post.servers[v.voter] == pre.servers[v.voter]);
+        }
+    }
+    assert(won_election(pre, n, pre.servers[n].current_term));
+    lemma_one_server_changed_keeps_quorums(
+        pre,
+        post,
+        n,
+        Server {
+            role: pre.servers[n].role,
+            current_term: pre.servers[n].current_term,
+            log: pre.servers[n].log.push(
+                Entry { term: pre.servers[n].current_term, value: value },
+            ),
+            commit: pre.servers[n].commit,
+        },
+    );
+}
+
+proof fn lemma_append_entries_preserves_inv(
+    pre: Cluster,
+    post: Cluster,
+    leader: ServerId,
+    follower: ServerId,
+    prefix: nat,
+)
+    requires
+        raft_inv(pre),
+        tr_append_entries(pre, post, leader, follower, prefix),
+    ensures
+        raft_inv(post),
+{
+    assert forall|v: Vote| post.votes.contains(v) && post.servers.contains_key(v.voter) implies
+    post.servers[v.voter].current_term >= v.term by {
+        if v.voter == follower {
+            assert(post.servers[follower].current_term == pre.servers[follower].current_term);
+        } else {
+            assert(post.servers[v.voter] == pre.servers[v.voter]);
+        }
+    }
+    // The receiver is a follower afterwards, so the leader clause is vacuous
+    // for it — which is also what makes Leader Append-Only provable.
+    lemma_one_server_changed_keeps_quorums(
+        pre,
+        post,
+        follower,
+        Server {
+            role: Role::Follower,
+            current_term: pre.servers[follower].current_term,
+            log: appended_log(pre.servers[follower].log, pre.servers[leader].log, prefix),
+            commit: max_nat(
+                pre.servers[follower].commit,
+                min_nat(
+                    pre.servers[leader].commit,
+                    appended_log(pre.servers[follower].log, pre.servers[leader].log, prefix).len(),
+                ),
+            ),
+        },
+    );
+}
+
+proof fn lemma_advance_commit_preserves_inv(
+    pre: Cluster,
+    post: Cluster,
+    n: ServerId,
+    upto: nat,
+)
+    requires
+        raft_inv(pre),
+        tr_advance_commit(pre, post, n, upto),
+    ensures
+        raft_inv(post),
+{
+    assert forall|v: Vote| post.votes.contains(v) && post.servers.contains_key(v.voter) implies
+    post.servers[v.voter].current_term >= v.term by {
+        if v.voter == n {
+            assert(post.servers[n].current_term == pre.servers[n].current_term);
+        } else {
+            assert(post.servers[v.voter] == pre.servers[v.voter]);
+        }
+    }
+    assert(won_election(pre, n, pre.servers[n].current_term));
+    lemma_one_server_changed_keeps_quorums(
+        pre,
+        post,
+        n,
+        Server {
+            role: pre.servers[n].role,
+            current_term: pre.servers[n].current_term,
+            log: pre.servers[n].log,
+            commit: upto,
+        },
     );
 }
 
@@ -389,13 +533,16 @@ pub proof fn lemma_raft_step_preserves_inv(pre: Cluster, post: Cluster, s: RaftS
 {
     match s {
         RaftStep::Timeout { server } => lemma_timeout_preserves_inv(pre, post, server),
-        RaftStep::GrantVote { voter, candidate, term } => lemma_grant_vote_preserves_inv(
-            pre,
-            post,
-            voter,
-            candidate,
-            term,
-        ),
+        RaftStep::GrantVote { voter, candidate, term, cand_last_term, cand_last_index } =>
+            lemma_grant_vote_preserves_inv(
+                pre,
+                post,
+                voter,
+                candidate,
+                term,
+                cand_last_term,
+                cand_last_index,
+            ),
         RaftStep::BecomeLeader { server, term } => lemma_become_leader_preserves_inv(
             pre,
             post,
@@ -407,6 +554,20 @@ pub proof fn lemma_raft_step_preserves_inv(pre: Cluster, post: Cluster, s: RaftS
             post,
             server,
             term,
+        ),
+        RaftStep::ClientRequest { server, value } => lemma_client_request_preserves_inv(
+            pre,
+            post,
+            server,
+            value,
+        ),
+        RaftStep::AppendEntries { leader, follower, prefix } =>
+            lemma_append_entries_preserves_inv(pre, post, leader, follower, prefix),
+        RaftStep::AdvanceCommit { server, upto } => lemma_advance_commit_preserves_inv(
+            pre,
+            post,
+            server,
+            upto,
         ),
         // Neither servers nor votes move; the invariant says nothing about
         // messages, which is why replay is free.

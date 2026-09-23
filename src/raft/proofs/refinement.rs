@@ -43,12 +43,25 @@ verus! {
 pub open spec fn timeout_post(c: Cluster, n: ServerId) -> Cluster {
     Cluster {
         members: c.members,
-        servers: c.servers.insert(n, timeout_next(c.servers[n])),
+        servers: c.servers.insert(
+            n,
+            Server {
+                role: Role::Candidate,
+                current_term: c.servers[n].current_term + 1,
+                log: c.servers[n].log,
+                commit: c.servers[n].commit,
+            },
+        ),
         votes: c.votes.insert(
             Vote { voter: n, term: c.servers[n].current_term + 1, candidate: n },
         ),
         messages: c.messages.insert(
-            RaftMessage::RequestVote { term: c.servers[n].current_term + 1, candidate: n },
+            RaftMessage::RequestVote {
+                term: c.servers[n].current_term + 1,
+                candidate: n,
+                last_term: last_term(c.servers[n].log),
+                last_index: c.servers[n].log.len(),
+            },
         ),
     }
 }
@@ -62,7 +75,15 @@ pub open spec fn grant_vote_post(
 ) -> Cluster {
     Cluster {
         members: c.members,
-        servers: c.servers.insert(voter, grant_vote_next(term)),
+        servers: c.servers.insert(
+            voter,
+            Server {
+                role: Role::Follower,
+                current_term: term,
+                log: c.servers[voter].log,
+                commit: c.servers[voter].commit,
+            },
+        ),
         votes: c.votes.insert(Vote { voter: voter, term: term, candidate: cand }),
         messages: c.messages.insert(
             RaftMessage::VoteGranted { term: term, voter: voter, candidate: cand },
@@ -74,7 +95,15 @@ pub open spec fn grant_vote_post(
 pub open spec fn become_leader_post(c: Cluster, n: ServerId, term: Term) -> Cluster {
     Cluster {
         members: c.members,
-        servers: c.servers.insert(n, become_leader_next(term)),
+        servers: c.servers.insert(
+            n,
+            Server {
+                role: Role::Leader,
+                current_term: term,
+                log: c.servers[n].log,
+                commit: c.servers[n].commit,
+            },
+        ),
         votes: c.votes,
         messages: c.messages.insert(RaftMessage::Heartbeat { term: term, leader: n }),
     }
@@ -84,7 +113,15 @@ pub open spec fn become_leader_post(c: Cluster, n: ServerId, term: Term) -> Clus
 pub open spec fn step_down_post(c: Cluster, n: ServerId, term: Term) -> Cluster {
     Cluster {
         members: c.members,
-        servers: c.servers.insert(n, step_down_next(term)),
+        servers: c.servers.insert(
+            n,
+            Server {
+                role: Role::Follower,
+                current_term: term,
+                log: c.servers[n].log,
+                commit: c.servers[n].commit,
+            },
+        ),
         votes: c.votes,
         messages: c.messages,
     }
@@ -98,10 +135,14 @@ pub proof fn theorem_timeout_step_refines_tr_timeout(c: Cluster, n: ServerId)
     requires
         c.members.contains(n),
         c.servers.contains_key(n),
-        timeout_fires(c.servers[n]),
+        timeout_fires(c.servers[n].role),
     ensures
         tr_timeout(c, timeout_post(c, n), n),
-        timeout_post(c, n).servers[n] == timeout_next(c.servers[n]),
+        timeout_post(c, n).servers[n].role == Role::Candidate,
+        timeout_post(c, n).servers[n].current_term == c.servers[n].current_term + 1,
+        // Standing for election does not touch the log. Worth stating rather
+        // than reading off the definition: it is half of Leader Append-Only.
+        timeout_post(c, n).servers[n].log == c.servers[n].log,
 {
 }
 
@@ -112,18 +153,9 @@ pub proof fn theorem_timeout_step_refuses_exactly_when_disabled(
     n: ServerId,
 )
     requires
-        !timeout_fires(c.servers[n]),
+        !timeout_fires(c.servers[n].role),
     ensures
         !tr_timeout(c, post, n),
-{
-}
-
-/// However the model times out, the server lands where the step says.
-pub proof fn theorem_timeout_outcome_is_the_step(c: Cluster, post: Cluster, n: ServerId)
-    requires
-        tr_timeout(c, post, n),
-    ensures
-        post.servers[n] == timeout_next(c.servers[n]),
 {
 }
 
@@ -136,39 +168,60 @@ pub proof fn theorem_grant_vote_step_refines_tr_grant_vote(
     voter: ServerId,
     cand: ServerId,
     term: Term,
+    cand_last_term: Term,
+    cand_last_index: nat,
 )
     requires
         c.members.contains(voter),
         c.members.contains(cand),
         c.servers.contains_key(voter),
-        c.messages.contains(RaftMessage::RequestVote { term: term, candidate: cand }),
-        grant_vote_fires(c.servers[voter], term, has_voted(c, voter, term)),
+        c.messages.contains(
+            RaftMessage::RequestVote {
+                term: term,
+                candidate: cand,
+                last_term: cand_last_term,
+                last_index: cand_last_index,
+            },
+        ),
+        grant_vote_fires(c.servers[voter].current_term, term, has_voted(c, voter, term)),
+        // The other half of the guard, and the half the executable step does
+        // not decide: a question about two logs rather than about a term.
+        at_least_as_up_to_date(cand_last_term, cand_last_index, c.servers[voter].log),
     ensures
-        tr_grant_vote(c, grant_vote_post(c, voter, cand, term), voter, cand, term),
-        grant_vote_post(c, voter, cand, term).servers[voter] == grant_vote_next(term),
+        tr_grant_vote(
+            c,
+            grant_vote_post(c, voter, cand, term),
+            voter,
+            cand,
+            term,
+            cand_last_term,
+            cand_last_index,
+        ),
+        grant_vote_post(c, voter, cand, term).servers[voter].role == Role::Follower,
+        grant_vote_post(c, voter, cand, term).servers[voter].current_term == term,
+        grant_vote_post(c, voter, cand, term).servers[voter].log == c.servers[voter].log,
 {
 }
 
 /// **A refused vote is a vote the model would not have granted.**
 ///
-/// The half that matters: with the coupling in place, refusing means the term
-/// was behind or the voter had already spent its vote — and the second of those
-/// is the guard two leaders in one term would have to get past.
+/// With the coupling in place, refusing means the term was behind or the voter
+/// had already spent its vote — and the second of those is the guard two
+/// leaders in one term would have to get past.
 pub proof fn theorem_grant_vote_step_refuses_exactly_when_disabled(
     c: Cluster,
     post: Cluster,
     voter: ServerId,
     cand: ServerId,
     term: Term,
+    cand_last_term: Term,
+    cand_last_index: nat,
 )
     requires
-        !grant_vote_fires(c.servers[voter], term, has_voted(c, voter, term)),
+        !grant_vote_fires(c.servers[voter].current_term, term, has_voted(c, voter, term)),
     ensures
-        !tr_grant_vote(c, post, voter, cand, term),
+        !tr_grant_vote(c, post, voter, cand, term, cand_last_term, cand_last_index),
 {
-    if has_voted(c, voter, term) {
-        assert(!tr_grant_vote(c, post, voter, cand, term));
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -182,10 +235,16 @@ pub proof fn theorem_become_leader_step_refines_tr_become_leader(
 )
     requires
         c.servers.contains_key(n),
-        become_leader_fires(c.servers[n], term, won_election(c, n, term)),
+        become_leader_fires(
+            c.servers[n].role,
+            c.servers[n].current_term,
+            term,
+            won_election(c, n, term),
+        ),
     ensures
         tr_become_leader(c, become_leader_post(c, n, term), n, term),
-        become_leader_post(c, n, term).servers[n] == become_leader_next(term),
+        become_leader_post(c, n, term).servers[n].role == Role::Leader,
+        become_leader_post(c, n, term).servers[n].log == c.servers[n].log,
 {
 }
 
@@ -196,7 +255,12 @@ pub proof fn theorem_become_leader_step_refuses_exactly_when_disabled(
     term: Term,
 )
     requires
-        !become_leader_fires(c.servers[n], term, won_election(c, n, term)),
+        !become_leader_fires(
+            c.servers[n].role,
+            c.servers[n].current_term,
+            term,
+            won_election(c, n, term),
+        ),
     ensures
         !tr_become_leader(c, post, n, term),
 {
@@ -213,10 +277,12 @@ pub proof fn theorem_step_down_step_refines_tr_step_down(c: Cluster, n: ServerId
     requires
         c.servers.contains_key(n),
         carries_term(c, term),
-        step_down_fires(c.servers[n], term),
+        step_down_fires(c.servers[n].current_term, term),
     ensures
         tr_step_down(c, step_down_post(c, n, term), n, term),
-        step_down_post(c, n, term).servers[n] == step_down_next(term),
+        step_down_post(c, n, term).servers[n].role == Role::Follower,
+        // Stepping down changes who you think you are, not what you recorded.
+        step_down_post(c, n, term).servers[n].log == c.servers[n].log,
 {
 }
 
@@ -227,7 +293,7 @@ pub proof fn theorem_step_down_step_refuses_exactly_when_disabled(
     term: Term,
 )
     requires
-        !step_down_fires(c.servers[n], term),
+        !step_down_fires(c.servers[n].current_term, term),
     ensures
         !tr_step_down(c, post, n, term),
 {

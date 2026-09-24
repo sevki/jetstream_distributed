@@ -234,4 +234,156 @@ pub open spec fn compacted(log: Seq<Entry>) -> Seq<Record>
     }
 }
 
+// ---------------------------------------------------------------------------
+// The executable layer
+// ---------------------------------------------------------------------------
+
+/// A record, at `u64`.
+///
+/// One struct with a tag rather than an enum with two shapes, because that is
+/// what goes on the wire — see `crate::raft::wire`, where every record is the
+/// same seventeen bytes and a `Truncate`'s second field is padding. Keeping the
+/// executable form the same shape as the encoded form means the encoder has no
+/// case analysis of its own to get wrong.
+#[derive(Clone, Copy)]
+pub struct ExecRecord {
+    /// `false` for an append, `true` for a truncation.
+    pub is_truncate: bool,
+    /// The term, or the new length.
+    pub a: u64,
+    /// The value, or padding.
+    pub b: u64,
+}
+
+/// An entry, at `u64`.
+#[derive(Clone, Copy)]
+pub struct ExecEntry {
+    pub term: u64,
+    pub value: u64,
+}
+
+impl ExecRecord {
+    /// The ghost record this stands for.
+    pub open spec fn view(self) -> Record {
+        if self.is_truncate {
+            Record::Truncate { len: self.a as nat }
+        } else {
+            Record::Append { term: self.a as nat, value: self.b as nat }
+        }
+    }
+}
+
+impl ExecEntry {
+    /// The ghost entry this stands for.
+    pub open spec fn view(self) -> Entry {
+        Entry { term: self.term as nat, value: self.value as nat }
+    }
+}
+
+/// A sequence of executable records, as ghost records.
+pub open spec fn record_seq(v: Seq<ExecRecord>) -> Seq<Record> {
+    v.map_values(|r: ExecRecord| r.view())
+}
+
+/// A sequence of executable entries, as ghost entries.
+pub open spec fn entry_seq(v: Seq<ExecEntry>) -> Seq<Entry> {
+    v.map_values(|e: ExecEntry| e.view())
+}
+
+/// Drop everything from `len` onwards.
+///
+/// Written as a pop loop rather than `Vec::truncate` so that the postcondition
+/// is proved from `Vec`'s own `pop` specification and nothing else. It is the
+/// same work either way; this way the proof does not depend on which `Vec`
+/// methods the standard library happens to have specifications for.
+pub fn truncate_to(out: &mut Vec<ExecEntry>, len: usize)
+    requires
+        len <= old(out).len(),
+    ensures
+        out@ == old(out)@.take(len as int),
+{
+    assert(old(out)@.take(old(out)@.len() as int) =~= old(out)@);
+    while out.len() > len
+        invariant
+            len <= out@.len(),
+            out@ == old(out)@.take(out@.len() as int),
+        decreases out@.len() - len as int,
+    {
+        let ghost before = out@;
+        let _ = out.pop();
+        assert(out@ =~= before.drop_last());
+        assert(old(out)@.take(out@.len() as int) =~= before.drop_last());
+    }
+}
+
+/// **Apply one record to the log in hand.**
+///
+/// One step of [`replay`], executable. The postcondition is the spec function
+/// applied to one more record, so `replay_exec`'s loop invariant is this
+/// composed with itself and nothing else has to be re-argued.
+pub fn apply_record(out: &mut Vec<ExecEntry>, r: ExecRecord, Ghost(rs): Ghost<Seq<Record>>)
+    requires
+        entry_seq(old(out)@) == replay(rs),
+    ensures
+        entry_seq(out@) == replay(rs.push(r.view())),
+{
+    if r.is_truncate {
+        let target = if (r.a as usize) < out.len() {
+            r.a as usize
+        } else {
+            out.len()
+        };
+        proof {
+            // `min_nat` is what `replay` clamps with, and this is the same
+            // choice made at `usize`.
+            assert(min_nat(r.a as nat, entry_seq(out@).len()) == target as nat);
+        }
+        let ghost before = out@;
+        truncate_to(out, target);
+        assert(entry_seq(out@) =~= entry_seq(before).take(target as int));
+    } else {
+        out.push(ExecEntry { term: r.a, value: r.b });
+        assert(entry_seq(out@) =~= replay(rs).push(
+            Entry { term: r.a as nat, value: r.b as nat },
+        ));
+    }
+    proof {
+        let ghost pushed = rs.push(r.view());
+        assert(pushed.drop_last() =~= rs);
+    }
+}
+
+/// **Rebuild the log from the device.**
+///
+/// What a recovering store runs, and the executable counterpart of [`replay`].
+/// The postcondition says the two agree, which is what makes
+/// `crate::raft::proofs::store`'s theorems statements about this code and not
+/// only about a model of it.
+pub fn replay_exec(records: &Vec<ExecRecord>) -> (out: Vec<ExecEntry>)
+    ensures
+        entry_seq(out@) == replay(record_seq(records@)),
+{
+    let mut out: Vec<ExecEntry> = Vec::new();
+    assert(entry_seq(out@) =~= replay(record_seq(records@).take(0)));
+
+    let mut i: usize = 0;
+    while i < records.len()
+        invariant
+            i <= records@.len(),
+            entry_seq(out@) == replay(record_seq(records@).take(i as int)),
+        decreases records@.len() - i as int,
+    {
+        let r = records[i];
+        proof {
+            assert(record_seq(records@).take(i + 1) =~= record_seq(records@).take(i as int).push(
+                r.view(),
+            ));
+        }
+        apply_record(&mut out, r, Ghost(record_seq(records@).take(i as int)));
+        i = i + 1;
+    }
+    assert(record_seq(records@).take(records@.len() as int) =~= record_seq(records@));
+    out
+}
+
 } // verus!

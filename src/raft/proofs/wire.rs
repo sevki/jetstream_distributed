@@ -25,7 +25,12 @@
 use vstd::prelude::*;
 
 use crate::raft::model::*;
-use crate::raft::proofs::store::theorem_the_store_always_agrees;
+// A **glob**, not `use ...::theorem_the_store_always_agrees`. A `proof fn` is
+// erased when `verus!` expands for an ordinary build, so a named import of one
+// resolves under Verus and fails under `cargo build` — which is how the
+// services job found this and the proof job did not. A glob import of an
+// absent name is not an error.
+use crate::raft::proofs::store::*;
 use crate::raft::store::*;
 use crate::raft::wire::*;
 

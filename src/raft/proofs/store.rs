@@ -102,6 +102,24 @@ pub proof fn lemma_a_prefix_of_a_fitting_sequence_fits(rs: Seq<Record>, n: int)
     }
 }
 
+/// And so does a concatenation of two that fit — which is what an acceptance
+/// writes.
+pub proof fn lemma_concatenating_fitting_sequences_fits(a: Seq<Record>, b: Seq<Record>)
+    requires
+        records_fit(a),
+        records_fit(b),
+    ensures
+        records_fit(a + b),
+{
+    assert forall|i: int| 0 <= i < (a + b).len() implies record_fits(#[trigger] (a + b)[i]) by {
+        if i < a.len() {
+            assert((a + b)[i] == a[i]);
+        } else {
+            assert((a + b)[i] == b[i - a.len()]);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The invariant
 // ---------------------------------------------------------------------------
@@ -471,6 +489,14 @@ pub proof fn theorem_a_follower_accepts_with_at_most_two_writes(
         store_inv(pre),
         prefix <= pre.log.len(),
         prefix < leader.len(),
+        // **The records this writes have to be writable.** `records_fit` is a
+        // clause of `store_inv` now, so `store_inv(post)` is not free: an
+        // acceptance carrying an entry too wide for the device is a step the
+        // store must refuse, and saying so here is what makes the conclusion
+        // true rather than merely hoped for.
+        leader[prefix as int].term <= u64::MAX,
+        leader[prefix as int].value <= u64::MAX,
+        prefix <= u64::MAX,
         post.records == pre.records + accept_records(pre.log, leader, prefix),
         post.log == appended_log(pre.log, leader, prefix),
         // It is a `LogStore` method, so it syncs before it answers. That is
@@ -485,6 +511,13 @@ pub proof fn theorem_a_follower_accepts_with_at_most_two_writes(
 {
     theorem_accepting_an_entry_is_at_most_two_records(pre, leader, prefix);
     assert(post.records.take(pre.records.len() as int) =~= pre.records);
+
+    let written = accept_records(pre.log, leader, prefix);
+    assert(records_fit(written)) by {
+        assert forall|i: int| 0 <= i < written.len() implies record_fits(#[trigger] written[i]) by {
+        }
+    }
+    lemma_concatenating_fitting_sequences_fits(pre.records, written);
 }
 
 /// **A follower that answers `Accepted` has written the entry down**, and no
@@ -512,6 +545,9 @@ pub proof fn theorem_a_follower_that_answers_accepted_has_written_it_down(
         store_inv(pre),
         prefix <= pre.log.len(),
         prefix < leader.len(),
+        leader[prefix as int].term <= u64::MAX,
+        leader[prefix as int].value <= u64::MAX,
+        prefix <= u64::MAX,
         post.records == pre.records + accept_records(pre.log, leader, prefix),
         post.log == appended_log(pre.log, leader, prefix),
         // `LogStore`: durable before it returns.

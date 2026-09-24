@@ -178,6 +178,41 @@ fn a_crash_between_the_marker_and_the_entry_is_a_truncation_and_no_more() {
     assert_eq!(torn.entries(), log.entries());
 }
 
+/// **Nothing is lost between operations.**
+///
+/// The executable side of `theorem_durability_never_retreats`. Every
+/// `LogStore` method here syncs before it returns, so at every point a caller
+/// could observe, the durable line is at the end of the device and there is no
+/// crash that loses anything. The line lags only *inside* a two-record
+/// overwrite, and what that window can lose is a truncation and no more —
+/// which is `a_crash_between_the_marker_and_the_entry_is_a_truncation_and_no_more`.
+#[test]
+fn nothing_is_lost_between_operations() {
+    let log = RecordLogStore::new();
+    let mut ops = 0;
+
+    let mut check = |l: &RecordLogStore, ops: &mut i32| {
+        *ops += 1;
+        assert_eq!(
+            l.durable_len(),
+            l.device_len(),
+            "after operation {ops} the durable line is not at the end of the device"
+        );
+        // And the only crash the model permits from here keeps everything.
+        assert_eq!(l.after_crash(l.durable_len()).entries(), l.entries());
+    };
+
+    log.append(e(1, 10)).unwrap();
+    check(&log, &mut ops);
+    log.append(e(1, 11)).unwrap();
+    check(&log, &mut ops);
+    log.overwrite(1, e(2, 99)).unwrap();
+    check(&log, &mut ops);
+    log.append(e(2, 100)).unwrap();
+    check(&log, &mut ops);
+    assert_eq!(ops, 4);
+}
+
 // ---------------------------------------------------------------------------
 // Compaction
 // ---------------------------------------------------------------------------

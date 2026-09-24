@@ -132,30 +132,82 @@ pub struct Store {
     /// What is on the device, oldest record first. **Only ever grows**, which
     /// is [`theorem_the_device_is_append_only`].
     pub records: Seq<Record>,
+    /// **How many records the store has reported durable.**
+    ///
+    /// The bound a crash may not go below. Without it "a crash keeps a prefix"
+    /// permits the empty prefix — a restart that discards every record the
+    /// store ever acknowledged, including entries a leader committed on the
+    /// strength of that acknowledgement. That would be a weaker promise than
+    /// the device beneath makes: `vendor/pmemlog`'s append permits a crash to
+    /// show the log before the append or the log after it, and nothing older.
+    ///
+    /// So `durable` is that line. [`store_sync`] moves it to the end of what
+    /// has been written; [`store_recover`] may not go below it; and
+    /// [`theorem_durability_never_retreats`] says no transition at all can.
+    pub durable: nat,
 }
 
-/// **The one invariant**: memory agrees with the device.
+/// **The invariant**: memory agrees with the device, and the durable line is
+/// on the device.
 ///
-/// Everything else in this module is about preserving it. It is what makes
-/// [`store_recover`]'s definition of the recovered log a definition of the
-/// *right* log rather than of some other log that happens to be computable.
+/// Everything else in this module is about preserving it. The first clause is
+/// what makes [`store_recover`]'s definition of the recovered log a definition
+/// of the *right* log rather than of some other log that happens to be
+/// computable; the second is what makes `durable` mean something.
 pub open spec fn store_inv(s: Store) -> bool {
-    s.log == replay(s.records)
+    &&& s.log == replay(s.records)
+    &&& s.durable <= s.records.len()
 }
 
-/// A fresh store: no entries, no records.
+/// A fresh store: no entries, no records, nothing durable.
 pub open spec fn store_init(s: Store) -> bool {
     &&& s.log == Seq::<Entry>::empty()
     &&& s.records == Seq::<Record>::empty()
+    &&& s.durable == 0
 }
 
-/// The store appends one entry.
+// ---------------------------------------------------------------------------
+// What the device offers
+// ---------------------------------------------------------------------------
+
+/// **One record onto the device, not yet durable.**
+///
+/// The primitive. `durable` does not move, so a crash from here may lose this
+/// record — which is the truth about a write that has been issued and not
+/// confirmed, and the state a multi-record operation passes through.
+pub open spec fn store_write(pre: Store, post: Store, r: Record) -> bool {
+    &&& post.records == pre.records.push(r)
+    &&& post.log == replay_step(pre.log, r)
+    &&& post.durable == pre.durable
+}
+
+/// **Everything written has landed.**
+///
+/// The other primitive, and the only thing that moves `durable` forward. What
+/// a caller is promised when a `LogStore` method returns.
+pub open spec fn store_sync(pre: Store, post: Store) -> bool {
+    &&& post.records == pre.records
+    &&& post.log == pre.log
+    &&& post.durable == pre.records.len()
+}
+
+// ---------------------------------------------------------------------------
+// What a caller gets
+// ---------------------------------------------------------------------------
+
+/// The store appends one entry, **durably**.
+///
+/// A write and a sync, which is what `LogStore`'s *"every mutating method must
+/// be durable before it returns"* means on a device. Stated as one transition
+/// because that is what the caller sees; [`theorem_an_append_is_a_write_then_a_sync`]
+/// is the proof that it is the two primitives and nothing more.
 pub open spec fn store_append(pre: Store, post: Store, e: Entry) -> bool {
     &&& post.records == pre.records.push(Record::Append { term: e.term, value: e.value })
     &&& post.log == pre.log.push(e)
+    &&& post.durable == post.records.len()
 }
 
-/// The store cuts its log back to `len` entries.
+/// The store cuts its log back to `len` entries, durably.
 ///
 /// `len <= pre.log.len()` is a guard and not a clamp: a store asking to
 /// truncate past its own tail has misunderstood something, and the model should
@@ -166,6 +218,7 @@ pub open spec fn store_truncate(pre: Store, post: Store, len: nat) -> bool {
     &&& len <= pre.log.len()
     &&& post.records == pre.records.push(Record::Truncate { len })
     &&& post.log == pre.log.take(len as int)
+    &&& post.durable == post.records.len()
 }
 
 /// **The store crashes and comes back.**
@@ -175,17 +228,35 @@ pub open spec fn store_truncate(pre: Store, post: Store, len: nat) -> bool {
 /// `pmemlog`'s write restriction enforces. The recovered log is not guessed,
 /// reconciled or repaired — it is `replay` of what is there.
 ///
-/// Nothing here says `survived == pre.records.len()`. A crash may lose the last
-/// write, or the last ten; [`theorem_a_crash_can_only_rewind`] is what says
-/// that whatever it loses, what comes back is a log the store legitimately had.
+/// **`pre.durable <= survived` is the whole difference between a model of a
+/// log and a model of a log worth trusting.** Without it, `survived == 0`
+/// satisfies this transition after any completed append, so a restart could
+/// discard every record the store had reported durable — and a leader that
+/// committed an entry on the strength of that acknowledgement would be wrong.
+/// The device beneath makes no such allowance: pmemlog's append shows a crash
+/// either the log before it or the log after it, never anything older, and a
+/// model that permitted less would be claiming *this* layer is where the
+/// guarantee is lost.
+///
+/// Above the line it is genuinely open. A crash may lose the last write, or
+/// the last ten, if those writes had not been confirmed — which is exactly the
+/// window a multi-record operation is in between its first
+/// [`store_write`] and its [`store_sync`].
+///
+/// Everything that survived is on the device, so it is durable: `post.durable
+/// == survived`.
 pub open spec fn store_recover(pre: Store, post: Store, survived: nat) -> bool {
-    &&& survived <= pre.records.len()
+    &&& pre.durable <= survived <= pre.records.len()
     &&& post.records == pre.records.take(survived as int)
     &&& post.log == replay(post.records)
+    &&& post.durable == survived
 }
 
-/// Any of the three.
+/// Any of the five: the two primitives, the two durable compounds a caller
+/// sees, and the crash.
 pub open spec fn store_next(pre: Store, post: Store) -> bool {
+    ||| exists|r: Record| store_write(pre, post, r)
+    ||| store_sync(pre, post)
     ||| exists|e: Entry| store_append(pre, post, e)
     ||| exists|len: nat| store_truncate(pre, post, len)
     ||| exists|survived: nat| store_recover(pre, post, survived)

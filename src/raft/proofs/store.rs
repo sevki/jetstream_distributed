@@ -84,6 +84,40 @@ pub proof fn theorem_a_fresh_store_agrees(s: Store)
     assert(replay(s.records) =~= Seq::<Entry>::empty());
 }
 
+/// **An append is a write and a sync**, and nothing else.
+///
+/// `store_append` is stated as one transition because that is what a caller
+/// sees — `LogStore` promises durability before the method returns — and this
+/// is the proof that the promise is kept by the two primitives the device
+/// actually offers, rather than by a third thing the model made up.
+pub proof fn theorem_an_append_is_a_write_then_a_sync(pre: Store, mid: Store, post: Store, e: Entry)
+    requires
+        store_write(pre, mid, Record::Append { term: e.term, value: e.value }),
+        store_sync(mid, post),
+    ensures
+        store_append(pre, post, e),
+{
+    assert(mid.log == replay_step(pre.log, Record::Append { term: e.term, value: e.value }));
+}
+
+/// The same for a truncation.
+pub proof fn theorem_a_truncation_is_a_write_then_a_sync(
+    pre: Store,
+    mid: Store,
+    post: Store,
+    len: nat,
+)
+    requires
+        len <= pre.log.len(),
+        store_write(pre, mid, Record::Truncate { len }),
+        store_sync(mid, post),
+    ensures
+        store_truncate(pre, post, len),
+{
+    assert(min_nat(len, pre.log.len()) == len);
+    assert(mid.log == replay_step(pre.log, Record::Truncate { len }));
+}
+
 /// **Recovery is exact.** Memory equals `replay` of the device before every
 /// operation and after every operation — so the log rebuilt on recovery is the
 /// log that was there, not a log that merely resembles it.
@@ -100,7 +134,11 @@ pub proof fn theorem_recovery_is_exact(pre: Store, post: Store)
     ensures
         store_inv(post),
 {
-    if exists|e: Entry| store_append(pre, post, e) {
+    if exists|r: Record| store_write(pre, post, r) {
+        let r = choose|r: Record| store_write(pre, post, r);
+        assert(post.records.drop_last() =~= pre.records);
+    } else if store_sync(pre, post) {
+    } else if exists|e: Entry| store_append(pre, post, e) {
         let e = choose|e: Entry| store_append(pre, post, e);
         theorem_an_append_is_one_record(pre.records, e);
     } else if exists|len: nat| store_truncate(pre, post, len) {
@@ -114,7 +152,68 @@ pub proof fn theorem_recovery_is_exact(pre: Store, post: Store)
     }
 }
 
-/// The invariant survives any run.
+// ---------------------------------------------------------------------------
+// Durability
+// ---------------------------------------------------------------------------
+
+/// **Nothing reported durable is ever lost, by any transition, ever.**
+///
+/// The theorem the whole `durable` field exists for, and the one Raft needs:
+/// a follower that answered `Accepted` has told its leader an entry is on
+/// disk, and the leader may commit on the strength of that answer. If a
+/// restart could take the entry back, the leader would have committed
+/// something no longer written down — and Raft's safety argument would be
+/// resting on a promise this layer did not keep.
+///
+/// Two clauses, and the second is the sharp one. The line never retreats, and
+/// **everything below the line is unchanged, record for record**. A store that
+/// kept the right *number* of records while rewriting one of them would
+/// satisfy the first and fail the second.
+pub proof fn theorem_durability_never_retreats(pre: Store, post: Store)
+    requires
+        store_inv(pre),
+        store_next(pre, post),
+    ensures
+        post.durable >= pre.durable,
+        post.records.take(pre.durable as int) == pre.records.take(pre.durable as int),
+{
+    if exists|r: Record| store_write(pre, post, r) {
+        let r = choose|r: Record| store_write(pre, post, r);
+        assert(post.records.take(pre.durable as int) =~= pre.records.take(pre.durable as int));
+    } else if store_sync(pre, post) {
+        assert(post.records.take(pre.durable as int) =~= pre.records.take(pre.durable as int));
+    } else if exists|e: Entry| store_append(pre, post, e) {
+        let e = choose|e: Entry| store_append(pre, post, e);
+        assert(post.records.take(pre.durable as int) =~= pre.records.take(pre.durable as int));
+    } else if exists|len: nat| store_truncate(pre, post, len) {
+        let len = choose|len: nat| store_truncate(pre, post, len);
+        assert(post.records.take(pre.durable as int) =~= pre.records.take(pre.durable as int));
+    } else {
+        assert(exists|survived: nat| store_recover(pre, post, survived));
+        let survived = choose|survived: nat| store_recover(pre, post, survived);
+        assert(store_recover(pre, post, survived));
+        assert(post.records.take(pre.durable as int) =~= pre.records.take(pre.durable as int));
+    }
+}
+
+/// **A crash keeps everything reported durable**, spelled out for the crash
+/// alone since that is the transition anyone would doubt.
+pub proof fn theorem_a_crash_keeps_everything_reported_durable(
+    pre: Store,
+    post: Store,
+    survived: nat,
+)
+    requires
+        store_inv(pre),
+        store_recover(pre, post, survived),
+    ensures
+        post.records.len() >= pre.durable,
+        post.records.take(pre.durable as int) == pre.records.take(pre.durable as int),
+{
+    assert(post.records.take(pre.durable as int) =~= pre.records.take(pre.durable as int));
+}
+
+/// The invariant survives any run./// The invariant survives any run.
 pub proof fn theorem_the_store_always_agrees(tr: Seq<Store>)
     requires
         tr.len() > 0,
@@ -335,13 +434,103 @@ pub proof fn theorem_a_follower_accepts_with_at_most_two_writes(
         prefix < leader.len(),
         post.records == pre.records + accept_records(pre.log, leader, prefix),
         post.log == appended_log(pre.log, leader, prefix),
+        // It is a `LogStore` method, so it syncs before it answers. That is
+        // what lets the follower reply `Accepted` — see
+        // `theorem_a_follower_that_answers_accepted_has_written_it_down`.
+        post.durable == post.records.len(),
     ensures
         store_inv(post),
         post.records.len() <= pre.records.len() + 2,
         post.records.take(pre.records.len() as int) == pre.records,
+        post.durable >= pre.durable,
 {
     theorem_accepting_an_entry_is_at_most_two_records(pre, leader, prefix);
     assert(post.records.take(pre.records.len() as int) =~= pre.records);
+}
+
+/// **A follower that answers `Accepted` has written the entry down**, and no
+/// crash from there can take it back.
+///
+/// The sentence that connects this module to Raft's safety argument. A leader
+/// counts an `Accepted` towards a majority and may commit on the strength of
+/// it. This says the records the acceptance produced are below the durable
+/// line by the time the answer goes out, so any legal recovery afterwards
+/// returns the same device and the same log — not a prefix of it.
+///
+/// Take the `post.durable` hypothesis away — which is what `LogStore`'s
+/// *"durable before it returns"* buys — and the conclusion fails immediately:
+/// `survived` could be anything down to `pre.durable`, and the commit rule
+/// would be counting a promise nobody made.
+pub proof fn theorem_a_follower_that_answers_accepted_has_written_it_down(
+    pre: Store,
+    post: Store,
+    later: Store,
+    leader: Seq<Entry>,
+    prefix: nat,
+    survived: nat,
+)
+    requires
+        store_inv(pre),
+        prefix <= pre.log.len(),
+        prefix < leader.len(),
+        post.records == pre.records + accept_records(pre.log, leader, prefix),
+        post.log == appended_log(pre.log, leader, prefix),
+        // `LogStore`: durable before it returns.
+        post.durable == post.records.len(),
+        // And then a crash, at any point the model allows.
+        store_recover(post, later, survived),
+    ensures
+        later.records == post.records,
+        later.log == post.log,
+{
+    theorem_a_follower_accepts_with_at_most_two_writes(pre, post, leader, prefix);
+    assert(survived == post.records.len());
+    assert(later.records =~= post.records);
+}
+
+/// **A durable record is durable for ever.**
+///
+/// The same statement across a whole run rather than one step: a record below
+/// the durable line at step `i` is the same record, at the same index, at
+/// every step after it. Crashes included, however many of them.
+///
+/// This is what a leader is relying on when it commits, and it is the
+/// difference between "a crash keeps a prefix" — which permits the empty
+/// prefix — and a log worth building consensus on.
+pub proof fn theorem_a_durable_record_is_durable_for_ever(
+    tr: Seq<Store>,
+    i: int,
+    j: int,
+    k: int,
+)
+    requires
+        tr.len() > 0,
+        store_init(tr[0]),
+        forall|n: int| 0 <= n < tr.len() - 1 ==> store_next(#[trigger] tr[n], tr[n + 1]),
+        0 <= i <= j < tr.len(),
+        0 <= k < tr[i].durable,
+    ensures
+        k < tr[j].records.len(),
+        tr[j].records[k] == tr[i].records[k],
+        tr[j].durable >= tr[i].durable,
+    decreases j - i,
+{
+    lemma_prefix_agrees(tr, i);
+    if i == j {
+    } else {
+        lemma_prefix_agrees(tr, j - 1);
+        theorem_a_durable_record_is_durable_for_ever(tr, i, j - 1, k);
+        assert(store_next(tr[j - 1], tr[j]));
+        theorem_durability_never_retreats(tr[j - 1], tr[j]);
+        // The durable line at `j - 1` is at least the one at `i`, so index `k`
+        // is below it, and what is below it is unchanged.
+        assert(k < tr[j - 1].durable);
+        assert(tr[j].records.take(tr[j - 1].durable as int) == tr[j - 1].records.take(
+            tr[j - 1].durable as int,
+        ));
+        assert(tr[j].records.take(tr[j - 1].durable as int)[k] == tr[j].records[k]);
+        assert(tr[j - 1].records.take(tr[j - 1].durable as int)[k] == tr[j - 1].records[k]);
+    }
 }
 
 // ---------------------------------------------------------------------------

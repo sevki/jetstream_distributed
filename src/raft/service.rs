@@ -263,6 +263,9 @@ struct RecordInner {
     records: Vec<ExecRecord>,
     /// The log, kept equal to `replay_exec(&records)` — C27.
     log: Vec<ExecEntry>,
+    /// How many records have been reported durable — C35. A crash may not go
+    /// below this, and it only lags inside a multi-record operation.
+    durable: usize,
 }
 
 impl Default for RecordLogStore {
@@ -273,14 +276,20 @@ impl Default for RecordLogStore {
 
 impl RecordLogStore {
     pub fn new() -> Self {
-        RecordLogStore(Arc::new(Mutex::new(RecordInner { records: Vec::new(), log: Vec::new() })))
+        RecordLogStore(Arc::new(Mutex::new(RecordInner {
+            records: Vec::new(),
+            log: Vec::new(),
+            durable: 0,
+        })))
     }
 
     /// Start from a device. This is recovery, and it is the whole of it:
     /// `replay_exec` and nothing else.
     pub fn recovered(records: Vec<ExecRecord>) -> Self {
         let log = replay_exec(&records);
-        RecordLogStore(Arc::new(Mutex::new(RecordInner { records, log })))
+        // Everything that survived is on the device, so it is durable.
+        let durable = records.len();
+        RecordLogStore(Arc::new(Mutex::new(RecordInner { records, log, durable })))
     }
 
     /// What is on the device.
@@ -296,12 +305,30 @@ impl RecordLogStore {
         self.0.lock().expect("record log lock").records.len()
     }
 
+    /// How many records have been reported durable.
+    ///
+    /// Equal to `device_len()` whenever no operation is in flight, because
+    /// every `LogStore` method here syncs before it returns. It lags only
+    /// *inside* a two-record `overwrite`, which is the one window a crash can
+    /// lose anything at all.
+    pub fn durable_len(&self) -> usize {
+        self.0.lock().expect("record log lock").durable
+    }
+
     /// **The crash.** A new store recovered from the first `survived` records.
     ///
     /// C28 in executable form: the device keeps a prefix, recovery is `replay`
-    /// of it, and what comes back is a log this store had. `survived` past the
-    /// end is clamped rather than refused, because a caller asking about more
-    /// records than exist is asking about no crash at all.
+    /// of it, and what comes back is a log this store had.
+    ///
+    /// `survived` past the end is clamped, because a caller asking about more
+    /// records than exist is asking about no crash at all. It is **not**
+    /// clamped up to `durable`: this is a test facility, and a crash landing
+    /// below the durable line is precisely what
+    /// `theorem_durability_never_retreats` says cannot happen — so being able
+    /// to ask for one is how a test can check that the store never puts itself
+    /// in a position where it would matter. Between operations `durable`
+    /// equals the record count, so no such point exists;
+    /// `nothing_is_lost_between_operations` is the test that says so.
     pub fn after_crash(&self, survived: usize) -> Self {
         let all = self.records();
         let keep = if survived < all.len() { survived } else { all.len() };
@@ -323,6 +350,7 @@ impl RecordLogStore {
             .iter()
             .map(|e| ExecRecord { is_truncate: false, a: e.term, b: e.value })
             .collect();
+        g.durable = rewritten.len();
         g.records = rewritten;
     }
 
@@ -349,6 +377,13 @@ fn write_record(g: &mut RecordInner, r: ExecRecord) {
     apply_record(&mut g.log, r);
 }
 
+/// Everything written has landed. What `LogStore`'s *"durable before it
+/// returns"* means, and the only thing that moves the line a crash may not go
+/// below.
+fn sync(g: &mut RecordInner) {
+    g.durable = g.records.len();
+}
+
 impl LogStore for RecordLogStore {
     fn len(&self) -> io::Result<u64> {
         Ok(self.0.lock().expect("record log lock").log.len() as u64)
@@ -367,6 +402,7 @@ impl LogStore for RecordLogStore {
     fn append(&self, entry: LogEntry) -> io::Result<u64> {
         let mut g = self.0.lock().expect("record log lock");
         write_record(&mut g, ExecRecord { is_truncate: false, a: entry.term, b: entry.value });
+        sync(&mut g);
         Ok(g.log.len() as u64)
     }
 
@@ -390,6 +426,11 @@ impl LogStore for RecordLogStore {
             write_record(&mut g, ExecRecord { is_truncate: true, a: prefix, b: 0 });
         }
         write_record(&mut g, ExecRecord { is_truncate: false, a: entry.term, b: entry.value });
+        // One sync, at the end, so the two records land together or not at
+        // all. The window between them is the only place a crash can lose
+        // anything, and what it leaves — the marker without the entry — is a
+        // truncation and no more.
+        sync(&mut g);
         Ok(())
     }
 }

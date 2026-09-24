@@ -61,20 +61,6 @@ pub open spec fn tag_truncate() -> u8 {
     1
 }
 
-/// **Whether a record can be written at all.** See the module note on the
-/// 64-bit boundary.
-pub open spec fn record_fits(r: Record) -> bool {
-    match r {
-        Record::Append { term, value } => term <= u64::MAX && value <= u64::MAX,
-        Record::Truncate { len } => len <= u64::MAX,
-    }
-}
-
-/// Every record in the sequence fits.
-pub open spec fn records_fit(rs: Seq<Record>) -> bool {
-    forall|i: int| 0 <= i < rs.len() ==> record_fits(#[trigger] rs[i])
-}
-
 // ---------------------------------------------------------------------------
 // One `u64`
 // ---------------------------------------------------------------------------

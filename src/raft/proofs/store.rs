@@ -71,6 +71,38 @@ pub proof fn theorem_a_truncation_is_one_record(records: Seq<Record>, len: nat)
 }
 
 // ---------------------------------------------------------------------------
+// Fitting
+// ---------------------------------------------------------------------------
+
+/// A fitting sequence plus a fitting record fits.
+pub proof fn lemma_pushing_a_fitting_record_fits(rs: Seq<Record>, r: Record)
+    requires
+        records_fit(rs),
+        record_fits(r),
+    ensures
+        records_fit(rs.push(r)),
+{
+    assert forall|i: int| 0 <= i < rs.push(r).len() implies record_fits(#[trigger] rs.push(r)[i]) by {
+        if i < rs.len() {
+            assert(rs.push(r)[i] == rs[i]);
+        }
+    }
+}
+
+/// And so does any prefix of one — which is what a crash leaves.
+pub proof fn lemma_a_prefix_of_a_fitting_sequence_fits(rs: Seq<Record>, n: int)
+    requires
+        records_fit(rs),
+        0 <= n <= rs.len(),
+    ensures
+        records_fit(rs.take(n)),
+{
+    assert forall|i: int| 0 <= i < rs.take(n).len() implies record_fits(#[trigger] rs.take(n)[i]) by {
+        assert(rs.take(n)[i] == rs[i]);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The invariant
 // ---------------------------------------------------------------------------
 
@@ -137,18 +169,25 @@ pub proof fn theorem_recovery_is_exact(pre: Store, post: Store)
     if exists|r: Record| store_write(pre, post, r) {
         let r = choose|r: Record| store_write(pre, post, r);
         assert(post.records.drop_last() =~= pre.records);
+        lemma_pushing_a_fitting_record_fits(pre.records, r);
     } else if store_sync(pre, post) {
     } else if exists|e: Entry| store_append(pre, post, e) {
         let e = choose|e: Entry| store_append(pre, post, e);
         theorem_an_append_is_one_record(pre.records, e);
+        lemma_pushing_a_fitting_record_fits(
+            pre.records,
+            Record::Append { term: e.term, value: e.value },
+        );
     } else if exists|len: nat| store_truncate(pre, post, len) {
         let len = choose|len: nat| store_truncate(pre, post, len);
         theorem_a_truncation_is_one_record(pre.records, len);
+        lemma_pushing_a_fitting_record_fits(pre.records, Record::Truncate { len });
     } else {
         // Recovery, where the invariant *is* the transition.
         assert(exists|survived: nat| store_recover(pre, post, survived));
         let survived = choose|survived: nat| store_recover(pre, post, survived);
         assert(store_recover(pre, post, survived));
+        lemma_a_prefix_of_a_fitting_sequence_fits(pre.records, survived as int);
     }
 }
 
@@ -561,6 +600,103 @@ pub proof fn theorem_compaction_replays_the_same(log: Seq<Entry>)
         assert(replay(compacted(log)) =~= head.push(log.last()));
         assert(head.push(log.last()) =~= log);
     }
+}
+
+/// **Appending a compacted log appends that log**, whatever was there before.
+///
+/// The induction the two compaction theorems below are built from. It is
+/// stated over an arbitrary prefix `rs` rather than over the empty one because
+/// that is the whole question: what the staged generation does to a device
+/// that still holds the old one.
+pub proof fn lemma_a_compacted_log_appends_itself(rs: Seq<Record>, log: Seq<Entry>)
+    ensures
+        replay(rs + compacted(log)) == replay(rs) + log,
+    decreases log.len(),
+{
+    if log.len() == 0 {
+        assert(rs + compacted(log) =~= rs);
+        assert(replay(rs) + log =~= replay(rs));
+    } else {
+        let head = log.drop_last();
+        let a = Record::Append { term: log.last().term, value: log.last().value };
+        assert(a == Record::Append { term: log.last().term, value: log.last().value });
+        assert(rs + compacted(log) =~= (rs + compacted(head)).push(a));
+
+        lemma_a_compacted_log_appends_itself(rs, head);
+        assert(Entry { term: log.last().term, value: log.last().value } == log.last());
+        theorem_an_append_is_one_record(rs + compacted(head), log.last());
+        assert(replay(rs + compacted(log)) =~= (replay(rs) + head).push(log.last()));
+        assert((replay(rs) + head).push(log.last()) =~= replay(rs) + log);
+    }
+}
+
+/// **A staged compaction is inert until the old generation is reclaimed.**
+///
+/// Codex's finding, and the sharpest of the three. Compaction on an
+/// append-only device is two steps — write the new generation, reclaim the old
+/// one — and a crash can land between them. Writing [`compacted`] alone would
+/// leave `old_records ++ compacted(log)`, which replays to **`log + log`**:
+/// the old generation still replays to `log`, and the new one appends it
+/// again. `theorem_compaction_replays_the_same` would have been true and would
+/// have licensed nothing, because it only covers the case where the rewrite
+/// has already replaced what came before.
+///
+/// [`compaction_batch`]'s leading `Truncate { len: 0 }` is what fixes it. The
+/// staged generation clears whatever preceded it, so the device replays to
+/// `log` **with the old records still there**, which is this theorem, and to
+/// `log` once they are gone, which is the next one. Both crash views agree,
+/// and reclaiming becomes a no-op rather than a change.
+pub proof fn theorem_a_staged_compaction_is_inert(records: Seq<Record>)
+    ensures
+        replay(records + compaction_batch(replay(records))) == replay(records),
+{
+    let log = replay(records);
+    let cleared = records.push(Record::Truncate { len: 0 });
+    assert(records + compaction_batch(log) =~= cleared + compacted(log));
+
+    theorem_a_truncation_is_one_record(records, 0);
+    assert(replay(cleared) =~= Seq::<Entry>::empty());
+
+    lemma_a_compacted_log_appends_itself(cleared, log);
+    assert(replay(cleared) + log =~= log);
+}
+
+/// **And once it has landed, the old generation is dead.**
+///
+/// The batch on its own replays to the same log, so dropping everything before
+/// it changes nothing — which is exactly the licence to call `advance_head`.
+/// Together with the theorem above: the device means `log` before the reclaim
+/// and `log` after it, so a crash at either side of that step recovers the
+/// same thing.
+pub proof fn theorem_after_compaction_the_old_records_are_dead(records: Seq<Record>)
+    ensures
+        replay(compaction_batch(replay(records))) == replay(records),
+        replay(compaction_batch(replay(records))) == replay(
+            records + compaction_batch(replay(records)),
+        ),
+{
+    let log = replay(records);
+    let cleared = Seq::<Record>::empty().push(Record::Truncate { len: 0 });
+    assert(compaction_batch(log) =~= cleared + compacted(log));
+
+    theorem_a_truncation_is_one_record(Seq::<Record>::empty(), 0);
+    assert(replay(cleared) =~= Seq::<Entry>::empty());
+
+    lemma_a_compacted_log_appends_itself(cleared, log);
+    assert(replay(cleared) + log =~= log);
+
+    theorem_a_staged_compaction_is_inert(records);
+}
+
+/// The batch is one record longer than the log: the marker, then an append per
+/// entry. So a store that compacts when the device outgrows the log by a
+/// constant factor keeps the device within a constant factor of the log.
+pub proof fn theorem_the_compaction_batch_is_one_longer_than_the_log(log: Seq<Entry>)
+    ensures
+        compaction_batch(log).len() == log.len() + 1,
+{
+    theorem_compaction_is_one_record_per_entry(log);
+    assert(compaction_batch(log).len() == 1 + compacted(log).len());
 }
 
 /// **Compaction costs one record per entry, and no more.** The rewrite's size

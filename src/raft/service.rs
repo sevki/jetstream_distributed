@@ -335,23 +335,51 @@ impl RecordLogStore {
         RecordLogStore::recovered(all[..keep].to_vec())
     }
 
-    /// **Rewrite the device as pure appends**, which is C31.
+    /// **Rewrite the device as pure appends**, which is C31 and C36.
     ///
-    /// One record per entry and no truncations, so a device that has
-    /// accumulated markers can be replaced by one the size of the log. What
-    /// this does *not* do is schedule itself: nothing calls it, and a store
-    /// that never compacts grows without bound. Stated in `crate::raft::store`
-    /// and repeated here because this is where a reader would look for the
-    /// bound.
+    /// Two steps, and the order matters. First the **batch** — a
+    /// `Truncate { len: 0 }` followed by one append per entry — is written and
+    /// synced as a unit. Then the old generation is dropped, which on
+    /// `pmemlog` is `advance_head` and here is a `drain`.
+    ///
+    /// The leading marker is what makes the middle state safe. Without it a
+    /// crash between the two steps would leave the old records followed by the
+    /// new generation, which replays to `log + log` — every entry twice.
+    /// `theorem_a_staged_compaction_is_inert` is the proof that with it, the
+    /// device means the same log before the reclaim and after it, so a crash
+    /// on either side of that step recovers the same thing.
+    ///
+    /// The batch is synced **as one**: a crash inside it would leave the
+    /// marker and a prefix of the log, which is a rewind and could go below
+    /// the durable line. On `pmemlog` that is a single `append`, whose crash
+    /// view is the log before it or the log after it and nothing between.
+    ///
+    /// What this does *not* do is schedule itself: nothing calls it, and a
+    /// store that never compacts grows without bound. Stated in
+    /// `crate::raft::store` and repeated here because this is where a reader
+    /// would look for the bound.
     pub fn compact(&self) {
         let mut g = self.0.lock().expect("record log lock");
-        let rewritten: Vec<ExecRecord> = g
-            .log
-            .iter()
-            .map(|e| ExecRecord { is_truncate: false, a: e.term, b: e.value })
-            .collect();
-        g.durable = rewritten.len();
-        g.records = rewritten;
+        let batch: Vec<ExecRecord> =
+            core::iter::once(ExecRecord { is_truncate: true, a: 0, b: 0 })
+                .chain(
+                    g.log
+                        .iter()
+                        .map(|e| ExecRecord { is_truncate: false, a: e.term, b: e.value })
+                        .collect::<Vec<_>>(),
+                )
+                .collect();
+
+        let old_generation = g.records.len();
+        for r in batch {
+            write_record(&mut g, r);
+        }
+        sync(&mut g);
+
+        // The batch replays to the same log with the old records there and
+        // with them gone, so dropping them is a no-op rather than a change.
+        g.records.drain(..old_generation);
+        g.durable = g.records.len();
     }
 
     /// The whole log, for tests to compare against.

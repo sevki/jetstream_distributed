@@ -217,7 +217,11 @@ fn nothing_is_lost_between_operations() {
 // Compaction
 // ---------------------------------------------------------------------------
 
-/// **Compaction keeps the log and removes the markers**, which is C31.
+/// **Compaction keeps the log and shrinks the device**, which is C31.
+///
+/// The device ends one record longer than the log: the `Truncate { len: 0 }`
+/// marker, then an append per entry. That one extra record is what makes the
+/// staged generation self-sufficient, which is the test below.
 #[test]
 fn compaction_keeps_the_log_and_shrinks_the_device() {
     let log = RecordLogStore::new();
@@ -230,11 +234,79 @@ fn compaction_keeps_the_log_and_shrinks_the_device() {
 
     log.compact();
     assert_eq!(log.entries(), before, "the log is unchanged");
-    assert_eq!(log.device_len(), before.len(), "one record per entry, no markers");
+    assert_eq!(log.device_len(), before.len() + 1, "the marker, then one record per entry");
+    assert_eq!(log.durable_len(), log.device_len());
 
-    // And the compacted device still recovers to the same log — which is what
-    // makes the rewrite safe to do before a crash rather than only after one.
+    // And the compacted device still recovers to the same log.
     assert_eq!(log.after_crash(log.device_len()).entries(), before);
+}
+
+/// **A crash between staging and reclaiming does not double the log.**
+///
+/// The failure `compaction_batch`'s leading marker exists to prevent, and the
+/// one Codex pointed at. Compaction on an append-only device is two steps —
+/// write the new generation, then reclaim the old one — and a crash can land
+/// between them, leaving the device holding *both*.
+///
+/// Without the marker that state replays to `log + log`: the old generation
+/// still replays to the log, and the new one appends every entry again. With
+/// it, the staged generation clears what came before, so the device means the
+/// same log whether the old records are still there or not.
+///
+/// This builds the intermediate state by hand rather than crashing a real
+/// compaction, because that state is exactly what a real crash would leave and
+/// nothing in the store will hold still there.
+#[test]
+fn a_crash_between_staging_and_reclaiming_does_not_double_the_log() {
+    let log = RecordLogStore::new();
+    log.append(e(1, 10)).unwrap();
+    log.append(e(1, 11)).unwrap();
+    log.overwrite(1, e(2, 99)).unwrap();
+    let expected = log.entries();
+    let old_generation = log.records();
+
+    // The batch compaction would stage: clear, then one append per entry.
+    let mut staged = vec![ExecRecord { is_truncate: true, a: 0, b: 0 }];
+    staged.extend(
+        expected.iter().map(|e| ExecRecord { is_truncate: false, a: e.term, b: e.value }),
+    );
+
+    // The middle state: the old generation, then the whole staged batch.
+    let mut both = old_generation.clone();
+    both.extend(staged.iter().copied());
+    assert_eq!(
+        naively_replayed(&both),
+        expected,
+        "a crash between staging and reclaiming must not double the log"
+    );
+
+    // And the reclaimed state means the same thing, so the reclaim is a no-op.
+    assert_eq!(naively_replayed(&staged), expected);
+
+    // Which is what the store actually does.
+    log.compact();
+    assert_eq!(log.entries(), expected);
+    assert_eq!(log.records().len(), staged.len());
+}
+
+/// Without the leading marker the middle state really is wrong — so the test
+/// above is not passing for some other reason.
+#[test]
+fn staging_without_the_marker_would_double_the_log() {
+    let log = RecordLogStore::new();
+    log.append(e(1, 10)).unwrap();
+    log.append(e(1, 11)).unwrap();
+    let expected = log.entries();
+
+    let mut both = log.records();
+    // The rewrite as `compacted(log)` alone — no marker.
+    both.extend(
+        expected.iter().map(|e| ExecRecord { is_truncate: false, a: e.term, b: e.value }),
+    );
+
+    let doubled = naively_replayed(&both);
+    assert_eq!(doubled.len(), expected.len() * 2, "every entry twice, which is the bug");
+    assert_eq!(&doubled[..expected.len()], &expected[..]);
 }
 
 // ---------------------------------------------------------------------------

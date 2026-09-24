@@ -85,6 +85,33 @@ pub enum Record {
     Truncate { len: nat },
 }
 
+/// **Whether a record can be written at all.**
+///
+/// [`Record`]'s fields are `nat` — unbounded, because
+/// [`crate::raft::model`]'s terms are unbounded and a model that caps them has
+/// an overflow bug the protocol does not. `crate::raft::wire` writes them as
+/// `u64`. So there are records the model can name and the device cannot hold,
+/// and this is the line between.
+///
+/// It is a **guard on the write transitions and a clause of [`store_inv`]**,
+/// not merely a precondition on the encoding theorems. Stated only on the
+/// theorems it would filter which theorems may be *invoked*, while leaving the
+/// unencodable state reachable — so no invariant over reachable stores would
+/// establish it, and the store theorems and the wire theorems could not be
+/// composed. A store asked to write a record that does not fit must refuse,
+/// and refusing is what a disabled transition is.
+pub open spec fn record_fits(r: Record) -> bool {
+    match r {
+        Record::Append { term, value } => term <= u64::MAX && value <= u64::MAX,
+        Record::Truncate { len } => len <= u64::MAX,
+    }
+}
+
+/// Every record in the sequence fits.
+pub open spec fn records_fit(rs: Seq<Record>) -> bool {
+    forall|i: int| 0 <= i < rs.len() ==> record_fits(#[trigger] rs[i])
+}
+
 /// **The log is what the records replay to.**
 ///
 /// Left fold over the device, oldest first. Written back-to-front — `drop_last`
@@ -147,16 +174,19 @@ pub struct Store {
     pub durable: nat,
 }
 
-/// **The invariant**: memory agrees with the device, and the durable line is
-/// on the device.
+/// **The invariant**: memory agrees with the device, the durable line is on
+/// the device, and every record on it can be written down.
 ///
 /// Everything else in this module is about preserving it. The first clause is
 /// what makes [`store_recover`]'s definition of the recovered log a definition
 /// of the *right* log rather than of some other log that happens to be
-/// computable; the second is what makes `durable` mean something.
+/// computable; the second is what makes `durable` mean something; and the
+/// third is what lets `crate::raft::wire`'s theorems apply to a reachable
+/// store at all, rather than only to record sequences chosen to suit them.
 pub open spec fn store_inv(s: Store) -> bool {
     &&& s.log == replay(s.records)
     &&& s.durable <= s.records.len()
+    &&& records_fit(s.records)
 }
 
 /// A fresh store: no entries, no records, nothing durable.
@@ -176,6 +206,7 @@ pub open spec fn store_init(s: Store) -> bool {
 /// record — which is the truth about a write that has been issued and not
 /// confirmed, and the state a multi-record operation passes through.
 pub open spec fn store_write(pre: Store, post: Store, r: Record) -> bool {
+    &&& record_fits(r)
     &&& post.records == pre.records.push(r)
     &&& post.log == replay_step(pre.log, r)
     &&& post.durable == pre.durable
@@ -202,6 +233,7 @@ pub open spec fn store_sync(pre: Store, post: Store) -> bool {
 /// because that is what the caller sees; [`theorem_an_append_is_a_write_then_a_sync`]
 /// is the proof that it is the two primitives and nothing more.
 pub open spec fn store_append(pre: Store, post: Store, e: Entry) -> bool {
+    &&& record_fits(Record::Append { term: e.term, value: e.value })
     &&& post.records == pre.records.push(Record::Append { term: e.term, value: e.value })
     &&& post.log == pre.log.push(e)
     &&& post.durable == post.records.len()
@@ -215,6 +247,7 @@ pub open spec fn store_append(pre: Store, post: Store, e: Entry) -> bool {
 /// has to be total on device states this transition cannot produce — a device
 /// is not only written by a correct store.
 pub open spec fn store_truncate(pre: Store, post: Store, len: nat) -> bool {
+    &&& record_fits(Record::Truncate { len })
     &&& len <= pre.log.len()
     &&& post.records == pre.records.push(Record::Truncate { len })
     &&& post.log == pre.log.take(len as int)
@@ -320,9 +353,8 @@ pub open spec fn accept_records(follower: Seq<Entry>, leader: Seq<Entry>, prefix
 /// The same log, written as nothing but appends.
 ///
 /// What a store rewrites itself to when the record count has outgrown the
-/// entry count. [`theorem_compaction_replays_the_same`] is the soundness of
-/// that rewrite; `pmemlog`'s `advance_head` is what then reclaims the records
-/// before it.
+/// entry count. On its own this is **not** what to write to the device — see
+/// [`compaction_batch`], which is.
 pub open spec fn compacted(log: Seq<Entry>) -> Seq<Record>
     decreases log.len(),
 {
@@ -333,6 +365,37 @@ pub open spec fn compacted(log: Seq<Entry>) -> Seq<Record>
             Record::Append { term: log.last().term, value: log.last().value },
         )
     }
+}
+
+/// **What compaction actually writes**: a `Truncate { len: 0 }`, then the log.
+///
+/// The leading marker is not decoration and the proof of that is
+/// [`crate::raft::proofs::store::theorem_a_staged_compaction_is_inert`].
+///
+/// Compaction on an append-only device is two steps — write the new
+/// generation, then reclaim the old one — and a crash can land between them.
+/// Writing [`compacted`] alone would leave the device holding
+/// `old_records ++ compacted(log)`, which replays to **`log + log`**: every
+/// entry twice, because the old generation still replays to `log` and the new
+/// one appends it again. The rewrite would be sound only in the case where it
+/// had already finished, which is the case that needs no proof.
+///
+/// The marker makes the staged generation **self-sufficient**: it clears
+/// whatever came before, so the batch replays to `log` with the old records
+/// there and to `log` with them gone. Both crash views agree, which is what
+/// makes reclaiming the old generation afterwards a no-op rather than a
+/// change.
+///
+/// # It has to land atomically
+///
+/// A crash *inside* the batch would leave the marker and a prefix of the log —
+/// a rewind, and one that could go below the durable line. So the batch is one
+/// [`store_sync`]'s worth of writing: on `pmemlog` a single `append`, whose
+/// crash view is the log before it or the log after it and nothing between.
+/// That is the one property of the device this design leans on, and it is the
+/// property `pmemlog` was built to have.
+pub open spec fn compaction_batch(log: Seq<Entry>) -> Seq<Record> {
+    seq![Record::Truncate { len: 0 }] + compacted(log)
 }
 
 // ---------------------------------------------------------------------------

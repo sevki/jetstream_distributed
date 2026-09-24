@@ -25,6 +25,7 @@
 use vstd::prelude::*;
 
 use crate::raft::model::*;
+use crate::raft::proofs::store::theorem_the_store_always_agrees;
 use crate::raft::store::*;
 use crate::raft::wire::*;
 
@@ -276,6 +277,49 @@ pub proof fn theorem_a_torn_tail_is_a_record_prefix(rs: Seq<Record>, k: int)
             ));
         }
     }
+}
+
+/// **Every reachable store is encodable, so the two halves compose.**
+///
+/// Codex's second finding, and what it was really about. `records_fit` began
+/// life as a precondition on the theorems above, which sounds like a
+/// statement about records and is really a statement about *which theorems may
+/// be invoked*: a store could reach a state holding a record too wide to
+/// write, and no invariant would have ruled it out — the encoding theorems
+/// would simply have stopped applying, quietly, exactly where they were
+/// needed.
+///
+/// `records_fit` is now a guard on the write transitions and a clause of
+/// `store_inv`, so it holds of every reachable store, and this is the theorem
+/// that spends it: take any store satisfying the invariant, and its device
+/// round-trips through the encoding and survives a tear at any byte.
+pub proof fn theorem_a_reachable_store_is_encodable(s: Store, k: int)
+    requires
+        store_inv(s),
+        0 <= k <= encode(s.records).len(),
+    ensures
+        parse(encode(s.records)) == s.records,
+        parse(encode(s.records).take(k)) == s.records.take(k / (record_len() as int)),
+        replay(parse(encode(s.records))) == s.log,
+{
+    theorem_parse_of_encode(s.records);
+    theorem_a_torn_tail_is_a_record_prefix(s.records, k);
+}
+
+/// And the same for a whole run: no reachable store is unwritable.
+pub proof fn theorem_no_reachable_store_is_unwritable(tr: Seq<Store>, i: int)
+    requires
+        tr.len() > 0,
+        store_init(tr[0]),
+        forall|n: int| 0 <= n < tr.len() - 1 ==> store_next(#[trigger] tr[n], tr[n + 1]),
+        0 <= i < tr.len(),
+    ensures
+        records_fit(tr[i].records),
+        parse(encode(tr[i].records)) == tr[i].records,
+{
+    theorem_the_store_always_agrees(tr);
+    assert(store_inv(tr[i]));
+    theorem_parse_of_encode(tr[i].records);
 }
 
 /// **The whole chain, in one statement.** Whatever prefix of the bytes a crash

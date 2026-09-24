@@ -101,9 +101,19 @@ fn a_truncation_lengthens_the_device() {
     assert_eq!(log.device_len(), 5, "and the device grew, by exactly two");
 }
 
-/// **A truncation costs one marker however much it deletes.** The device grows
-/// by two for an overwrite that throws away one entry and by two for one that
-/// throws away a hundred.
+/// **A truncation costs one marker however much it deletes** — and if it
+/// deletes enough, the device is reclaimed straight afterwards.
+///
+/// Two facts, and the second one broke this test when compaction started
+/// running, which is the policy working rather than a regression. The write
+/// itself is two records whatever the size of the tail. But a truncation that
+/// leaves a two-entry log on a hundred-record device has made the device
+/// grossly oversized, and `worth_compacting` then rewrites it — so measuring
+/// "device grew by two" only works where compaction does not fire.
+///
+/// So: the small store shows the constant cost, and the large one shows the
+/// device ending up **smaller than before the truncation**, which is a better
+/// statement than the one this test used to make.
 #[test]
 fn the_cost_of_a_truncation_does_not_depend_on_what_it_deletes() {
     let small = RecordLogStore::new();
@@ -119,8 +129,22 @@ fn the_cost_of_a_truncation_does_not_depend_on_what_it_deletes() {
     small.overwrite(1, e(2, 7)).unwrap();
     large.overwrite(1, e(2, 7)).unwrap();
 
-    assert_eq!(small.device_len() - before_small, 2);
-    assert_eq!(large.device_len() - before_large, 2, "99 entries deleted, still two records");
+    // Two entries deleted nothing worth reclaiming, so the write's own cost is
+    // visible: the marker and the entry.
+    assert_eq!(small.device_len() - before_small, 2, "the marker and the entry, and no more");
+
+    // Ninety-nine entries deleted leaves a device far too big for the log it
+    // now holds, so it is rewritten — and ends smaller than it started.
+    assert!(
+        large.device_len() < before_large,
+        "deleting 99 entries left a {}-record device for a {}-entry log",
+        large.device_len(),
+        large.len().unwrap()
+    );
+    assert!(large.device_len() <= 2 * (large.len().unwrap() as usize + 1));
+
+    // And the log is the same either way, compaction or not — which is the
+    // point: reclaiming the device is not supposed to be observable.
     assert_eq!(small.entries(), large.entries(), "and the same log either way");
 }
 

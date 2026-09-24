@@ -163,4 +163,114 @@ pub open spec fn recovered_log(bytes: Seq<u8>) -> Seq<Entry> {
     replay(parse(bytes))
 }
 
+// ---------------------------------------------------------------------------
+// The executable encoder
+// ---------------------------------------------------------------------------
+
+/// Eight bytes, least significant first.
+pub fn u64_to_le_exec(x: u64) -> (out: Vec<u8>)
+    ensures
+        out@ == u64_to_le(x),
+{
+    let mut out: Vec<u8> = Vec::with_capacity(8);
+    out.push((x & 0xff) as u8);
+    out.push(((x >> 8) & 0xff) as u8);
+    out.push(((x >> 16) & 0xff) as u8);
+    out.push(((x >> 24) & 0xff) as u8);
+    out.push(((x >> 32) & 0xff) as u8);
+    out.push(((x >> 40) & 0xff) as u8);
+    out.push(((x >> 48) & 0xff) as u8);
+    out.push(((x >> 56) & 0xff) as u8);
+    assert(out@ =~= u64_to_le(x));
+    out
+}
+
+/// And back, from eight bytes starting at `at`.
+pub fn le_to_u64_exec(b: &Vec<u8>, at: usize) -> (x: u64)
+    requires
+        at + 8 <= b@.len(),
+    ensures
+        x == le_to_u64(b@.subrange(at as int, at + 8)),
+{
+    let x = (b[at] as u64) | ((b[at + 1] as u64) << 8) | ((b[at + 2] as u64) << 16) | ((b[at + 3]
+        as u64) << 24) | ((b[at + 4] as u64) << 32) | ((b[at + 5] as u64) << 40) | ((b[at + 6]
+        as u64) << 48) | ((b[at + 7] as u64) << 56);
+    assert(b@.subrange(at as int, at + 8).len() == 8);
+    x
+}
+
+/// Seventeen bytes: the tag, then the two fields.
+///
+/// Written as seventeen pushes rather than as a loop over
+/// [`u64_to_le_exec`]'s output, because [`u64_to_le`] is a `seq![..]` literal
+/// and the postcondition then falls out by extensionality — a copy loop would
+/// need an invariant to say the same thing.
+pub fn encode_record_exec(r: ExecRecord) -> (out: Vec<u8>)
+    ensures
+        out@ == encode_record(r.view()),
+        out@.len() == record_len(),
+{
+    // A truncation's second field is padding, and `encode_record` writes zero
+    // there, so this is the one place the two shapes differ.
+    let tag = if r.is_truncate {
+        tag_truncate()
+    } else {
+        tag_append()
+    };
+    let b = if r.is_truncate {
+        0u64
+    } else {
+        r.b
+    };
+    let a = r.a;
+
+    let mut out: Vec<u8> = Vec::with_capacity(17);
+    out.push(tag);
+    out.push((a & 0xff) as u8);
+    out.push(((a >> 8) & 0xff) as u8);
+    out.push(((a >> 16) & 0xff) as u8);
+    out.push(((a >> 24) & 0xff) as u8);
+    out.push(((a >> 32) & 0xff) as u8);
+    out.push(((a >> 40) & 0xff) as u8);
+    out.push(((a >> 48) & 0xff) as u8);
+    out.push(((a >> 56) & 0xff) as u8);
+    out.push((b & 0xff) as u8);
+    out.push(((b >> 8) & 0xff) as u8);
+    out.push(((b >> 16) & 0xff) as u8);
+    out.push(((b >> 24) & 0xff) as u8);
+    out.push(((b >> 32) & 0xff) as u8);
+    out.push(((b >> 40) & 0xff) as u8);
+    out.push(((b >> 48) & 0xff) as u8);
+    out.push(((b >> 56) & 0xff) as u8);
+    assert(out@ =~= encode_record(r.view()));
+    out
+}
+
+/// **Read one record from `at`.**
+///
+/// The padding a `Truncate` carries is not preserved, because the ghost
+/// [`Record`] has no field for it — and `encode_record` writes zero there, so a
+/// device this store wrote round-trips byte for byte anyway.
+pub fn decode_record_exec(bytes: &Vec<u8>, at: usize) -> (r: ExecRecord)
+    requires
+        at + 17 <= bytes@.len(),
+    ensures
+        r.view() == decode_record(bytes@.subrange(at as int, at + 17)),
+{
+    let tag = bytes[at];
+    let a = le_to_u64_exec(bytes, at + 1);
+    let b = le_to_u64_exec(bytes, at + 9);
+    proof {
+        let sub = bytes@.subrange(at as int, at + 17);
+        assert(sub[0] == tag);
+        assert(sub.subrange(1, 9) =~= bytes@.subrange(at + 1, at + 9));
+        assert(sub.subrange(9, 17) =~= bytes@.subrange(at + 9, at + 17));
+    }
+    if tag == tag_append() {
+        ExecRecord { is_truncate: false, a, b }
+    } else {
+        ExecRecord { is_truncate: true, a, b: 0 }
+    }
+}
+
 } // verus!

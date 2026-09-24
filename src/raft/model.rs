@@ -394,12 +394,46 @@ pub open spec fn max_nat(a: nat, b: nat) -> nat {
 
 /// The commit index a follower ends up with after accepting an entry.
 ///
-/// `min(leaderCommit, index of last new entry)` as figure 2 has it, **never
-/// backwards**, and **never past the end of the log**. The last clamp is what
-/// stops a truncation leaving the commit point naming entries that are no
-/// longer there — a state no later reader can make sense of, and one only a
-/// conflict below the commit point can produce, which is what Leader
-/// Completeness is supposed to rule out.
+/// `min(leaderCommit, index of last new entry)` as figure 2 has it, and then
+/// **clamped to the length of the log**.
+///
+/// # The clamp gives up monotonicity, and that is a choice
+///
+/// Raft's commit index is supposed to be monotone. This expression is not, and
+/// the earlier version of this comment claimed both "never backwards" and
+/// "never past the end of the log" — which cannot both hold, because a
+/// truncation that cuts *below* the commit point forces one of them to give.
+/// A follower with `commit = 5` told to replace the entry at index 0 ends with
+/// a one-entry log, and either its commit point still says 5 — naming four
+/// entries that no longer exist — or it retreats to 1.
+///
+/// This model retreats, and the trade is worth stating rather than
+/// discovering. A commit point naming absent entries is a state no later
+/// reader can make sense of: every query about "what has been applied" reads
+/// past the end of the log. A commit point that went backwards is a broken
+/// *promise* but a readable state, and the breach is visible.
+///
+/// # What is actually proved about it
+///
+/// Not "never backwards", which is false. Instead, in
+/// `crate::raft::proofs::log`:
+///
+/// * [`crate::raft::proofs::log::theorem_the_commit_point_never_outruns_the_log`]
+///   — the clamp does what it is for.
+/// * `theorem_the_commit_point_does_not_retreat_above_a_truncation` — commit
+///   **is** monotone whenever the truncation point is at or above it, which is
+///   every step of a healthy cluster.
+/// * `theorem_the_commit_point_retreats_only_below_a_truncation` — and when it
+///   does retreat, the truncation was strictly below the old commit point.
+///
+/// So monotonicity holds conditionally, on exactly the condition **Leader
+/// Completeness would discharge**: a leader never asks a follower to delete a
+/// committed entry, because a committed entry is in every future leader's log.
+/// This repository does not prove Leader Completeness, so the model may not
+/// treat that case as unreachable — it has to handle it, and the theorems above
+/// say precisely how. When Leader Completeness lands, the condition becomes
+/// vacuous and monotonicity becomes unconditional; until then it is a
+/// hypothesis with a name.
 ///
 /// It is a named function rather than an expression inside [`tr_append_entries`]
 /// because the proof of `lemma_append_entries_preserves_inv` has to hand its

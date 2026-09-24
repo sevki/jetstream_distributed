@@ -1,6 +1,6 @@
 //! Randomised ownership scenarios over a simulated network.
 //!
-//! `src/proofs` establishes that the *model* is safe: no reachable state of
+//! `src/ownership/proofs` establishes that the *model* is safe: no reachable state of
 //! the state machine has two owners, a burned epoch fences the outgoing one,
 //! and a stale token confers nothing. That is a claim about a transition
 //! relation. It says nothing about whether an implementation follows it, and
@@ -18,13 +18,19 @@
 //! is *not* is a check on the proofs — those are static, and a simulation
 //! cannot contradict them.
 //!
-//! **Where the executable code lives, and why.** Entirely in `tests/`. `src/`
-//! is specification and proof plus the one verified `FenceGuard`, and CI greps
-//! it for `verifier::external`; unverified protocol code there would need that
-//! attribute and would fail the build by design. The one piece of `src/` this
-//! does use is `FenceGuard`, because it is the node-local check a real node
-//! performs, and exercising it against an authoritative fence is precisely the
-//! asymmetry `src/exec.rs` documents.
+//! **Where this executable code lives, and why.** In `tests/`, and it is a
+//! *stand-in* rather than the service — a hand-written coordinator speaking a
+//! line protocol, built to be shot at. The real one is
+//! `src/ownership/service.rs`, which compiles only with the `service` feature
+//! and therefore never reaches the verifier. Keeping the two coordinators
+//! visibly separate is the point: a suite that audits the thing it was written
+//! from is worth much less than one that survived being pointed at something
+//! else.
+//!
+//! The one piece of `src/` this does use is `FenceGuard`, because it is the
+//! node-local check a real node performs, and exercising it against an
+//! authoritative fence is precisely the asymmetry `src/ownership/exec.rs`
+//! documents.
 //!
 //! Everything here is deterministic: turmoil's network is seeded, its clock is
 //! simulated, and nothing reads a wall clock or an RNG. A failing seed
@@ -43,7 +49,7 @@ use std::{
     time::Duration,
 };
 
-use distributed_ownership::exec::FenceGuard;
+use distributed_ownership::ownership::exec::FenceGuard;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use turmoil::{
     net::{TcpListener, TcpStream},
@@ -238,7 +244,7 @@ impl Owned {
 impl Coord {
     pub fn new(fence: Fence) -> Self {
         Coord {
-            // The same start state the scenarios in `src/proofs` use: offered
+            // The same start state the scenarios in `src/ownership/proofs` use: offered
             // to node 0 at the initial epoch, held by nobody.
             state: Owned::Unowned { epoch: INITIAL_EPOCH, intended: INITIAL_OWNER },
             log: Vec::new(),
@@ -367,7 +373,7 @@ impl Coord {
 
             // The fence, at the point where the effect lands. This is
             // `can_mutate(sys, actor, node, epoch)` made executable, and it is
-            // the check `src/exec.rs` says a node cannot perform for itself.
+            // the check `src/ownership/exec.rs` says a node cannot perform for itself.
             ("WRITE", [node, epoch]) => {
                 let permitted = matches!(
                     self.state,
@@ -543,10 +549,10 @@ enum NodeCmd {
 
 /// A node's local state: the last generation it observed.
 ///
-/// `FenceGuard` is the verified `u64` check from `src/exec.rs`. It is what the
+/// `FenceGuard` is the verified `u64` check from `src/ownership/exec.rs`. It is what the
 /// node consults before bothering to send a write, and it is deliberately not
 /// authoritative: a partitioned node's guard goes on saying yes long after the
-/// system has moved on, which is the asymmetry `src/exec.rs` is at pains to
+/// system has moved on, which is the asymmetry `src/ownership/exec.rs` is at pains to
 /// document. The sim exercises both halves — the node asks its guard, the
 /// coordinator asks the registry, and the oracles watch what the registry did.
 #[derive(Default)]

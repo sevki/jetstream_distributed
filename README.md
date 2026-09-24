@@ -91,7 +91,7 @@ recent sequencer that the server has observed" — belief is checked against
 authority. This model originally had no such split on the routing side and
 resolved a seizure by editing the absent node's state, which no implementation
 can do; see [The holder graph is a tree](#the-holder-graph-is-a-tree-and-now-says-so)
-and the `believes_holds` / `has_token` split in `src/raymond.rs`.
+and the `believes_holds` / `has_token` split in `src/raymond/model.rs`.
 
 **What Chubby has that this does not**: a deployed system, sessions and
 KeepAlives, failover, caching with invalidations, a filesystem namespace, ACLs,
@@ -193,76 +193,102 @@ verifying, the build fails.
 
 | # | Invariant | Verus theorem | Assumptions |
 | --- | --- | --- | --- |
-| 1 | **Exclusive mutable ownership** - in any reachable state, if `A` and `B` may both mutate an actor then `A == B` (and their epochs are equal) | `proofs::exclusivity::theorem_exclusive_mutable_ownership` | reachability; none beyond the model |
-| 1a | The same, structurally: no state at all, reachable or not, admits two mutable owners | `proofs::exclusivity::theorem_exclusive_mutable_ownership_structural` | none |
-| 1b | Two capability tokens that both confer authority over the same actor are the same token | `proofs::exclusivity::theorem_authorized_token_unique` | reachability |
-| 2 | **Unique current epoch** - existence stated outright, and uniqueness as an implication over *arbitrary* epochs (not under the assumption that a witness was already supplied) | `proofs::fencing::theorem_unique_current_epoch` | none |
-| 3 | **Stale-owner fencing** - `current_epoch(actor) > supplied_epoch ==> !can_mutate(actor, node, supplied_epoch)` | `proofs::fencing::theorem_stale_epoch_cannot_mutate` | none |
-| 3a | Advancing `n -> n+1` strips authority from every holder of `n` | `proofs::fencing::theorem_epoch_advance_fences_previous` | none |
-| 3b | For issued tokens the fence check is exactly epoch equality (no token is ever ahead of the actor) | `proofs::fencing::theorem_fence_is_exact_for_issued_tokens` | reachability |
-| 4 | **Transfer safety** - every permitted transition preserves the ownership and fencing invariants | `proofs::transfer::theorem_transition_preserves_invariants` | `inv` holds before the step |
-| 4a | Across a whole handover, the epoch never decreases, nobody has authority at the middle stages, and the outgoing owner is fenced from the first transition onwards | `proofs::transfer::theorem_handover_safety` | `A != B` |
-| 4b | At no stage of a handover can both nodes have authority | `proofs::transfer::theorem_handover_never_both` | `A != B` |
-| 4c | An interrupted handover fences both the old and the abandoned new epoch | `proofs::transfer::theorem_interrupted_transfer_fences_both` | none |
-| 4d | Ownership cannot be manufactured: the only step that can make `may_mutate` true is `Acquire`, from `Unowned` at that exact epoch with a matching grant | `proofs::transfer::theorem_ownership_only_via_acquire` | none |
-| 5 | **Epoch monotonicity** - no transition decreases an actor's epoch | `proofs::fencing::theorem_epoch_monotone_step`, `..._next`, `..._execution` | none |
-| 6 | **Token uniqueness (authority)** - at most one token confers authority per `(ActorId, Epoch)` | `proofs::tokens::theorem_valid_token_unique_per_actor_epoch` | none |
-| 6a | **Token uniqueness (physical)** - at most one token is ever *issued* per `(ActorId, Epoch)` | `proofs::tokens::theorem_issued_token_unique_per_actor_epoch` | reachability |
-| 6b | Stale physical tokens confer no authority | `proofs::tokens::theorem_stale_token_has_no_authority` | none |
-| 6c | No token is ever minted for a future epoch | `proofs::tokens::theorem_no_future_tokens` | reachability |
-| E | The runtime `u64` check returns exactly the model's verdict **for the generation the guard records**, and rejects any epoch superseded *within that record* | `exec::FenceGuard::accepts`, `exec::FenceGuard::rejects_stale` | the guard is the node's own belief, immutable after `FenceGuard::new`. **This is node-local staleness rejection, not fencing**: a partitioned `A` still holding `FenceGuard::new(A, 41)` accepts `(A, 41)` while the system is at `Owned { B, 42 }`. A node cannot fence itself — see below |
-| E1 | **Acquire refines `tr_acquire`** — when the step fires the model fires, to exactly the record the step computed; when it refuses a request naming the actor's current epoch, *no* post state satisfies `tr_acquire`; and however the model acquires, the record it lands on is the one the step computes | `proofs::refinement::theorem_acquire_step_refines_tr_acquire`, `..._refuses_exactly_when_disabled`, `..._outcome_is_the_step` | the couplings (see the module docs of `proofs::refinement`); the refusal direction additionally assumes the request named the current epoch, which is the one place the executable step is narrower than the model |
-| E2 | **Begin-transfer refines `tr_begin_transfer`**, in the same three parts. Refusal is exactly disablement *or* epoch exhaustion, and the refusal says which | `proofs::refinement::theorem_begin_transfer_step_refines_tr_begin_transfer`, `..._refuses_exactly_when_disabled`, `..._outcome_is_the_step` | the couplings; `u64` exhaustion is the implementation's, not the model's |
-| E3 | **Release refines `tr_handle_revoke` followed by `tr_complete_release`** — two model transitions, one method, with the middle state exhibited rather than assumed to exist. A refused release is provably not the handover the model would complete | `proofs::refinement::theorem_release_step_refines_handle_revoke_then_complete_release`, `theorem_refused_release_is_not_the_models_release` | the couplings, and that the `Revoke` being acknowledged is on the network — which `tr_begin_transfer` put there |
-| E4 | **Forced revocation refines all three of its transitions**: `tr_revoke_owner` from `Owned`, `tr_reassign_unowned` from `Unowned`, `tr_abort_transfer` from `Transferring` — and in the last case the actor provably goes back to the node the transfer came from, whatever successor the coordinator named | `proofs::refinement::theorem_force_step_refines_tr_revoke_owner`, `..._tr_reassign_unowned`, `..._tr_abort_transfer` | the roster answers `pre.nodes.contains(next)` |
-| E5 | **A poll is `tr_issue_grant` or the delivery of a `Revoke`**, and the epoch it offers is the actor's current one — so a poll can never hand out a generation the registry has already left. `Nothing` is returned only to a node that is owed nothing | `proofs::refinement::theorem_poll_step_refines_tr_issue_grant`, `..._tr_handle_revoke`, `theorem_poll_step_offers_nothing_only_when_nothing_is_owed` | the couplings |
-| E6 | **The registry's fence is the *system's* fence** — `may_write_step` on the registry's own record is `can_mutate`, not a node's belief about it. Same postcondition as E, different thing, bought entirely by where it is called | `steps::may_write_step`, `proofs::refinement::theorem_may_write_step_is_the_system_fence` | the record the step is handed is the actor's |
-| E7 | **The refinement theorems are not vacuous.** Each is an implication under hypotheses, and hypotheses that cannot all hold make a theorem true and empty — a refinement suite can be green and say nothing. So one concrete system is written out in full and a whole handover walked through it, each theorem applied to the state the previous one produced, with what came out asserted | `proofs::refinement::scenario_a_handover_through_the_verified_steps` | none: the system is exhibited |
-| E7a | The same for the *refusal* theorems, whose hypotheses are the negation of a guard and so are untouched by a run in which the guard holds. In a system where no grant was published, **no** post state satisfies `tr_acquire` — quantified over all of them, not over one the server had in mind | `proofs::refinement::scenario_the_refusals_are_refusals_of_something_real` | none |
-| P1 | **Issued tokens never disappear** — no crash, partition or recovery retracts a capability, which is why stale tokens must be fenced rather than revoked | `proofs::properties::theorem_issued_monotone` | none |
-| P2 | **Sent messages never disappear** — the fact that makes duplication, reordering and unbounded delay free in the model | `proofs::properties::theorem_network_monotone` | none |
-| P3 | **The actor population is constant** — no transition creates or destroys an actor | `proofs::properties::theorem_actor_domain_constant` | none |
-| P4 | **An epoch advances by at most one per transition** — with claim 5, the epoch sequence is non-decreasing and never skips a generation | `proofs::properties::theorem_epoch_increases_by_at_most_one` | none |
-| P5 | **Ownership at a given epoch is final** — once owned by `n` at `e`, every later state still at `e` is still owned by `n` at `e`; a handover *must* burn the epoch | `proofs::properties::theorem_ownership_at_an_epoch_is_final` | valid execution |
-| P6 | **An epoch determines its owner** — any two points of an execution owned at the same epoch have the same owner | `proofs::properties::theorem_epoch_determines_owner` | valid execution |
-| P7 | **Staleness is permanent** — a fenced-out node can never be fenced back in by waiting | `proofs::properties::theorem_stale_stays_stale` | valid execution |
-| P8 | **No authority without a capability** — a node that may mutate provably holds an issued token for exactly that `(actor, epoch)` | `proofs::properties::theorem_no_authority_without_token` | reachability |
-| P9 | **Epoch monotonicity survives composition** | `proofs::properties::theorem_composed_epoch_monotone` | none |
-| R9 | **The privilege is never lost** — every Raymond transition leaves `privilege` pointing at a node | `proofs::raymond::lemma_ray_token_exists_init`, `lemma_ray_token_exists_step` | Raymond invariant |
-| R10 | **Raymond critical sections are exclusive — while nobody's belief is stale.** The hypothesis is not a weakening; it is the algorithm's real scope. Raymond's mutual exclusion rests on every node agreeing where the privilege is, and a seizure breaks that until the seized node reconciles | `proofs::raymond::theorem_ray_critical_section_is_exclusive` | Raymond invariant, `ray_no_stale_holders` |
-| R10a | **At most one node is *authorised* to be in its critical section**, with no side conditions: the authorised occupant is the privilege holder, and there is one of those by construction. This is the part of R10 that survives a seizure | `proofs::raymond::theorem_authorised_critical_section_is_exclusive` | Raymond invariant |
-| R13 | **A stale holder confers no authority.** A node that believes it holds the privilege, does not, and may still be inside its critical section, still cannot mutate the actor — `couples` is written against possession, not belief. The routing counterpart of 6b, and what survives imperfect failure detection | `proofs::raymond::theorem_stale_holder_confers_no_authority` | the coupling |
-| R14 | **Reconciliation repairs the belief**: the stale holder drops it, leaves the critical section it thought it was in, and re-points at the real holder | `proofs::raymond::lemma_reconcile_preserves_inv` | Raymond invariant |
-| R11 | **The holder pointers are acyclic** — part of `ray_inv`, preserved by every transition. A handover rewrites two pointers and needs a new rank (the old one shifted up by one, new root at zero); a seizure only makes the new holder point at itself, which *removes* a constraint, so the old rank still works | `proofs::raymond::lemma_frame_acyclic`, `lemma_repoint_acyclic` | Raymond invariant |
-| R12 | **Every node reaches the privilege holder by following holder pointers** — what makes "requests travel hop-by-hop towards the token" a checked claim. Two hypotheses, both load-bearing: R11 says the walk terminates rather than circling, and `ray_no_stale_holders` says it terminates at the real holder rather than at somebody who merely thinks so. The second was free when authority *was* belief; it is not free now, and it should not be — after a seizure a node whose belief-path leads to the seized holder genuinely cannot route to the privilege | `proofs::raymond::theorem_every_node_reaches_the_token` | Raymond invariant, `ray_no_stale_holders` |
-| I | The inductive invariant holds in every reachable state (`init ==> inv`, `inv /\ next ==> inv`) | `proofs::invariant::theorem_reachable_inv` | the model's transition relation |
-| S | **The headline scenario**: `A` owns X@41, a transfer and a crash/recovery occur, `B` owns X@42, `A` returns still holding its epoch-41 token - and cannot perform an authoritative mutation. The postcondition exports the whole nine-step run, so the crash, the recovery and the outcome are the same execution — exported as separate existentials they need not have been, and an ordinary live handover could supply the outcome | `proofs::adversarial::scenario_stale_owner_returns` | `A != B` |
-| S1 | A stale `Grant` cannot resurrect a superseded epoch | `proofs::adversarial::theorem_stale_grant_cannot_be_used` | none |
-| S2 | Message duplication / reordering / delay cannot change ownership | `proofs::adversarial::theorem_network_steps_cannot_change_ownership` | none |
-| S3 | Crash and stale-node recovery cannot change ownership | `proofs::adversarial::theorem_crash_recovery_cannot_change_ownership` | none |
-| S4 | An interrupted transfer leaves nobody with authority and burns the epoch. A step property, not a constructed execution — hence `theorem_`, not `scenario_` | `proofs::adversarial::theorem_interrupted_transfer_burns_the_epoch` | `inv` holds before the step (and so, by `theorem_reachable_inv`, every reachable state) |
-| S4a | **An interrupted transfer really happens**: the run is exported with its four labels, so the `AbortTransfer` at index 3 interrupts the very `BeginTransfer` at index 2 that opened the transfer, ending at `Unowned(43, A)` with nobody able to mutate at 41 or 42. Without it, S4 stays provable even if `AbortTransfer` were changed to be always false — a conditional lemma about an unreachable transition | `proofs::adversarial::scenario_interrupted_transfer` | `A != B` |
-| S5 | **A fabricated `Released` is inert.** `HandleRevoke` lets any live node manufacture a `Released` from any `Revoke` ever sent, however old. `CompleteRelease` is the only step that consumes one, and it re-reads the actor's current state, so if it fires the actor is `Transferring` right now and the network holds the `Released` naming exactly that handover's `from` and `new_epoch` | `proofs::adversarial::theorem_complete_release_needs_the_matching_released` | none |
-| S6 | **A fabricated `Released` cannot steer a handover.** The resulting epoch is read from the live `Transferring` record, not from the message | `proofs::adversarial::theorem_complete_release_outcome_is_fixed_by_state` | none |
-| R1 | **Raymond: exactly one valid privilege** - now *structural*: `Raymond::privilege` is one node id, so uniqueness needs no invariant. It used to be inductive, and that was exactly what made a returning stale holder unrepresentable | `proofs::raymond::theorem_ray_exactly_one_token`, `theorem_ray_at_most_one_token`, preserved by `lemma_ray_step_preserves_inv` | Raymond invariant |
-| R2 | **Raymond: holder/routing changes cannot manufacture ownership** | `proofs::raymond::theorem_routing_cannot_manufacture_ownership` | Raymond invariant, coupling |
-| R3 | **Raymond: duplicate/reordered requests cannot create a second owner** | `proofs::raymond::theorem_duplicate_requests_are_safe` | Raymond invariant |
-| R4 | **Raymond: token transfer preserves ownership safety** | `proofs::composed::lemma_composed_pass_token_preserves_inv` (and, as a layer-local lemma, `proofs::raymond::theorem_token_transfer_preserves_ownership_safety`) | none — in the composed machine the release-before-transfer condition is a *guard*, not an assumption |
-| R5 | **Composed exclusivity**: in every reachable composed state at most one node may mutate the actor, and it is the node holding the token | `proofs::composed::theorem_composed_exclusivity` | composed reachability |
-| C0 | **Non-degeneracy**: a composed state in which a node is *actually inside* the critical section is reachable from `composed_init`. The contract exports the run: three labels, `RequestCs` / `EnterCs` / `ExitCs`, with `using` false at indices 0, 1 and 3 and true at 2 — so the node inside got there by entering, and the exit leaves the state it entered | `proofs::composed_scenario::scenario_composed_critical_section` | `A != B` |
-| C0a | (Step-level lemma backing C0) `EnterCs`/`ExitCs` are legal `ComposedStep::Ray` transitions and preserve the composed invariant | `proofs::composed::theorem_composed_admits_critical_section`, `..._exit` | composed invariant holds before the step |
-| C1 | **Non-vacuity**: a complete *voluntary* handover driven through **both** layers is reachable. The contract exports the whole run: `labels == handover_labels(x, a, b)` — ten steps, `BeginTransfer` at 2, `CompleteRelease` at 4, `PassToken` at 8 — plus the `Transferring { a, b, 41, 42 }` state at index 3, since the labels carry no epochs. No other execution satisfies it: the substitutes that satisfied earlier versions were crash takeover, revoking a live `A`, and an unrelated 39 → 40 transfer | `proofs::composed_scenario::scenario_composed_handover` | `A != B` |
-| C2 | **Crash-driven takeover is reachable in the composed machine**: `A` owns X@41 holding the token, crashes and takes no further step; the coordinator burns the epoch; the token is *seized*; `B` ends up owning X@42 and holding the token, with `A`'s epoch-41 token still issued and powerless. The postcondition exports the whole run — eight labels with `Crash(A)` at 2, `RevokeOwner` at 3 and `SeizeToken` at 4, and no `CompleteRelease` anywhere, so a voluntary release before the crash cannot stand in for the revocation | `proofs::composed_scenario::scenario_composed_crash_takeover` | `A != B` |
-| C3 | Seizing the token preserves the coupling and leaves the target holding the one token — safety comes from the epoch being burned first, not from the holder agreeing to let go | `proofs::composed::lemma_composed_seize_preserves_inv`, `proofs::raymond::lemma_seize_preserves_inv` | composed invariant. **No liveness assumption**: the epoch was burned first, so this holds even when the seized node is healthy and was suspected wrongly — see below |
-| C4 | **Privilege movement is partitioned by cooperation**: a holder that acts passes it on, a holder that does not has it taken, and no other composed step moves it at all. This used to be partitioned by *liveness*, which required a guard no coordinator can evaluate | `proofs::composed::theorem_token_movement_is_partitioned` | composed invariant |
-| C5 | The two layers describe the **same cluster**: `ray.nodes == own.nodes` is part of `composed_inv` and `composed_init`. Without it a Raymond root could be a node the ownership layer never heard of, so `!own.live.contains(n)` would hold for it with no `Crash` having happened, and the seizure guard would be satisfied by unmodelled liveness rather than by a fail-stop | `composed::composed_inv`, preserved by `proofs::composed::theorem_composed_step_preserves_inv` | — |
-| P10 | **The node population is constant** — `Crash` and `Recover` move nodes in and out of `live`, never out of `nodes` | `proofs::properties::theorem_node_domain_constant` | none |
-| C6 | **A seized node cannot rejoin `live` while still seized** — `cs_own` refuses `Recover` for it, so the only way back is through `Reconcile`, which now carries the content the claim always asserted: it is where the stale belief is dropped, by the node that holds it. Backed by `composed_inv`'s "every stale holder owes a reconciliation", which is what makes `seized` mean somethint must perform a step an execution has to contain rather than an assumption | `proofs::composed::theorem_seized_node_cannot_recover` | — |
-| C7 | Reconciliation is **not a dead end**: `A` can be told what happened and then rejoin, holding no token and no authority | `proofs::composed_scenario::scenario_composed_crash_takeover` (third witness) | `A != B` |
-| C | The coupling is an **invariant** of the composed machine: `composed_init ==> composed_inv`, `composed_inv /\ composed_next ==> composed_inv`, hence `composed_reachable ==> composed_inv` | `proofs::composed::theorem_composed_reachable_inv`, `theorem_composed_step_preserves_inv` | the composed transition relation |
-| R6 | A concrete routing execution: request `D → B → A → C[token]`, token `C → A → B → D`, then a twelfth step redelivering `D`'s original request after the token has finished moving. The contract exports the whole run — `tr[0] == routing_init_state(a, b, c, d)` and `labels == routing_labels(a, b, c, d)` — which pins the *path* and not just the endpoints: exactly one `RequestCs`, `D`'s, so each forward is caused by the receive before it. Pinning `r0` alone was not enough, because reachability still admitted `A`, `B` and `D` requesting independently and serving their own queue heads | `proofs::raymond_routing::scenario_request_and_token_routing` | four distinct nodes |
-| R7 | A request outlives the topology it was routed against: after the token moves it is still in `requests` and still deliverable | `proofs::raymond::theorem_delayed_request_survives_token_move` | none |
-| R8 | Delivering an arbitrarily delayed request preserves the Raymond invariant and leaves token possession completely unchanged | `proofs::raymond::theorem_delayed_request_delivery_is_safe` | Raymond invariant |
+| 1 | **Exclusive mutable ownership** - in any reachable state, if `A` and `B` may both mutate an actor then `A == B` (and their epochs are equal) | `ownership::proofs::exclusivity::theorem_exclusive_mutable_ownership` | reachability; none beyond the model |
+| 1a | The same, structurally: no state at all, reachable or not, admits two mutable owners | `ownership::proofs::exclusivity::theorem_exclusive_mutable_ownership_structural` | none |
+| 1b | Two capability tokens that both confer authority over the same actor are the same token | `ownership::proofs::exclusivity::theorem_authorized_token_unique` | reachability |
+| 2 | **Unique current epoch** - existence stated outright, and uniqueness as an implication over *arbitrary* epochs (not under the assumption that a witness was already supplied) | `ownership::proofs::fencing::theorem_unique_current_epoch` | none |
+| 3 | **Stale-owner fencing** - `current_epoch(actor) > supplied_epoch ==> !can_mutate(actor, node, supplied_epoch)` | `ownership::proofs::fencing::theorem_stale_epoch_cannot_mutate` | none |
+| 3a | Advancing `n -> n+1` strips authority from every holder of `n` | `ownership::proofs::fencing::theorem_epoch_advance_fences_previous` | none |
+| 3b | For issued tokens the fence check is exactly epoch equality (no token is ever ahead of the actor) | `ownership::proofs::fencing::theorem_fence_is_exact_for_issued_tokens` | reachability |
+| 4 | **Transfer safety** - every permitted transition preserves the ownership and fencing invariants | `ownership::proofs::transfer::theorem_transition_preserves_invariants` | `inv` holds before the step |
+| 4a | Across a whole handover, the epoch never decreases, nobody has authority at the middle stages, and the outgoing owner is fenced from the first transition onwards | `ownership::proofs::transfer::theorem_handover_safety` | `A != B` |
+| 4b | At no stage of a handover can both nodes have authority | `ownership::proofs::transfer::theorem_handover_never_both` | `A != B` |
+| 4c | An interrupted handover fences both the old and the abandoned new epoch | `ownership::proofs::transfer::theorem_interrupted_transfer_fences_both` | none |
+| 4d | Ownership cannot be manufactured: the only step that can make `may_mutate` true is `Acquire`, from `Unowned` at that exact epoch with a matching grant | `ownership::proofs::transfer::theorem_ownership_only_via_acquire` | none |
+| 5 | **Epoch monotonicity** - no transition decreases an actor's epoch | `ownership::proofs::fencing::theorem_epoch_monotone_step`, `..._next`, `..._execution` | none |
+| 6 | **Token uniqueness (authority)** - at most one token confers authority per `(ActorId, Epoch)` | `ownership::proofs::tokens::theorem_valid_token_unique_per_actor_epoch` | none |
+| 6a | **Token uniqueness (physical)** - at most one token is ever *issued* per `(ActorId, Epoch)` | `ownership::proofs::tokens::theorem_issued_token_unique_per_actor_epoch` | reachability |
+| 6b | Stale physical tokens confer no authority | `ownership::proofs::tokens::theorem_stale_token_has_no_authority` | none |
+| 6c | No token is ever minted for a future epoch | `ownership::proofs::tokens::theorem_no_future_tokens` | reachability |
+| E | The runtime `u64` check returns exactly the model's verdict **for the generation the guard records**, and rejects any epoch superseded *within that record* | `ownership::exec::FenceGuard::accepts`, `ownership::exec::FenceGuard::rejects_stale` | the guard is the node's own belief, immutable after `FenceGuard::new`. **This is node-local staleness rejection, not fencing**: a partitioned `A` still holding `FenceGuard::new(A, 41)` accepts `(A, 41)` while the system is at `Owned { B, 42 }`. A node cannot fence itself — see below |
+| E1 | **Acquire refines `tr_acquire`** — when the step fires the model fires, to exactly the record the step computed; when it refuses a request naming the actor's current epoch, *no* post state satisfies `tr_acquire`; and however the model acquires, the record it lands on is the one the step computes | `ownership::proofs::refinement::theorem_acquire_step_refines_tr_acquire`, `..._refuses_exactly_when_disabled`, `..._outcome_is_the_step` | the couplings (see the module docs of `ownership::proofs::refinement`); the refusal direction additionally assumes the request named the current epoch, which is the one place the executable step is narrower than the model |
+| E2 | **Begin-transfer refines `tr_begin_transfer`**, in the same three parts. Refusal is exactly disablement *or* epoch exhaustion, and the refusal says which | `ownership::proofs::refinement::theorem_begin_transfer_step_refines_tr_begin_transfer`, `..._refuses_exactly_when_disabled`, `..._outcome_is_the_step` | the couplings; `u64` exhaustion is the implementation's, not the model's |
+| E3 | **Release refines `tr_handle_revoke` followed by `tr_complete_release`** — two model transitions, one method, with the middle state exhibited rather than assumed to exist. A refused release is provably not the handover the model would complete | `ownership::proofs::refinement::theorem_release_step_refines_handle_revoke_then_complete_release`, `theorem_refused_release_is_not_the_models_release` | the couplings, and that the `Revoke` being acknowledged is on the network — which `tr_begin_transfer` put there |
+| E4 | **Forced revocation refines all three of its transitions**: `tr_revoke_owner` from `Owned`, `tr_reassign_unowned` from `Unowned`, `tr_abort_transfer` from `Transferring` — and in the last case the actor provably goes back to the node the transfer came from, whatever successor the coordinator named | `ownership::proofs::refinement::theorem_force_step_refines_tr_revoke_owner`, `..._tr_reassign_unowned`, `..._tr_abort_transfer` | the roster answers `pre.nodes.contains(next)` |
+| E5 | **A poll is `tr_issue_grant` or the delivery of a `Revoke`**, and the epoch it offers is the actor's current one — so a poll can never hand out a generation the registry has already left. `Nothing` is returned only to a node that is owed nothing | `ownership::proofs::refinement::theorem_poll_step_refines_tr_issue_grant`, `..._tr_handle_revoke`, `theorem_poll_step_offers_nothing_only_when_nothing_is_owed` | the couplings |
+| E6 | **The registry's fence is the *system's* fence** — `may_write_step` on the registry's own record is `can_mutate`, not a node's belief about it. Same postcondition as E, different thing, bought entirely by where it is called | `ownership::steps::may_write_step`, `ownership::proofs::refinement::theorem_may_write_step_is_the_system_fence` | the record the step is handed is the actor's |
+| E7 | **The refinement theorems are not vacuous.** Each is an implication under hypotheses, and hypotheses that cannot all hold make a theorem true and empty — a refinement suite can be green and say nothing. So one concrete system is written out in full and a whole handover walked through it, each theorem applied to the state the previous one produced, with what came out asserted | `ownership::proofs::refinement::scenario_a_handover_through_the_verified_steps` | none: the system is exhibited |
+| E7a | The same for the *refusal* theorems, whose hypotheses are the negation of a guard and so are untouched by a run in which the guard holds. In a system where no grant was published, **no** post state satisfies `tr_acquire` — quantified over all of them, not over one the server had in mind | `ownership::proofs::refinement::scenario_the_refusals_are_refusals_of_something_real` | none |
+| P1 | **Issued tokens never disappear** — no crash, partition or recovery retracts a capability, which is why stale tokens must be fenced rather than revoked | `ownership::proofs::properties::theorem_issued_monotone` | none |
+| P2 | **Sent messages never disappear** — the fact that makes duplication, reordering and unbounded delay free in the model | `ownership::proofs::properties::theorem_network_monotone` | none |
+| P3 | **The actor population is constant** — no transition creates or destroys an actor | `ownership::proofs::properties::theorem_actor_domain_constant` | none |
+| P4 | **An epoch advances by at most one per transition** — with claim 5, the epoch sequence is non-decreasing and never skips a generation | `ownership::proofs::properties::theorem_epoch_increases_by_at_most_one` | none |
+| P5 | **Ownership at a given epoch is final** — once owned by `n` at `e`, every later state still at `e` is still owned by `n` at `e`; a handover *must* burn the epoch | `ownership::proofs::properties::theorem_ownership_at_an_epoch_is_final` | valid execution |
+| P6 | **An epoch determines its owner** — any two points of an execution owned at the same epoch have the same owner | `ownership::proofs::properties::theorem_epoch_determines_owner` | valid execution |
+| P7 | **Staleness is permanent** — a fenced-out node can never be fenced back in by waiting | `ownership::proofs::properties::theorem_stale_stays_stale` | valid execution |
+| P8 | **No authority without a capability** — a node that may mutate provably holds an issued token for exactly that `(actor, epoch)` | `ownership::proofs::properties::theorem_no_authority_without_token` | reachability |
+| P9 | **Epoch monotonicity survives composition** | `ownership::proofs::properties::theorem_composed_epoch_monotone` | none |
+| R9 | **The privilege is never lost** — every Raymond transition leaves `privilege` pointing at a node | `raymond::proofs::routing_layer::lemma_ray_token_exists_init`, `lemma_ray_token_exists_step` | Raymond invariant |
+| R10 | **Raymond critical sections are exclusive — while nobody's belief is stale.** The hypothesis is not a weakening; it is the algorithm's real scope. Raymond's mutual exclusion rests on every node agreeing where the privilege is, and a seizure breaks that until the seized node reconciles | `raymond::proofs::routing_layer::theorem_ray_critical_section_is_exclusive` | Raymond invariant, `ray_no_stale_holders` |
+| R10a | **At most one node is *authorised* to be in its critical section**, with no side conditions: the authorised occupant is the privilege holder, and there is one of those by construction. This is the part of R10 that survives a seizure | `raymond::proofs::routing_layer::theorem_authorised_critical_section_is_exclusive` | Raymond invariant |
+| R13 | **A stale holder confers no authority.** A node that believes it holds the privilege, does not, and may still be inside its critical section, still cannot mutate the actor — `couples` is written against possession, not belief. The routing counterpart of 6b, and what survives imperfect failure detection | `raymond::proofs::routing_layer::theorem_stale_holder_confers_no_authority` | the coupling |
+| R14 | **Reconciliation repairs the belief**: the stale holder drops it, leaves the critical section it thought it was in, and re-points at the real holder | `raymond::proofs::routing_layer::lemma_reconcile_preserves_inv` | Raymond invariant |
+| R11 | **The holder pointers are acyclic** — part of `ray_inv`, preserved by every transition. A handover rewrites two pointers and needs a new rank (the old one shifted up by one, new root at zero); a seizure only makes the new holder point at itself, which *removes* a constraint, so the old rank still works | `raymond::proofs::routing_layer::lemma_frame_acyclic`, `lemma_repoint_acyclic` | Raymond invariant |
+| R12 | **Every node reaches the privilege holder by following holder pointers** — what makes "requests travel hop-by-hop towards the token" a checked claim. Two hypotheses, both load-bearing: R11 says the walk terminates rather than circling, and `ray_no_stale_holders` says it terminates at the real holder rather than at somebody who merely thinks so. The second was free when authority *was* belief; it is not free now, and it should not be — after a seizure a node whose belief-path leads to the seized holder genuinely cannot route to the privilege | `raymond::proofs::routing_layer::theorem_every_node_reaches_the_token` | Raymond invariant, `ray_no_stale_holders` |
+| C1 | **Election Safety — at most one leader per term.** The headline. Three sentences: a leader won a majority; any two majorities share a member; a member votes once per term | `raft::proofs::election::theorem_election_safety`, `..._reachable` | the Raft invariant, discharged for reachable states by `theorem_reachable_raft_inv` |
+| C2 | **Any two majorities of a cluster share a member.** The one piece of real mathematics, and the reason Raft needs no coordinator: two disjoint subsets whose sizes sum past the whole would make a union larger than a set containing it | `raft::proofs::election::lemma_quorums_intersect` | none |
+| C3 | **A server votes at most once per term** — sentence three, and the clause `tr_grant_vote`'s guard exists to maintain | `raft::proofs::election::inv_votes_unique`, preserved by `lemma_raft_step_preserves_inv` | the Raft invariant |
+| C4 | **A cast vote is never ahead of its voter's term.** Not in the headline argument and the clause without which it does not survive induction: it is what makes a fresh candidacy safe, because a server timing out into term `t + 1` can only be voting there for the first time | `raft::proofs::election::inv_vote_implies_term` | the Raft invariant |
+| C5 | **The Raft invariant holds in every reachable state** (`raft_init ==> inv`, `inv /\ raft_next ==> inv`) | `raft::proofs::election::theorem_reachable_raft_inv` | the model's transition relation |
+| C6 | **A majority, once won, stays won** — votes only accumulate and the cluster does not change size, so a leader elected at term 7 remains, as a matter of record, the winner of term 7 | `raft::proofs::election::lemma_quorum_survives` | none |
+| C7 | **Terms never decrease, and votes are never retracted.** The Raft counterparts of epoch monotonicity (claim 5) and token permanence (P1) — and a vote is physical in the same sense a token is, which is exactly why a returning server must not vote again in a term it has already voted in | `raft::proofs::election::theorem_term_monotone_step`, `theorem_votes_monotone_step` | none |
+| C8 | **A lone self-vote is not a majority** in a cluster of more than one. The check that the `>` in the quorum threshold is load-bearing rather than decorative: with `>=` a single server could elect itself | `raft::proofs::election::theorem_a_lone_vote_is_not_a_majority` | a cluster of at least two |
+| C9 | **An election actually happens.** A concrete three-server cluster walked from initialisation through a real election, exported with every step named, so C1 is not a safety property of a protocol that never elects anybody | `raft::proofs::scenario::scenario_a_leader_is_elected` | none: the cluster is exhibited |
+| C10 | **The election steps refine the model**, in both directions: each executable step fires exactly when the model's transition is enabled, and lands where the model lands | `raft::proofs::refinement::theorem_timeout_step_refines_tr_timeout`, `..._grant_vote_...`, `..._become_leader_...`, `..._step_down_...`, and the `..._refuses_exactly_when_disabled` for each | the couplings, tabulated in `raft::proofs::refinement`'s module docs |
+| C11 | **The `u64` tally answers the model's question about the set.** `is_majority` computes `votes + votes > members` with no multiplication to overflow and no subtraction that can go below zero; this is what makes that the same question as `is_quorum` | `raft::steps::is_majority`, `raft::proofs::refinement::theorem_majority_count_is_a_quorum`, `theorem_a_tally_fits_in_the_membership` | that the tally does not double-count a voter and the membership count is not stale — neither of which a step function can check, so both are named |
+| C12 | **Elections do not touch logs, and neither does committing.** Standing, voting, winning and standing down change who a server thinks it is; advancing the commit point is a claim about how much of the log is decided, not a change to it | `raft::proofs::log::theorem_elections_do_not_touch_logs`, `theorem_committing_does_not_touch_the_log` | none |
+| C13 | **Leader Append-Only.** A server that is a leader before and after a step has only gained entries — everything it had, it still has, in the same places. This is where Election Safety buys something concrete: the only transition that shortens a log makes its receiver a follower, so a server that is a leader on both sides was not the receiver | `raft::proofs::log::theorem_leader_append_only` | none |
+| C14 | **A client command is stamped with the term of the leader that accepted it**, and appended at the end. The term on an entry names the leader that made it, because Election Safety says there was only one leader of that term | `raft::proofs::log::theorem_client_request_stamps_the_leaders_term` | none |
+| C15 | **A follower agrees before it accepts** — the consistency check, named: it takes an entry at `prefix` only if it already holds an entry at `prefix - 1` of the leader's term, and drops everything beyond | `raft::proofs::log::theorem_a_follower_agrees_before_it_accepts` | none |
+| C16 | **Entries are never invented.** A follower's new entry is the leader's entry at the same index — copied, not constructed | `raft::proofs::log::theorem_replication_copies_the_leaders_entry` | none |
+| C17 | **Commitment needs a majority *and* the entry has to be of the committing leader's own term** — figure 8 of the Raft paper. A majority *holding* an entry is not a majority having *voted* on it, and committing on replica count alone lets a later leader overwrite it | `raft::proofs::log::theorem_commit_needs_a_majority_of_its_own_term` | none |
+| C18 | **Two commits of the same length share a holder.** As far as quorum intersection reaches without Log Matching: it produces a server holding both prefixes, which is the first line of a Leader Completeness proof and not a substitute for one | `raft::proofs::log::theorem_two_commits_share_a_holder` | none |
+| C19 | **One log is extended per term**, because the leader of a term is unique. A corollary of C1, stated because it is the shape every later log argument leans on | `raft::proofs::log::theorem_one_log_is_extended_per_term` | the Raft invariant |
+| C20 | **An append makes its receiver a follower, and the executable step computes that** — the role change at an *equal* term, which `tr_step_down` cannot reach and which figure 2 gives candidates. The refusal side is stated asymmetrically on purpose: a leader at an equal term is the state Election Safety rules out, and a step that fired on it would let any peer depose a leader by naming its term | `raft::proofs::refinement::theorem_an_append_makes_its_receiver_a_follower`, `theorem_follow_step_agrees_with_tr_append_entries`, `theorem_follow_step_refuses_exactly_when_disabled` | none |
+| C21 | **The ghost history neither enables nor disables anything.** For *any* history whatsoever — not the one the run produced, any at all — every step still fires from the same real state and lands in the same real state. This is the soundness condition for an auxiliary variable, and it is what makes `Cluster::created` and `Cluster::led` a record rather than an assumption: no guard reads them | `raft::proofs::history::theorem_history_does_not_gate_the_protocol`, `theorem_history_is_monotone` | none |
+| C22 | **At most one server *ever* leads a term** — across the whole run, not merely at one instant. Strictly stronger than C1, which compares two servers that are leaders *now*: a leader that stepped down an hour ago is outside C1 and its entries are still in logs. The sentence the log argument needs, and it cannot be stated without history | `raft::proofs::history::theorem_at_most_one_server_ever_leads_a_term`, `..._reachable` | the history invariant |
+| C23 | **Having led a term, you are still leading it or you have moved past it.** The load-bearing history invariant. The ways to stop leading either raise the term or cannot fire: a leader of `t` is refused a vote in `t` because it spent that vote on itself, and an append demoting it at an equal term would be two leaders in one term | `raft::proofs::history::inv_led_means_at_or_past`, with `inv_standing_implies_voted`, `inv_leader_is_led`, `inv_led_implies_won` | the Raft invariant (Election Safety) |
+| C24 | **A leader of a term holds everything created at that term** — the freshness clause. A leader appends at the end of its own log, and this says every slot already written at its term is inside that log, so the slot it is about to write is not one of them. At `tr_become_leader` it holds because a term being won *now* has never been led, which is C22 | `raft::proofs::history::inv_creator_holds`, `lemma_become_leader_finds_its_term_unwritten`, `lemma_client_request_writes_a_fresh_slot` | the history invariant |
+| C25 | **The consistency check is exactly the guard that keeps the creation record true.** A follower taking the leader's entry at `prefix` records a predecessor that is now *its own* entry at `prefix - 1`, not the leader's — and those agree precisely because `tr_append_entries` will not fire unless they do | `raft::proofs::history::lemma_the_consistency_check_preserves_the_record` | the history invariant |
+| C26 | **Log Matching — two logs that agree on an entry's term at an index agree on every entry at and below it.** The headline of the log half. One slot gives one recorded value and one recorded predecessor, so agreement at an index is agreement one index down, and repeating reaches zero | `raft::proofs::history::theorem_log_matching`, `theorem_log_matching_prefixes`, `theorem_log_matching_values`, `theorem_log_matching_reachable` | `inv_logs_follow_created`, discharged for reachable states by `theorem_reachable_hist_inv` |
+| I | The inductive invariant holds in every reachable state (`init ==> inv`, `inv /\ next ==> inv`) | `ownership::proofs::invariant::theorem_reachable_inv` | the model's transition relation |
+| S | **The headline scenario**: `A` owns X@41, a transfer and a crash/recovery occur, `B` owns X@42, `A` returns still holding its epoch-41 token - and cannot perform an authoritative mutation. The postcondition exports the whole nine-step run, so the crash, the recovery and the outcome are the same execution — exported as separate existentials they need not have been, and an ordinary live handover could supply the outcome | `ownership::proofs::adversarial::scenario_stale_owner_returns` | `A != B` |
+| S1 | A stale `Grant` cannot resurrect a superseded epoch | `ownership::proofs::adversarial::theorem_stale_grant_cannot_be_used` | none |
+| S2 | Message duplication / reordering / delay cannot change ownership | `ownership::proofs::adversarial::theorem_network_steps_cannot_change_ownership` | none |
+| S3 | Crash and stale-node recovery cannot change ownership | `ownership::proofs::adversarial::theorem_crash_recovery_cannot_change_ownership` | none |
+| S4 | An interrupted transfer leaves nobody with authority and burns the epoch. A step property, not a constructed execution — hence `theorem_`, not `scenario_` | `ownership::proofs::adversarial::theorem_interrupted_transfer_burns_the_epoch` | `inv` holds before the step (and so, by `theorem_reachable_inv`, every reachable state) |
+| S4a | **An interrupted transfer really happens**: the run is exported with its four labels, so the `AbortTransfer` at index 3 interrupts the very `BeginTransfer` at index 2 that opened the transfer, ending at `Unowned(43, A)` with nobody able to mutate at 41 or 42. Without it, S4 stays provable even if `AbortTransfer` were changed to be always false — a conditional lemma about an unreachable transition | `ownership::proofs::adversarial::scenario_interrupted_transfer` | `A != B` |
+| S5 | **A fabricated `Released` is inert.** `HandleRevoke` lets any live node manufacture a `Released` from any `Revoke` ever sent, however old. `CompleteRelease` is the only step that consumes one, and it re-reads the actor's current state, so if it fires the actor is `Transferring` right now and the network holds the `Released` naming exactly that handover's `from` and `new_epoch` | `ownership::proofs::adversarial::theorem_complete_release_needs_the_matching_released` | none |
+| S6 | **A fabricated `Released` cannot steer a handover.** The resulting epoch is read from the live `Transferring` record, not from the message | `ownership::proofs::adversarial::theorem_complete_release_outcome_is_fixed_by_state` | none |
+| R1 | **Raymond: exactly one valid privilege** - now *structural*: `Raymond::privilege` is one node id, so uniqueness needs no invariant. It used to be inductive, and that was exactly what made a returning stale holder unrepresentable | `raymond::proofs::routing_layer::theorem_ray_exactly_one_token`, `theorem_ray_at_most_one_token`, preserved by `lemma_ray_step_preserves_inv` | Raymond invariant |
+| R2 | **Raymond: holder/routing changes cannot manufacture ownership** | `raymond::proofs::routing_layer::theorem_routing_cannot_manufacture_ownership` | Raymond invariant, coupling |
+| R3 | **Raymond: duplicate/reordered requests cannot create a second owner** | `raymond::proofs::routing_layer::theorem_duplicate_requests_are_safe` | Raymond invariant |
+| R4 | **Raymond: token transfer preserves ownership safety** | `composed::proofs::coupling::lemma_composed_pass_token_preserves_inv` (and, as a layer-local lemma, `raymond::proofs::routing_layer::theorem_token_transfer_preserves_ownership_safety`) | none — in the composed machine the release-before-transfer condition is a *guard*, not an assumption |
+| R5 | **Composed exclusivity**: in every reachable composed state at most one node may mutate the actor, and it is the node holding the token | `composed::proofs::coupling::theorem_composed_exclusivity` | composed reachability |
+| C0 | **Non-degeneracy**: a composed state in which a node is *actually inside* the critical section is reachable from `composed_init`. The contract exports the run: three labels, `RequestCs` / `EnterCs` / `ExitCs`, with `using` false at indices 0, 1 and 3 and true at 2 — so the node inside got there by entering, and the exit leaves the state it entered | `composed::proofs::scenario::scenario_composed_critical_section` | `A != B` |
+| C0a | (Step-level lemma backing C0) `EnterCs`/`ExitCs` are legal `ComposedStep::Ray` transitions and preserve the composed invariant | `composed::proofs::coupling::theorem_composed_admits_critical_section`, `..._exit` | composed invariant holds before the step |
+| C1 | **Non-vacuity**: a complete *voluntary* handover driven through **both** layers is reachable. The contract exports the whole run: `labels == handover_labels(x, a, b)` — ten steps, `BeginTransfer` at 2, `CompleteRelease` at 4, `PassToken` at 8 — plus the `Transferring { a, b, 41, 42 }` state at index 3, since the labels carry no epochs. No other execution satisfies it: the substitutes that satisfied earlier versions were crash takeover, revoking a live `A`, and an unrelated 39 → 40 transfer | `composed::proofs::scenario::scenario_composed_handover` | `A != B` |
+| C2 | **Crash-driven takeover is reachable in the composed machine**: `A` owns X@41 holding the token, crashes and takes no further step; the coordinator burns the epoch; the token is *seized*; `B` ends up owning X@42 and holding the token, with `A`'s epoch-41 token still issued and powerless. The postcondition exports the whole run — eight labels with `Crash(A)` at 2, `RevokeOwner` at 3 and `SeizeToken` at 4, and no `CompleteRelease` anywhere, so a voluntary release before the crash cannot stand in for the revocation | `composed::proofs::scenario::scenario_composed_crash_takeover` | `A != B` |
+| C3 | Seizing the token preserves the coupling and leaves the target holding the one token — safety comes from the epoch being burned first, not from the holder agreeing to let go | `composed::proofs::coupling::lemma_composed_seize_preserves_inv`, `raymond::proofs::routing_layer::lemma_seize_preserves_inv` | composed invariant. **No liveness assumption**: the epoch was burned first, so this holds even when the seized node is healthy and was suspected wrongly — see below |
+| C4 | **Privilege movement is partitioned by cooperation**: a holder that acts passes it on, a holder that does not has it taken, and no other composed step moves it at all. This used to be partitioned by *liveness*, which required a guard no coordinator can evaluate | `composed::proofs::coupling::theorem_token_movement_is_partitioned` | composed invariant |
+| C5 | The two layers describe the **same cluster**: `ray.nodes == own.nodes` is part of `composed_inv` and `composed_init`. Without it a Raymond root could be a node the ownership layer never heard of, so `!own.live.contains(n)` would hold for it with no `Crash` having happened, and the seizure guard would be satisfied by unmodelled liveness rather than by a fail-stop | `composed::model::composed_inv`, preserved by `composed::proofs::coupling::theorem_composed_step_preserves_inv` | — |
+| P10 | **The node population is constant** — `Crash` and `Recover` move nodes in and out of `live`, never out of `nodes` | `ownership::proofs::properties::theorem_node_domain_constant` | none |
+| C6 | **A seized node cannot rejoin `live` while still seized** — `cs_own` refuses `Recover` for it, so the only way back is through `Reconcile`, which now carries the content the claim always asserted: it is where the stale belief is dropped, by the node that holds it. Backed by `composed_inv`'s "every stale holder owes a reconciliation", which is what makes `seized` mean somethint must perform a step an execution has to contain rather than an assumption | `composed::proofs::coupling::theorem_seized_node_cannot_recover` | — |
+| C7 | Reconciliation is **not a dead end**: `A` can be told what happened and then rejoin, holding no token and no authority | `composed::proofs::scenario::scenario_composed_crash_takeover` (third witness) | `A != B` |
+| C | The coupling is an **invariant** of the composed machine: `composed_init ==> composed_inv`, `composed_inv /\ composed_next ==> composed_inv`, hence `composed_reachable ==> composed_inv` | `composed::proofs::coupling::theorem_composed_reachable_inv`, `theorem_composed_step_preserves_inv` | the composed transition relation |
+| R6 | A concrete routing execution: request `D → B → A → C[token]`, token `C → A → B → D`, then a twelfth step redelivering `D`'s original request after the token has finished moving. The contract exports the whole run — `tr[0] == routing_init_state(a, b, c, d)` and `labels == routing_labels(a, b, c, d)` — which pins the *path* and not just the endpoints: exactly one `RequestCs`, `D`'s, so each forward is caused by the receive before it. Pinning `r0` alone was not enough, because reachability still admitted `A`, `B` and `D` requesting independently and serving their own queue heads | `raymond::proofs::routing_run::scenario_request_and_token_routing` | four distinct nodes |
+| R7 | A request outlives the topology it was routed against: after the token moves it is still in `requests` and still deliverable | `raymond::proofs::routing_layer::theorem_delayed_request_survives_token_move` | none |
+| R8 | Delivering an arbitrarily delayed request preserves the Raymond invariant and leaves token possession completely unchanged | `raymond::proofs::routing_layer::theorem_delayed_request_delivery_is_safe` | Raymond invariant |
 
 "Reachability" means the hypothesis `reachable(sys)`, i.e. some finite execution
 starting from an `init` state ends in `sys`. It is discharged once and for all by
@@ -273,7 +299,7 @@ starting from an `init` state ends in `sys`. It is discharged once and for all b
 A holder that acts hands the privilege on (`ComposedStep::PassToken`, which
 requires `pre.own.live.contains(n)` and `believes_holds`); a holder that does
 not has it taken (`ComposedStep::SeizeToken`).
-`proofs::composed::theorem_token_movement_is_partitioned` proves there is no
+`composed::proofs::coupling::theorem_token_movement_is_partitioned` proves there is no
 third way: routing steps, ownership transitions, acquisition and reconciliation
 all leave possession exactly as they found it.
 
@@ -484,7 +510,7 @@ passes its own fence, every time.
 That is not a contradiction: the postcondition promises
 `may_mutate(self.view(), ..)`, and `view()` is exactly that stale belief. But
 the safety property proved here is about the *system's* state
-(`can_mutate(sys, ..)`), and nothing in `src/exec.rs` connects a guard to it.
+(`can_mutate(sys, ..)`), and nothing in `src/ownership/exec.rs` connects a guard to it.
 What a guard buys is **node-local staleness rejection, not fencing**.
 
 Real fencing has to happen where the effect lands, against authoritative state:
@@ -497,7 +523,7 @@ nothing about whether an implementation performs it.
 
 ## The Raymond layer
 
-`src/raymond.rs` models Raymond's distributed mutual-exclusion algorithm as a
+`src/raymond/model.rs` models Raymond's distributed mutual-exclusion algorithm as a
 **routing** layer, kept strictly separate from ownership semantics. Per node it
 tracks a `holder` pointer (that node's **belief** about the next hop towards the
 privilege), a request `queue`, an `asked` flag (outstanding request) and `using`
@@ -542,7 +568,7 @@ all, so it cannot even change *who could* be the owner.
 
 On its own, though, `couples` is only a predicate: `ray_assign_privilege` never
 sees the ownership state, so nothing in the routing layer stops a token from
-moving out from under a node that still has authority. `src/composed.rs` closes
+moving out from under a node that still has authority. `src/composed/model.rs` closes
 that gap by defining a single state machine over both layers in which the
 synchronisation is a **guard**:
 
@@ -586,84 +612,239 @@ Raymond's **liveness** (every request is eventually served) needs FIFO,
 reliable links and no crashes. None of those are assumed here and none of it is
 claimed.
 
+## Raft: the same statement, bought by counting
+
+The failure-model table's first row is the strongest assumption this repository
+makes — **ownership records are updated atomically** — and it says outright that
+a real deployment has to buy that from consensus, or from a store with
+compare-and-swap. `src/raft/` is the first half of buying it.
+
+Raft's **Election Safety** is the exclusivity theorem with two words changed,
+and it is bought a completely different way:
+
+```text
+ownership:  at most one authoritative owner per epoch, because a single
+            atomic registry hands the epoch out
+raft:       at most one leader per term, because any two quorums share a
+            voter and a voter votes once per term
+```
+
+The difference is worth dwelling on, because it is the whole reason both are
+here. `ownership::proofs::exclusivity` is **structural**: `may_mutate` is true in
+exactly one shape, `Owned { owner, epoch }`, so two owners is not a state the
+model can represent, and all the work is in showing the transitions never reach
+a bad one. In `raft::model` nothing is structural. A `Cluster` can perfectly well
+hold two servers both believing they lead term 7 — that state is representable,
+and ruling it out is a **counting** argument over a set that no single
+participant can see. Side by side, the two say what a coordinator costs.
+
+The argument is three sentences (C1–C3), and the interesting clause is the one
+that is *not* in it. `inv_vote_implies_term` (C4) says a cast vote is never
+ahead of its voter's term, and without it the induction fails at the most
+ordinary step in the protocol: a server timing out into term `t + 1` votes for
+itself there, and only this clause rules out an earlier vote of its own already
+sitting in that term.
+
+### The log, and the line between modelled and proved
+
+The model has a log. `tr_client_request` stamps an entry with its leader's term,
+`tr_append_entries` carries one entry under the consistency check and truncates
+whatever diverged, `tr_advance_commit` advances the commit point under figure
+8's restriction, and `tr_grant_vote` carries the `lastLogIndex`/`lastLogTerm`
+up-to-date comparison. All four are in `raft_next`, so every run of
+`raft_reachable` may use them and every theorem above holds across them.
+
+C12–C19 are what follows from a *single step* — a leader only appends, a follower
+agrees before it accepts, an entry is copied rather than invented, a commit needs
+a majority of the committing leader's own term. **Log Matching is proved too**
+(C26), and getting there needed something the model did not have.
+
+> Ruling out a second entry at the same `(index, term)` is a fact about the
+> **run's history**, not about any one state. At `tr_client_request` the leader
+> appends at the end of its own log, and nothing in the *state* says no leader of
+> that term ever appended at that index before.
+
+So `Cluster` carries two ghost fields: `led`, every `(server, term)` ever led,
+and `created`, every entry any leader ever made — keyed by the slot naming it,
+recording its value **and the term of the entry before it**. That second
+component is what makes Log Matching an induction rather than a wish: two
+servers whose entries at an index carry the same term are reading the same slot,
+so they agree on the value *and* on the recorded predecessor, which is the same
+question one index down. Repeat to zero.
+
+**Two moments are worth pointing at.** At `tr_become_leader` the freshness clause
+(C24) holds because a term being won now has never been led — that is C22, and
+the middle of its chain is a fact about a server that may have stepped down long
+ago, which is where the history earns its keep. And at `tr_append_entries` the
+record survives because the follower's entry at `prefix - 1` has the same term as
+the leader's: that is the **consistency check**, already in the protocol since
+the log went in, and it turns out to be exactly the guard the proof wants rather
+than something added for it (C25).
+
+**The ghost state is not an escape hatch, and that is a theorem** (C21): for any
+history whatsoever, every step still fires from the same real state and lands in
+the same real state. A guard that read the history could not satisfy that. The
+fields are written and never read, which is what makes them auxiliary variables
+in the standard sense.
+
+**Leader Completeness and State Machine Safety are still not proved**, and the
+reason is not "we ran out of time": they need this plus an induction over terms
+relating the up-to-date vote guard to what has been committed. A follower here
+will still truncate entries it had committed, which is faithful Raft — the
+protection against that is supposed to come from the election restriction, and
+the election restriction's proof is what is still missing.
+
+**There is no reconfiguration**, deliberately: membership is fixed and no
+transition changes it. Joint consensus is a separate protocol with its own
+well-known unsafety, and modelling it half-way would be worse than not modelling
+it.
+
+### The consensus service
+
+`src/raft/service.rs` serves it: `request_vote` with the up-to-date comparison,
+`append_entries` with the consistency check and the truncation, `heartbeat`,
+`standing`. As in the ownership service, **no method takes a server number** —
+the candidate asking for a vote is whoever opened the connection — and that
+matters more here, because a protocol whose entire safety argument is "a server
+votes once per term" is exactly the one you do not want taking the voter's or the
+candidate's identity from a field. Standing for election, tallying, taking a
+term, appending a command and advancing the commit point are inherent methods
+rather than RPCs, for the reason `force` is inherent on the ownership registry: a
+peer that could trigger them could keep the cluster in a permanent election, or
+declare somebody's entry committed.
+
+The log itself is a **trait**, `LogStore`, with `MemoryLogStore` as the mock the
+tests run against. A real log is a file with a format, an fsync policy and a
+truncation story, none of which belongs in the protocol; the protocol's own
+behaviour is exactly what you want to exercise without a disk in the way.
+
+**Replies are protocol steps too.** Raft's term rule is about *"RPC request or
+response"*, and a `Ballot::Refused(2)` reaching a term-1 candidate carries the
+same news as an inbound request would. `count_ballot`, `observe_standing` and
+`observe_appended` are that side of it, and they take the reply itself rather
+than a summary: there is no way into a candidate's tally except by handing over a
+`Ballot::Granted` for the term being stood in. A method taking only `(peer,
+term)` would let a caller count a peer that refused — a majority assembled out of
+nothing, and a leader the model never elected.
+
+**And the same durability finding, arrived at from the other end.** Raft's own
+figure 2 requires `currentTerm` and `votedFor` on stable storage *before
+responding to RPCs*. That is the requirement the ownership registry's epoch floor
+turned out to have, and it is load-bearing for the same reason: a server that
+grants a vote, replies, restarts having forgotten, and grants again has voted
+twice in one term — two candidates can then each hold a majority, and Election
+Safety is gone. Not because the proof is wrong, but because `already_voted` was
+reported `false` when the model's `has_voted` was true. `tests/raft_election.rs`
+runs that in both directions: a restarted voter that refuses the second request,
+and a forgetful one that grants it and elects two leaders.
+
 ## Repository layout
 
 ```text
 distributed-ownership/
-├── Cargo.toml
+├── Cargo.toml              one crate; the services are behind a non-default feature
 ├── rust-toolchain.toml
 ├── README.md
 ├── src/
 │   ├── lib.rs
-│   ├── model.rs        state space + transition relation (no specification)
-│   ├── ownership.rs    may_mutate, tokens, the system invariant
-│   ├── fencing.rs      current_epoch, valid_fence, staleness
-│   ├── transfer.rs     the multi-step handover and its lemmas
-│   ├── raymond.rs      Raymond routing layer + the coupling predicate
-│   ├── composed.rs     both layers as one machine; coupling enforced by guards
-│   ├── steps.rs        the transitions as executable u64 functions
-│   ├── exec.rs         the u64 fence check a node runs on its own belief
-│   └── proofs/
-│       ├── mod.rs
-│       ├── invariant.rs    init ==> inv, inv /\ next ==> inv, reachable ==> inv
-│       ├── properties.rs   structural, temporal and capability properties
-│       ├── exclusivity.rs  claim 1
-│       ├── fencing.rs      claims 2, 3, 5
-│       ├── transfer.rs     claim 4
-│       ├── tokens.rs       claim 6
-│       ├── adversarial.rs  concrete adversarial executions
-│       ├── raymond.rs      claim 7
-│       ├── composed.rs     the coupling as a composed-machine invariant
-│       ├── composed_scenario.rs  an end-to-end handover across both layers
-│       ├── raymond_routing.rs  the D → B → A → C routing execution
-│       └── refinement.rs   steps.rs agrees with the model's tr_* transitions
+│   ├── ownership/          exclusive mutable ownership with epoch fencing
+│   │   ├── model.rs        state space + transition relation (no specification)
+│   │   ├── spec.rs         may_mutate, tokens, the system invariant
+│   │   ├── fencing.rs      current_epoch, valid_fence, staleness
+│   │   ├── transfer.rs     the multi-step handover and its lemmas
+│   │   ├── steps.rs        the transitions as executable u64 functions
+│   │   ├── exec.rs         the u64 fence check a node runs on its own belief
+│   │   ├── service.rs      the protocol over Jetstream RPC   [feature = "service"]
+│   │   └── proofs/
+│   │       ├── invariant.rs    init ==> inv, inv /\ next ==> inv, reachable ==> inv
+│   │       ├── properties.rs   structural, temporal and capability properties
+│   │       ├── exclusivity.rs  claim 1
+│   │       ├── fencing.rs      claims 2, 3, 5
+│   │       ├── transfer.rs     claim 4
+│   │       ├── tokens.rs       claim 6
+│   │       ├── adversarial.rs  concrete adversarial executions
+│   │       └── refinement.rs   steps.rs agrees with the model's tr_* transitions
+│   ├── raymond/            Raymond's mutual-exclusion routing layer
+│   │   ├── model.rs
+│   │   └── proofs/{routing_layer.rs, routing_run.rs}
+│   ├── composed/           ownership and Raymond as one machine
+│   │   ├── model.rs        the coupling enforced by guards, not assumed
+│   │   └── proofs/{coupling.rs, scenario.rs}
+│   └── raft/               consensus: terms, votes, quorums, the log
+│       ├── model.rs        state space + transition relation
+│       ├── steps.rs        the election decisions as executable u64 functions
+│       ├── service.rs      the protocol over Jetstream RPC   [feature = "service"]
+│       └── proofs/
+│           ├── election.rs     Election Safety, via quorum intersection
+│           ├── history.rs      the ghost record, and Log Matching out of it
+│           ├── log.rs          what one replication step gives you (and what it does not)
+│           ├── refinement.rs   steps.rs agrees with the model's tr_* transitions
+│           └── scenario.rs     a run in which an election actually happens
 ├── tests/
 │   ├── scenario_body/mod.rs    the executable protocol + the runtime oracles
 │   ├── turmoil_ownership.rs    named stories, each with an expected ending
 │   ├── turmoil_scenarios.rs    the blind seed search + the regression replay
+│   ├── protocol_lines.rs       the search over what arrives at the registry
+│   ├── ownership_handover.rs   the service's headline story   [feature = "service"]
+│   ├── ownership_durability.rs the restart that must not rewind [feature = "service"]
+│   ├── raft_election.rs        a split vote elects one leader  [feature = "service"]
+│   ├── raft_log.rs             the consistency check and figure 8 [feature = "service"]
+│   ├── raft_wire.rs            the service over a simulated network [feature = "service"]
 │   └── seeds/scenarios.txt     seeds that once broke something
-├── services/
-│   └── ownership/              the protocol as a Jetstream service
 └── .github/workflows/verify.yml
 ```
 
-This differs from a plain `proofs/` directory at the repository root: Verus
-verifies a *crate*, so every proof file has to be a module of that crate. Keeping
-them under `src/proofs/` is the ordinary Rust way to express that; a top-level
-`proofs/` would need `#[path = "../proofs/..."]` attributes for no benefit.
+**One directory per algorithm, and each one holds the whole of that algorithm**
+— its model, its proofs, its executable steps and its service. A protocol whose
+proof lived in one crate and whose implementation lived in another is a protocol
+where the two can drift without anything noticing; here they are compiled
+together and the service calls the functions the proofs are about.
 
-Executable code *in the crate* is confined to two modules. `src/steps.rs` holds
-the protocol's transitions as small `u64`-valued functions — one per request a
-server answers — each with a postcondition stated in terms of the model and a
-theorem in `src/proofs/refinement.rs` discharging it. `src/exec.rs` holds the
-fence check a node runs against its own belief, which is a different thing from
-the fence a registry runs and says so at length. Other executable code in the
-repository lives under `tests/` and `services/`, where it is simulation and
-service rather than library — see
-[Network resiliency](#network-resiliency-the-model-run-for-real)
-and [The protocol as a Jetstream service](#the-protocol-as-a-jetstream-service).
-`exec` offers **queries only**: a `FenceGuard` has private fields, a single
+**The services are behind a feature that is off by default**, and that is what
+makes one crate workable. `verus --crate-type=lib src/lib.rs` and `cargo verus
+verify` both run with default features, so the verified build's dependency graph
+is `vstd` and nothing else — no Jetstream, no async runtime for Verus to be
+asked about, and no need for a single `#[verifier::external]` to keep service
+code out of the proofs. Turn the feature on and the same modules compile against
+the same verified step functions, under `cargo +stable`: `rust-toolchain.toml`
+pins the Rust release the Verus build was made against so the **proofs** verify,
+not so a service is stuck on it.
+
+This differs from a plain `proofs/` directory at the repository root: Verus
+verifies a *crate*, so every proof file has to be a module of that crate.
+Keeping them under `src/{algorithm}/proofs/` is the ordinary Rust way to express
+that; a top-level `proofs/` would need `#[path = "../proofs/..."]` attributes
+for no benefit.
+
+**Verified executable code** is in the `steps.rs` and `exec.rs` of each
+algorithm: small `u64`-valued functions, each with a postcondition stated in
+terms of that algorithm's model and a theorem in its `proofs/refinement.rs`
+discharging it. **Unverified executable code** is in each algorithm's
+`service.rs` and under `tests/`, and it is unverified in the plain sense that
+Verus never compiles it — the feature is off when the proofs are checked — not
+in the sense that an escape hatch waves it through. `exec` offers **queries
+only**: a `FenceGuard` has private fields, a single
 constructor and no setter, so its ghost view is fixed at construction. Were it
 mutable — by a `bump` method or by assigning to a public field — its view could
 drift from `Owned(A, e)` to `Owned(B, e + 1)`, exactly the atomic ownership
 assignment this model refuses to admit. Observing a new generation means
 constructing a new guard. Making a
 guard follow the protocol needs a refinement of the *node* side; the registry
-side is `src/steps.rs`.
+side is `src/ownership/steps.rs`.
 Everything else in the crate is specification or proof.
 
-Specification and proof code are kept apart from the model: `src/model.rs`
+Specification and proof code are kept apart from the model: `src/ownership/model.rs`
 defines only the state space and the transition relation and does not import the
 specification layer, so a specification cannot be quietly weakened to fit the
 model.
 
 ## The protocol as a Jetstream service
 
-Everything above is a model and a simulation of it. `services/ownership/` is the
+Everything above is a model and a simulation of it. `src/ownership/service.rs` is the
 protocol served over [Jetstream](https://github.com/sevki/jetstream) RPC — a
 `#[service] trait Ownership` with `poll`, `acquire`, `write`, `begin_transfer`
 and `release`, implemented by a `Registry` that performs the fence with
-`exec::FenceGuard`.
+`ownership::exec::FenceGuard`.
 
 **The service form removes a class of defect rather than guarding against it.**
 The line protocol in `tests/` carries the sender as a field — `WRITE 0 41`
@@ -705,7 +886,7 @@ has ever used. `Registry::new` starts strictly above it and writes that down
 before serving, and each later burn is recorded *before* the state depending on
 it is visible, so a registry that dies mid-decision skips an epoch — the safe
 direction, since epochs must not repeat but need not be consecutive.
-`services/ownership/tests/durability.rs` runs the same handover against a floor
+`tests/ownership_durability.rs` runs the same handover against a floor
 that remembers and against one that forgot, and asserts in the second case that
 the already-fenced owner writes again at the burned epoch while the node holding
 the *later* epoch is the one refused.
@@ -720,9 +901,10 @@ same guarantee.
 **What is verified about it, precisely.** Every decision the service makes about
 the actor, and nothing else. `poll`, `acquire`, `write`, `begin_transfer`,
 `release` and `force` each look the actor's record up, hand it to a function in
-`distributed_ownership::steps`, and store what comes back; those functions are
+`distributed_ownership::ownership::steps`, and store what comes back; those
+functions are
 executable `u64` code with postconditions stated in terms of the model, and
-`proofs::refinement` is where the postconditions are tied to `tr_acquire`,
+`ownership::proofs::refinement` is where the postconditions are tied to `tr_acquire`,
 `tr_begin_transfer`, `tr_handle_revoke`, `tr_complete_release`,
 `tr_revoke_owner`, `tr_reassign_unowned`, `tr_abort_transfer` and
 `tr_issue_grant` — rows E1 to E6 above.
@@ -740,7 +922,7 @@ The couplings that connect one actor's `u64` record to a whole `System` are
 hypotheses of the theorems rather than silent assumptions — the registry's
 issued-grant set stands for `network.contains(Grant { .. })`, its roster for
 `nodes.contains(..)`, an open connection for `live.contains(..)` — and the
-module docs of `proofs::refinement` tabulate which part of the service
+module docs of `ownership::proofs::refinement` tabulate which part of the service
 discharges each one.
 
 The grant coupling is the one a server can *break*, and one did. `granted` is
@@ -1042,8 +1224,8 @@ rests on something the network does not give you. Both are findings. What it is
 *not* is a check on the proofs — those are static, and no simulation can
 contradict them. It is also not a substitute for a refinement: the coordinator
 *in `tests/`* is hand-written to match the model and nothing machine-checks that
-it does — which is exactly the gap `src/steps.rs` closes for the Jetstream
-service in `services/ownership/`, and the reason the two coordinators are worth
+it does — which is exactly the gap `src/ownership/steps.rs` closes for the Jetstream
+service in `src/ownership/service.rs`, and the reason the two coordinators are worth
 keeping side by side.
 
 **Would the oracles notice?** A suite that cannot fail is indistinguishable
@@ -1051,7 +1233,7 @@ from one that passes, so `oracles_catch_an_unfenced_coordinator` runs one story
 twice with a single bit changed — the coordinator stops checking writes against
 the registry — and requires the oracles to *reject* the second run. Same
 actions, same seed, same network, same oracles; what separates them is exactly
-the check `src/exec.rs` says has to happen where the effect lands.
+the check `src/ownership/exec.rs` says has to happen where the effect lands.
 `oracles_catch_a_write_at_a_burned_epoch` does the same for the fencing oracle,
 on the case the others cannot see: a stale write with nothing written after it.
 `oracles_catch_an_overfencing_coordinator` is the mirror of the first: the same
@@ -1088,7 +1270,7 @@ the high-water mark has to follow.
 that attribute and would fail the build by design. The one piece of `src/` the
 simulation uses is `FenceGuard`, because it is the node-local check a real node
 performs — and watching a stale guard say yes while the coordinator says no is
-precisely the asymmetry `src/exec.rs` documents.
+precisely the asymmetry `src/ownership/exec.rs` documents.
 
 Where the model makes a node act, the simulation makes that node send the
 request. `tr_begin_transfer` carries `pre.live.contains(from)` — agreeing to
@@ -1169,7 +1351,7 @@ the whole crate with no errors. CI writes the current count into each run's job
 summary, which is the authoritative figure — the snapshot in prose drifts, the
 job summary does not.
 
-**Machine-checked** (every `proof fn` in `src/proofs/` is checked by Verus in
+**Machine-checked** (every `proof fn` in `src/{algorithm}/proofs/` is checked by Verus in
 CI, with no `assume`/`admit`/`external_body`/`axiom`):
 
 * exclusive mutable ownership, in every reachable state;
@@ -1239,8 +1421,8 @@ invariant preservation):
   make.
 * **done, for the registry's transitions**: the refinement from the `nat`-valued
   model to an executable `u64` implementation, with the epoch-exhaustion case
-  handled, is `src/steps.rs` and `src/proofs/refinement.rs` — see rows E1 to E6.
-  What remains unrefined is the *node* side: `src/exec.rs` still offers no way
+  handled, is `src/ownership/steps.rs` and `src/ownership/proofs/refinement.rs` — see rows E1 to E6.
+  What remains unrefined is the *node* side: `src/ownership/exec.rs` still offers no way
   to advance a node's fence guard, only to consult it, so that no executable API
   can perform a handover the model does not;
 * the actual actor runtime: networking, persistence, and the code that obeys the
@@ -1249,7 +1431,17 @@ invariant preservation):
   theorems on a simulated network (see
   [Network resiliency](#network-resiliency-the-model-run-for-real)), which is
   evidence rather than proof: nothing machine-checks that the coordinator in
-  `tests/` refines the transition relation in `src/`.
+  `tests/` refines the transition relation in `src/`;
+* **Raft's Leader Completeness and State Machine Safety.** Log Matching is
+  proved (C26), so two servers that agree on an entry agree on everything below
+  it. What is missing is the argument that a leader's log contains every
+  *committed* entry, which needs an induction over terms relating the up-to-date
+  vote guard to what has been committed, and State Machine Safety on top of
+  that. Until they exist the registry's contents agree *where servers overlap*
+  but are not yet guaranteed to survive a leader change — which is the half of
+  the atomicity assumption that is load-bearing for `System::actors`;
+* **reconfiguration.** Membership is fixed. Joint consensus is a real and
+  well-known source of Raft unsafety and is not attempted here.
 
 ### The holder graph is a tree, and now says so
 
@@ -1259,7 +1451,7 @@ set of non-root nodes from pointing at each other in a cycle, off to one side of
 the real root. `ray_init` permitted it too — it forbids only a non-root pointing
 at *itself*, so `A → B`, `B → A` beside a root `C → C` satisfied it.
 
-The consequence was visible in `src/raymond.rs`'s own opening comment: "requests
+The consequence was visible in `src/raymond/model.rs`'s own opening comment: "requests
 travel hop-by-hop towards the token" is false for a node inside such a cycle,
 whose request would circle for ever. Nothing in the safety proofs depended on the
 claim, which is exactly why it went unchecked for eight review rounds.
@@ -1400,3 +1592,12 @@ silence as evidence about triggers. It is not.
 CI greps `src/` for the real escape hatches and fails the build if any appear.
 Everything the proofs rely on that is not derived is a modelled transition or an
 explicitly documented entry in the failure-model table above.
+
+That grep now runs over a `src/` that also holds two Jetstream services, and it
+still means what it said. The services are behind a feature that is off when the
+proofs are checked, so Verus never compiles them and none of them needs a
+`#[verifier::external]` to be kept out — which is why the feature exists rather
+than being a packaging preference. If a service ever did need one, this grep
+would fail the build, and that is the right outcome: an unverified module inside
+a verified crate should be excluded by the build, not waved through by an
+attribute.

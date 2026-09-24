@@ -392,6 +392,23 @@ pub open spec fn max_nat(a: nat, b: nat) -> nat {
     }
 }
 
+/// The commit index a follower ends up with after accepting an entry.
+///
+/// `min(leaderCommit, index of last new entry)` as figure 2 has it, **never
+/// backwards**, and **never past the end of the log**. The last clamp is what
+/// stops a truncation leaving the commit point naming entries that are no
+/// longer there — a state no later reader can make sense of, and one only a
+/// conflict below the commit point can produce, which is what Leader
+/// Completeness is supposed to rule out.
+///
+/// It is a named function rather than an expression inside [`tr_append_entries`]
+/// because the proof of `lemma_append_entries_preserves_inv` has to hand its
+/// frame lemma a `Server` that is *exactly* what the transition inserts. Two
+/// copies of one rule drift, and did.
+pub open spec fn accepted_commit(follower_commit: nat, leader_commit: nat, new_log_len: nat) -> nat {
+    min_nat(max_nat(follower_commit, min_nat(leader_commit, new_log_len)), new_log_len)
+}
+
 // ---------------------------------------------------------------------------
 // Transitions
 // ---------------------------------------------------------------------------
@@ -621,26 +638,9 @@ pub open spec fn tr_append_entries(
             role: Role::Follower,
             current_term: pre.servers[follower].current_term,
             log: appended_log(pre.servers[follower].log, pre.servers[leader].log, prefix),
-            // `min(leaderCommit, index of last new entry)`, and never
-            // backwards.
-            // `min(leaderCommit, index of last new entry)`, never backwards,
-            // and **never past the end of the log**. The last clamp is what
-            // stops a truncation leaving the commit point naming entries that
-            // are no longer there — a state no later reader can make sense of,
-            // and one only a conflict below the commit point can produce, which
-            // is what Leader Completeness is supposed to rule out.
-            commit: min_nat(
-                max_nat(
-                    pre.servers[follower].commit,
-                    min_nat(
-                        pre.servers[leader].commit,
-                        appended_log(
-                            pre.servers[follower].log,
-                            pre.servers[leader].log,
-                            prefix,
-                        ).len(),
-                    ),
-                ),
+            commit: accepted_commit(
+                pre.servers[follower].commit,
+                pre.servers[leader].commit,
                 appended_log(pre.servers[follower].log, pre.servers[leader].log, prefix).len(),
             ),
         },

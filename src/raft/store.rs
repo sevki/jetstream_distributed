@@ -308,21 +308,25 @@ pub open spec fn entry_seq(v: Seq<ExecEntry>) -> Seq<Entry> {
 /// methods the standard library happens to have specifications for.
 pub fn truncate_to(out: &mut Vec<ExecEntry>, len: usize)
     requires
-        len <= old(out).len(),
+        len <= old(out)@.len(),
     ensures
         final(out)@ == old(out)@.take(len as int),
 {
-    assert(old(out)@.take(old(out)@.len() as int) =~= old(out)@);
-    while out.len() > len
+    let ghost original = old(out)@;
+    let mut n: usize = out.len();
+    assert(original.take(n as int) =~= original);
+
+    while n > len
         invariant
-            len <= out@.len(),
-            out@ == old(out)@.take(out@.len() as int),
-        decreases out@.len() - len as int,
+            len <= n <= original.len(),
+            out@ == original.take(n as int),
+            out@.len() == n,
+        decreases n - len as int,
     {
-        let ghost before = out@;
         let _ = out.pop();
-        assert(out@ =~= before.drop_last());
-        assert(old(out)@.take(out@.len() as int) =~= before.drop_last());
+        assert(out@ =~= original.take(n as int).drop_last());
+        assert(original.take(n as int).drop_last() =~= original.take(n - 1));
+        n = n - 1;
     }
 }
 
@@ -336,16 +340,25 @@ pub fn apply_record(out: &mut Vec<ExecEntry>, r: ExecRecord)
         entry_seq(final(out)@) == replay_step(entry_seq(old(out)@), r.view()),
 {
     let ghost before = out@;
+    proof {
+        assert(entry_seq(before).len() == before.len());
+    }
     if r.is_truncate {
-        let target = if (r.a as usize) < out.len() {
+        // **The comparison is in `u64`, not `usize`.** `r.a as usize` can
+        // truncate — `usize` is not 64 bits everywhere, and a record naming a
+        // length above `usize::MAX` would be read as a much smaller one, which
+        // is a truncation to the wrong place and not a refusal. Comparing
+        // `r.a` against the length widened to `u64` means the cast below only
+        // ever happens on a value already known to be under it.
+        let here: u64 = out.len() as u64;
+        let target: usize = if r.a < here {
             r.a as usize
         } else {
             out.len()
         };
         proof {
-            // `min_nat` is what `replay_step` clamps with, and this is the same
-            // choice made at `usize`.
-            assert(entry_seq(before).len() == before.len());
+            // `min_nat` is what `replay_step` clamps with, and this is the
+            // same choice made at `usize`.
             assert(min_nat(r.a as nat, entry_seq(before).len()) == target as nat);
         }
         truncate_to(out, target);

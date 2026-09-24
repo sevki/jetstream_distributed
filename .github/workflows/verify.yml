@@ -484,4 +484,5 @@ jobs:
             --test raft_election \
             --test raft_wire \
             --test raft_log \
+            --test raft_store \
             -- --nocapture

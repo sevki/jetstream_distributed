@@ -138,3 +138,8 @@ required-features = ["service"]
 name = "raft_log"
 path = "tests/raft_log.rs"
 required-features = ["service"]
+
+[[test]]
+name = "raft_store"
+path = "tests/raft_store.rs"
+required-features = ["service"]

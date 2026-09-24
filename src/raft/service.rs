@@ -92,6 +92,7 @@ use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use crate::raft::store::{apply_record, replay_exec, ExecEntry, ExecRecord};
 use crate::raft::steps::{
     become_leader_step, follow_step, grant_vote_step, is_majority, step_down_step, timeout_step,
     ExecRole, ExecServer, RaftOutcome, RaftRefusal,
@@ -227,6 +228,160 @@ impl LogStore for MemoryLogStore {
         let mut g = self.0.lock().expect("log lock");
         g.truncate(prefix as usize);
         g.push(entry);
+        Ok(())
+    }
+}
+
+/// **A `LogStore` whose device is append-only**, and the executable form of
+/// [`crate::raft::store`].
+///
+/// [`MemoryLogStore`] is a `Vec<LogEntry>` that shrinks when it truncates,
+/// which is a log no durable device can be. This one keeps a **record log** —
+/// appends and truncation markers, only ever growing — and its entries are
+/// `replay_exec` of that. `crate::raft::proofs::store` is what says the two
+/// agree: C27 says memory and device never disagree, C28 says a crash can only
+/// rewind, C29 says accepting a replicated entry costs at most two records.
+///
+/// It is still in memory. The point is not durability yet — it is that the
+/// shape is the shape a device can serve, so wiring one underneath changes
+/// where the bytes go and not what the store does. [`Self::after_crash`] is
+/// that claim made testable: drop any suffix of the records and replay, which
+/// is exactly what C28 says a crash can do.
+///
+/// # Order of writes
+///
+/// The record goes onto the device **before** the in-memory log is updated. A
+/// crash between the two leaves memory behind the device, and recovery replays
+/// the device, so nothing is lost. The other order leaves memory *ahead* of the
+/// device — a store that believes an entry it never wrote down, which is the
+/// failure `LogStore`'s durability requirement exists to forbid.
+#[derive(Clone)]
+pub struct RecordLogStore(Arc<Mutex<RecordInner>>);
+
+struct RecordInner {
+    /// The device. Only ever grows — C30.
+    records: Vec<ExecRecord>,
+    /// The log, kept equal to `replay_exec(&records)` — C27.
+    log: Vec<ExecEntry>,
+}
+
+impl Default for RecordLogStore {
+    fn default() -> Self {
+        RecordLogStore::new()
+    }
+}
+
+impl RecordLogStore {
+    pub fn new() -> Self {
+        RecordLogStore(Arc::new(Mutex::new(RecordInner { records: Vec::new(), log: Vec::new() })))
+    }
+
+    /// Start from a device. This is recovery, and it is the whole of it:
+    /// `replay_exec` and nothing else.
+    pub fn recovered(records: Vec<ExecRecord>) -> Self {
+        let log = replay_exec(&records);
+        RecordLogStore(Arc::new(Mutex::new(RecordInner { records, log })))
+    }
+
+    /// What is on the device.
+    pub fn records(&self) -> Vec<ExecRecord> {
+        self.0.lock().expect("record log lock").records.clone()
+    }
+
+    /// How many records are on the device. Distinct from `len()`, which is the
+    /// number of *entries* — a truncation is a record and not an entry, so
+    /// these diverge, and watching them diverge is what C31's compaction is
+    /// for.
+    pub fn device_len(&self) -> usize {
+        self.0.lock().expect("record log lock").records.len()
+    }
+
+    /// **The crash.** A new store recovered from the first `survived` records.
+    ///
+    /// C28 in executable form: the device keeps a prefix, recovery is `replay`
+    /// of it, and what comes back is a log this store had. `survived` past the
+    /// end is clamped rather than refused, because a caller asking about more
+    /// records than exist is asking about no crash at all.
+    pub fn after_crash(&self, survived: usize) -> Self {
+        let all = self.records();
+        let keep = if survived < all.len() { survived } else { all.len() };
+        RecordLogStore::recovered(all[..keep].to_vec())
+    }
+
+    /// **Rewrite the device as pure appends**, which is C31.
+    ///
+    /// One record per entry and no truncations, so a device that has
+    /// accumulated markers can be replaced by one the size of the log. What
+    /// this does *not* do is schedule itself: nothing calls it, and a store
+    /// that never compacts grows without bound. Stated in `crate::raft::store`
+    /// and repeated here because this is where a reader would look for the
+    /// bound.
+    pub fn compact(&self) {
+        let mut g = self.0.lock().expect("record log lock");
+        let rewritten: Vec<ExecRecord> = g
+            .log
+            .iter()
+            .map(|e| ExecRecord { is_truncate: false, a: e.term, b: e.value })
+            .collect();
+        g.records = rewritten;
+    }
+
+    /// The whole log, for tests to compare against.
+    pub fn entries(&self) -> Vec<LogEntry> {
+        self.0
+            .lock()
+            .expect("record log lock")
+            .log
+            .iter()
+            .map(|e| LogEntry { term: e.term, value: e.value })
+            .collect()
+    }
+}
+
+/// Put one record on the device, then apply it.
+///
+/// The only way this store changes. `apply_record` is the verified function
+/// from `crate::raft::store`, so the in-memory log is not maintained by
+/// hand-written logic that could disagree with `replay` — it is maintained by
+/// the function `replay` is defined in terms of.
+fn write_record(g: &mut RecordInner, r: ExecRecord) {
+    g.records.push(r);
+    apply_record(&mut g.log, r);
+}
+
+impl LogStore for RecordLogStore {
+    fn len(&self) -> io::Result<u64> {
+        Ok(self.0.lock().expect("record log lock").log.len() as u64)
+    }
+
+    fn entry_at(&self, index: u64) -> io::Result<Option<LogEntry>> {
+        Ok(self
+            .0
+            .lock()
+            .expect("record log lock")
+            .log
+            .get(index as usize)
+            .map(|e| LogEntry { term: e.term, value: e.value }))
+    }
+
+    fn append(&self, entry: LogEntry) -> io::Result<u64> {
+        let mut g = self.0.lock().expect("record log lock");
+        write_record(&mut g, ExecRecord { is_truncate: false, a: entry.term, b: entry.value });
+        Ok(g.log.len() as u64)
+    }
+
+    /// **Two records**, which is C29's conflict branch: the marker, then the
+    /// entry. Never more, whatever the size of the tail it deletes — and the
+    /// device grows by two rather than shrinking by the length of that tail.
+    ///
+    /// The branch that costs *nothing* is not here. `Peer::append_entries`
+    /// decides whether the entry conflicts and only calls this if it does, so
+    /// an `AppendEntries` whose entry is already present never reaches the
+    /// device at all.
+    fn overwrite(&self, prefix: u64, entry: LogEntry) -> io::Result<()> {
+        let mut g = self.0.lock().expect("record log lock");
+        write_record(&mut g, ExecRecord { is_truncate: true, a: prefix, b: 0 });
+        write_record(&mut g, ExecRecord { is_truncate: false, a: entry.term, b: entry.value });
         Ok(())
     }
 }

@@ -77,6 +77,34 @@ documented part of the system model"*. Anything this repository proves on top of
 `pmemlog` is conditional on them, and the root `README.md` says so where it
 states what is proved.
 
+## The crash model: 8-byte chunks, not byte atomicity
+
+Worth stating on its own, because it is easy to assume something stronger.
+
+`pmemspec_t::persistence_chunk_size` is **8**, and
+`WriteRestrictedPersistentMemory::write` may only be called when the permission
+holds for *every* subset of 8-byte chunks having been flushed. A crash part-way
+through a write can leave an arbitrary mixture of old and new chunks.
+
+So pmemlog's `append` is **not** atomic in bytes. It is atomic in the *abstract
+log* — a crash shows the log before the append or the log after it — and it
+earns that with the CRC and the corruption-detecting boolean: a partially
+flushed append fails the check, so `recover` reads the state before it. The
+permission machinery is what forces this for every reachable crash state rather
+than the convenient ones.
+
+Two consequences for anything built on top:
+
+* **The abstract atomicity is exactly as strong as the two assumptions above.**
+  It is proved, not assumed — but proved *from* them.
+* **A device written directly, bypassing pmemlog, would need writes sized in
+  whole 8-byte chunks** to inherit the model. This repository's records are
+  seventeen bytes, which is not one; they are safe only because they ride inside
+  pmemlog's log and are covered by its checksum. A future file-backed
+  `PersistentMemory` has to provide the 8-byte chunk model, and POSIX does not
+  promise it for a write that crosses a chunk — which is the first thing to get
+  right when one is written.
+
 ## What it does and does not give us
 
 `AbstractInfiniteLogState` has `append` and `advance_head`. It has no

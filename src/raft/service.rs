@@ -395,7 +395,13 @@ impl RecordLogStore {
     /// The batch is synced **as one**: a crash inside it would leave the
     /// marker and a prefix of the log, which is a rewind and could go below
     /// the durable line. On `pmemlog` that is a single `append`, whose crash
-    /// view is the log before it or the log after it and nothing between.
+    /// view of the **abstract log** is the log before it or after it and
+    /// nothing between — earned by its CRC rather than given by byte-atomic
+    /// hardware, since its own model permits any subset of 8-byte chunks to
+    /// have been flushed. `crate::raft::store::store_write_batch` says this at
+    /// length; the short version is that the guarantee is as strong as the two
+    /// corruption assumptions `vendor/pmemlog/README.md` enumerates, and no
+    /// stronger.
     ///
     /// What this does *not* do is schedule itself: nothing calls it, and a
     /// store that never compacts grows without bound. Stated in

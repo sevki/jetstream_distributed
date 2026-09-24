@@ -226,9 +226,35 @@ pub open spec fn store_write(pre: Store, post: Store, r: Record) -> bool {
 /// is the proof that the hazard is real rather than theoretical, and it is why
 /// compaction must use this and not a loop.
 ///
-/// It is the one thing this module asks of the device that it cannot check. On
-/// a real `InfiniteLogImpl` the batch is one `append` call of the encoded
+/// # How pmemlog earns this, since it is not a hardware promise
+///
+/// Reading `vendor/pmemlog/src/pmemspec_t.rs` closely: its crash model is
+/// **not** byte-atomic writes. `persistence_chunk_size` is 8, and
+/// `WriteRestrictedPersistentMemory::write` must be safe for *any subset of
+/// 8-byte chunks* having been flushed — a crash mid-write can leave an
+/// arbitrary mixture of old and new chunks.
+///
+/// So `append` is not atomic in bytes. It is atomic in the **abstract log**,
+/// which is what this transition talks about, and pmemlog earns that with its
+/// CRC and its corruption-detecting boolean: every partially-flushed byte state
+/// fails the check, so `recover` reads it as the state before the append. The
+/// permission machinery is what forces that to hold for every reachable crash
+/// state rather than for the convenient ones.
+///
+/// Worth stating precisely because an earlier version of this comment said the
+/// crash view is "the log before it or the log after it and nothing between" as
+/// though it were something the hardware provides. It is something the vendored
+/// crate *proves*, on top of the two corruption assumptions its README
+/// enumerates — and it is therefore exactly as strong as those.
+///
+/// On a real `InfiniteLogImpl` the batch is one `append` call of the encoded
 /// records; anything that decomposed it into several would break C36.
+///
+/// It also means a device written **directly**, rather than through pmemlog,
+/// would need records sized in whole 8-byte chunks to inherit the model — and
+/// [`crate::raft::wire`]'s records are seventeen bytes, which is not one. They
+/// are safe only because they ride inside pmemlog's log and are covered by
+/// *its* checksum.
 pub open spec fn store_write_batch(pre: Store, post: Store, rs: Seq<Record>) -> bool {
     &&& records_fit(rs)
     &&& post.records == pre.records + rs

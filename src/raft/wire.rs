@@ -206,6 +206,13 @@ pub fn le_to_u64_exec(b: &Vec<u8>, at: usize) -> (x: u64)
     ensures
         x == le_to_u64(b@.subrange(at as int, at + 8)),
 {
+    // **Bind the length into a `usize` first.** The precondition `at + 8 <=
+    // b@.len()` is `nat` arithmetic and says nothing to the exec checker about
+    // `at + 1` overflowing a `usize`. Binding `b.len()` gives the same fact in a
+    // form that does: `at + 8 <= n` with `n: usize` bounds every index below.
+    let n = b.len();
+    assert(at + 8 <= n);
+
     let x = (b[at] as u64) | ((b[at + 1] as u64) << 8) | ((b[at + 2] as u64) << 16) | ((b[at + 3]
         as u64) << 24) | ((b[at + 4] as u64) << 32) | ((b[at + 5] as u64) << 40) | ((b[at + 6]
         as u64) << 48) | ((b[at + 7] as u64) << 56);
@@ -285,6 +292,11 @@ pub fn decode_record_exec(bytes: &Vec<u8>, at: usize) -> (r: ExecRecord)
     ensures
         r.view() == decode_record(bytes@.subrange(at as int, at + 17)),
 {
+    // Same reason as in `le_to_u64_exec`: the `nat` precondition does not bound
+    // the `usize` additions, and binding the length does.
+    let n = bytes.len();
+    assert(at + RECORD_LEN <= n);
+
     let tag = bytes[at];
     let a = le_to_u64_exec(bytes, at + 1);
     let b = le_to_u64_exec(bytes, at + 9);

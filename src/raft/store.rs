@@ -103,11 +103,21 @@ pub open spec fn replay(records: Seq<Record>) -> Seq<Entry>
     if records.len() == 0 {
         Seq::<Entry>::empty()
     } else {
-        let before = replay(records.drop_last());
-        match records.last() {
-            Record::Append { term, value } => before.push(Entry { term, value }),
-            Record::Truncate { len } => before.take(min_nat(len, before.len()) as int),
-        }
+        replay_step(replay(records.drop_last()), records.last())
+    }
+}
+
+/// **One record applied to the log in hand.**
+///
+/// Split out of [`replay`] so that the executable [`apply_record`] can state
+/// its postcondition against the log it was given rather than against a ghost
+/// record sequence it would have to be handed. That matters beyond tidiness:
+/// a function taking a `Ghost` argument cannot be called from ordinary Rust,
+/// and the whole point of the executable layer is that the service calls it.
+pub open spec fn replay_step(log: Seq<Entry>, r: Record) -> Seq<Entry> {
+    match r {
+        Record::Append { term, value } => log.push(Entry { term, value }),
+        Record::Truncate { len } => log.take(min_nat(len, log.len()) as int),
     }
 }
 
@@ -300,7 +310,7 @@ pub fn truncate_to(out: &mut Vec<ExecEntry>, len: usize)
     requires
         len <= old(out).len(),
     ensures
-        out@ == old(out)@.take(len as int),
+        final(out)@ == old(out)@.take(len as int),
 {
     assert(old(out)@.take(old(out)@.len() as int) =~= old(out)@);
     while out.len() > len
@@ -321,12 +331,11 @@ pub fn truncate_to(out: &mut Vec<ExecEntry>, len: usize)
 /// One step of [`replay`], executable. The postcondition is the spec function
 /// applied to one more record, so `replay_exec`'s loop invariant is this
 /// composed with itself and nothing else has to be re-argued.
-pub fn apply_record(out: &mut Vec<ExecEntry>, r: ExecRecord, Ghost(rs): Ghost<Seq<Record>>)
-    requires
-        entry_seq(old(out)@) == replay(rs),
+pub fn apply_record(out: &mut Vec<ExecEntry>, r: ExecRecord)
     ensures
-        entry_seq(out@) == replay(rs.push(r.view())),
+        entry_seq(final(out)@) == replay_step(entry_seq(old(out)@), r.view()),
 {
+    let ghost before = out@;
     if r.is_truncate {
         let target = if (r.a as usize) < out.len() {
             r.a as usize
@@ -334,22 +343,18 @@ pub fn apply_record(out: &mut Vec<ExecEntry>, r: ExecRecord, Ghost(rs): Ghost<Se
             out.len()
         };
         proof {
-            // `min_nat` is what `replay` clamps with, and this is the same
+            // `min_nat` is what `replay_step` clamps with, and this is the same
             // choice made at `usize`.
-            assert(min_nat(r.a as nat, entry_seq(out@).len()) == target as nat);
+            assert(entry_seq(before).len() == before.len());
+            assert(min_nat(r.a as nat, entry_seq(before).len()) == target as nat);
         }
-        let ghost before = out@;
         truncate_to(out, target);
         assert(entry_seq(out@) =~= entry_seq(before).take(target as int));
     } else {
         out.push(ExecEntry { term: r.a, value: r.b });
-        assert(entry_seq(out@) =~= replay(rs).push(
+        assert(entry_seq(out@) =~= entry_seq(before).push(
             Entry { term: r.a as nat, value: r.b as nat },
         ));
-    }
-    proof {
-        let ghost pushed = rs.push(r.view());
-        assert(pushed.drop_last() =~= rs);
     }
 }
 
@@ -375,11 +380,11 @@ pub fn replay_exec(records: &Vec<ExecRecord>) -> (out: Vec<ExecEntry>)
     {
         let r = records[i];
         proof {
-            assert(record_seq(records@).take(i + 1) =~= record_seq(records@).take(i as int).push(
-                r.view(),
-            ));
+            let rs = record_seq(records@).take(i as int);
+            assert(record_seq(records@).take(i + 1) =~= rs.push(r.view()));
+            assert(rs.push(r.view()).drop_last() =~= rs);
         }
-        apply_record(&mut out, r, Ghost(record_seq(records@).take(i as int)));
+        apply_record(&mut out, r);
         i = i + 1;
     }
     assert(record_seq(records@).take(records@.len() as int) =~= record_seq(records@));

@@ -77,13 +77,20 @@
 //! coupling `has_quorum == won_election` that the proof rests on is only as good
 //! as that.
 //!
-//! Two of the three also take **the term the request went out in**, and drop
-//! replies that do not name the term this server is in now. A reply carries no
-//! clock: an `Accepted(3)` looks the same whenever it was sent, and one that
-//! crossed a leadership boundary would be counted against a log the terms in
-//! between may have rewritten. Every stale-reply hazard in this file is the same
-//! shape — state that outlives the leadership it was collected for — which is
-//! also what `crate::raft::proofs::history` is about on the other side.
+//! **One of the three used to take the term the request went out in as an
+//! argument, and no longer does.** A reply carries no clock: an acknowledgement
+//! looks the same whenever it was sent, and one that crossed a leadership
+//! boundary would be counted against a log the terms in between may have
+//! rewritten. [`Appended::Accepted`] now carries [`Acceptance`], which states
+//! the term the follower accepted at, so [`Peer::observe_appended`] compares
+//! that against its own term and there is no argument left for a caller to get
+//! wrong. [`Peer::count_ballot`] and [`Peer::observe_standing`] still take the
+//! term, because a `Ballot` and a `Standing` are answers about a term rather
+//! than about a log, and the term they name is the one being asked about.
+//!
+//! Every stale-reply hazard in this file is the same shape — state that outlives
+//! the leadership it was collected for — which is also what
+//! `crate::raft::proofs::history` is about on the other side.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -135,12 +142,33 @@ pub struct LogEntry {
     pub value: u64,
 }
 
+/// **What a follower says when it takes an entry.**
+///
+/// Two fields, and the term is the one that matters. A reply carrying only a
+/// length says *what* the follower has and nothing about *when* — and a length
+/// read in a later term is an acknowledgement of a log the terms in between may
+/// have rewritten. [`Peer::observe_appended`] used to take the term as a
+/// *caller* argument, which put the whole staleness check in the hands of
+/// whoever remembered to pass the right number.
+///
+/// Now the reply says which term it was accepted at, and the leader compares
+/// that against its own. There is no argument left to get wrong.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, JetStreamWireFormat)]
+pub struct Acceptance {
+    /// The term the follower accepted at — which is the term the request
+    /// carried, since `append_entries` refuses anything behind its own and
+    /// steps up to anything ahead.
+    pub term: u64,
+    /// The follower's log length afterwards, which is what the leader tracks to
+    /// decide what is replicated.
+    pub len: u64,
+}
+
 /// The reply to `append_entries`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, JetStreamWireFormat)]
 pub enum Appended {
-    /// Taken. This is the follower's log length afterwards, which is what the
-    /// leader tracks to decide what is replicated.
-    Accepted(u64),
+    /// Taken, at a stated term. See [`Acceptance`].
+    Accepted(Acceptance),
     /// Refused. This is the follower's term, so a stale leader finds out.
     Rejected(u64),
 }
@@ -266,6 +294,21 @@ struct RecordInner {
     /// How many records have been reported durable — C35. A crash may not go
     /// below this, and it only lags inside a multi-record operation.
     durable: usize,
+}
+
+/// **When the device has outgrown the log enough to be worth rewriting.**
+///
+/// A compacted device is `log.len() + 1` records — the marker, then one append
+/// per entry — so compacting at twice that keeps the device within a constant
+/// factor of the log and does amortised O(1) work per write: each compaction
+/// costs `log.len() + 1` writes and cannot recur until at least `log.len() + 1`
+/// more records have accumulated.
+///
+/// Two is a choice, not a derivation. Lower thrashes on a follower that is
+/// being rewritten repeatedly; higher lets the device grow further between
+/// rewrites. The bound is what matters and the constant is tunable.
+fn worth_compacting(records: usize, entries: usize) -> bool {
+    records > 2 * (entries + 1)
 }
 
 impl Default for RecordLogStore {
@@ -420,6 +463,28 @@ fn sync(g: &mut RecordInner) {
     g.durable = g.records.len();
 }
 
+/// **Rewrite the device if it has outgrown the log.**
+///
+/// Called after every write that syncs, which is the end of every `LogStore`
+/// method. This is what closes the limitation C31 left open: compaction was
+/// proved sound and nothing ran it, so a store that never compacted grew
+/// without bound. It runs now, on the policy [`worth_compacting`] states.
+///
+/// Safe to call at the end of an operation and nowhere else: it installs its
+/// batch atomically (C36), so it introduces no crash window of its own, and it
+/// leaves the durable line at the end of the device — which is what the caller
+/// was about to be promised anyway.
+fn compact_if_worthwhile(g: &mut RecordInner) {
+    if !worth_compacting(g.records.len(), g.log.len()) {
+        return;
+    }
+    let mut batch: Vec<ExecRecord> = Vec::with_capacity(g.log.len() + 1);
+    batch.push(ExecRecord { is_truncate: true, a: 0, b: 0 });
+    batch.extend(g.log.iter().map(|e| ExecRecord { is_truncate: false, a: e.term, b: e.value }));
+    g.records = batch;
+    g.durable = g.records.len();
+}
+
 impl LogStore for RecordLogStore {
     fn len(&self) -> io::Result<u64> {
         Ok(self.0.lock().expect("record log lock").log.len() as u64)
@@ -439,6 +504,7 @@ impl LogStore for RecordLogStore {
         let mut g = self.0.lock().expect("record log lock");
         write_record(&mut g, ExecRecord { is_truncate: false, a: entry.term, b: entry.value });
         sync(&mut g);
+        compact_if_worthwhile(&mut g);
         Ok(g.log.len() as u64)
     }
 
@@ -467,6 +533,7 @@ impl LogStore for RecordLogStore {
         // anything, and what it leaves — the marker without the entry — is a
         // truncation and no more.
         sync(&mut g);
+        compact_if_worthwhile(&mut g);
         Ok(())
     }
 }
@@ -1145,18 +1212,25 @@ impl Peer {
     ///
     /// Returns `Some(commit)` when the reply advanced replication and `None`
     /// when it did not.
-    pub fn observe_appended(&self, from: u64, term: u64, reply: Appended) -> Result<Option<u64>> {
+    pub fn observe_appended(&self, from: u64, reply: Appended) -> Result<Option<u64>> {
         match reply {
-            Appended::Accepted(len) => {
+            Appended::Accepted(ack) => {
                 {
                     let g = self.inner.lock().expect("peer lock");
-                    if g.server.current_term != term || !matches!(g.server.role, ExecRole::Leader) {
+                    // **The term comes off the wire, not from the caller.** A
+                    // reply that crossed a leadership boundary names the term it
+                    // was accepted at, and this server is entitled to count it
+                    // only against the term it is in now — the log of any term in
+                    // between may have been rewritten.
+                    if g.server.current_term != ack.term
+                        || !matches!(g.server.role, ExecRole::Leader)
+                    {
                         // An acknowledgement of a log this server no longer has,
                         // or one it is no longer entitled to count.
                         return Ok(None);
                     }
                 }
-                self.record_match(from, len).map(Some)
+                self.record_match(from, ack.len).map(Some)
             },
             Appended::Rejected(seen) => {
                 let mut g = self.inner.lock().expect("peer lock");
@@ -1386,7 +1460,12 @@ impl Consensus for Peer {
             g.commit = learned;
         }
         g.log.push(Event::Accepted { term, prefix, len: new_len });
-        Ok(Appended::Accepted(new_len))
+        // The term this follower accepted at, which is `term`: `follow_step`
+        // refuses anything behind and steps up to anything ahead, so by here
+        // `g.server.current_term == term`. Stating it from the server's own
+        // record rather than from the argument, so the reply cannot claim a term
+        // the follower is not actually in.
+        Ok(Appended::Accepted(Acceptance { term: g.server.current_term, len: new_len }))
     }
 
     async fn heartbeat(&self, ctx: Context, term: u64, leader_commit: u64) -> Result<Standing> {

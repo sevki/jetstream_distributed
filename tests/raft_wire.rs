@@ -21,7 +21,7 @@ use std::sync::{Arc, OnceLock};
 
 use distributed_ownership::raft::service::{
     consensus_protocol::{ConsensusChannel, ConsensusService},
-    Appended, Ballot, Consensus, LogEntry, MemoryLog, MemoryLogStore, Peer, Standing,
+    Acceptance, Appended, Ballot, Consensus, LogEntry, MemoryLog, MemoryLogStore, Peer, Standing,
 };
 use jetstream::prelude::*;
 use jetstream_rpc::session::{Session, SingleLaneSession};
@@ -39,6 +39,15 @@ fn roster() -> HashMap<IpAddr, u64> {
         (turmoil::lookup("b"), 1u64),
         (turmoil::lookup("c"), 2u64),
     ])
+}
+
+/// The reply a follower gives when it accepts at `term` with `len` entries.
+///
+/// The term is on the wire now rather than supplied by the caller, so an
+/// assertion about a reply checks *when* it was accepted as well as what it
+/// says — and `observe_appended` can no longer be handed the wrong term.
+fn accepted(term: u64, len: u64) -> Appended {
+    Appended::Accepted(Acceptance { term, len })
 }
 
 // The `Session` owns the lane's I/O, so a helper that builds one and returns
@@ -257,9 +266,9 @@ fn a_leader_leads_over_the_wire() {
             .append_entries(Context::default(), term, 0, 0, LogEntry { term, value: 7 }, 0)
             .await
             .unwrap();
-        assert_eq!(reply, Appended::Accepted(1));
+        assert_eq!(reply, accepted(term, 1));
         assert_eq!(
-            me.observe_appended(1, term, reply).unwrap(),
+            me.observe_appended(1, reply).unwrap(),
             Some(1),
             "the leader and one follower are a majority of three, and the entry is \
              of the leader's own term"

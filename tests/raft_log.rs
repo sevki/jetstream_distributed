@@ -18,7 +18,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
 use distributed_ownership::raft::service::{
-    Appended, Ballot, Consensus, LogEntry, LogStore, MemoryLog, MemoryLogStore, Peer, Standing,
+    Acceptance, Appended, Ballot, Consensus, LogEntry, LogStore, MemoryLog, MemoryLogStore, Peer, Standing,
 };
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
@@ -38,6 +38,15 @@ fn from(addr: IpAddr) -> Context {
 fn peer_with(me: u64, log: &MemoryLogStore) -> Peer {
     Peer::new(roster(), me, Arc::new(MemoryLog::new()), Arc::new(log.clone()))
         .expect("the server is on the roster")
+}
+
+/// The reply a follower gives when it accepts at `term` with `len` entries.
+///
+/// The term is on the wire now rather than supplied by the caller, so an
+/// assertion about a reply checks *when* it was accepted as well as what it
+/// says — and `observe_appended` can no longer be handed the wrong term.
+fn accepted(term: u64, len: u64) -> Appended {
+    Appended::Accepted(Acceptance { term, len })
 }
 
 /// Make `p` the leader of term 1 in a three-server cluster.
@@ -65,7 +74,7 @@ async fn a_follower_takes_the_leaders_entry() {
     // `prefix` 0: the follower is asked to agree on nothing before this entry.
     assert_eq!(
         b.append_entries(from(A), term, 0, 0, entry, 0).await.unwrap(),
-        Appended::Accepted(1)
+        accepted(term, 1)
     );
     assert_eq!(lb.entries(), la.entries(), "the follower's entry is the leader's");
 }
@@ -143,7 +152,7 @@ async fn an_accepted_entry_truncates_a_divergent_tail() {
 
     assert_eq!(
         b.append_entries(from(A), 3, 1, 1, la.entries()[1], 0).await.unwrap(),
-        Appended::Accepted(2)
+        accepted(3, 2)
     );
     assert_eq!(lb.entries(), la.entries(), "the divergent tail is gone, not appended past");
 }
@@ -232,7 +241,7 @@ async fn a_follower_commits_no_further_than_its_own_log() {
     // The leader claims two entries are committed while sending only the first.
     assert_eq!(
         b.append_entries(from(A), term, 0, 0, la.entries()[0], 2).await.unwrap(),
-        Appended::Accepted(1)
+        accepted(term, 1)
     );
     assert_eq!(
         b.commit(),
@@ -258,13 +267,13 @@ async fn a_replayed_append_keeps_the_entries_after_it() {
 
     let e0 = LogEntry { term: 1, value: 10 };
     let e1 = LogEntry { term: 1, value: 11 };
-    assert_eq!(f.append_entries(from(A), 1, 0, 0, e0, 0).await.unwrap(), Appended::Accepted(1));
-    assert_eq!(f.append_entries(from(A), 1, 1, 1, e1, 0).await.unwrap(), Appended::Accepted(2));
+    assert_eq!(f.append_entries(from(A), 1, 0, 0, e0, 0).await.unwrap(), accepted(1, 1));
+    assert_eq!(f.append_entries(from(A), 1, 1, 1, e1, 0).await.unwrap(), accepted(1, 2));
 
     // The network redelivers the first one.
     assert_eq!(
         f.append_entries(from(A), 1, 0, 0, e0, 0).await.unwrap(),
-        Appended::Accepted(2),
+        accepted(1, 2),
         "the entry at 0 is already there, so nothing is deleted and the reply \
          reports the log the follower really has"
     );
@@ -280,17 +289,17 @@ async fn a_conflicting_append_still_drops_the_tail() {
 
     assert_eq!(
         f.append_entries(from(A), 1, 0, 0, LogEntry { term: 1, value: 10 }, 0).await.unwrap(),
-        Appended::Accepted(1)
+        accepted(1, 1)
     );
     assert_eq!(
         f.append_entries(from(A), 1, 1, 1, LogEntry { term: 1, value: 11 }, 0).await.unwrap(),
-        Appended::Accepted(2)
+        accepted(1, 2)
     );
 
     // A later leader overwrites index 1 with an entry of its own term.
     assert_eq!(
         f.append_entries(from(A), 2, 1, 1, LogEntry { term: 2, value: 99 }, 0).await.unwrap(),
-        Appended::Accepted(2)
+        accepted(2, 2)
     );
     assert_eq!(store.entry_at(1).unwrap(), Some(LogEntry { term: 2, value: 99 }));
 }
@@ -327,7 +336,7 @@ async fn a_new_leadership_starts_its_replication_tally_empty() {
     // is one entry long, and its commit point cannot still be 3.
     assert_eq!(
         a.append_entries(from(B), 2, 0, 0, LogEntry { term: 2, value: 50 }, 0).await.unwrap(),
-        Appended::Accepted(1)
+        accepted(2, 1)
     );
     assert_eq!(a.commit(), 1, "the commit point cannot name entries that are gone");
 
@@ -350,9 +359,14 @@ async fn a_new_leadership_starts_its_replication_tally_empty() {
 
 /// **A reply that crossed a leadership boundary is not counted.**
 ///
-/// `Appended::Accepted(1)` carries a length and nothing that says *when*. Read
-/// in a later term it would be an acknowledgement of a log that may since have
-/// been rewritten.
+/// An acknowledgement carries a length *and the term it was accepted at*, and
+/// the term is what makes this checkable. A length read in a later term would be
+/// an acknowledgement of a log the terms in between may have rewritten.
+///
+/// The term used to be a *caller* argument to `observe_appended`, which put the
+/// whole check in the hands of whoever remembered to pass the right number. It
+/// is on the wire now, so the case below is one the caller cannot get wrong:
+/// the reply says term 1, this server is in term 3, and it is dropped.
 #[tokio::test]
 async fn an_acknowledgement_from_an_earlier_term_is_dropped() {
     let la = MemoryLogStore::new();
@@ -370,14 +384,14 @@ async fn an_acknowledgement_from_an_earlier_term_is_dropped() {
 
     // A reply to something sent in term 1, arriving now.
     assert_eq!(
-        a.observe_appended(1, 1, Appended::Accepted(2)).unwrap(),
+        a.observe_appended(1, accepted(1, 2)).unwrap(),
         None,
         "a term-1 acknowledgement says nothing about the term-3 log"
     );
     assert_eq!(a.commit(), 0);
 
     // The same reply, correctly attributed, does count.
-    assert_eq!(a.observe_appended(1, 3, Appended::Accepted(2)).unwrap(), Some(2));
+    assert_eq!(a.observe_appended(1, accepted(3, 2)).unwrap(), Some(2));
     assert_eq!(a.commit(), 2);
 }
 
@@ -392,7 +406,7 @@ async fn a_heartbeat_tells_a_follower_what_is_committed() {
 
     assert_eq!(
         f.append_entries(from(A), 1, 0, 0, LogEntry { term: 1, value: 7 }, 0).await.unwrap(),
-        Appended::Accepted(1)
+        accepted(1, 1)
     );
     assert_eq!(f.commit(), 0, "the append that carried it was sent before the commit");
 

@@ -21,7 +21,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
 use distributed_ownership::raft::service::{
-    Appended, Ballot, Consensus, LogEntry, LogStore, MemoryLog, Peer, RecordLogStore,
+    Acceptance, Appended, Ballot, Consensus, LogEntry, LogStore, MemoryLog, Peer, RecordLogStore,
 };
 use distributed_ownership::raft::store::ExecRecord;
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
@@ -42,6 +42,15 @@ fn from(addr: IpAddr) -> Context {
 fn peer_with(me: u64, log: &RecordLogStore) -> Peer {
     Peer::new(roster(), me, Arc::new(MemoryLog::new()), Arc::new(log.clone()))
         .expect("the server is on the roster")
+}
+
+/// The reply a follower gives when it accepts at `term` with `len` entries.
+///
+/// The term is on the wire now rather than supplied by the caller, so an
+/// assertion about a reply checks *when* it was accepted as well as what it
+/// says — and `observe_appended` can no longer be handed the wrong term.
+fn accepted(term: u64, len: u64) -> Appended {
+    Appended::Accepted(Acceptance { term, len })
 }
 
 fn e(term: u64, value: u64) -> LogEntry {
@@ -362,6 +371,54 @@ fn a_batch_written_one_record_at_a_time_would_rewind_the_log() {
     assert_eq!(log.durable_len(), log.device_len(), "and the whole batch is durable");
 }
 
+/// **Compaction runs, and the device stays within a constant factor of the log.**
+///
+/// C31 proved the rewrite sound and nothing called it, so the stated limitation
+/// was that a store which never compacts grows without bound. It compacts
+/// itself now, at `records > 2 * (entries + 1)`, and this is the bound.
+///
+/// The run is deliberately the bad case: every append followed by an overwrite
+/// of the same index, which is three records per entry and the shape that made
+/// the device outgrow the log in the first place.
+#[test]
+fn the_device_stays_within_a_constant_factor_of_the_log() {
+    let log = RecordLogStore::new();
+    for i in 0..60u64 {
+        log.append(e(1, i)).unwrap();
+        log.overwrite(i, e(2, i)).unwrap();
+        let (records, entries) = (log.device_len(), log.len().unwrap() as usize);
+        assert!(
+            records <= 2 * (entries + 1) + 2,
+            "after {i} rounds the device is {records} records for {entries} entries"
+        );
+        assert_eq!(log.durable_len(), records, "and compaction leaves everything durable");
+    }
+    // The log itself is untouched by any of it.
+    assert_eq!(log.len().unwrap(), 60);
+    for i in 0..60u64 {
+        assert_eq!(log.entry_at(i).unwrap(), Some(e(2, i)));
+    }
+}
+
+/// Compaction happening mid-run does not change what recovery reads.
+///
+/// The property that makes it safe to run automatically: a device that has been
+/// rewritten replays to the same log, so a crash after a compaction recovers
+/// what a crash before it would have.
+#[test]
+fn compaction_mid_run_does_not_change_what_recovery_reads() {
+    let log = RecordLogStore::new();
+    for i in 0..40u64 {
+        log.append(e(1, i)).unwrap();
+        log.overwrite(i, e(2, i)).unwrap();
+        assert_eq!(
+            log.after_crash(log.durable_len()).entries(),
+            log.entries(),
+            "recovery disagreed with memory at round {i}"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The protocol on top
 // ---------------------------------------------------------------------------
@@ -384,13 +441,13 @@ async fn a_duplicate_append_entries_does_not_touch_the_device() {
 
     // Term 1, one entry at index 0.
     let first = follower.append_entries(from(A), 1, 0, 0, e(1, 42), 0).await.unwrap();
-    assert_eq!(first, Appended::Accepted(1));
+    assert_eq!(first, accepted(1, 1));
     let after_first = log.device_len();
     assert_eq!(log.entries(), vec![e(1, 42)]);
 
     // The very same request again.
     let again = follower.append_entries(from(A), 1, 0, 0, e(1, 42), 0).await.unwrap();
-    assert_eq!(again, Appended::Accepted(1), "still accepted");
+    assert_eq!(again, accepted(1, 1), "still accepted");
     assert_eq!(log.entries(), vec![e(1, 42)], "and the log is unchanged");
     assert_eq!(log.device_len(), after_first, "the device was not touched");
 }
@@ -407,7 +464,7 @@ async fn a_conflicting_append_entries_does_touch_the_device() {
 
     // Same index, a later leader's term: a genuine conflict.
     let replaced = follower.append_entries(from(A), 2, 0, 0, e(2, 43), 0).await.unwrap();
-    assert_eq!(replaced, Appended::Accepted(1));
+    assert_eq!(replaced, accepted(2, 1));
     assert_eq!(log.entries(), vec![e(2, 43)], "the divergent entry is gone");
     assert_eq!(log.device_len(), after_first + 2, "and it cost exactly two records");
 }
@@ -442,11 +499,11 @@ async fn a_follower_that_restarts_keeps_everything_it_acknowledged() {
     // is recognised, and the next one extends.
     let restarted = peer_with(1, &restarted_store);
     let duplicate = restarted.append_entries(from(A), 1, 2, 1, e(1, 12), 0).await.unwrap();
-    assert_eq!(duplicate, Appended::Accepted(3));
+    assert_eq!(duplicate, accepted(1, 3));
     assert_eq!(restarted_store.device_len(), 3, "the duplicate wrote nothing");
 
     let next = restarted.append_entries(from(A), 1, 3, 1, e(1, 13), 0).await.unwrap();
-    assert_eq!(next, Appended::Accepted(4));
+    assert_eq!(next, accepted(1, 4));
     assert_eq!(restarted_store.entries(), vec![e(1, 10), e(1, 11), e(1, 12), e(1, 13)]);
 }
 

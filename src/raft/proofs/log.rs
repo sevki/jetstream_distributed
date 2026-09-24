@@ -59,6 +59,7 @@ use vstd::prelude::*;
 use vstd::set_lib::*;
 
 use crate::raft::model::*;
+use crate::raft::proofs::history::*;
 use crate::raft::proofs::election::*;
 
 verus! {
@@ -213,14 +214,53 @@ pub proof fn theorem_a_follower_agrees_before_it_accepts(
         // The check itself.
         prefix > 0 ==> pre.servers[follower].log[prefix as int - 1].term
             == pre.servers[leader].log[prefix as int - 1].term,
-        // What it ends up with: its own agreed prefix, then the leader's entry,
-        // and nothing else.
-        post.servers[follower].log.len() == prefix + 1,
-        post.servers[follower].log[prefix as int] == pre.servers[leader].log[prefix as int],
+        // What it ends up with: its own agreed prefix, then the leader's entry.
+        //
+        // **Not "and nothing else" any more.** `appended_log` deletes the
+        // suffix only on a conflict, so a follower that already held the
+        // leader's entry at `prefix` keeps everything after it — which is why
+        // the length is a bound rather than an equation.
+        post.servers[follower].log.len() >= prefix + 1,
         has_prefix(post.servers[follower].log, pre.servers[follower].log, prefix),
 {
     assert forall|i: int| 0 <= i < prefix implies post.servers[follower].log[i]
         == pre.servers[follower].log[i] by {}
+}
+
+/// **A follower that accepts ends up holding the leader's entry** — whichever
+/// branch of `appended_log` it took.
+///
+/// Its own theorem because the two branches get there differently, and the
+/// second is the interesting one. On a conflict the entry is *copied* from the
+/// leader. When there was no conflict nothing is written at all, and the entry
+/// already there is the leader's **because it has the leader's term at the
+/// leader's index** — which is Log Matching, and is the one place the model's
+/// shape leans on a theorem.
+///
+/// The reasoning is not circular: `theorem_log_matching` is proved from
+/// `inv_logs_follow_created`, whose own preservation across this transition
+/// (`lemma_the_consistency_check_preserves_the_record`) handles the no-conflict
+/// branch by observing that the log does not change, never by appealing to this.
+pub proof fn theorem_a_follower_ends_up_with_the_leaders_entry(
+    pre: Cluster,
+    post: Cluster,
+    leader: ServerId,
+    follower: ServerId,
+    prefix: nat,
+)
+    requires
+        tr_append_entries(pre, post, leader, follower, prefix),
+        inv_logs_follow_created(pre),
+    ensures
+        post.servers[follower].log[prefix as int] == pre.servers[leader].log[prefix as int],
+{
+    let fl = pre.servers[follower].log;
+    let ll = pre.servers[leader].log;
+    if prefix < fl.len() && fl[prefix as int].term == ll[prefix as int].term {
+        // No conflict: the log is untouched, and Log Matching says the entry
+        // sitting there is the one being sent.
+        theorem_log_matching_values(pre, follower, leader, prefix);
+    }
 }
 
 /// **Entries are never invented.** A follower's new entry is the leader's
@@ -234,10 +274,12 @@ pub proof fn theorem_replication_copies_the_leaders_entry(
 )
     requires
         tr_append_entries(pre, post, leader, follower, prefix),
+        inv_logs_follow_created(pre),
     ensures
         prefix < pre.servers[leader].log.len(),
         post.servers[follower].log[prefix as int] == pre.servers[leader].log[prefix as int],
 {
+    theorem_a_follower_ends_up_with_the_leaders_entry(pre, post, leader, follower, prefix);
 }
 
 /// **Commitment needs a majority, and the entry has to belong to the

@@ -348,14 +348,32 @@ pub open spec fn replicated_on(c: Cluster, log: Seq<Entry>, n: nat) -> Set<Serve
     )
 }
 
-/// What a follower's log becomes when it accepts one entry at `prefix`: its own
-/// agreed prefix, then the leader's entry, and nothing else.
+/// What a follower's log becomes when it accepts one entry at `prefix`.
 ///
-/// Written as "keep my first `prefix` entries" rather than "copy the leader's
-/// first `prefix` entries", which would bake Log Matching into the transition
-/// instead of leaving it to be proved.
+/// **The suffix is deleted only on a conflict.** Figure 2's rule 3 is *if an
+/// existing entry conflicts with a new one (same index, different terms),
+/// delete it and all that follow*, and the conditional is the whole of it: an
+/// unconditional truncation loses entries to a request that told the follower
+/// nothing new, because a duplicate or reordered `AppendEntries` for an earlier
+/// index would throw away everything after it.
+///
+/// So when the entry already there has the leader's term, the log is left
+/// alone. That is sound *because of Log Matching* — one `(index, term)` names
+/// one entry, so the entry already there is the entry being sent — which makes
+/// this the one place in the model where a transition's shape leans on a
+/// theorem rather than the other way round. `crate::raft::proofs::history`
+/// proves the theorem without using this branch, so the reasoning is not
+/// circular; see `lemma_the_consistency_check_preserves_the_record`.
+///
+/// Otherwise: keep my first `prefix` entries, then the leader's. Written as
+/// "keep mine" rather than "copy the leader's first `prefix`", which would bake
+/// Log Matching into the transition instead of leaving it to be proved.
 pub open spec fn appended_log(follower: Seq<Entry>, leader: Seq<Entry>, prefix: nat) -> Seq<Entry> {
-    follower.take(prefix as int).push(leader[prefix as int])
+    if prefix < follower.len() && follower[prefix as int].term == leader[prefix as int].term {
+        follower
+    } else {
+        follower.take(prefix as int).push(leader[prefix as int])
+    }
 }
 
 pub open spec fn min_nat(a: nat, b: nat) -> nat {
@@ -605,16 +623,25 @@ pub open spec fn tr_append_entries(
             log: appended_log(pre.servers[follower].log, pre.servers[leader].log, prefix),
             // `min(leaderCommit, index of last new entry)`, and never
             // backwards.
-            commit: max_nat(
-                pre.servers[follower].commit,
-                min_nat(
-                    pre.servers[leader].commit,
-                    appended_log(
-                        pre.servers[follower].log,
-                        pre.servers[leader].log,
-                        prefix,
-                    ).len(),
+            // `min(leaderCommit, index of last new entry)`, never backwards,
+            // and **never past the end of the log**. The last clamp is what
+            // stops a truncation leaving the commit point naming entries that
+            // are no longer there — a state no later reader can make sense of,
+            // and one only a conflict below the commit point can produce, which
+            // is what Leader Completeness is supposed to rule out.
+            commit: min_nat(
+                max_nat(
+                    pre.servers[follower].commit,
+                    min_nat(
+                        pre.servers[leader].commit,
+                        appended_log(
+                            pre.servers[follower].log,
+                            pre.servers[leader].log,
+                            prefix,
+                        ).len(),
+                    ),
                 ),
+                appended_log(pre.servers[follower].log, pre.servers[leader].log, prefix).len(),
             ),
         },
     )

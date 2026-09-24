@@ -1381,7 +1381,9 @@ pub proof fn lemma_the_consistency_check_preserves_the_record(
     let nl = appended_log(fl, ll, prefix);
 
     assert(post.servers[follower].log == nl);
-    assert(nl.len() == prefix + 1);
+    // Only the conflicting branch fixes the length; the other keeps whatever
+    // the follower had, which the guard says is at least `prefix`.
+    assert(nl.len() >= prefix + 1);
 
     assert forall|s: Slot| post.created.contains_key(s) implies exists|w: ServerId|
         #[trigger] post.led.contains(Led { server: w, term: s.term }) by {
@@ -1409,7 +1411,14 @@ pub proof fn lemma_the_consistency_check_preserves_the_record(
         )
     } by {
         if m == follower {
-            if i < prefix {
+            if prefix < fl.len() && fl[prefix as int].term == ll[prefix as int].term {
+                // **No conflict, so nothing was written.** The record held of
+                // this log before and holds of it now, because it is the same
+                // log. Note what this branch does *not* do: appeal to Log
+                // Matching. That would be circular, since Log Matching is what
+                // this invariant gives.
+                assert(nl == fl);
+            } else if i < prefix {
                 // The follower's own entries, and its own predecessors.
                 assert(nl[i as int] == fl[i as int]);
                 assert(term_before(nl, i) == term_before(fl, i));

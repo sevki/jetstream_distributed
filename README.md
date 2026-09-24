@@ -263,12 +263,15 @@ verifying, the build fails.
 | C26 | **Log Matching — two logs that agree on an entry's term at an index agree on every entry at and below it.** The headline of the log half. One slot gives one recorded value and one recorded predecessor, so agreement at an index is agreement one index down, and repeating reaches zero | `raft::proofs::history::theorem_log_matching`, `theorem_log_matching_prefixes`, `theorem_log_matching_values`, `theorem_log_matching_reachable` | `inv_logs_follow_created`, discharged for reachable states by `theorem_reachable_hist_inv` |
 | C27 | **Recovery is exact.** The in-memory log equals `replay` of the device before and after every operation — append, truncate, *and* crash-recovery. The recovery case is trivial, and that is the design working: the device **is** the log, not a journal of intentions about it, so recovery reconciles nothing | `raft::proofs::store::theorem_recovery_is_exact`, `theorem_the_store_always_agrees`, `theorem_a_fresh_store_agrees` | none |
 | C28 | **A crash can only rewind.** `replay` is total on every sequence of records, so there is no prefix a crash can leave that recovery cannot read, and what comes back is a log the store had rather than one no sequence of writes could produce. Records that reached the device are unchanged and at the same indices | `raft::proofs::store::theorem_a_crash_can_only_rewind`, `theorem_a_crash_keeps_what_reached_the_device` | that a crash keeps a **prefix** — the property an append-only device gives you, and what pmemlog's write restriction enforces |
-| C29 | **Accepting a replicated entry is at most two records**, and `appended_log` is what they replay to — so figure 2's rule 3, which deletes a suffix, is implementable on a device that deletes nothing. The conflict branch is Truncate-then-Append, two records however long the tail it throws away; **the other branch is empty**, so an AppendEntries whose entry is already present writes nothing at all. That is C25's conditional again, as an operational fact | `raft::proofs::store::theorem_accepting_an_entry_is_at_most_two_records`, `theorem_a_follower_accepts_with_at_most_two_writes` | the store invariant (C27) |
+| C29 | **Accepting a replicated entry costs at most two records**, and `appended_log` is what they replay to — so figure 2's rule 3, which deletes a suffix, is implementable on a device that deletes nothing. **Three costs, and which one you pay says what just happened**: *nothing* when the entry is already there, so a duplicate `AppendEntries` never reaches the device; *one record* when extending, since the marker would be `Truncate { len: log.len() }` and writing the identity would double the cost of the steady state; *two* on a genuine conflict, however long the tail it deletes. The zero-cost branch is C25's conditional again, as an operational fact | `raft::proofs::store::theorem_accepting_an_entry_is_at_most_two_records`, `theorem_extending_the_log_costs_one_record`, `theorem_a_follower_accepts_with_at_most_two_writes` | the store invariant (C27) |
 | C30 | **The device is append-only.** No operation moves its tail back: the records that were there are still there, in order, at the same indices. A `Record::Truncate` shortens the *log* and lengthens the device. This is the property that lets the whole store sit on `vendor/pmemlog`, whose abstract state has `append` and `advance_head` and nothing that shortens a tail | `raft::proofs::store::theorem_the_device_is_append_only` | none |
-| C31 | **Compaction is sound**, costs one record per entry, and leaves no truncation behind — so a store can rewrite itself as pure appends and let `advance_head` reclaim what came before. Soundness only: **nothing schedules it**, and a store that never compacts grows without bound | `raft::proofs::store::theorem_compaction_replays_the_same`, `theorem_compaction_is_one_record_per_entry`, `theorem_compaction_leaves_no_truncations` | none |
+| C31 | **Compaction is sound**, costs one record per entry, and leaves no truncation behind — so a store can rewrite itself as pure appends. Soundness only: **nothing schedules it**, and a store that never compacts grows without bound | `raft::proofs::store::theorem_compaction_replays_the_same`, `theorem_compaction_is_one_record_per_entry`, `theorem_compaction_leaves_no_truncations` | none |
 | C32 | **Cut the bytes anywhere and a record prefix comes back** — for *every* `k`, not for multiples of seventeen. The tear can land in the middle of a `u64` and the theorem still holds, because fixed width means no byte of a half-written record can be mistaken for the start of a whole one. This is what C28 needs and cannot state for itself: `store_recover` is written over a *record* prefix, and a device gives back a *byte* prefix | `raft::proofs::wire::theorem_a_torn_tail_is_a_record_prefix`, `theorem_recovery_from_a_torn_device` | every record fits in 64 bits (`records_fit`) |
 | C33 | **What was written is what is read**, and the encoding is exactly seventeen bytes per record — which is what makes `bytes.len() / 17` the record count and the parser's stopping condition an observation rather than an argument | `raft::proofs::wire::theorem_parse_of_encode`, `theorem_the_encoding_is_fixed_width`, `lemma_a_record_round_trips`, `lemma_a_record_is_seventeen_bytes` | `records_fit` |
 | C34 | Eight bytes, least significant first, and back again | `raft::proofs::wire::lemma_le_round_trip` (by `bit_vector`) | none |
+| C35 | **Nothing reported durable is ever lost, by any transition, ever.** The line does not retreat *and* everything below it is unchanged record for record — a store that kept the right *number* of records while rewriting one would satisfy the first clause and fail the second. Stated per step, across a whole run with any number of crashes, and finally as the sentence Raft needs: **a follower that answers `Accepted` has written the entry down**, so a leader counting that answer toward a majority is counting something that cannot be taken back | `raft::proofs::store::theorem_durability_never_retreats`, `theorem_a_durable_record_is_durable_for_ever`, `theorem_a_follower_that_answers_accepted_has_written_it_down`, `theorem_a_crash_keeps_everything_reported_durable` | that a crash keeps a **prefix** of the records, and that a `LogStore` method is durable before it returns — the latter discharged by `theorem_an_append_is_a_write_then_a_sync` |
+| C36 | **A staged compaction is inert until the old generation is reclaimed.** Compaction on an append-only device is two steps and a crash can land between them; writing `compacted(log)` alone would leave `old ++ compacted(log)`, which replays to **`log + log`**. The leading `Truncate { len: 0 }` makes the staged generation self-sufficient, so the device means the same log with the old records there and once they are gone — which is what turns the reclaim into a no-op rather than a change | `raft::proofs::store::theorem_a_staged_compaction_is_inert`, `theorem_after_compaction_the_old_records_are_dead`, `lemma_a_compacted_log_appends_itself` | that the batch lands atomically — one pmemlog `append`, whose crash view is the log before it or after it and nothing between |
+| C37 | **Every reachable store is encodable, so the two halves compose.** `records_fit` is a guard on the write transitions and a clause of `store_inv`, not a precondition that filters which theorems may be *invoked* — stated only on the theorems, an unencodable state stays reachable and the encoding theorems quietly stop applying exactly where they are needed. This is the theorem that spends it: any store satisfying the invariant round-trips through the encoding *and* survives a tear at any byte | `raft::proofs::wire::theorem_a_reachable_store_is_encodable`, `theorem_no_reachable_store_is_unwritable`, with `lemma_pushing_a_fitting_record_fits`, `lemma_a_prefix_of_a_fitting_sequence_fits` | none |
 | I | The inductive invariant holds in every reachable state (`init ==> inv`, `inv /\ next ==> inv`) | `ownership::proofs::invariant::theorem_reachable_inv` | the model's transition relation |
 | S | **The headline scenario**: `A` owns X@41, a transfer and a crash/recovery occur, `B` owns X@42, `A` returns still holding its epoch-41 token - and cannot perform an authoritative mutation. The postcondition exports the whole nine-step run, so the crash, the recovery and the outcome are the same execution — exported as separate existentials they need not have been, and an ordinary live handover could supply the outcome | `ownership::proofs::adversarial::scenario_stale_owner_returns` | `A != B` |
 | S1 | A stale `Grant` cannot resurrect a superseded epoch | `ownership::proofs::adversarial::theorem_stale_grant_cannot_be_used` | none |
@@ -766,14 +769,68 @@ The chain is then: a device keeps a byte prefix (C32) → that is a record prefi
 (C28) → `replay` of a record prefix is a log the store had (C27). No step asks
 the device for more than *"you keep a prefix of what I wrote"*.
 
+#### The line a crash may not cross
+
+C27 and C28 as first written said *"a crash keeps a prefix"* — which permits
+the **empty** prefix. After any completed append, a restart could discard every
+record the store had reported durable, including entries a leader committed on
+the strength of that acknowledgement. That is strictly weaker than the device
+underneath: pmemlog's append shows a crash either the log before it or the log
+after it and nothing older. A layer whose whole job is to be no weaker than
+pmemlog was weaker than pmemlog, and no test caught it because every crash the
+suite simulates happens to be an honest one.
+
+`Store` carries `durable`, and the model now separates **what the device
+offers** — `store_write`, one record on the device with the line unmoved, and
+`store_sync`, the only thing that moves it — from **what a caller gets**:
+`store_append` and `store_truncate`, durable before they return, which is what
+`LogStore` already promised in prose. `theorem_an_append_is_a_write_then_a_sync`
+is the proof that the promise is kept by the two primitives and not by a third
+thing the model invented.
+
+**C35 is the theorem that buys.** Read the second clause: the line never
+retreats *and* everything below it is unchanged record for record. A store that
+kept the right *number* of records while rewriting one of them would satisfy the
+first and fail the second. And read the third statement in it, which is where
+this module meets Raft's commit rule — a follower that answers `Accepted` has
+written the entry down, so a leader counting that answer toward a majority is
+counting something that cannot be taken back. Remove the durability hypothesis
+and the conclusion fails immediately; that is what it is there to show.
+
+#### Compaction has a middle state
+
+`theorem_compaction_replays_the_same` says `replay(compacted(log)) == log`,
+which is true and licenses nothing. It covers the case where the rewrite has
+**already** replaced what came before — the case that needs no proof. The
+procedure is two steps on an append-only device, write the new generation and
+then reclaim the old one, and a crash between them leaves
+`old_records ++ compacted(log)`, which replays to `log + log`. Every entry
+twice.
+
+`compaction_batch` is a leading `Truncate { len: 0 }` and then the log, and that
+marker is what makes the staged generation **self-sufficient**: it clears
+whatever preceded it, so the device replays to `log` with the old records still
+there and to `log` once they are gone. Both crash views agree, which is what
+turns the reclaim from a change into a no-op (C36).
+
+It has to land atomically. A crash *inside* the batch would leave the marker and
+a prefix of the log — a rewind, and one that could cross the line C35 draws. So
+the batch is one sync's worth of writing: on pmemlog a single `append`, whose
+crash view is the log before it or the log after it and nothing between. **That
+is the one property of the device this design leans on**, and it is the property
+pmemlog was built to have.
+
 Two limitations, stated rather than assumed away:
 
 * **The 64-bit boundary.** `Record`'s fields are `nat`, because the model's
   terms are unbounded and a model that caps them has an overflow bug the
-  protocol does not. Bytes are not unbounded, so C32 and C33 are conditional on
-  `records_fit`. A cluster reaching term 2^64 is outside what this encoding
-  represents, and the theorems say so in a precondition rather than silently
-  truncating.
+  protocol does not. Bytes are not unbounded. `records_fit` is therefore a
+  **guard on the write transitions and a clause of the store invariant**, not
+  merely a precondition on C32 and C33 — stated only on the theorems it would
+  filter which theorems may be *invoked* while leaving the unencodable state
+  reachable, so the store half and the wire half could not be composed at all
+  (C37). A cluster reaching term 2^64 now has a store that cannot advance,
+  rather than one that silently writes the wrong record.
 * **The device grows even when the log does not.** A follower thrashing between
   two leaders writes a record per round. C31 says the way out is sound —
   rewrite as pure appends, let `advance_head` reclaim the rest — and nothing

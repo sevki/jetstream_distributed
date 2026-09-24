@@ -270,8 +270,10 @@ verifying, the build fails.
 | C33 | **What was written is what is read**, and the encoding is exactly seventeen bytes per record — which is what makes `bytes.len() / 17` the record count and the parser's stopping condition an observation rather than an argument | `raft::proofs::wire::theorem_parse_of_encode`, `theorem_the_encoding_is_fixed_width`, `lemma_a_record_round_trips`, `lemma_a_record_is_seventeen_bytes` | `records_fit` |
 | C34 | Eight bytes, least significant first, and back again | `raft::proofs::wire::lemma_le_round_trip` (by `bit_vector`) | none |
 | C35 | **Nothing reported durable is ever lost, by any transition, ever.** The line does not retreat *and* everything below it is unchanged record for record — a store that kept the right *number* of records while rewriting one would satisfy the first clause and fail the second. Stated per step, across a whole run with any number of crashes, and finally as the sentence Raft needs: **a follower that answers `Accepted` has written the entry down**, so a leader counting that answer toward a majority is counting something that cannot be taken back | `raft::proofs::store::theorem_durability_never_retreats`, `theorem_a_durable_record_is_durable_for_ever`, `theorem_a_follower_that_answers_accepted_has_written_it_down`, `theorem_a_crash_keeps_everything_reported_durable` | that a crash keeps a **prefix** of the records, and that a `LogStore` method is durable before it returns — the latter discharged by `theorem_an_append_is_a_write_then_a_sync` |
-| C36 | **A staged compaction is inert until the old generation is reclaimed.** Compaction on an append-only device is two steps and a crash can land between them; writing `compacted(log)` alone would leave `old ++ compacted(log)`, which replays to **`log + log`**. The leading `Truncate { len: 0 }` makes the staged generation self-sufficient, so the device means the same log with the old records there and once they are gone — which is what turns the reclaim into a no-op rather than a change | `raft::proofs::store::theorem_a_staged_compaction_is_inert`, `theorem_after_compaction_the_old_records_are_dead`, `lemma_a_compacted_log_appends_itself` | that the batch lands atomically — one pmemlog `append`, whose crash view is the log before it or after it and nothing between |
+| C36 | **A staged compaction is inert until the old generation is reclaimed, and the batch has no middle.** Compaction on an append-only device is two steps and a crash can land between them; writing `compacted(log)` alone would leave `old ++ compacted(log)`, which replays to **`log + log`**. The leading `Truncate { len: 0 }` makes the staged generation self-sufficient, so the device means the same log with the old records there and once they are gone — which turns the reclaim into a no-op rather than a change. And the batch is written by one `store_write_batch`, so no recovery the model permits can observe it part-way | `raft::proofs::store::theorem_a_staged_compaction_is_inert`, `theorem_after_compaction_the_old_records_are_dead`, `theorem_an_atomic_batch_has_no_middle`, `lemma_a_compacted_log_appends_itself` | that the batch lands atomically — one pmemlog `append`, whose crash view is the log before it or after it and nothing between. The **one** property of the device this design asks for and cannot itself check |
+| C36b | **A batch written a record at a time rewinds the log**, exactly — a crash after `k` of its entries recovers exactly `k`. The reason C36 needs atomicity rather than merely preferring it: the marker has already cleared everything, so a partial batch is the compaction of a *shorter* log. Proved as an equality, not a possibility | `raft::proofs::store::theorem_a_partial_batch_can_rewind`, `lemma_compacted_take_is_take_compacted` | none |
 | C37 | **Every reachable store is encodable, so the two halves compose.** `records_fit` is a guard on the write transitions and a clause of `store_inv`, not a precondition that filters which theorems may be *invoked* — stated only on the theorems, an unencodable state stays reachable and the encoding theorems quietly stop applying exactly where they are needed. This is the theorem that spends it: any store satisfying the invariant round-trips through the encoding *and* survives a tear at any byte | `raft::proofs::wire::theorem_a_reachable_store_is_encodable`, `theorem_no_reachable_store_is_unwritable`, with `lemma_pushing_a_fitting_record_fits`, `lemma_a_prefix_of_a_fitting_sequence_fits` | none |
+| C38 | **The commit point never outruns the log**, and **retreats only when a truncation cuts below it**. Raft's commit index is supposed to be monotone; `accepted_commit`'s clamp to the log length gives that up in exactly one case, because a truncation below the commit point forces a choice between a commit index naming absent entries and one that goes backwards. This model retreats — a broken promise is readable, a commit point past the end of the log is not — and these say precisely when. Commit **is** monotone whenever the truncation is at or above it, which is every step of a healthy cluster; and when it retreats, the leader deleted an entry the follower had *committed* | `raft::proofs::log::theorem_the_commit_point_never_outruns_the_log`, `theorem_the_commit_point_does_not_retreat_above_a_truncation`, `theorem_the_commit_point_retreats_only_below_a_truncation`, `theorem_a_commit_retreat_means_a_committed_entry_was_deleted` | none — and the condition on monotonicity is exactly what **Leader Completeness** would discharge, so when that lands the hypothesis becomes vacuous and monotonicity becomes unconditional |
 | I | The inductive invariant holds in every reachable state (`init ==> inv`, `inv /\ next ==> inv`) | `ownership::proofs::invariant::theorem_reachable_inv` | the model's transition relation |
 | S | **The headline scenario**: `A` owns X@41, a transfer and a crash/recovery occur, `B` owns X@42, `A` returns still holding its epoch-41 token - and cannot perform an authoritative mutation. The postcondition exports the whole nine-step run, so the crash, the recovery and the outcome are the same execution — exported as separate existentials they need not have been, and an ordinary live handover could supply the outcome | `ownership::proofs::adversarial::scenario_stale_owner_returns` | `A != B` |
 | S1 | A stale `Grant` cannot resurrect a superseded epoch | `ownership::proofs::adversarial::theorem_stale_grant_cannot_be_used` | none |
@@ -705,6 +707,13 @@ will still truncate entries it had committed, which is faithful Raft — the
 protection against that is supposed to come from the election restriction, and
 the election restriction's proof is what is still missing.
 
+**C38 is what that gap costs, stated concretely.** Because the model may not
+assume that state unreachable, it has to handle it, and handling it means a
+follower's commit index can retreat — one Raft property given up to keep
+another. C38 confines the retreat to exactly the state Leader Completeness would
+rule out, so the gap has a boundary and a name rather than being a general
+caveat. Closing that proof closes this too.
+
 **There is no reconfiguration**, deliberately: membership is fixed and no
 transition changes it. Joint consensus is a separate protocol with its own
 well-known unsafety, and modelling it half-way would be worse than not modelling
@@ -746,6 +755,36 @@ Matching provable. It is also, it turns out, what makes the common case — a
 duplicate or reordered `AppendEntries`, which under heartbeats is most of them —
 a read and no write. The check that makes the protocol safe is the check that
 makes the steady state free.
+
+#### The commit point, and the one Raft property this model gives up
+
+Raft's commit index is monotone. This model's is not, in exactly one case, and
+the case is worth understanding because it is the shape of what is still
+missing.
+
+`accepted_commit` clamps the commit index to the length of the log. A follower
+with `commit = 5` told to replace the entry at index 0 ends with a one-entry
+log, and something has to give: either its commit point still says 5 — naming
+four entries that no longer exist — or it retreats to 1. **This model
+retreats.** A commit point past the end of the log is a state no later reader
+can make sense of, since every query about what has been applied reads off the
+end; a commit point that went backwards is a broken promise, but a readable one,
+and the breach is visible rather than latent.
+
+An earlier version of this comment claimed *both* "never backwards" and "never
+past the end of the log", which cannot both hold. That was a review finding and
+it was correct.
+
+What replaced it is **C38**, which says precisely when the retreat happens:
+commit is monotone whenever the truncation point is at or above it — every step
+of a healthy cluster — and when it retreats, the leader asked the follower to
+delete an entry it had **committed**. Not "commit might go backwards sometimes",
+but *"commit goes backwards only in the state whose unreachability is the
+missing theorem"*.
+
+That missing theorem is Leader Completeness. When it lands, C38's hypothesis
+becomes vacuous and monotonicity becomes unconditional. Until then the model may
+not treat the case as unreachable — so it handles it, and says how.
 
 #### The byte layer, and the theorem it exists for
 
@@ -813,12 +852,25 @@ whatever preceded it, so the device replays to `log` with the old records still
 there and to `log` once they are gone. Both crash views agree, which is what
 turns the reclaim from a change into a no-op (C36).
 
-It has to land atomically. A crash *inside* the batch would leave the marker and
-a prefix of the log — a rewind, and one that could cross the line C35 draws. So
-the batch is one sync's worth of writing: on pmemlog a single `append`, whose
+It has to land atomically, and that is not a preference. A crash *inside* the
+batch leaves the marker — which has already cleared everything — plus a
+*prefix* of the log, so recovery produces a shorter log than the store had.
+**C36b proves the rewind is exact**: a crash after `k` of the batch's entries
+recovers exactly `k`, because a partial batch is not arbitrary damage, it is the
+compaction of a shorter log. Data loss on an operation whose entire purpose is
+to change nothing.
+
+So the batch is one `store_write_batch`: on pmemlog a single `append`, whose
 crash view is the log before it or the log after it and nothing between. **That
-is the one property of the device this design leans on**, and it is the property
-pmemlog was built to have.
+is the one property of the device this design asks for and cannot itself
+check**, and it is the property pmemlog was built to have. `RecordLogStore`
+installs the batch in one step; `a_batch_written_one_record_at_a_time_would_rewind_the_log`
+walks every cut inside it and checks the real `compact` produces none of them.
+
+This was a review finding and it was a bug in the *code*, not the model: the
+executable store appended the batch a record at a time under a doc comment
+saying it must not. The model had no word for "atomically", which is why the
+two could drift with nothing to catch it — `store_write_batch` is that word.
 
 Two limitations, stated rather than assumed away:
 

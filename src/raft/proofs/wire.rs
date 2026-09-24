@@ -1,0 +1,306 @@
+//! **The encoding's theorems**: the round trip, and the torn tail.
+//!
+//! Two results, and the second is the one that matters.
+//!
+//! [`theorem_parse_of_encode`] is the round trip: what was written is what is
+//! read. Necessary, and not interesting — an encoding that failed this would be
+//! broken in a way testing finds in a minute.
+//!
+//! [`theorem_a_torn_tail_is_a_record_prefix`] is the one that is hard to test
+//! and easy to get wrong: **cut the bytes anywhere and what parses is a prefix
+//! of the records**. Anywhere. Not at a record boundary, not at a boundary the
+//! device promised — anywhere at all, including the middle of a `u64`.
+//!
+//! That is what `crate::raft::store`'s crash argument needs and cannot state
+//! for itself. `store_recover` is written over a *record* prefix; a device
+//! hands back a *byte* prefix; and a byte prefix can cut a record in half. This
+//! theorem is the bridge, and without it the store's crash model would be an
+//! assumption about how writes land dressed up as a definition.
+//!
+//! It is proved for **every** `k`, not for multiples of seventeen, which is the
+//! whole point: the fixed width means a half-written record cannot be mistaken
+//! for a whole one, so recovery does not need the device to tear tidily.
+#![allow(unused_imports)]
+
+use vstd::prelude::*;
+
+use crate::raft::model::*;
+use crate::raft::store::*;
+use crate::raft::wire::*;
+
+verus! {
+
+// ---------------------------------------------------------------------------
+// Sequence plumbing
+// ---------------------------------------------------------------------------
+
+/// Taking the first part of a concatenation gives the first part back.
+pub proof fn lemma_take_the_front(a: Seq<u8>, b: Seq<u8>)
+    ensures
+        (a + b).take(a.len() as int) == a,
+        (a + b).skip(a.len() as int) == b,
+{
+    assert((a + b).take(a.len() as int) =~= a);
+    assert((a + b).skip(a.len() as int) =~= b);
+}
+
+/// Cutting a concatenation inside its first part cuts the first part.
+pub proof fn lemma_cut_inside_the_front(a: Seq<u8>, b: Seq<u8>, k: int)
+    requires
+        0 <= k <= a.len(),
+    ensures
+        (a + b).take(k) == a.take(k),
+{
+    assert((a + b).take(k) =~= a.take(k));
+}
+
+/// Cutting a concatenation past its first part keeps all of it and cuts the
+/// second.
+pub proof fn lemma_cut_past_the_front(a: Seq<u8>, b: Seq<u8>, k: int)
+    requires
+        a.len() <= k <= a.len() + b.len(),
+    ensures
+        (a + b).take(k) == a + b.take(k - a.len()),
+{
+    assert((a + b).take(k) =~= a + b.take(k - a.len()));
+}
+
+// ---------------------------------------------------------------------------
+// One `u64`
+// ---------------------------------------------------------------------------
+
+/// **Eight bytes, least significant first, and back again.**
+///
+/// The one place in this repository where the solver is asked a question about
+/// bits rather than about sequences. `by(bit_vector)` is not an escape hatch:
+/// it is a second decision procedure for a decidable theory, and it proves the
+/// goal rather than assuming it.
+pub proof fn lemma_le_round_trip(x: u64)
+    ensures
+        le_to_u64(u64_to_le(x)) == x,
+{
+    let b = u64_to_le(x);
+    assert(b.len() == 8);
+    assert(le_to_u64(b) == ((((x & 0xff) as u8) as u64) | (((((x >> 8) & 0xff) as u8) as u64) << 8)
+        | (((((x >> 16) & 0xff) as u8) as u64) << 16) | (((((x >> 24) & 0xff) as u8) as u64) << 24)
+        | (((((x >> 32) & 0xff) as u8) as u64) << 32) | (((((x >> 40) & 0xff) as u8) as u64) << 40)
+        | (((((x >> 48) & 0xff) as u8) as u64) << 48) | (((((x >> 56) & 0xff) as u8) as u64)
+        << 56)) as u64);
+    assert(((((x & 0xff) as u8) as u64) | (((((x >> 8) & 0xff) as u8) as u64) << 8) | (((((x >> 16)
+        & 0xff) as u8) as u64) << 16) | (((((x >> 24) & 0xff) as u8) as u64) << 24) | (((((x >> 32)
+        & 0xff) as u8) as u64) << 32) | (((((x >> 40) & 0xff) as u8) as u64) << 40) | (((((x >> 48)
+        & 0xff) as u8) as u64) << 48) | (((((x >> 56) & 0xff) as u8) as u64) << 56)) as u64
+        == x) by (bit_vector);
+}
+
+// ---------------------------------------------------------------------------
+// One record
+// ---------------------------------------------------------------------------
+
+/// Every record is seventeen bytes, whichever it is. This is the property the
+/// parser's totality rests on.
+pub proof fn lemma_a_record_is_seventeen_bytes(r: Record)
+    ensures
+        encode_record(r).len() == record_len(),
+{
+}
+
+/// **A record survives the round trip**, provided it fits — see
+/// `crate::raft::wire`'s note on the 64-bit boundary.
+pub proof fn lemma_a_record_round_trips(r: Record)
+    requires
+        record_fits(r),
+    ensures
+        decode_record(encode_record(r)) == r,
+{
+    match r {
+        Record::Append { term, value } => {
+            let a = u64_to_le(term as u64);
+            let b = u64_to_le(value as u64);
+            let bytes = seq![tag_append()] + a + b;
+            assert(bytes[0] == tag_append());
+            assert(bytes.subrange(1, 9) =~= a);
+            assert(bytes.subrange(9, 17) =~= b);
+            lemma_le_round_trip(term as u64);
+            lemma_le_round_trip(value as u64);
+            assert(le_to_u64(a) as nat == term);
+            assert(le_to_u64(b) as nat == value);
+        },
+        Record::Truncate { len } => {
+            let a = u64_to_le(len as u64);
+            let bytes = seq![tag_truncate()] + a + u64_to_le(0);
+            assert(bytes[0] == tag_truncate());
+            assert(tag_truncate() != tag_append());
+            assert(bytes.subrange(1, 9) =~= a);
+            lemma_le_round_trip(len as u64);
+            assert(le_to_u64(a) as nat == len);
+        },
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The device
+// ---------------------------------------------------------------------------
+
+/// The encoding is seventeen bytes per record, exactly.
+///
+/// Which is what makes `bytes.len() / 17` the record count, and the parser's
+/// stopping condition an observation rather than an argument.
+pub proof fn theorem_the_encoding_is_fixed_width(rs: Seq<Record>)
+    ensures
+        encode(rs).len() == rs.len() * record_len(),
+    decreases rs.len(),
+{
+    if rs.len() > 0 {
+        theorem_the_encoding_is_fixed_width(rs.skip(1));
+        lemma_a_record_is_seventeen_bytes(rs[0]);
+    }
+}
+
+/// **What was written is what is read.**
+pub proof fn theorem_parse_of_encode(rs: Seq<Record>)
+    requires
+        records_fit(rs),
+    ensures
+        parse(encode(rs)) == rs,
+    decreases rs.len(),
+{
+    if rs.len() == 0 {
+        assert(encode(rs) =~= Seq::<u8>::empty());
+        assert(parse(encode(rs)) =~= rs);
+    } else {
+        let head = encode_record(rs[0]);
+        let tail = encode(rs.skip(1));
+        lemma_a_record_is_seventeen_bytes(rs[0]);
+        assert(encode(rs) == head + tail);
+        assert(encode(rs).len() >= record_len());
+
+        lemma_take_the_front(head, tail);
+        assert(encode(rs).take(record_len() as int) == head);
+        assert(encode(rs).skip(record_len() as int) == tail);
+
+        assert(records_fit(rs.skip(1))) by {
+            assert forall|i: int| 0 <= i < rs.skip(1).len() implies record_fits(
+                #[trigger] rs.skip(1)[i],
+            ) by {
+                assert(rs.skip(1)[i] == rs[i + 1]);
+            }
+        }
+        assert(record_fits(rs[0]));
+        lemma_a_record_round_trips(rs[0]);
+        theorem_parse_of_encode(rs.skip(1));
+
+        assert(parse(encode(rs)) =~= seq![rs[0]] + rs.skip(1));
+        assert(seq![rs[0]] + rs.skip(1) =~= rs);
+    }
+}
+
+/// **Cut the bytes anywhere and a record prefix comes back.**
+///
+/// The crash theorem. `k` is any byte count at all — a torn write lands where
+/// it lands, and nothing in this statement asks it to land on a boundary. What
+/// parses is the first `k / 17` records: every record whose bytes are all
+/// there, and no part of one whose bytes are not.
+///
+/// Together with `crate::raft::proofs::store::theorem_a_crash_can_only_rewind`
+/// this is the whole crash argument. A device hands back some prefix of the
+/// bytes; that prefix is some prefix of the records; `replay` of a record
+/// prefix is a log the store had. No step of that chain asks the device for
+/// anything more than "you keep a prefix of what I wrote".
+pub proof fn theorem_a_torn_tail_is_a_record_prefix(rs: Seq<Record>, k: int)
+    requires
+        records_fit(rs),
+        0 <= k <= encode(rs).len(),
+    ensures
+        parse(encode(rs).take(k)) == rs.take(k / (record_len() as int)),
+    decreases rs.len(),
+{
+    theorem_the_encoding_is_fixed_width(rs);
+    if rs.len() == 0 {
+        assert(encode(rs) =~= Seq::<u8>::empty());
+        assert(k == 0);
+        assert(parse(encode(rs).take(k)) =~= rs.take(0));
+    } else {
+        let head = encode_record(rs[0]);
+        let tail = encode(rs.skip(1));
+        lemma_a_record_is_seventeen_bytes(rs[0]);
+        assert(encode(rs) == head + tail);
+        assert(head.len() == record_len());
+
+        if k < record_len() as int {
+            // Not even the first record is whole, so nothing parses — and
+            // `k / 17` is zero, which is the same statement.
+            lemma_cut_inside_the_front(head, tail, k);
+            assert(encode(rs).take(k).len() == k);
+            assert(encode(rs).take(k).len() < record_len());
+            assert(k / (record_len() as int) == 0) by (nonlinear_arith)
+                requires
+                    0 <= k < record_len() as int,
+            ;
+            assert(parse(encode(rs).take(k)) =~= rs.take(0));
+        } else {
+            // The first record is whole. Peel it and recurse on the rest.
+            lemma_cut_past_the_front(head, tail, k);
+            assert(encode(rs).take(k) == head + tail.take(k - record_len() as int));
+
+            let rest = head + tail.take(k - record_len() as int);
+            assert(rest.len() >= record_len());
+            lemma_take_the_front(head, tail.take(k - record_len() as int));
+            assert(rest.take(record_len() as int) == head);
+            assert(rest.skip(record_len() as int) == tail.take(k - record_len() as int));
+
+            assert(records_fit(rs.skip(1))) by {
+                assert forall|i: int| 0 <= i < rs.skip(1).len() implies record_fits(
+                    #[trigger] rs.skip(1)[i],
+                ) by {
+                    assert(rs.skip(1)[i] == rs[i + 1]);
+                }
+            }
+            assert(record_fits(rs[0]));
+            lemma_a_record_round_trips(rs[0]);
+            theorem_a_torn_tail_is_a_record_prefix(rs.skip(1), k - record_len() as int);
+
+            // `(k - 17) / 17 == k / 17 - 1`, which is where the index bookkeeping
+            // lands: one record consumed here, the rest by the recursion.
+            assert((k - record_len() as int) / (record_len() as int) == k / (record_len() as int)
+                - 1) by (nonlinear_arith)
+                requires
+                    record_len() as int <= k,
+                    record_len() == 17,
+            ;
+            assert(parse(encode(rs).take(k)) =~= seq![rs[0]] + rs.skip(1).take(
+                k / (record_len() as int) - 1,
+            ));
+            assert(seq![rs[0]] + rs.skip(1).take(k / (record_len() as int) - 1) =~= rs.take(
+                k / (record_len() as int),
+            ));
+        }
+    }
+}
+
+/// **The whole chain, in one statement.** Whatever prefix of the bytes a crash
+/// leaves, the log recovered from it is `replay` of a prefix of the records
+/// that were written — a log the store had, reached the way it reached it.
+pub proof fn theorem_recovery_from_a_torn_device(rs: Seq<Record>, k: int)
+    requires
+        records_fit(rs),
+        0 <= k <= encode(rs).len(),
+    ensures
+        exists|j: nat|
+            j <= rs.len() && recovered_log(encode(rs).take(k)) == #[trigger] replay(
+                rs.take(j as int),
+            ),
+{
+    theorem_the_encoding_is_fixed_width(rs);
+    theorem_a_torn_tail_is_a_record_prefix(rs, k);
+    let j = (k / (record_len() as int)) as nat;
+    assert(j <= rs.len()) by (nonlinear_arith)
+        requires
+            0 <= k <= rs.len() * record_len(),
+            record_len() == 17,
+            j == k / (record_len() as int),
+    ;
+    assert(recovered_log(encode(rs).take(k)) == replay(rs.take(j as int)));
+}
+
+} // verus!

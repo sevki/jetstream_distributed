@@ -10,6 +10,7 @@
 //! * [`steps`]   — the election decisions as executable `u64` functions.
 //! * [`store`]   — the durable log: how a log that truncates lives on a device
 //!                 that cannot.
+//! * [`wire`]    — the record encoding, and what a torn write leaves behind.
 //! * [`proofs`]  — Election Safety, a run in which an election happens, and
 //!                 what one replication step gives you.
 //! * `service`   — the protocol over Jetstream RPC, behind the `service`
@@ -23,6 +24,7 @@ pub mod model;
 pub mod proofs;
 pub mod steps;
 pub mod store;
+pub mod wire;
 
 #[cfg(feature = "service")]
 pub mod service;

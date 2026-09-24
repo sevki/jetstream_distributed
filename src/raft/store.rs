@@ -212,6 +212,30 @@ pub open spec fn store_write(pre: Store, post: Store, r: Record) -> bool {
     &&& post.durable == pre.durable
 }
 
+/// **Several records, atomically.**
+///
+/// What `pmemlog`'s `append` gives and the reason this design can rest on it:
+/// the crash view is the device **before** the call or the device **after**
+/// it, never anything between. `durable` moves to the end, because a batch that
+/// landed has landed.
+///
+/// This is not [`store_write`] repeated. A loop of single writes passes through
+/// every intermediate state, and for [`compaction_batch`] those states are
+/// exactly the dangerous ones — the marker plus a *prefix* of the log, which
+/// replays to a shorter log than the store had. `theorem_a_partial_batch_can_rewind`
+/// is the proof that the hazard is real rather than theoretical, and it is why
+/// compaction must use this and not a loop.
+///
+/// It is the one thing this module asks of the device that it cannot check. On
+/// a real `InfiniteLogImpl` the batch is one `append` call of the encoded
+/// records; anything that decomposed it into several would break C36.
+pub open spec fn store_write_batch(pre: Store, post: Store, rs: Seq<Record>) -> bool {
+    &&& records_fit(rs)
+    &&& post.records == pre.records + rs
+    &&& post.log == replay(pre.records + rs)
+    &&& post.durable == post.records.len()
+}
+
 /// **Everything written has landed.**
 ///
 /// The other primitive, and the only thing that moves `durable` forward. What
@@ -285,10 +309,11 @@ pub open spec fn store_recover(pre: Store, post: Store, survived: nat) -> bool {
     &&& post.durable == survived
 }
 
-/// Any of the five: the two primitives, the two durable compounds a caller
+/// Any of the six: the three primitives, the two durable compounds a caller
 /// sees, and the crash.
 pub open spec fn store_next(pre: Store, post: Store) -> bool {
     ||| exists|r: Record| store_write(pre, post, r)
+    ||| exists|rs: Seq<Record>| store_write_batch(pre, post, rs)
     ||| store_sync(pre, post)
     ||| exists|e: Entry| store_append(pre, post, e)
     ||| exists|len: nat| store_truncate(pre, post, len)

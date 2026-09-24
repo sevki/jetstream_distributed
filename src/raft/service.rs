@@ -360,25 +360,33 @@ impl RecordLogStore {
     /// would look for the bound.
     pub fn compact(&self) {
         let mut g = self.0.lock().expect("record log lock");
-        let batch: Vec<ExecRecord> =
-            core::iter::once(ExecRecord { is_truncate: true, a: 0, b: 0 })
-                .chain(
-                    g.log
-                        .iter()
-                        .map(|e| ExecRecord { is_truncate: false, a: e.term, b: e.value })
-                        .collect::<Vec<_>>(),
-                )
-                .collect();
 
-        let old_generation = g.records.len();
-        for r in batch {
-            write_record(&mut g, r);
-        }
-        sync(&mut g);
+        // The batch: a marker that clears whatever came before, then one
+        // append per entry.
+        let mut batch: Vec<ExecRecord> = Vec::with_capacity(g.log.len() + 1);
+        batch.push(ExecRecord { is_truncate: true, a: 0, b: 0 });
+        batch.extend(
+            g.log.iter().map(|e| ExecRecord { is_truncate: false, a: e.term, b: e.value }),
+        );
 
-        // The batch replays to the same log with the old records there and
-        // with them gone, so dropping them is a no-op rather than a change.
-        g.records.drain(..old_generation);
+        // **Installed as one.** Not `write_record` in a loop: every
+        // intermediate state of that loop is the marker plus a *prefix* of the
+        // log, which replays to a shorter log than the store had, and a crash
+        // in the middle of it is data loss on an operation whose whole purpose
+        // is to change nothing. `theorem_a_partial_batch_can_rewind` proves
+        // that hazard is exact rather than theoretical.
+        //
+        // On a real `InfiniteLogImpl` this is one `append` of the encoded
+        // batch, whose crash view is the device before the call or after it and
+        // nothing between — `store_write_batch`, and the one property this
+        // design asks of the device that it cannot itself check. Here the lock
+        // gives the same guarantee: no reader sees a half-installed `records`.
+        //
+        // The old generation is dropped in the same step, which is sound
+        // because the batch replays to the same log with it there and with it
+        // gone (`theorem_after_compaction_the_old_records_are_dead`) — so the
+        // reclaim is a no-op and needs no crash window of its own.
+        g.records = batch;
         g.durable = g.records.len();
     }
 

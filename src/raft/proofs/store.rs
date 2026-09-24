@@ -188,6 +188,9 @@ pub proof fn theorem_recovery_is_exact(pre: Store, post: Store)
         let r = choose|r: Record| store_write(pre, post, r);
         assert(post.records.drop_last() =~= pre.records);
         lemma_pushing_a_fitting_record_fits(pre.records, r);
+    } else if exists|rs: Seq<Record>| store_write_batch(pre, post, rs) {
+        let rs = choose|rs: Seq<Record>| store_write_batch(pre, post, rs);
+        lemma_concatenating_fitting_sequences_fits(pre.records, rs);
     } else if store_sync(pre, post) {
     } else if exists|e: Entry| store_append(pre, post, e) {
         let e = choose|e: Entry| store_append(pre, post, e);
@@ -236,6 +239,9 @@ pub proof fn theorem_durability_never_retreats(pre: Store, post: Store)
 {
     if exists|r: Record| store_write(pre, post, r) {
         let r = choose|r: Record| store_write(pre, post, r);
+        assert(post.records.take(pre.durable as int) =~= pre.records.take(pre.durable as int));
+    } else if exists|rs: Seq<Record>| store_write_batch(pre, post, rs) {
+        let rs = choose|rs: Seq<Record>| store_write_batch(pre, post, rs);
         assert(post.records.take(pre.durable as int) =~= pre.records.take(pre.durable as int));
     } else if store_sync(pre, post) {
         assert(post.records.take(pre.durable as int) =~= pre.records.take(pre.durable as int));
@@ -722,6 +728,94 @@ pub proof fn theorem_after_compaction_the_old_records_are_dead(records: Seq<Reco
     assert(replay(cleared) + log =~= log);
 
     theorem_a_staged_compaction_is_inert(records);
+}
+
+/// **A partial compaction batch rewinds the log**, which is why the batch may
+/// not be written a record at a time.
+///
+/// Copilot's finding, and it was a bug in the executable store rather than in
+/// the model: `compact` appended the marker and each entry separately and
+/// synced once at the end, which is exactly the loop this rules out. A crash
+/// part-way leaves `old_records ++ Truncate { len: 0 } ++ (a prefix of the
+/// log)` — the marker has already cleared everything, and only some of the log
+/// has been written back. Recovery replays that to a **shorter log than the
+/// store had**, which is data loss on an operation whose whole purpose is to
+/// change nothing.
+///
+/// Stated as an equality rather than an inequality because the point is not
+/// that something *might* go wrong: the recovered log is exactly the prefix
+/// that landed, for every cut. The store is one atomic
+/// [`store_write_batch`] away from this, and that is the one property the
+/// device has to supply.
+pub proof fn theorem_a_partial_batch_can_rewind(records: Seq<Record>, k: int)
+    requires
+        0 <= k <= replay(records).len(),
+    ensures
+        replay(
+            records + seq![Record::Truncate { len: 0 }] + compacted(replay(records)).take(k),
+        ) == replay(records).take(k),
+{
+    let log = replay(records);
+    let cleared = records.push(Record::Truncate { len: 0 });
+    assert(records + seq![Record::Truncate { len: 0 }] =~= cleared);
+
+    theorem_a_truncation_is_one_record(records, 0);
+    assert(replay(cleared) =~= Seq::<Entry>::empty());
+
+    lemma_compacted_take_is_take_compacted(log, k);
+    lemma_a_compacted_log_appends_itself(cleared, log.take(k));
+    assert(replay(cleared) + log.take(k) =~= log.take(k));
+}
+
+/// Cutting the compacted records at `k` is compacting the log cut at `k`.
+///
+/// The seq fact behind the theorem above: a partial batch is not some arbitrary
+/// damaged thing, it is the compaction of a shorter log — which is why the
+/// rewind is exact.
+pub proof fn lemma_compacted_take_is_take_compacted(log: Seq<Entry>, k: int)
+    requires
+        0 <= k <= log.len(),
+    ensures
+        compacted(log).take(k) == compacted(log.take(k)),
+    decreases log.len(),
+{
+    if log.len() == 0 {
+        assert(compacted(log).take(k) =~= compacted(log.take(k)));
+    } else if k == log.len() {
+        theorem_compaction_is_one_record_per_entry(log);
+        assert(log.take(k) =~= log);
+        assert(compacted(log).take(k) =~= compacted(log));
+    } else {
+        let head = log.drop_last();
+        theorem_compaction_is_one_record_per_entry(head);
+        lemma_compacted_take_is_take_compacted(head, k);
+        assert(log.take(k) =~= head.take(k));
+        // `compacted(log)` is `compacted(head)` with one record pushed, and `k`
+        // is below that record, so the cut never reaches it.
+        assert(compacted(log).take(k) =~= compacted(head).take(k));
+    }
+}
+
+/// **And an atomic batch cannot be observed part-way.** The transition takes
+/// the device from before the batch to after it, so there is no state between
+/// for a crash to find — which is what makes C36's inertness argument cover the
+/// whole operation rather than its endpoints.
+pub proof fn theorem_an_atomic_batch_has_no_middle(pre: Store, post: Store, rs: Seq<Record>)
+    requires
+        store_inv(pre),
+        store_write_batch(pre, post, rs),
+    ensures
+        post.records == pre.records + rs,
+        post.durable == post.records.len(),
+        // Every recovery the model permits from `post` keeps the whole batch.
+        forall|later: Store, survived: nat|
+            #[trigger] store_recover(post, later, survived) ==> later.records == post.records,
+{
+    assert forall|later: Store, survived: nat| #[trigger]
+        store_recover(post, later, survived) implies later.records == post.records by {
+        assert(survived == post.records.len());
+        assert(post.records.take(survived as int) =~= post.records);
+    }
 }
 
 /// The batch is one record longer than the log: the marker, then an append per

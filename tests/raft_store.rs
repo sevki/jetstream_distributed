@@ -119,19 +119,25 @@ fn the_cost_of_a_truncation_does_not_depend_on_what_it_deletes() {
 // Crashes
 // ---------------------------------------------------------------------------
 
-/// **A crash at every prefix lands on a log the store had.**
+/// **Recovery reads every prefix, and reads it right.**
 ///
-/// C28, run. The store is driven through a sequence that appends, truncates
-/// and appends again — so the log genuinely goes backwards partway through —
-/// and after every single record the log is remembered. Then the run is
-/// crashed at each of those points in turn, and what recovery produces is
-/// compared against what was remembered.
+/// C28's totality half: `replay` is defined on *every* sequence of records, so
+/// there is no prefix a device can present that recovery cannot read. Driven
+/// over every cut of a run that appends, truncates and appends again — so the
+/// log genuinely goes backwards partway through — and each recovery compared
+/// against an independent replay.
 ///
-/// A store whose in-memory log had drifted from its device would fail this at
-/// the first point they disagreed, which is the whole reason it is written
-/// over *every* prefix rather than over the end.
+/// Note what this does **not** claim: that every one of these cuts is a crash
+/// the model permits. Most are not — `store_recover` requires
+/// `pre.durable <= survived`, and between operations the line is at the end of
+/// the device, so the only crash that loses anything is the window inside a
+/// two-record `overwrite`. That is
+/// `a_crash_inside_a_conflicting_append_loses_only_the_new_entry`. This test is
+/// about the parser and the fold being total, which has to hold for *any*
+/// prefix precisely because the store is not the only thing that could have
+/// written the device.
 #[test]
-fn a_crash_at_every_prefix_lands_on_a_log_the_store_had() {
+fn recovery_reads_every_prefix_and_reads_it_right() {
     let log = RecordLogStore::new();
 
     // A run in which the log genuinely goes backwards partway through, so the
@@ -150,7 +156,7 @@ fn a_crash_at_every_prefix_lands_on_a_log_the_store_had() {
         assert_eq!(
             recovered.entries(),
             naively_replayed(&records[..k]),
-            "a crash after {k} records recovered a log the store never had"
+            "recovery from {k} records disagreed with an independent replay"
         );
         assert_eq!(recovered.device_len(), k, "and recovery kept exactly what survived");
     }
@@ -309,6 +315,53 @@ fn staging_without_the_marker_would_double_the_log() {
     assert_eq!(&doubled[..expected.len()], &expected[..]);
 }
 
+/// **A batch written a record at a time rewinds the log.**
+///
+/// The control for `compact` being atomic, and the bug Copilot found: the
+/// executable store used to append the marker and each entry separately and
+/// sync once at the end, which is exactly this loop. Every intermediate state
+/// is the marker plus a *prefix* of the log — the marker has already cleared
+/// everything, and only some of the log has been written back — so a crash
+/// part-way recovers a **shorter log than the store had**. Data loss on an
+/// operation whose whole purpose is to change nothing.
+///
+/// `theorem_a_partial_batch_can_rewind` proves the rewind is exact rather than
+/// merely possible. This is that theorem run, and it is what `compact`
+/// installing the batch in one step is for.
+#[test]
+fn a_batch_written_one_record_at_a_time_would_rewind_the_log() {
+    let log = RecordLogStore::new();
+    for i in 0..5u64 {
+        log.append(e(1, i)).unwrap();
+    }
+    let before = log.entries();
+    let old_generation = log.records();
+
+    let mut batch = vec![ExecRecord { is_truncate: true, a: 0, b: 0 }];
+    batch.extend(before.iter().map(|e| ExecRecord { is_truncate: false, a: e.term, b: e.value }));
+
+    // Every cut inside the batch, which is what a record-at-a-time loop makes
+    // reachable. The marker is index 0, so a cut at `1 + k` has written k
+    // entries back.
+    for k in 0..before.len() {
+        let mut partway = old_generation.clone();
+        partway.extend(batch[..1 + k].iter().copied());
+        assert_eq!(
+            naively_replayed(&partway),
+            before[..k].to_vec(),
+            "a crash after {k} of the batch's entries recovers only {k} of {} — the rewind",
+            before.len()
+        );
+    }
+
+    // And the real `compact` never produces one of those states: it installs
+    // the whole batch in a single step.
+    log.compact();
+    assert_eq!(log.entries(), before);
+    assert_eq!(log.records().len(), batch.len());
+    assert_eq!(log.durable_len(), log.device_len(), "and the whole batch is durable");
+}
+
 // ---------------------------------------------------------------------------
 // The protocol on top
 // ---------------------------------------------------------------------------
@@ -363,7 +416,7 @@ async fn a_conflicting_append_entries_does_touch_the_device() {
 /// takes three entries, the process dies having written two, and comes back
 /// able to take the third.
 #[tokio::test]
-async fn a_follower_that_restarts_carries_on_from_what_it_wrote() {
+async fn a_follower_that_restarts_keeps_everything_it_acknowledged() {
     let log = RecordLogStore::new();
     let follower = peer_with(1, &log);
 
@@ -373,17 +426,65 @@ async fn a_follower_that_restarts_carries_on_from_what_it_wrote() {
     assert_eq!(log.entries(), vec![e(1, 10), e(1, 11), e(1, 12)]);
     assert_eq!(log.device_len(), 3, "three entries, three records: replication extends");
 
-    // The third record never reached the device.
-    let restarted_store = log.after_crash(2);
-    assert_eq!(restarted_store.entries(), vec![e(1, 10), e(1, 11)]);
+    // **Every one of those three syncs before answering**, so the durable line
+    // is at the end of the device and there is no crash the model permits that
+    // loses any of them. This is C35 from the protocol's side: the leader may
+    // have committed on the strength of those `Accepted` replies.
+    assert_eq!(log.durable_len(), 3);
+    let restarted_store = log.after_crash(log.durable_len());
+    assert_eq!(
+        restarted_store.entries(),
+        vec![e(1, 10), e(1, 11), e(1, 12)],
+        "a restart may not take back an acknowledged entry"
+    );
 
+    // And the restarted follower carries on: a duplicate of the last request
+    // is recognised, and the next one extends.
     let restarted = peer_with(1, &restarted_store);
-    let retried = restarted.append_entries(from(A), 1, 2, 1, e(1, 12), 0).await.unwrap();
-    assert_eq!(retried, Appended::Accepted(3), "the leader retries and it lands");
-    assert_eq!(restarted_store.entries(), vec![e(1, 10), e(1, 11), e(1, 12)]);
+    let duplicate = restarted.append_entries(from(A), 1, 2, 1, e(1, 12), 0).await.unwrap();
+    assert_eq!(duplicate, Appended::Accepted(3));
+    assert_eq!(restarted_store.device_len(), 3, "the duplicate wrote nothing");
+
+    let next = restarted.append_entries(from(A), 1, 3, 1, e(1, 13), 0).await.unwrap();
+    assert_eq!(next, Appended::Accepted(4));
+    assert_eq!(restarted_store.entries(), vec![e(1, 10), e(1, 11), e(1, 12), e(1, 13)]);
 }
 
-/// **Replication that extends costs one record per entry.**
+/// **The one window a crash can lose anything**, and what it loses.
+///
+/// Replication that extends is one record and one sync, so between calls the
+/// durable line is at the end of the device and nothing is at risk — which is
+/// the test above. The line lags only *inside* a two-record `overwrite`, which
+/// is what a conflicting `AppendEntries` does, and what that window can lose is
+/// the new entry and nothing older.
+#[tokio::test]
+async fn a_crash_inside_a_conflicting_append_loses_only_the_new_entry() {
+    let log = RecordLogStore::new();
+    let follower = peer_with(1, &log);
+
+    follower.append_entries(from(A), 1, 0, 0, e(1, 10), 0).await.unwrap();
+    follower.append_entries(from(A), 1, 1, 1, e(1, 11), 0).await.unwrap();
+    let settled = log.durable_len();
+    assert_eq!(settled, 2);
+
+    // A later leader replaces index 1: marker, then entry. Two records.
+    follower.append_entries(from(A), 2, 1, 1, e(2, 99), 0).await.unwrap();
+    assert_eq!(log.entries(), vec![e(1, 10), e(2, 99)]);
+    assert_eq!(log.device_len(), settled + 2);
+
+    // The crash lands between the two. `survived` is above the line as it
+    // stood when the operation began, so this is a recovery the model permits.
+    let torn = log.after_crash(settled + 1);
+    assert_eq!(torn.entries(), vec![e(1, 10)], "the truncation landed, the entry did not");
+    assert!(torn.entries().len() >= 1, "and nothing from before the operation was lost");
+
+    // The leader retries and it lands.
+    let restarted = peer_with(1, &torn);
+    restarted.append_entries(from(A), 2, 1, 1, e(2, 99), 0).await.unwrap();
+    assert_eq!(torn.entries(), log.entries());
+}
+
+/// **Replication that extends costs one record per entry.**/// **Replication that extends costs one record per entry.**
 ///
 /// The steady state, and the reason the identity marker is not written. A
 /// leader nobody is fighting sends entry after entry at the end of the

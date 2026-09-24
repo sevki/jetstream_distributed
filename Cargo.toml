@@ -30,11 +30,11 @@ service = ["dep:jetstream", "dep:tokio"]
 
 [dependencies]
 # `vstd` is the Verus standard library. This is the version that ships with
-# Verus release 0.2026.09.13.671956e (per the cargo-verus toolchain manifest).
+# Verus release 0.2026.09.20.aef82ed (per the cargo-verus toolchain manifest).
 # It is only used when driving verification through `cargo verus`; the primary
 # CI entry point (`verus --crate-type=lib src/lib.rs`) uses the prebuilt vstd
 # inside the Verus release archive instead.
-vstd = "=0.0.0-2026-09-06-0133"
+vstd = "=0.0.0-2026-09-20-0158"
 
 # Not `"16.3.1"` from crates.io — that version is not published there (16.0.0 is
 # the latest release), and the services are written against the working tree,

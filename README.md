@@ -951,7 +951,7 @@ rustup toolchain install 1.98.1-x86_64-unknown-linux-gnu \
   --component rustc-dev,llvm-tools,rust-std,cargo,rustfmt
 
 # 2. Download the pinned Verus release
-VERUS=0.2026.09.13.671956e
+VERUS=0.2026.09.20.aef82ed
 curl -fL -o verus.zip \
   "https://github.com/verus-lang/verus/releases/download/release%2F${VERUS}/verus-${VERUS}-x86-linux.zip"
 unzip -q verus.zip && export PATH="$PWD/verus-x86-linux:$PATH"

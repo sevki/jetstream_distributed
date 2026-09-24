@@ -102,6 +102,16 @@ jobs:
       # an undischarged assumption underpin a "verified" theorem. Whole-word
       # matching leaves vstd's `axiom_*` lemma names alone, but it does mean
       # prose in `src/` must not use the bare word.
+      #
+      # It covers `src/` and not `vendor/`, deliberately. `vendor/pmemlog` is
+      # somebody else's verified crate and it has six of these: two assumptions
+      # about what a CRC detects, one CRC computation, and three I/O primitives
+      # for the device. Every one is a boundary of the system model rather than
+      # a proof obligation waved away, they are enumerated one by one in
+      # `vendor/pmemlog/README.md`, and the root `README.md` says what this
+      # repository proves *conditional on them*. Extending the grep over
+      # `vendor/` would not make them go away; it would make the vendored crate
+      # unusable and leave the assumptions undocumented instead of listed.
       - name: Reject verification escape hatches
         run: |
           set -euo pipefail
@@ -189,6 +199,109 @@ jobs:
             echo "::error::this crate's verification summary reports errors: $summary"
             exit 1
           fi
+
+  # The vendored storage layer.
+  #
+  # Its own job, because a failure here means something different from a failure
+  # above: `vendor/pmemlog` is Microsoft's code and this repository does not
+  # develop it. A red run here says the crate no longer verifies under the Verus
+  # release this repository pins — which is a fact about the pin, not about any
+  # proof written here, and the fix is to move the pin or the vendored commit
+  # rather than to edit the proofs.
+  #
+  # It goes through `cargo verus` rather than the bare `verus` entry point
+  # because pmemlog depends on `crc64fast` for its CRCs, and the bare entry
+  # point has no way to build a dependency.
+  pmemlog:
+    name: pmemlog proof check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      VERUS_VERSION: 0.2026.09.20.aef82ed
+      VERUS_TOOLCHAIN: 1.98.1-x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Rust toolchain Verus was built against
+        run: |
+          rustup toolchain install "$VERUS_TOOLCHAIN" \
+            --component rustc-dev,llvm-tools,rust-std,cargo,rustfmt
+
+      - name: Restore the Verus release from cache
+        id: verus-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/verus
+          key: verus-${{ env.VERUS_VERSION }}-x86-linux
+
+      - name: Download Verus
+        if: steps.verus-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euxo pipefail
+          url="https://github.com/verus-lang/verus/releases/download/release%2F${VERUS_VERSION}/verus-${VERUS_VERSION}-x86-linux.zip"
+          curl --fail --location --silent --show-error -o /tmp/verus.zip "$url"
+          unzip -q /tmp/verus.zip -d /tmp/verus-unpacked
+          mv /tmp/verus-unpacked/verus-x86-linux "$HOME/verus"
+          chmod +x "$HOME/verus/verus" "$HOME/verus/rust_verify" "$HOME/verus/z3" "$HOME/verus/cargo-verus"
+
+      - name: Put Verus on PATH
+        run: echo "$HOME/verus" >> "$GITHUB_PATH"
+
+      # The same positional check the job above uses, and for the same reason:
+      # `cargo verus verify` prints vstd's summary and exits 0 even when it has
+      # verified nothing of the crate asked for, so the summary has to appear
+      # *after* Cargo starts compiling `pmemlog`.
+      - name: Verify the vendored log
+        run: |
+          set -euo pipefail
+          cargo verus verify -p pmemlog 2>&1 | tee /tmp/pmemlog-verus.txt
+
+          if grep -q 'did not find any crates that opted into verification' /tmp/pmemlog-verus.txt; then
+            echo "::error::cargo verus verified nothing - is [package.metadata.verus] verify = true still in vendor/pmemlog/Cargo.toml?"
+            exit 1
+          fi
+
+          start=$(grep -n 'Checking pmemlog' /tmp/pmemlog-verus.txt | tail -1 | cut -d: -f1 || true)
+          if [ -z "$start" ]; then
+            echo "::error::cargo verus never compiled pmemlog, so it cannot have verified it"
+            exit 1
+          fi
+
+          summary=$(awk -v n="$start" 'NR > n && /verification results/' /tmp/pmemlog-verus.txt)
+          if [ -z "$summary" ]; then
+            echo "::error::no verification summary for pmemlog - cargo verus built it without verifying it"
+            exit 1
+          fi
+          echo "pmemlog: $summary" >> "$GITHUB_STEP_SUMMARY"
+
+          if ! printf '%s\n' "$summary" | grep -qE '(^|[^0-9])0 errors'; then
+            echo "::error::pmemlog's verification summary reports errors: $summary"
+            exit 1
+          fi
+
+      # Vendoring is only worth anything if the vendored source is *the*
+      # vendored source. This is the check that nobody quietly patched a proof
+      # to make it pass: the tree here must equal upstream at the pinned commit,
+      # module for module, with the two documented omissions.
+      - name: The vendored source is unmodified
+        run: |
+          set -euo pipefail
+          upstream=41cab95051229ebd457b4eed7fc111e3e7c9099c
+          git clone --quiet --filter=blob:none --no-checkout \
+            https://github.com/microsoft/verified-storage.git /tmp/verified-storage
+          git -C /tmp/verified-storage fetch --quiet --depth 1 origin "$upstream"
+          git -C /tmp/verified-storage checkout --quiet "$upstream"
+
+          if ! diff -r /tmp/verified-storage/pmemlog/src vendor/pmemlog/src \
+                 --exclude=main.rs; then
+            echo "::error::vendor/pmemlog/src differs from upstream $upstream - if that is intended, say so in vendor/pmemlog/README.md and update this check"
+            exit 1
+          fi
+          if ! diff /tmp/verified-storage/LICENSE.txt vendor/pmemlog/LICENSE.txt; then
+            echo "::error::vendor/pmemlog/LICENSE.txt is not upstream's"
+            exit 1
+          fi
+          echo "vendor/pmemlog matches upstream $upstream"
 
   # The simulation. Separate from the two verification jobs on purpose: it is
   # evidence of a different kind and it fails for different reasons. A proof

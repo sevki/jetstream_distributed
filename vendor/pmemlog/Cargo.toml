@@ -1,0 +1,23 @@
+# Vendored from microsoft/verified-storage. See README.md in this directory for
+# what was taken, from where, and what was changed.
+[package]
+name = "pmemlog"
+version = "0.1.0"
+edition = "2021"
+description = "A verified append-only log on persistent memory (vendored from microsoft/verified-storage)"
+license = "MIT"
+publish = false
+
+[dependencies]
+# The same pin as the workspace root. Upstream's manifest asks for exactly this
+# version, which is how the Verus bump in this repository was chosen: the
+# release whose vstd pmemlog already builds against.
+vstd = "=0.0.0-2026-09-20-0158"
+crc64fast = "1.0.0"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ["cfg(verus_keep_ghost)"] }
+unused_features = "allow"
+
+[package.metadata.verus]
+verify = true

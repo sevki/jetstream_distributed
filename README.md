@@ -791,6 +791,11 @@ distributed-ownership/
 │   ├── raft_log.rs             the consistency check and figure 8 [feature = "service"]
 │   ├── raft_wire.rs            the service over a simulated network [feature = "service"]
 │   └── seeds/scenarios.txt     seeds that once broke something
+├── vendor/
+│   └── pmemlog/                Microsoft's verified persistent-memory log
+│       ├── README.md           provenance, omissions, and its six assumptions
+│       ├── LICENSE.txt         upstream's MIT licence, unaltered
+│       └── src/                unmodified upstream source
 └── .github/workflows/verify.yml
 ```
 
@@ -1525,8 +1530,37 @@ benefit costs nothing in what the scenario claims.
 
 ## No escape hatches
 
-The proofs use no `assume`, `admit`, `external_body`, `axiom`, or any other way
-of asserting something Verus did not check.
+The proofs in `src/` use no `assume`, `admit`, `external_body`, `axiom`, or any
+other way of asserting something Verus did not check. CI enforces it by grep on
+every pull request.
+
+### The one exception, and it is not in `src/`
+
+`vendor/pmemlog` is [Microsoft's verified persistent-memory
+log](https://github.com/microsoft/verified-storage), vendored unmodified, and it
+has six. Three are I/O primitives and a CRC computation — the code that actually
+touches the device, with nothing beneath it to verify against. **Two are
+assumptions about the physical world**, and anything this repository ever proves
+on top of that log is conditional on them:
+
+* `axiom_bytes_uncorrupted`: if `y` is the CRC of `x`, and a read gives back
+  `x_c` and `y_c` with `y_c` the CRC of `x_c`, then `x_c == x`. This says a CRC
+  detects the corruptions the device actually produces. It is not provable and
+  it is not free: a device whose corruptions are CRC-preserving violates it, and
+  every guarantee resting on it.
+* `axiom_corruption_detecting_boolean`: the two flag values `CRC(b"0")` and
+  `CRC(b"1")` are far enough apart that corruption cannot turn one into the
+  other.
+
+These are stated here rather than buried because the repository's rule is that
+an assumption may be *an explicit documented part of the system model* and may
+not be a way of making verification pass. These are the former; they are
+enumerated one by one in `vendor/pmemlog/README.md`; and the CI grep covers
+`src/` and not `vendor/` for exactly this reason, with the reason written into
+the workflow.
+
+Nothing in `src/` depends on `vendor/pmemlog` yet. When something does, this
+section is where the conditional lives.
 
 There are also no raised solver budgets: no `#[verifier::rlimit]` anywhere. The
 long concrete scenarios are kept tractable purely by **splitting** them:

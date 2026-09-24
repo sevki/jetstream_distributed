@@ -258,6 +258,22 @@ pub proof fn theorem_accepting_an_entry_is_at_most_two_records(
     if prefix < follower.len() && follower[prefix as int].term == leader[prefix as int].term {
         // No conflict: no records, and `appended_log` leaves the log alone.
         assert(s.records + accept_records(follower, leader, prefix) =~= s.records);
+    } else if prefix == follower.len() {
+        // Extending. The marker would be the identity, so it is not written —
+        // and `follower.take(follower.len())` is `follower`, which is why one
+        // record lands on the same log two would have.
+        let a = Record::Append {
+            term: leader[prefix as int].term,
+            value: leader[prefix as int].value,
+        };
+        assert(s.records + accept_records(follower, leader, prefix) =~= s.records.push(a));
+        assert(Entry { term: leader[prefix as int].term, value: leader[prefix as int].value }
+            == leader[prefix as int]);
+        theorem_an_append_is_one_record(
+            s.records,
+            Entry { term: leader[prefix as int].term, value: leader[prefix as int].value },
+        );
+        assert(follower.take(prefix as int) =~= follower);
     } else {
         let t = Record::Truncate { len: prefix };
         let a = Record::Append {
@@ -282,6 +298,27 @@ pub proof fn theorem_accepting_an_entry_is_at_most_two_records(
             leader[prefix as int],
         ));
     }
+}
+
+/// **Extending the log costs one record, not two.**
+///
+/// The steady state of replication: a leader nobody is fighting sends entry
+/// after entry at the end of the follower's log, and each one is a single
+/// append. The marker a conflict would need is `Truncate { len: follower.len() }`,
+/// which deletes nothing, and writing it anyway would double the cost of the
+/// case that happens most.
+pub proof fn theorem_extending_the_log_costs_one_record(
+    follower: Seq<Entry>,
+    leader: Seq<Entry>,
+    prefix: nat,
+)
+    requires
+        prefix == follower.len(),
+        prefix < leader.len(),
+    ensures
+        accept_records(follower, leader, prefix).len() == 1,
+        !(accept_records(follower, leader, prefix)[0] is Truncate),
+{
 }
 
 /// The same, as a transition: a follower that accepts an entry lands with the

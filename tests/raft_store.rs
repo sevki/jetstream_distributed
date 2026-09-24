@@ -23,6 +23,7 @@ use std::sync::Arc;
 use distributed_ownership::raft::service::{
     Appended, Ballot, Consensus, LogEntry, LogStore, MemoryLog, Peer, RecordLogStore,
 };
+use distributed_ownership::raft::store::ExecRecord;
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
 
@@ -45,6 +46,26 @@ fn peer_with(me: u64, log: &RecordLogStore) -> Peer {
 
 fn e(term: u64, value: u64) -> LogEntry {
     LogEntry { term, value }
+}
+
+/// **`replay`, written out by hand.**
+///
+/// Deliberately a second implementation and not a call into the store's own.
+/// Checking `after_crash` against `replay_exec` would be checking the store
+/// against itself: any disagreement between the model and the code would
+/// cancel out and the test would pass. Three lines, obviously right, and
+/// independent.
+fn naively_replayed(records: &[ExecRecord]) -> Vec<LogEntry> {
+    let mut log: Vec<LogEntry> = Vec::new();
+    for r in records {
+        if r.is_truncate {
+            let keep = (r.a as usize).min(log.len());
+            log.truncate(keep);
+        } else {
+            log.push(LogEntry { term: r.a, value: r.b });
+        }
+    }
+    log
 }
 
 // ---------------------------------------------------------------------------
@@ -113,33 +134,22 @@ fn the_cost_of_a_truncation_does_not_depend_on_what_it_deletes() {
 fn a_crash_at_every_prefix_lands_on_a_log_the_store_had() {
     let log = RecordLogStore::new();
 
-    // The run, with the log after each *record* remembered as we go. Note the
-    // overwrite contributes two records and so two snapshots.
-    let mut seen: Vec<Vec<LogEntry>> = vec![Vec::new()];
-    let mut remember = |l: &RecordLogStore, seen: &mut Vec<Vec<LogEntry>>| {
-        while seen.len() <= l.device_len() {
-            seen.push(l.entries());
-        }
-    };
-
+    // A run in which the log genuinely goes backwards partway through, so the
+    // prefixes are not simply longer and longer logs.
     log.append(e(1, 10)).unwrap();
-    remember(&log, &mut seen);
     log.append(e(1, 11)).unwrap();
-    remember(&log, &mut seen);
     log.append(e(1, 12)).unwrap();
-    remember(&log, &mut seen);
     log.overwrite(1, e(2, 99)).unwrap();
-    remember(&log, &mut seen);
     log.append(e(2, 100)).unwrap();
-    remember(&log, &mut seen);
 
-    assert_eq!(log.device_len(), 6, "3 appends + 2 for the overwrite + 1 append");
+    let records = log.records();
+    assert_eq!(records.len(), 6, "3 appends + 2 for the overwrite + 1 append");
 
-    for k in 0..=log.device_len() {
+    for k in 0..=records.len() {
         let recovered = log.after_crash(k);
         assert_eq!(
             recovered.entries(),
-            seen[k],
+            naively_replayed(&records[..k]),
             "a crash after {k} records recovered a log the store never had"
         );
         assert_eq!(recovered.device_len(), k, "and recovery kept exactly what survived");
@@ -254,8 +264,9 @@ async fn a_follower_that_restarts_carries_on_from_what_it_wrote() {
     follower.append_entries(from(A), 1, 1, 1, e(1, 11), 0).await.unwrap();
     follower.append_entries(from(A), 1, 2, 1, e(1, 12), 0).await.unwrap();
     assert_eq!(log.entries(), vec![e(1, 10), e(1, 11), e(1, 12)]);
+    assert_eq!(log.device_len(), 3, "three entries, three records: replication extends");
 
-    // The third append never reached the device.
+    // The third record never reached the device.
     let restarted_store = log.after_crash(2);
     assert_eq!(restarted_store.entries(), vec![e(1, 10), e(1, 11)]);
 
@@ -263,6 +274,25 @@ async fn a_follower_that_restarts_carries_on_from_what_it_wrote() {
     let retried = restarted.append_entries(from(A), 1, 2, 1, e(1, 12), 0).await.unwrap();
     assert_eq!(retried, Appended::Accepted(3), "the leader retries and it lands");
     assert_eq!(restarted_store.entries(), vec![e(1, 10), e(1, 11), e(1, 12)]);
+}
+
+/// **Replication that extends costs one record per entry.**
+///
+/// The steady state, and the reason the identity marker is not written. A
+/// leader nobody is fighting sends entry after entry at the end of the
+/// follower's log; each is a single append, not an append and a marker that
+/// deletes nothing.
+#[tokio::test]
+async fn extending_the_log_costs_one_record_per_entry() {
+    let log = RecordLogStore::new();
+    let follower = peer_with(1, &log);
+
+    for i in 0..10u64 {
+        let prev_term = if i == 0 { 0 } else { 1 };
+        follower.append_entries(from(A), 1, i, prev_term, e(1, i), 0).await.unwrap();
+    }
+    assert_eq!(log.len().unwrap(), 10);
+    assert_eq!(log.device_len(), 10, "one record per entry, no identity markers");
 }
 
 /// The record store is a drop-in for the mock: an election still works against

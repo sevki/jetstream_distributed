@@ -197,21 +197,41 @@ pub open spec fn store_next(pre: Store, post: Store) -> bool {
 
 /// **What a follower writes when it accepts one entry at `prefix`.**
 ///
-/// The two branches are exactly `appended_log`'s, and the point of writing them
-/// side by side is what the first branch costs: *nothing*. When the entry
-/// already there carries the leader's term, figure 2's rule 3 does not fire,
-/// the log does not change, and the device is not touched. A duplicate or
-/// reordered `AppendEntries` — which is most of them, in a healthy cluster
-/// under heartbeats — is a read and no write at all.
+/// **Three costs, and which one you pay says what just happened.**
 ///
-/// The other branch is two records and never more, whatever the size of the
-/// tail it deletes.
+/// * **Nothing.** The entry already there carries the leader's term, so figure
+///   2's rule 3 does not fire, the log does not change, and the device is not
+///   touched. A duplicate or reordered `AppendEntries` — which is most of them,
+///   in a healthy cluster under heartbeats — is a read and no write at all.
+/// * **One record.** `prefix == follower.len()`: the log is being extended and
+///   there is no tail to delete. The marker would be
+///   `Truncate { len: follower.len() }`, which is the identity, so it is not
+///   written. This is the steady state of replication under a leader nobody is
+///   fighting, and writing the marker anyway would double its cost for nothing.
+/// * **Two records.** A genuine conflict — same index, different term. Cut
+///   back, then write. Two records and never more, whatever the size of the
+///   tail it deletes.
+///
+/// All three replay to `appended_log`, which is
+/// `crate::raft::proofs::store::theorem_accepting_an_entry_is_at_most_two_records`.
 pub open spec fn accept_records(follower: Seq<Entry>, leader: Seq<Entry>, prefix: nat) -> Seq<
     Record,
 > {
     if prefix < follower.len() && follower[prefix as int].term == leader[prefix as int].term {
+        // Already there. Nothing is written.
         Seq::<Record>::empty()
+    } else if prefix == follower.len() {
+        // **Extending.** There is no tail to delete, so the marker would be
+        // `Truncate { len: follower.len() }` — the identity. Writing it would
+        // double the cost of the steady state of replication for nothing.
+        seq![
+            Record::Append {
+                term: leader[prefix as int].term,
+                value: leader[prefix as int].value,
+            },
+        ]
     } else {
+        // A genuine conflict: cut back, then write.
         seq![
             Record::Truncate { len: prefix },
             Record::Append {

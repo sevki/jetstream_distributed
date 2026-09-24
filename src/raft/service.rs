@@ -370,17 +370,25 @@ impl LogStore for RecordLogStore {
         Ok(g.log.len() as u64)
     }
 
-    /// **Two records**, which is C29's conflict branch: the marker, then the
-    /// entry. Never more, whatever the size of the tail it deletes — and the
-    /// device grows by two rather than shrinking by the length of that tail.
+    /// **One record when extending, two on a conflict**, which is C29 and
+    /// `theorem_extending_the_log_costs_one_record`.
     ///
-    /// The branch that costs *nothing* is not here. `Peer::append_entries`
-    /// decides whether the entry conflicts and only calls this if it does, so
-    /// an `AppendEntries` whose entry is already present never reaches the
-    /// device at all.
+    /// `Peer::append_entries` calls this whenever the entry at `prefix` is not
+    /// already the leader's — which covers both *extending past the end* and
+    /// *replacing a divergent entry*, and those cost different amounts. When
+    /// `prefix` is the current length there is no tail to delete, so the marker
+    /// would be `Truncate { len: len }`: the identity. Writing it would double
+    /// the cost of the steady state of replication for nothing, so it is not
+    /// written.
+    ///
+    /// The branch that costs *nothing at all* is not here. `append_entries`
+    /// decides whether the entry conflicts and does not call this if it does
+    /// not, so a duplicate `AppendEntries` never reaches the device.
     fn overwrite(&self, prefix: u64, entry: LogEntry) -> io::Result<()> {
         let mut g = self.0.lock().expect("record log lock");
-        write_record(&mut g, ExecRecord { is_truncate: true, a: prefix, b: 0 });
+        if (prefix as usize) < g.log.len() {
+            write_record(&mut g, ExecRecord { is_truncate: true, a: prefix, b: 0 });
+        }
         write_record(&mut g, ExecRecord { is_truncate: false, a: entry.term, b: entry.value });
         Ok(())
     }

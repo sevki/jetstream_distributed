@@ -47,18 +47,32 @@ use crate::raft::store::*;
 verus! {
 
 /// One tag byte and two little-endian `u64`s.
-pub open spec fn record_len() -> nat {
-    17
-}
+///
+/// A **`const`**, not a `spec fn`, so the executable encoder and the
+/// specification read the same number. `vendor/pmemlog` does the same with
+/// `crc_size`, and it is the same lesson `accepted_commit` taught earlier on
+/// this branch: two copies of one constant drift, and did.
+pub const RECORD_LEN: usize = 17;
 
 /// `Record::Append`'s tag.
-pub open spec fn tag_append() -> u8 {
-    0
-}
+pub const TAG_APPEND: u8 = 0;
 
 /// `Record::Truncate`'s tag.
+pub const TAG_TRUNCATE: u8 = 1;
+
+/// [`RECORD_LEN`] as a `nat`, for the specifications that count in `nat`.
+pub open spec fn record_len() -> nat {
+    RECORD_LEN as nat
+}
+
+/// [`TAG_APPEND`], for specifications.
+pub open spec fn tag_append() -> u8 {
+    TAG_APPEND
+}
+
+/// [`TAG_TRUNCATE`], for specifications.
 pub open spec fn tag_truncate() -> u8 {
-    1
+    TAG_TRUNCATE
 }
 
 // ---------------------------------------------------------------------------
@@ -199,23 +213,27 @@ pub fn le_to_u64_exec(b: &Vec<u8>, at: usize) -> (x: u64)
     x
 }
 
-/// Seventeen bytes: the tag, then the two fields.
+/// **Append one record's seventeen bytes to `out`.**
 ///
-/// Written as seventeen pushes rather than as a loop over
-/// [`u64_to_le_exec`]'s output, because [`u64_to_le`] is a `seq![..]` literal
-/// and the postcondition then falls out by extensionality — a copy loop would
-/// need an invariant to say the same thing.
-pub fn encode_record_exec(r: ExecRecord) -> (out: Vec<u8>)
+/// The primitive, taking `&mut Vec<u8>` rather than returning one, so
+/// [`encode_exec`]'s loop needs no `Vec::append` and no inner copy loop —
+/// the bytes go straight where they are wanted.
+///
+/// Seventeen direct pushes rather than a loop over [`u64_to_le_exec`], because
+/// [`u64_to_le`] is a `seq![..]` literal and the postcondition then falls out by
+/// extensionality. A copy loop would need an invariant to say the same thing,
+/// and this is code that cannot be run locally.
+pub fn push_record_exec(out: &mut Vec<u8>, r: ExecRecord)
     ensures
-        out@ == encode_record(r.view()),
-        out@.len() == record_len(),
+        final(out)@ == old(out)@ + encode_record(r.view()),
 {
+    let ghost before = out@;
     // A truncation's second field is padding, and `encode_record` writes zero
     // there, so this is the one place the two shapes differ.
     let tag = if r.is_truncate {
-        tag_truncate()
+        TAG_TRUNCATE
     } else {
-        tag_append()
+        TAG_APPEND
     };
     let b = if r.is_truncate {
         0u64
@@ -224,7 +242,6 @@ pub fn encode_record_exec(r: ExecRecord) -> (out: Vec<u8>)
     };
     let a = r.a;
 
-    let mut out: Vec<u8> = Vec::with_capacity(17);
     out.push(tag);
     out.push((a & 0xff) as u8);
     out.push(((a >> 8) & 0xff) as u8);
@@ -242,6 +259,17 @@ pub fn encode_record_exec(r: ExecRecord) -> (out: Vec<u8>)
     out.push(((b >> 40) & 0xff) as u8);
     out.push(((b >> 48) & 0xff) as u8);
     out.push(((b >> 56) & 0xff) as u8);
+    assert(out@ =~= before + encode_record(r.view()));
+}
+
+/// One record's bytes, on their own.
+pub fn encode_record_exec(r: ExecRecord) -> (out: Vec<u8>)
+    ensures
+        out@ == encode_record(r.view()),
+        out@.len() == record_len(),
+{
+    let mut out: Vec<u8> = Vec::with_capacity(RECORD_LEN);
+    push_record_exec(&mut out, r);
     assert(out@ =~= encode_record(r.view()));
     out
 }
@@ -266,11 +294,110 @@ pub fn decode_record_exec(bytes: &Vec<u8>, at: usize) -> (r: ExecRecord)
         assert(sub.subrange(1, 9) =~= bytes@.subrange(at + 1, at + 9));
         assert(sub.subrange(9, 17) =~= bytes@.subrange(at + 9, at + 17));
     }
-    if tag == tag_append() {
+    if tag == TAG_APPEND {
         ExecRecord { is_truncate: false, a, b }
     } else {
         ExecRecord { is_truncate: true, a, b: 0 }
     }
+}
+
+/// **Every record's bytes, in order** — the device a store with these records
+/// would hold.
+pub fn encode_exec(records: &Vec<ExecRecord>) -> (out: Vec<u8>)
+    ensures
+        out@ == encode(record_seq(records@)),
+{
+    let ghost rs = record_seq(records@);
+    let mut out: Vec<u8> = Vec::new();
+    let mut i: usize = 0;
+    proof {
+        assert(rs.skip(0) =~= rs);
+        assert(out@ + encode(rs) =~= encode(rs));
+    }
+
+    while i < records.len()
+        invariant
+            i <= records@.len(),
+            rs == record_seq(records@),
+            out@ + encode(rs.skip(i as int)) == encode(rs),
+        decreases records@.len() - i as int,
+    {
+        let ghost before = out@;
+        push_record_exec(&mut out, records[i]);
+        proof {
+            // `encode` folds front-to-back, so one step off the remainder is one
+            // record's bytes and the rest.
+            assert(rs.skip(i as int)[0] == records@[i as int].view());
+            assert(rs.skip(i as int).skip(1) =~= rs.skip(i + 1));
+            assert(encode(rs.skip(i as int)) =~= encode_record(records@[i as int].view()) + encode(
+                rs.skip(i + 1),
+            ));
+            assert(out@ =~= before + encode_record(records@[i as int].view()));
+            assert(out@ + encode(rs.skip(i + 1)) =~= before + encode(rs.skip(i as int)));
+        }
+        i = i + 1;
+    }
+    proof {
+        assert(rs.skip(i as int) =~= Seq::<Record>::empty());
+        assert(encode(rs.skip(i as int)) =~= Seq::<u8>::empty());
+        assert(out@ =~= encode(rs));
+    }
+    out
+}
+
+/// **Read as many whole records as are there, and stop.**
+///
+/// The executable [`parse`], and what a recovering store runs on the bytes a
+/// device hands back. The trailing fewer-than-seventeen bytes are dropped
+/// without comment, which is C32: a torn write leaves a partial record, and a
+/// partial record is not a record.
+pub fn parse_exec(bytes: &Vec<u8>) -> (out: Vec<ExecRecord>)
+    ensures
+        record_seq(out@) == parse(bytes@),
+{
+    let mut out: Vec<ExecRecord> = Vec::new();
+    let mut i: usize = 0;
+    proof {
+        assert(bytes@.skip(0) =~= bytes@);
+        assert(record_seq(out@) =~= Seq::<Record>::empty());
+        assert(record_seq(out@) + parse(bytes@.skip(0)) =~= parse(bytes@));
+    }
+
+    // `17 <= bytes.len() - i` rather than `i + 17 <= bytes.len()`: the
+    // invariant gives `i <= len`, so the subtraction is safe, while the
+    // addition could overflow `usize` for a device near the address space.
+    while RECORD_LEN <= bytes.len() - i
+        invariant
+            i <= bytes@.len(),
+            record_seq(out@) + parse(bytes@.skip(i as int)) == parse(bytes@),
+        decreases bytes@.len() - i as int,
+    {
+        let ghost before = out@;
+        let r = decode_record_exec(bytes, i);
+        proof {
+            let b = bytes@.skip(i as int);
+            assert(b.len() >= record_len());
+            assert(b.take(record_len() as int) =~= bytes@.subrange(i as int, i + 17));
+            assert(b.skip(record_len() as int) =~= bytes@.skip(i + 17));
+            assert(parse(b) =~= seq![decode_record(bytes@.subrange(i as int, i + 17))] + parse(
+                bytes@.skip(i + 17),
+            ));
+        }
+        out.push(r);
+        proof {
+            assert(record_seq(out@) =~= record_seq(before) + seq![r.view()]);
+            assert(record_seq(out@) + parse(bytes@.skip(i + 17)) =~= record_seq(before) + parse(
+                bytes@.skip(i as int),
+            ));
+        }
+        i = i + RECORD_LEN;
+    }
+    proof {
+        assert(bytes@.skip(i as int).len() < record_len());
+        assert(parse(bytes@.skip(i as int)) =~= Seq::<Record>::empty());
+        assert(record_seq(out@) =~= parse(bytes@));
+    }
+    out
 }
 
 } // verus!

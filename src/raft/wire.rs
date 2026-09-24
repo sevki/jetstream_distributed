@@ -21,9 +21,25 @@
 //! whole one. A log format whose recovery depends on the parser being clever is
 //! a log format whose recovery has a bug in it.
 //!
-//! No checksum here. That is not an omission: `pmemlog` CRCs what it stores and
-//! its two corruption assumptions are what make that worth doing, so a second
-//! checksum at this layer would add bytes and no guarantee.
+//! # No checksum, which constrains where this format may be used
+//!
+//! `pmemlog` CRCs what it stores, so a second checksum here would add bytes and
+//! no guarantee. But that CRC is also the only thing making a seventeen-byte
+//! record safe at all, and the reason is worth stating because "8-byte chunks"
+//! invites the wrong fix.
+//!
+//! pmemlog's crash model permits **any subset of 8-byte chunks** to have been
+//! flushed, so a write spanning `n` chunks has `2^n` partial outcomes: no record
+//! wider than eight bytes is atomic *however it is aligned*. Padding these to
+//! twenty-four would touch three whole chunks instead of three partial ones and
+//! buy nothing, since chunk 0 and chunk 2 can land while chunk 1 does not. A
+//! record wider than a chunk is detectable-or-not, never atomic.
+//!
+//! So these records inherit detection from the log they ride inside. Written
+//! straight to a device they would need a checksum of their own, and alignment
+//! would not substitute for one. **This format is sound inside pmemlog's log and
+//! not on bare storage** — a constraint, not an omission. See
+//! `vendor/pmemlog/README.md`.
 //!
 //! # The 64-bit boundary, stated
 //!

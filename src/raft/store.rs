@@ -251,10 +251,18 @@ pub open spec fn store_write(pre: Store, post: Store, r: Record) -> bool {
 /// records; anything that decomposed it into several would break C36.
 ///
 /// It also means a device written **directly**, rather than through pmemlog,
-/// would need records sized in whole 8-byte chunks to inherit the model — and
-/// [`crate::raft::wire`]'s records are seventeen bytes, which is not one. They
-/// are safe only because they ride inside pmemlog's log and are covered by
-/// *its* checksum.
+/// would need a checksum per record — and *not* merely chunk-aligned records,
+/// which is the wrong fix and the one "8-byte chunks" invites. A write spanning
+/// `n` chunks has `2^n` partial outcomes, so no record wider than eight bytes is
+/// atomic however it is aligned: padding [`crate::raft::wire`]'s seventeen bytes
+/// to twenty-four would touch three whole chunks instead of three partial ones
+/// and buy nothing, because chunk 0 and chunk 2 can land while chunk 1 does not.
+///
+/// A record wider than a chunk is detectable-or-not, never atomic. The
+/// mechanisms are a checksum over the record, or an outer log that already has
+/// one — and this repository takes the second. That is why the records carry no
+/// checksum of their own, and it is a real constraint on the format rather than
+/// an omission: **it is sound only inside pmemlog's log.**
 pub open spec fn store_write_batch(pre: Store, post: Store, rs: Seq<Record>) -> bool {
     &&& records_fit(rs)
     &&& post.records == pre.records + rs

@@ -97,13 +97,24 @@ Two consequences for anything built on top:
 
 * **The abstract atomicity is exactly as strong as the two assumptions above.**
   It is proved, not assumed — but proved *from* them.
-* **A device written directly, bypassing pmemlog, would need writes sized in
-  whole 8-byte chunks** to inherit the model. This repository's records are
-  seventeen bytes, which is not one; they are safe only because they ride inside
-  pmemlog's log and are covered by its checksum. A future file-backed
-  `PersistentMemory` has to provide the 8-byte chunk model, and POSIX does not
-  promise it for a write that crosses a chunk — which is the first thing to get
-  right when one is written.
+* **A device written directly, bypassing pmemlog, needs a checksum per record
+  — alignment is not enough.** Worth spelling out, because "8-byte chunks"
+  invites the wrong fix. A write spanning `n` chunks has `2^n` partial outcomes,
+  so *no* record wider than eight bytes is atomic under this model however it is
+  aligned: padding this repository's seventeen-byte records to twenty-four
+  would touch three whole chunks instead of three partial ones and buy nothing,
+  since chunks 0 and 2 can land while chunk 1 does not.
+
+  A record wider than a chunk is detectable-or-not, never atomic. The only
+  mechanisms are a checksum over the record, or an outer log that already has
+  one. This repository's records take the second, which is why they carry no
+  checksum of their own and why **the format is only sound inside pmemlog's
+  log** — a real constraint on it, not an omission.
+
+* **A file-backed `PersistentMemory` has to supply the 8-byte chunk model**, and
+  POSIX does not promise it for a write that crosses a chunk. That is the first
+  thing to get right when one is written, and the reason a naive
+  `pwrite` + `fsync` implementation would not be enough.
 
 ## What it does and does not give us
 

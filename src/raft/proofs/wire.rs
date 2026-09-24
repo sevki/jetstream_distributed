@@ -36,6 +36,21 @@ use crate::raft::wire::*;
 
 verus! {
 
+/// **`record_len()` is seventeen.**
+///
+/// Trivial, and needed. `record_len()` is now `RECORD_LEN as nat` rather than a
+/// bare literal — so that the executable encoder and the specification read the
+/// same constant — and the `by (nonlinear_arith)` steps below want the value,
+/// not the definition. Stating it once as a lemma is cheaper than hoping each
+/// solver call unfolds the cast.
+pub proof fn lemma_record_len_is_seventeen()
+    ensures
+        record_len() == 17,
+        record_len() as int == 17,
+{
+    assert(RECORD_LEN == 17);
+}
+
 // ---------------------------------------------------------------------------
 // Sequence plumbing
 // ---------------------------------------------------------------------------
@@ -157,6 +172,7 @@ pub proof fn theorem_the_encoding_is_fixed_width(rs: Seq<Record>)
         encode(rs).len() == rs.len() * record_len(),
     decreases rs.len(),
 {
+    lemma_record_len_is_seventeen();
     if rs.len() > 0 {
         theorem_the_encoding_is_fixed_width(rs.skip(1));
         lemma_a_record_is_seventeen_bytes(rs[0]);
@@ -221,6 +237,7 @@ pub proof fn theorem_a_torn_tail_is_a_record_prefix(rs: Seq<Record>, k: int)
         parse(encode(rs).take(k)) == rs.take(k / (record_len() as int)),
     decreases rs.len(),
 {
+    lemma_record_len_is_seventeen();
     theorem_the_encoding_is_fixed_width(rs);
     if rs.len() == 0 {
         assert(encode(rs) =~= Seq::<u8>::empty());
@@ -340,6 +357,7 @@ pub proof fn theorem_recovery_from_a_torn_device(rs: Seq<Record>, k: int)
                 rs.take(j as int),
             ),
 {
+    lemma_record_len_is_seventeen();
     theorem_the_encoding_is_fixed_width(rs);
     theorem_a_torn_tail_is_a_record_prefix(rs, k);
     let j = (k / (record_len() as int)) as nat;

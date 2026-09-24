@@ -261,6 +261,14 @@ verifying, the build fails.
 | C24 | **A leader of a term holds everything created at that term** — the freshness clause. A leader appends at the end of its own log, and this says every slot already written at its term is inside that log, so the slot it is about to write is not one of them. At `tr_become_leader` it holds because a term being won *now* has never been led, which is C22 | `raft::proofs::history::inv_creator_holds`, `lemma_become_leader_finds_its_term_unwritten`, `lemma_client_request_writes_a_fresh_slot` | the history invariant |
 | C25 | **The consistency check is exactly the guard that keeps the creation record true.** A follower taking the leader's entry at `prefix` records a predecessor that is now *its own* entry at `prefix - 1`, not the leader's — and those agree precisely because `tr_append_entries` will not fire unless they do | `raft::proofs::history::lemma_the_consistency_check_preserves_the_record` | the history invariant |
 | C26 | **Log Matching — two logs that agree on an entry's term at an index agree on every entry at and below it.** The headline of the log half. One slot gives one recorded value and one recorded predecessor, so agreement at an index is agreement one index down, and repeating reaches zero | `raft::proofs::history::theorem_log_matching`, `theorem_log_matching_prefixes`, `theorem_log_matching_values`, `theorem_log_matching_reachable` | `inv_logs_follow_created`, discharged for reachable states by `theorem_reachable_hist_inv` |
+| C27 | **Recovery is exact.** The in-memory log equals `replay` of the device before and after every operation — append, truncate, *and* crash-recovery. The recovery case is trivial, and that is the design working: the device **is** the log, not a journal of intentions about it, so recovery reconciles nothing | `raft::proofs::store::theorem_recovery_is_exact`, `theorem_the_store_always_agrees`, `theorem_a_fresh_store_agrees` | none |
+| C28 | **A crash can only rewind.** `replay` is total on every sequence of records, so there is no prefix a crash can leave that recovery cannot read, and what comes back is a log the store had rather than one no sequence of writes could produce. Records that reached the device are unchanged and at the same indices | `raft::proofs::store::theorem_a_crash_can_only_rewind`, `theorem_a_crash_keeps_what_reached_the_device` | that a crash keeps a **prefix** — the property an append-only device gives you, and what pmemlog's write restriction enforces |
+| C29 | **Accepting a replicated entry is at most two records**, and `appended_log` is what they replay to — so figure 2's rule 3, which deletes a suffix, is implementable on a device that deletes nothing. The conflict branch is Truncate-then-Append, two records however long the tail it throws away; **the other branch is empty**, so an AppendEntries whose entry is already present writes nothing at all. That is C25's conditional again, as an operational fact | `raft::proofs::store::theorem_accepting_an_entry_is_at_most_two_records`, `theorem_a_follower_accepts_with_at_most_two_writes` | the store invariant (C27) |
+| C30 | **The device is append-only.** No operation moves its tail back: the records that were there are still there, in order, at the same indices. A `Record::Truncate` shortens the *log* and lengthens the device. This is the property that lets the whole store sit on `vendor/pmemlog`, whose abstract state has `append` and `advance_head` and nothing that shortens a tail | `raft::proofs::store::theorem_the_device_is_append_only` | none |
+| C31 | **Compaction is sound**, costs one record per entry, and leaves no truncation behind — so a store can rewrite itself as pure appends and let `advance_head` reclaim what came before. Soundness only: **nothing schedules it**, and a store that never compacts grows without bound | `raft::proofs::store::theorem_compaction_replays_the_same`, `theorem_compaction_is_one_record_per_entry`, `theorem_compaction_leaves_no_truncations` | none |
+| C32 | **Cut the bytes anywhere and a record prefix comes back** — for *every* `k`, not for multiples of seventeen. The tear can land in the middle of a `u64` and the theorem still holds, because fixed width means no byte of a half-written record can be mistaken for the start of a whole one. This is what C28 needs and cannot state for itself: `store_recover` is written over a *record* prefix, and a device gives back a *byte* prefix | `raft::proofs::wire::theorem_a_torn_tail_is_a_record_prefix`, `theorem_recovery_from_a_torn_device` | every record fits in 64 bits (`records_fit`) |
+| C33 | **What was written is what is read**, and the encoding is exactly seventeen bytes per record — which is what makes `bytes.len() / 17` the record count and the parser's stopping condition an observation rather than an argument | `raft::proofs::wire::theorem_parse_of_encode`, `theorem_the_encoding_is_fixed_width`, `lemma_a_record_round_trips`, `lemma_a_record_is_seventeen_bytes` | `records_fit` |
+| C34 | Eight bytes, least significant first, and back again | `raft::proofs::wire::lemma_le_round_trip` (by `bit_vector`) | none |
 | I | The inductive invariant holds in every reachable state (`init ==> inv`, `inv /\ next ==> inv`) | `ownership::proofs::invariant::theorem_reachable_inv` | the model's transition relation |
 | S | **The headline scenario**: `A` owns X@41, a transfer and a crash/recovery occur, `B` owns X@42, `A` returns still holding its epoch-41 token - and cannot perform an authoritative mutation. The postcondition exports the whole nine-step run, so the crash, the recovery and the outcome are the same execution — exported as separate existentials they need not have been, and an ordinary live handover could supply the outcome | `ownership::proofs::adversarial::scenario_stale_owner_returns` | `A != B` |
 | S1 | A stale `Grant` cannot resurrect a superseded epoch | `ownership::proofs::adversarial::theorem_stale_grant_cannot_be_used` | none |
@@ -699,6 +707,82 @@ transition changes it. Joint consensus is a separate protocol with its own
 well-known unsafety, and modelling it half-way would be worse than not modelling
 it.
 
+### A log that truncates, on a device that cannot
+
+Raft's log shrinks. Figure 2's rule 3 deletes a conflicting entry and everything
+after it, and `appended_log` is that rule. Every durable log worth trusting
+*grows*: `vendor/pmemlog`'s abstract state offers `append` and `advance_head` —
+put bytes on the end, or forget bytes from the front — and nothing that takes
+the tail back.
+
+That is not a gap in the vendored crate. It is what makes a crash-consistent log
+cheap: an append that either happened or did not is one write, while a tail that
+moves backwards is a state the device has to be able to be caught in the middle
+of.
+
+`src/raft/store.rs` reconciles them in four lines of idea:
+
+1. the device holds a sequence of `Record`s, and only ever grows;
+2. a truncation is a *record*, `Record::Truncate { len }`, appended like any other;
+3. the log is `replay` of the records, computed on recovery;
+4. therefore the physical log is append-only and the logical log truncates.
+
+C27–C31 are what that buys. The one to read first is **C27**, and it is worth
+reading for how boring its proof is: the recovery case of "memory agrees with
+the device" is discharged by the transition's own definition, because
+`store_recover` *defines* the recovered log as `replay` of what survived. A
+design where recovery has to reconcile two sources is a design where that proof
+is the hard one. Here there is one source.
+
+**C29 is where the protocol and the storage layer turn out to want the same
+thing.** Accepting a replicated entry costs two records when the entry at
+`prefix` conflicts, and **zero** when it does not — the no-conflict branch
+writes nothing at all. That branch exists because of C25: the conditional
+truncation is what keeps the creation record true, and it is what makes Log
+Matching provable. It is also, it turns out, what makes the common case — a
+duplicate or reordered `AppendEntries`, which under heartbeats is most of them —
+a read and no write. The check that makes the protocol safe is the check that
+makes the steady state free.
+
+#### The byte layer, and the theorem it exists for
+
+C27–C31 are about *records*; pmemlog appends *bytes*. `src/raft/wire.rs` is the
+layer between, and it exists to make one statement provable.
+
+C28 says a crash leaves a prefix of the **records**. A device leaves a prefix of
+the **bytes**, and a byte prefix can cut a record in half. Without a theorem
+joining the two, C28's hypothesis is an assumption about how writes land wearing
+the clothes of a definition.
+
+**C32 is that theorem**: for every `k` at all — not multiples of seventeen —
+`parse(encode(rs).take(k)) == rs.take(k / 17)`. The tear may land in the middle
+of a `u64`. That is what the fixed width buys, and it is why the format is
+seventeen flat bytes rather than a length prefix or a varint: a log whose
+recovery depends on the parser being clever is a log whose recovery has a bug in
+it. There is no checksum here either, because pmemlog CRCs what it stores and a
+second one at this layer would add bytes and no guarantee.
+
+The chain is then: a device keeps a byte prefix (C32) → that is a record prefix
+(C28) → `replay` of a record prefix is a log the store had (C27). No step asks
+the device for more than *"you keep a prefix of what I wrote"*.
+
+Two limitations, stated rather than assumed away:
+
+* **The 64-bit boundary.** `Record`'s fields are `nat`, because the model's
+  terms are unbounded and a model that caps them has an overflow bug the
+  protocol does not. Bytes are not unbounded, so C32 and C33 are conditional on
+  `records_fit`. A cluster reaching term 2^64 is outside what this encoding
+  represents, and the theorems say so in a precondition rather than silently
+  truncating.
+* **The device grows even when the log does not.** A follower thrashing between
+  two leaders writes a record per round. C31 says the way out is sound —
+  rewrite as pure appends, let `advance_head` reclaim the rest — and nothing
+  *schedules* it. A store that never compacts grows without bound.
+* **Nothing in `src/` depends on `vendor/pmemlog` yet.** The store layer is the
+  shape of the interface, proved; wiring `LogStore` onto `InfiniteLogImpl` is
+  the next step. Until it happens, pmemlog's two corruption assumptions are not
+  assumptions of anything proved here.
+
 ### The consensus service
 
 `src/raft/service.rs` serves it: `request_vote` with the up-to-date comparison,
@@ -773,13 +857,17 @@ distributed-ownership/
 │   └── raft/               consensus: terms, votes, quorums, the log
 │       ├── model.rs        state space + transition relation
 │       ├── steps.rs        the election decisions as executable u64 functions
+│       ├── store.rs        a log that truncates, on a device that cannot
+│       ├── wire.rs         the record encoding, and what a torn write leaves
 │       ├── service.rs      the protocol over Jetstream RPC   [feature = "service"]
 │       └── proofs/
 │           ├── election.rs     Election Safety, via quorum intersection
 │           ├── history.rs      the ghost record, and Log Matching out of it
 │           ├── log.rs          what one replication step gives you (and what it does not)
 │           ├── refinement.rs   steps.rs agrees with the model's tr_* transitions
-│           └── scenario.rs     a run in which an election actually happens
+│           ├── scenario.rs     a run in which an election actually happens
+│           ├── store.rs        recovery is exact; a crash can only rewind
+│           └── wire.rs         cut the bytes anywhere; a record prefix comes back
 ├── tests/
 │   ├── scenario_body/mod.rs    the executable protocol + the runtime oracles
 │   ├── turmoil_ownership.rs    named stories, each with an expected ending
@@ -1375,7 +1463,11 @@ CI, with no `assume`/`admit`/`external_body`/`axiom`):
   preserves the coupling to the ownership layer;
 * the coupling itself, as an invariant of the composed machine: in every
   reachable composed state the only node that may mutate the actor is the node
-  holding the token.
+  holding the token;
+* Raft: Election Safety, Log Matching, and the single-step log properties;
+* the durable log: recovery is exact, a crash can only rewind, and a byte
+  prefix of the device parses back to a record prefix — so figure 2's suffix
+  deletion is implementable on a device that deletes nothing.
 
 **Modelled but not proven** (present in the state machine, no theorem beyond
 invariant preservation):
@@ -1397,6 +1489,15 @@ invariant preservation):
   needs `ray_no_stale_holders` on top, which is exactly what reconciliation
   restores. Routing termination would need the liveness the model does not
   claim.
+
+* **The durable log is not wired to a device.** `raft::store` and `raft::wire`
+  prove the shape of the interface — what a store does, what a crash leaves,
+  what the bytes mean — and nothing in `src/` calls `vendor/pmemlog` yet. The
+  layer that does will need an executable `replay` refining the spec one, and
+  until it exists pmemlog's two corruption assumptions are not assumptions of
+  anything proved here.
+* **Compaction is proved sound and is not scheduled.** A store that never
+  compacts grows without bound (C31).
 
 **Not modelled at all** (a gap, stated rather than papered over):
 
@@ -1533,6 +1634,18 @@ benefit costs nothing in what the scenario claims.
 The proofs in `src/` use no `assume`, `admit`, `external_body`, `axiom`, or any
 other way of asserting something Verus did not check. CI enforces it by grep on
 every pull request.
+
+### `bit_vector` and `nonlinear_arith` are not escape hatches
+
+`raft::proofs::wire` uses both: `by(bit_vector)` for the little-endian round
+trip, `by(nonlinear_arith)` for the division bookkeeping in C32. Neither asserts
+anything. They hand the goal to a *different decision procedure* — bit-blasting
+for the first, a nonlinear arithmetic solver for the second — because the
+default encoding is poor at bits and at multiplication. The obligation is
+discharged, not waived: a false goal fails under either.
+
+They are named here because "no escape hatches" should mean something precise,
+and a reader who greps for `assume` should also know what `by(...)` does.
 
 ### The one exception, and it is not in `src/`
 

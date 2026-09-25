@@ -243,9 +243,8 @@ pub proof fn theorem_grant_vote_step_refines_tr_grant_vote(
         ),
         grant_vote_post(c, voter, cand, term, cand_last_term, cand_last_index).servers[voter].role
             == Role::Follower,
-        grant_vote_post(c, voter, cand, term, cand_last_term, cand_last_index).servers[
-            voter,
-        ].current_term == term,
+        grant_vote_post(c, voter, cand, term, cand_last_term, cand_last_index).servers[voter]
+            .current_term == term,
         grant_vote_post(c, voter, cand, term, cand_last_term, cand_last_index).servers[voter].log
             == c.servers[voter].log,
 {

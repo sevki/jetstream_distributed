@@ -515,7 +515,24 @@ pub proof fn theorem_a_winner_shares_a_judged_voter_with_any_quorum(
     shared
 }
 
-/// The same, for any reachable cluster.
+/// The same, for any reachable cluster — **judgement included**, which is the
+/// whole point and which the first version of this wrapper left out.
+///
+/// # A postcondition is not inherited
+///
+/// This wrapper originally ensured only the shared voter and the vote, and
+/// stopped there. Its body called the theorem above, whose contract *does*
+/// promise the `VoteLog` and its `at_least_as_up_to_date` judgement — but a
+/// caller sees only what the wrapper's own `ensures` says. So a proof starting
+/// from `raft_reachable` could recover the shared voter and nothing about what
+/// that voter saw: the theorem was named "judged", documented as "the same",
+/// and contractually weaker than both.
+///
+/// The existential is therefore repeated here. It costs a duplicated clause and
+/// it buys the only thing this theorem is for. Worth stating as a rule, because
+/// every `*_reachable` wrapper in this repository has the same shape: **a
+/// wrapper's contract is written, not inferred**, and a wrapper that forwards a
+/// call does not forward its postconditions.
 pub proof fn theorem_a_winner_shares_a_judged_voter_with_any_quorum_reachable(
     c: Cluster,
     n: ServerId,
@@ -529,6 +546,18 @@ pub proof fn theorem_a_winner_shares_a_judged_voter_with_any_quorum_reachable(
     ensures
         q.contains(shared),
         c.votes.contains(Vote { voter: shared, term: t, candidate: n }),
+        exists|lg: Seq<Entry>, ct: Term, ci: nat|
+            #[trigger]
+            c.voted_with.contains(
+                VoteLog {
+                    voter: shared,
+                    term: t,
+                    candidate: n,
+                    voter_log: lg,
+                    cand_last_term: ct,
+                    cand_last_index: ci,
+                },
+            ) && at_least_as_up_to_date(ct, ci, lg),
 {
     theorem_reachable_vote_inv(c);
     theorem_a_winner_shares_a_judged_voter_with_any_quorum(c, n, t, q)

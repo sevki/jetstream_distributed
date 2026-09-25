@@ -72,18 +72,30 @@
 //! later leader's log cannot have a different term at an index a quorum has
 //! already agreed on, and that argument is the strong induction over terms:
 //!
-//! * the leader of term `T'` won a quorum in `T'`, and that quorum meets the
-//!   commit-time quorum of [`theorem_a_commit_was_on_a_quorum`] in some voter;
-//! * the voter still held the entry when it voted, by
-//!   `crate::raft::proofs::terms::theorem_an_agreed_entry_survives_any_step`;
-//! * so the candidate's log was at least as up to date as a log holding that
-//!   entry — and `terms`' C43 closes the case where the candidate's last term is
-//!   *behind*, while the case where it is at or above needs the induction
-//!   hypothesis at the intermediate term.
+//! 1. the leader of term `T'` won a quorum in `T'`, and that quorum meets the
+//!    commit-time quorum of [`theorem_a_commit_was_on_a_quorum`] in some voter;
+//! 2. that voter still held the entry when it voted;
+//! 3. so the candidate's log was at least as up to date as a log holding that
+//!    entry — and `terms`' C43 closes the case where the candidate's last term
+//!    is *behind*, while the case where it is at or above needs the induction
+//!    hypothesis at the intermediate term.
 //!
-//! Two of those three bullets are theorems in this repository. The third is
-//! not, and the second still needs the voter's log *as it stood at the vote*,
-//! which is the remaining ghost record. Nothing here claims otherwise.
+//! **Step 2 is conditional, and the condition is the induction itself.** An
+//! earlier draft of these docs cited
+//! `crate::raft::proofs::terms::theorem_an_agreed_entry_survives_any_step` as
+//! though it settled step 2. It does not.
+//! [`theorem_an_entry_persists_while_leaders_agree`] is the run-level form, and
+//! its signature says what the prose had left out: the entry persists from one
+//! state to a later one **exactly while every leader that replicates to that
+//! voter already agrees with it at that index**. Discharging *that* for the
+//! intervening leaders is the induction hypothesis at the intervening terms. So
+//! it is the inductive step's tool, not a free-standing fact, and reading it as
+//! one makes this roadmap circular.
+//!
+//! Step 1 is a theorem. Step 2 is a theorem **with a hypothesis the induction
+//! discharges**. Step 3 is half a theorem. And step 2 additionally wants the
+//! voter's log *as it stood at the vote*, which is the remaining ghost record.
+//! Nothing here claims otherwise.
 #![allow(unused_imports)]
 
 use vstd::prelude::*;
@@ -634,6 +646,82 @@ pub proof fn theorem_state_machine_safety_at_agreeing_terms(
 {
     theorem_reachable_commit_inv(c);
     theorem_two_commits_at_one_slot_agree(c, k1, k2);
+}
+
+/// A labelled execution is an execution.
+///
+/// `raft_execution` quantifies over `raft_next`, which hides *which* step was
+/// taken; `raft_labelled_execution` names it. Everything proved by walking an
+/// execution is available to a labelled one through this.
+pub proof fn lemma_a_labelled_execution_is_an_execution(tr: Seq<Cluster>, labels: Seq<RaftStep>)
+    requires
+        raft_labelled_execution(tr, labels),
+    ensures
+        raft_execution(tr),
+{
+    assert forall|i: int| 0 <= i < tr.len() - 1 implies raft_next(tr[i], tr[i + 1]) by {
+        assert(raft_step(tr[i], tr[i + 1], labels[i]));
+    }
+}
+
+/// **The hypothesis C42 carries, named**: does `s` replicate to `n` from a
+/// leader that already agrees with it at index `i`?
+///
+/// Giving it a name is the point. Left inline in a precondition it reads like
+/// bookkeeping; named, it is visible as the obligation it is.
+pub open spec fn replication_agrees_at(c: Cluster, s: RaftStep, n: ServerId, i: nat) -> bool {
+    step_replicates_to(s, n) ==> {
+        &&& c.servers.contains_key(replicating_leader(s))
+        &&& i < c.servers[replicating_leader(s)].log.len()
+        &&& c.servers[replicating_leader(s)].log[i as int].term == c.servers[n].log[i as int].term
+    }
+}
+
+/// **An entry persists across a run exactly while every leader replicating to
+/// its holder already agrees with it there.**
+///
+/// The run-level form of C42, and it exists because the *prose* around C42 was
+/// wrong in a way the theorem itself never was. The roadmap in this module's
+/// docs used to say "the voter still held the entry when it voted" and cite
+/// C42, as though that settled it. C42 has a hypothesis — the replicating
+/// leader must already agree at the index — and discharging it for every
+/// intervening leader **is** the Leader Completeness induction at the
+/// intervening terms.
+///
+/// So the condition belongs in a signature rather than in a paragraph, where it
+/// can drift. Here it is, as a quantifier over the steps between the two
+/// states: this is the lemma the induction will call at its inductive step,
+/// with the induction hypothesis discharging the quantifier.
+pub proof fn theorem_an_entry_persists_while_leaders_agree(
+    tr: Seq<Cluster>,
+    labels: Seq<RaftStep>,
+    a: int,
+    b: int,
+    n: ServerId,
+    i: nat,
+)
+    requires
+        raft_labelled_execution(tr, labels),
+        0 <= a <= b < tr.len(),
+        tr[a].servers.contains_key(n),
+        i < tr[a].servers[n].log.len(),
+        forall|t: int|
+            a <= t < b ==> #[trigger] replication_agrees_at(tr[t], labels[t], n, i),
+    ensures
+        tr[b].servers.contains_key(n),
+        i < tr[b].servers[n].log.len(),
+        tr[b].servers[n].log[i as int] == tr[a].servers[n].log[i as int],
+    decreases b - a,
+{
+    if a < b {
+        theorem_an_entry_persists_while_leaders_agree(tr, labels, a, b - 1, n, i);
+        lemma_a_labelled_execution_is_an_execution(tr, labels);
+        lemma_raft_execution_hist_inv(tr, b - 1);
+        assert(replication_agrees_at(tr[b - 1], labels[b - 1], n, i));
+        assert(raft_step(tr[b - 1], tr[b - 1 + 1], labels[b - 1]));
+        assert(tr[b - 1 + 1] == tr[b]);
+        theorem_an_agreed_entry_survives_any_step(tr[b - 1], tr[b], labels[b - 1], n, i);
+    }
 }
 
 /// **A commit is a commit for ever**, across a whole run.

@@ -283,6 +283,7 @@ verifying, the build fails.
 | C45 | **At the moment of commitment a majority held that entry at that index** — entry for entry, not "a prefix of that length". The difference is the whole point: quorum intersection hands the induction a voter, and what it needs from that voter is the entry in its log, not a count. Stated over the transition, because it is the one fact about commitment that is about a moment rather than a state | `raft::proofs::commit::theorem_a_commit_was_on_a_quorum` | none |
 | C46 | **Two commits at one index whose entries carry the same term are the same entry** — so **State Machine Safety holds with exactly one hypothesis added**, that the two commits agree on the entry's term. The value half is free: one `(term, index)` names one act of creation by one leader, which Election Safety and the `created` record give unconditionally. Nothing about values, quorums or counting is missing. What is missing is the answer to one question — can two leaders commit entries of *different terms* at one index? — and that question is Leader Completeness | `raft::proofs::commit::theorem_two_commits_at_one_slot_agree`, `theorem_state_machine_safety_at_agreeing_terms` | that the two commits agree on the entry's term, which is precisely Leader Completeness |
 | C47 | **A commit is a commit for ever**, across a whole run, and the ghost record covers the real count at the moment it is written. The first is what makes the record usable where `Server::commit` is not — a count on one server that C38 proves *retreats*. The second is what stops it becoming a second bookkeeping scheme that drifts from the first, a hazard this repository was already bitten by once in `records_fit` (C37) | `raft::proofs::commit::theorem_a_commit_is_a_commit_for_ever`, `theorem_the_record_covers_the_count`, `raft::proofs::history::theorem_history_is_monotone` | none |
+| C48 | **An entry persists across a run exactly while every leader replicating to its holder already agrees with it there.** The run-level form of C42, and it exists because the *prose* around C42 was wrong in a way the theorem never was: this README said the persistence step was already a theorem, when C42 carries a hypothesis — the replicating leader must already agree at that index — whose discharge for every intervening leader **is** Leader Completeness at the intervening terms. The condition now lives in a signature, quantified over the steps between the two states, where it cannot drift out of a paragraph. This is the lemma the induction calls at its inductive step, with the induction hypothesis discharging the quantifier | `raft::proofs::commit::theorem_an_entry_persists_while_leaders_agree`, `replication_agrees_at`, `lemma_a_labelled_execution_is_an_execution` | the quantifier in its own statement, which is exactly the induction hypothesis |
 | I | The inductive invariant holds in every reachable state (`init ==> inv`, `inv /\ next ==> inv`) | `ownership::proofs::invariant::theorem_reachable_inv` | the model's transition relation |
 | S | **The headline scenario**: `A` owns X@41, a transfer and a crash/recovery occur, `B` owns X@42, `A` returns still holding its epoch-41 token - and cannot perform an authoritative mutation. The postcondition exports the whole nine-step run, so the crash, the recovery and the outcome are the same execution — exported as separate existentials they need not have been, and an ordinary live handover could supply the outcome | `ownership::proofs::adversarial::scenario_stale_owner_returns` | `A != B` |
 | S1 | A stale `Grant` cannot resurrect a superseded epoch | `ownership::proofs::adversarial::theorem_stale_grant_cannot_be_used` | none |
@@ -807,13 +808,23 @@ that argument has three steps:
 
 1. the leader of term `T'` won a quorum in `T'`, and that quorum meets the
    commit-time quorum of **C45** in some voter;
-2. the voter still held the entry when it voted — **C42**;
+2. that voter still held the entry when it voted;
 3. so the candidate's log was at least as up to date as a log holding that entry,
    and **C43** closes the case where its last term is *behind*.
 
-Steps 1 and 2 are theorems here. Step 3 is half a theorem: the case where the
-candidate's last term is at or above the voter's needs the induction hypothesis
-at the intermediate term, and it needs the voter's log **as it stood at the
+**Step 2 is conditional, and its condition is the induction itself** — an
+earlier version of this section said step 2 was already a theorem, citing C42,
+and that was wrong in a way worth keeping on the record. C42 carries a
+hypothesis: the replicating leader must *already agree* with the voter at that
+index. Discharging that for every intervening leader **is** Leader Completeness
+at the intervening terms. **C48** is the run-level form, and it puts the
+condition in the signature rather than in a paragraph, so it cannot be read as
+free-standing again.
+
+So: step 1 is a theorem; step 2 is a theorem **with a hypothesis the induction
+discharges**; step 3 is half a theorem, because the case where the candidate's
+last term is at or above the voter's needs the induction hypothesis at the
+intermediate term. Step 2 additionally wants the voter's log **as it stood at the
 vote**, which is the one ghost record still missing. Two of the three pieces
 `terms.rs` named are now in place; the third, and the induction itself, are not.
 

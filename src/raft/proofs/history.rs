@@ -177,6 +177,7 @@ pub proof fn lemma_history_keeps_voters(
     c: Cluster,
     cr: Map<Slot, Creation>,
     l: Set<Led>,
+    cm: Set<Commit>,
     cand: ServerId,
     term: Term,
 )
@@ -193,6 +194,7 @@ pub proof fn lemma_history_keeps_replication(
     c: Cluster,
     cr: Map<Slot, Creation>,
     l: Set<Led>,
+    cm: Set<Commit>,
     log: Seq<Entry>,
     n: nat,
 )

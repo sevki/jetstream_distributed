@@ -6,4 +6,5 @@ pub mod log;
 pub mod refinement;
 pub mod scenario;
 pub mod store;
+pub mod terms;
 pub mod wire;

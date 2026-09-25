@@ -80,6 +80,11 @@
 //! Leader Completeness and State Machine Safety are still not proved. They need
 //! this plus an induction over terms relating the up-to-date vote guard to what
 //! has been committed, and that is the next piece of work rather than this one.
+//! [`crate::raft::proofs::terms`] is the half of it that needs no further ghost
+//! state — including the one theorem that most directly depends on Log Matching
+//! proved here: **a follower that already agrees with the leader at an index
+//! keeps its entry there**, which is what will rule out a committed entry
+//! vanishing from a voter's log between the commit and the next election.
 #![allow(unused_imports)]
 
 use vstd::prelude::*;

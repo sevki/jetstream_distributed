@@ -78,6 +78,12 @@
 //! protection against that is supposed to come from the election restriction,
 //! and the election restriction's proof is what is missing.
 //!
+//! Half of the election restriction *is* proved, in
+//! `crate::raft::proofs::terms`: a candidate whose last term is behind an entry
+//! the voter holds cannot collect that vote at all. What is missing is the case
+//! where the candidate's last term is at or above the voter's, which is where
+//! the induction over terms actually lives.
+//!
 //! So: the transition system includes replication; the verified guarantees now
 //! reach agreement between logs, and stop short of agreement surviving a leader
 //! change. Read any claim about this module against that line.

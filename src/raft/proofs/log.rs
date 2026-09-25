@@ -49,6 +49,14 @@
 //! calling the rest proved — is the failure mode this repository exists to
 //! avoid.
 //!
+//! The *ground* that induction stands on is in
+//! [`crate::raft::proofs::terms`]: a log's terms are sorted and bounded by its
+//! holder's, so the last one is the largest; an entry leaves a log only to a
+//! leader that disagrees with it there; and a candidate behind on terms is
+//! refused outright. Those are the lemmas the induction will call. The
+//! induction itself is still not written, and that module's own docs say
+//! exactly which three things it is short of.
+//!
 //! So the honest position is: the log is modelled faithfully, the properties
 //! that follow from one step are proved here, Log Matching is proved next door,
 //! and the two that need an induction over terms are named, located, and left

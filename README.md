@@ -274,6 +274,11 @@ verifying, the build fails.
 | C36b | **A batch written a record at a time rewinds the log**, exactly — a crash after `k` of its entries recovers exactly `k`. The reason C36 needs atomicity rather than merely preferring it: the marker has already cleared everything, so a partial batch is the compaction of a *shorter* log. Proved as an equality, not a possibility | `raft::proofs::store::theorem_a_partial_batch_can_rewind`, `lemma_compacted_take_is_take_compacted` | none |
 | C37 | **Every reachable store is encodable, so the two halves compose.** `records_fit` is a guard on the write transitions and a clause of `store_inv`, not a precondition that filters which theorems may be *invoked* — stated only on the theorems, an unencodable state stays reachable and the encoding theorems quietly stop applying exactly where they are needed. This is the theorem that spends it: any store satisfying the invariant round-trips through the encoding *and* survives a tear at any byte | `raft::proofs::wire::theorem_a_reachable_store_is_encodable`, `theorem_no_reachable_store_is_unwritable`, with `lemma_pushing_a_fitting_record_fits`, `lemma_a_prefix_of_a_fitting_sequence_fits` | none |
 | C38 | **The commit point never outruns the log**, and **retreats only when a truncation cuts below it**. Raft's commit index is supposed to be monotone; `accepted_commit`'s clamp to the log length gives that up in exactly one case, because a truncation below the commit point forces a choice between a commit index naming absent entries and one that goes backwards. This model retreats — a broken promise is readable, a commit point past the end of the log is not — and these say precisely when. Commit **is** monotone whenever the truncation is at or above it, which is every step of a healthy cluster; and when it retreats, the leader deleted an entry the follower had *committed* | `raft::proofs::log::theorem_the_commit_point_never_outruns_the_log`, `theorem_the_commit_point_does_not_retreat_above_a_truncation`, `theorem_the_commit_point_retreats_only_below_a_truncation`, `theorem_a_commit_retreat_means_a_committed_entry_was_deleted` | none — and the condition on monotonicity is exactly what **Leader Completeness** would discharge, so when that lands the hypothesis becomes vacuous and monotonicity becomes unconditional |
+| C39 | **A log's terms never decrease, and none exceeds its holder's own term.** Two facts proved together, because they hold for one reason: a leader stamps a new entry with its own term, and that term bounds everything already in the log, so the new entry is the largest *because* it is bounded. The replication case is the **consistency check** paying for itself a third time — a follower accepting at `prefix` keeps `follower.take(prefix)` and adds the leader's entry, and the terms of that are sorted only because the two logs *agree* at `prefix - 1` | `raft::proofs::terms::inv_log_shape`, `theorem_reachable_term_inv`, `lemma_accepting_keeps_shape`, `lemma_push_keeps_shape` | none |
+| C40 | **The last term is the largest**, so the up-to-date comparison — which reads only a log's final entry — says something about every entry in it. One line from C39, and the line the election restriction is stated over | `raft::proofs::terms::lemma_the_last_term_is_the_largest` | none |
+| C41 | **A follower that already agrees with the leader at an index keeps its entry there.** The payoff of C25's conditional truncation, and the reason it is load-bearing rather than merely faithful to figure 2. If `prefix <= i`, Log Matching says the two logs agree at `prefix` as well, so the guard fires and the follower's log is **not touched at all**; if `prefix > i`, the truncation is above `i`. Under an *unconditional* truncation the first case is false — a duplicate `AppendEntries` for an early index would delete an entry the follower already agreed on — and the induction Leader Completeness needs would have no base | `raft::proofs::terms::theorem_a_follower_that_agrees_keeps_the_entry` | Log Matching (C26) |
+| C42 | **An entry leaves a log only to a leader that disagrees with it there.** C41 lifted from one transition to the whole relation, which is the shape the missing induction consumes: it has to rule out an entry vanishing from a voter's log between the moment a quorum stored it and the moment that voter cast its next vote, and this says the only step that can is an `AppendEntries` from a leader whose own log differs at that index | `raft::proofs::terms::theorem_an_agreed_entry_survives_any_step` | Log Matching (C26) |
+| C43 | **A candidate behind on terms is refused, and cannot collect that vote.** A voter holding *any* entry of term `T` refuses every candidate whose last term is below `T` — so `tr_grant_vote` cannot fire, stated over the transition relation rather than over the guard. An empty log is the special case that makes C39's *lower* bound worth having: `last_term` of an empty log is 0, no entry is ever at term 0, so an empty log is strictly behind every non-empty one rather than incomparable with it | `raft::proofs::terms::theorem_a_candidate_missing_a_term_is_refused`, `theorem_a_stale_candidate_cannot_collect_that_vote`, `theorem_an_empty_log_cannot_win_a_vote`, `theorem_a_stale_candidate_cannot_collect_that_vote_reachable` | none |
 | I | The inductive invariant holds in every reachable state (`init ==> inv`, `inv /\ next ==> inv`) | `ownership::proofs::invariant::theorem_reachable_inv` | the model's transition relation |
 | S | **The headline scenario**: `A` owns X@41, a transfer and a crash/recovery occur, `B` owns X@42, `A` returns still holding its epoch-41 token - and cannot perform an authoritative mutation. The postcondition exports the whole nine-step run, so the crash, the recovery and the outcome are the same execution — exported as separate existentials they need not have been, and an ordinary live handover could supply the outcome | `ownership::proofs::adversarial::scenario_stale_owner_returns` | `A != B` |
 | S1 | A stale `Grant` cannot resurrect a superseded epoch | `ownership::proofs::adversarial::theorem_stale_grant_cannot_be_used` | none |
@@ -706,6 +711,50 @@ relating the up-to-date vote guard to what has been committed. A follower here
 will still truncate entries it had committed, which is faithful Raft — the
 protection against that is supposed to come from the election restriction, and
 the election restriction's proof is what is still missing.
+
+### The ground that induction has to stand on (C39–C43)
+
+`src/raft/proofs/terms.rs` is not that induction. It is the part of it that can
+be proved without any new ghost state, and each piece is a theorem rather than a
+step of a larger argument that only makes sense once the argument exists.
+
+**The one to read is C41.** A follower that already agrees with the leader at
+index `i` keeps its entry at `i` — and the proof splits on where the leader is
+writing. If the leader writes at or below `i`, Log Matching says the two logs
+agree at *that* index too, so the conditional in `appended_log` fires and the
+follower's log is not touched at all. If it writes above `i`, the truncation is
+above `i`. Either way the entry stays.
+
+That is the first commit on this branch earning something it was not made for.
+The conditional truncation went in because an unconditional one described a step
+the service would not take; it turns out to be what makes this theorem true, and
+this theorem is what rules out a committed entry vanishing from a voter's log
+between the commit and the next election. Under an unconditional truncation a
+duplicate `AppendEntries` for an early index deletes the entry, and the
+induction has no base.
+
+**C43 is the other half that is provable now**: a voter holding any entry of term
+`T` refuses every candidate whose last term is below `T`, so the vote cannot be
+granted at all. With C40 that is one line, and it is exactly half of what Leader
+Completeness needs — a candidate cannot win on a log that is *behind on terms*.
+
+**What is still missing is the other case**, and it is worth being precise about
+which one. When the candidate's last term is at or *above* the voter's, C43 says
+nothing: the candidate is not refused, and the committed entry has to be shown
+present in its log by a different argument — its own last entry was created by
+some leader of a term between the commit's and this election's, and a strong
+induction over terms says that leader already held the entry. Three things that
+argument needs and this repository does not have:
+
+* a **record of what was committed**. `commit` is a count per server and says
+  nothing about which entry a quorum once held.
+* a **record of the voter's log at the moment of the vote**, because
+  `tr_grant_vote` compares against a log that has since moved on.
+* the **strong induction over terms** itself — the part of Raft that took Verdi
+  a person-scale Coq development.
+
+C42 and C43 are the two lemmas that induction will call. The induction is not
+written, and nothing here pretends otherwise.
 
 **C38 is what that gap costs, stated concretely.** Because the model may not
 assume that state unreachable, it has to handle it, and handling it means a

@@ -659,7 +659,13 @@ pub proof fn lemma_a_labelled_execution_is_an_execution(tr: Seq<Cluster>, labels
     ensures
         raft_execution(tr),
 {
-    assert forall|i: int| 0 <= i < tr.len() - 1 implies raft_next(tr[i], tr[i + 1]) by {
+    // The same multi-trigger `raft_execution` states its own clause with. A
+    // trigger on `tr[i]` alone introduces `tr[i + 1]`, which matches again and
+    // walks off the end of the sequence — which is why the definition names it,
+    // and why this has to name the same one.
+    assert forall|i: int|
+        #![trigger tr[i], tr[i + 1]]
+        0 <= i < tr.len() - 1 implies raft_next(tr[i], tr[i + 1]) by {
         assert(raft_step(tr[i], tr[i + 1], labels[i]));
     }
 }

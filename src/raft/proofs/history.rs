@@ -403,6 +403,7 @@ pub proof fn lemma_client_request_ignores_history(
                 ),
                 l,
                 cm,
+                vw,
             ),
             n,
             value,

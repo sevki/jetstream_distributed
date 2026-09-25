@@ -49,6 +49,14 @@
 //! calling the rest proved — is the failure mode this repository exists to
 //! avoid.
 //!
+//! The *ground* that induction stands on is in
+//! [`crate::raft::proofs::terms`]: a log's terms are sorted and bounded by its
+//! holder's, so the last one is the largest; an entry leaves a log only to a
+//! leader that disagrees with it there; and a candidate behind on terms is
+//! refused outright. Those are the lemmas the induction will call. The
+//! induction itself is still not written, and that module's own docs say
+//! exactly which three things it is short of.
+//!
 //! So the honest position is: the log is modelled faithfully, the properties
 //! that follow from one step are proved here, Log Matching is proved next door,
 //! and the two that need an induction over terms are named, located, and left
@@ -59,6 +67,7 @@ use vstd::prelude::*;
 use vstd::set_lib::*;
 
 use crate::raft::model::*;
+use crate::raft::proofs::history::*;
 use crate::raft::proofs::election::*;
 
 verus! {
@@ -213,14 +222,53 @@ pub proof fn theorem_a_follower_agrees_before_it_accepts(
         // The check itself.
         prefix > 0 ==> pre.servers[follower].log[prefix as int - 1].term
             == pre.servers[leader].log[prefix as int - 1].term,
-        // What it ends up with: its own agreed prefix, then the leader's entry,
-        // and nothing else.
-        post.servers[follower].log.len() == prefix + 1,
-        post.servers[follower].log[prefix as int] == pre.servers[leader].log[prefix as int],
+        // What it ends up with: its own agreed prefix, then the leader's entry.
+        //
+        // **Not "and nothing else" any more.** `appended_log` deletes the
+        // suffix only on a conflict, so a follower that already held the
+        // leader's entry at `prefix` keeps everything after it — which is why
+        // the length is a bound rather than an equation.
+        post.servers[follower].log.len() >= prefix + 1,
         has_prefix(post.servers[follower].log, pre.servers[follower].log, prefix),
 {
     assert forall|i: int| 0 <= i < prefix implies post.servers[follower].log[i]
         == pre.servers[follower].log[i] by {}
+}
+
+/// **A follower that accepts ends up holding the leader's entry** — whichever
+/// branch of `appended_log` it took.
+///
+/// Its own theorem because the two branches get there differently, and the
+/// second is the interesting one. On a conflict the entry is *copied* from the
+/// leader. When there was no conflict nothing is written at all, and the entry
+/// already there is the leader's **because it has the leader's term at the
+/// leader's index** — which is Log Matching, and is the one place the model's
+/// shape leans on a theorem.
+///
+/// The reasoning is not circular: `theorem_log_matching` is proved from
+/// `inv_logs_follow_created`, whose own preservation across this transition
+/// (`lemma_the_consistency_check_preserves_the_record`) handles the no-conflict
+/// branch by observing that the log does not change, never by appealing to this.
+pub proof fn theorem_a_follower_ends_up_with_the_leaders_entry(
+    pre: Cluster,
+    post: Cluster,
+    leader: ServerId,
+    follower: ServerId,
+    prefix: nat,
+)
+    requires
+        tr_append_entries(pre, post, leader, follower, prefix),
+        inv_logs_follow_created(pre),
+    ensures
+        post.servers[follower].log[prefix as int] == pre.servers[leader].log[prefix as int],
+{
+    let fl = pre.servers[follower].log;
+    let ll = pre.servers[leader].log;
+    if prefix < fl.len() && fl[prefix as int].term == ll[prefix as int].term {
+        // No conflict: the log is untouched, and Log Matching says the entry
+        // sitting there is the one being sent.
+        theorem_log_matching_values(pre, follower, leader, prefix);
+    }
 }
 
 /// **Entries are never invented.** A follower's new entry is the leader's
@@ -234,10 +282,12 @@ pub proof fn theorem_replication_copies_the_leaders_entry(
 )
     requires
         tr_append_entries(pre, post, leader, follower, prefix),
+        inv_logs_follow_created(pre),
     ensures
         prefix < pre.servers[leader].log.len(),
         post.servers[follower].log[prefix as int] == pre.servers[leader].log[prefix as int],
 {
+    theorem_a_follower_ends_up_with_the_leaders_entry(pre, post, leader, follower, prefix);
 }
 
 /// **Commitment needs a majority, and the entry has to belong to the
@@ -304,6 +354,125 @@ pub proof fn theorem_one_log_is_extended_per_term(c: Cluster, n1: ServerId, n2: 
         c.servers[n1].log == c.servers[n2].log,
 {
     theorem_election_safety(c, n1, n2);
+}
+
+// ---------------------------------------------------------------------------
+// The commit point
+// ---------------------------------------------------------------------------
+
+/// **The commit point never outruns the log.**
+///
+/// What the clamp in [`accepted_commit`] is for: a commit index naming entries
+/// that are not there is a state no later reader can make sense of, since every
+/// query about what has been applied reads past the end.
+pub proof fn theorem_the_commit_point_never_outruns_the_log(
+    pre: Cluster,
+    post: Cluster,
+    leader: ServerId,
+    follower: ServerId,
+    prefix: nat,
+)
+    requires
+        tr_append_entries(pre, post, leader, follower, prefix),
+    ensures
+        post.servers[follower].commit <= post.servers[follower].log.len(),
+{
+    assert(post.servers.dom() =~= pre.servers.dom());
+}
+
+/// **Commit is monotone whenever the truncation is at or above it.**
+///
+/// Which is every step of a healthy cluster. A leader replicating forward
+/// always names a `prefix` at or beyond what the follower has committed,
+/// because a committed entry is in that leader's own log — so this is the
+/// ordinary case, and in the ordinary case Raft's monotone commit index holds
+/// here exactly as it should.
+pub proof fn theorem_the_commit_point_does_not_retreat_above_a_truncation(
+    pre: Cluster,
+    post: Cluster,
+    leader: ServerId,
+    follower: ServerId,
+    prefix: nat,
+)
+    requires
+        tr_append_entries(pre, post, leader, follower, prefix),
+        pre.servers[follower].commit <= prefix,
+    ensures
+        post.servers[follower].commit >= pre.servers[follower].commit,
+{
+    let fc = pre.servers[follower].commit;
+    let new_log = appended_log(pre.servers[follower].log, pre.servers[leader].log, prefix);
+
+    // Either branch of `appended_log` leaves a log at least as long as
+    // `prefix`: the no-conflict branch keeps a log that already reached past
+    // it, and the other is `take(prefix)` plus one.
+    assert(new_log.len() >= prefix);
+    assert(new_log.len() >= fc);
+    assert(accepted_commit(fc, pre.servers[leader].commit, new_log.len()) >= fc);
+}
+
+/// **And when it does retreat, the truncation was below it.**
+///
+/// The contrapositive of the theorem above, stated separately because it is the
+/// one a reader wants: the commit point going backwards is not something that
+/// can happen quietly in normal operation. It requires a leader to have asked a
+/// follower to delete an entry the follower had **committed** — which is
+/// exactly what Leader Completeness rules out, and exactly what this repository
+/// does not yet prove.
+///
+/// So this is the shape of the gap. Not "commit might go backwards sometimes",
+/// but "commit goes backwards only in the state whose unreachability is the
+/// missing theorem". When Leader Completeness lands, the hypothesis of
+/// [`theorem_the_commit_point_does_not_retreat_above_a_truncation`] becomes
+/// free and monotonicity becomes unconditional.
+pub proof fn theorem_the_commit_point_retreats_only_below_a_truncation(
+    pre: Cluster,
+    post: Cluster,
+    leader: ServerId,
+    follower: ServerId,
+    prefix: nat,
+)
+    requires
+        tr_append_entries(pre, post, leader, follower, prefix),
+        post.servers[follower].commit < pre.servers[follower].commit,
+    ensures
+        prefix < pre.servers[follower].commit,
+{
+    if prefix >= pre.servers[follower].commit {
+        theorem_the_commit_point_does_not_retreat_above_a_truncation(
+            pre,
+            post,
+            leader,
+            follower,
+            prefix,
+        );
+    }
+}
+
+/// The same two, joined: a follower's commit point either advanced, or the
+/// leader deleted something it had committed. There is no third case.
+pub proof fn theorem_a_commit_retreat_means_a_committed_entry_was_deleted(
+    pre: Cluster,
+    post: Cluster,
+    leader: ServerId,
+    follower: ServerId,
+    prefix: nat,
+)
+    requires
+        tr_append_entries(pre, post, leader, follower, prefix),
+    ensures
+        post.servers[follower].commit >= pre.servers[follower].commit || prefix
+            < pre.servers[follower].commit,
+{
+    if post.servers[follower].commit < pre.servers[follower].commit {
+        theorem_the_commit_point_retreats_only_below_a_truncation(
+            pre,
+            post,
+            leader,
+            follower,
+            prefix,
+        );
+    }
 }
 
 } // verus!

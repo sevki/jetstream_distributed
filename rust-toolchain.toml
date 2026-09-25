@@ -1,6 +1,6 @@
 # Must match the toolchain that the pinned Verus release was built against.
 # See .github/workflows/verify.yml (VERUS_VERSION) and
-# https://github.com/verus-lang/verus/blob/release/0.2026.09.13.671956e/rust-toolchain.toml
+# https://github.com/verus-lang/verus/blob/release/0.2026.09.20.aef82ed/rust-toolchain.toml
 [toolchain]
 channel = "1.98.1"
 components = ["rustc", "rust-std", "cargo", "rustfmt", "rustc-dev", "llvm-tools"]

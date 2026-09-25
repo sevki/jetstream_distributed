@@ -78,6 +78,12 @@
 //! protection against that is supposed to come from the election restriction,
 //! and the election restriction's proof is what is missing.
 //!
+//! Half of the election restriction *is* proved, in
+//! `crate::raft::proofs::terms`: a candidate whose last term is behind an entry
+//! the voter holds cannot collect that vote at all. What is missing is the case
+//! where the candidate's last term is at or above the voter's, which is where
+//! the induction over terms actually lives.
+//!
 //! So: the transition system includes replication; the verified guarantees now
 //! reach agreement between logs, and stop short of agreement surviving a leader
 //! change. Read any claim about this module against that line.
@@ -348,14 +354,32 @@ pub open spec fn replicated_on(c: Cluster, log: Seq<Entry>, n: nat) -> Set<Serve
     )
 }
 
-/// What a follower's log becomes when it accepts one entry at `prefix`: its own
-/// agreed prefix, then the leader's entry, and nothing else.
+/// What a follower's log becomes when it accepts one entry at `prefix`.
 ///
-/// Written as "keep my first `prefix` entries" rather than "copy the leader's
-/// first `prefix` entries", which would bake Log Matching into the transition
-/// instead of leaving it to be proved.
+/// **The suffix is deleted only on a conflict.** Figure 2's rule 3 is *if an
+/// existing entry conflicts with a new one (same index, different terms),
+/// delete it and all that follow*, and the conditional is the whole of it: an
+/// unconditional truncation loses entries to a request that told the follower
+/// nothing new, because a duplicate or reordered `AppendEntries` for an earlier
+/// index would throw away everything after it.
+///
+/// So when the entry already there has the leader's term, the log is left
+/// alone. That is sound *because of Log Matching* — one `(index, term)` names
+/// one entry, so the entry already there is the entry being sent — which makes
+/// this the one place in the model where a transition's shape leans on a
+/// theorem rather than the other way round. `crate::raft::proofs::history`
+/// proves the theorem without using this branch, so the reasoning is not
+/// circular; see `lemma_the_consistency_check_preserves_the_record`.
+///
+/// Otherwise: keep my first `prefix` entries, then the leader's. Written as
+/// "keep mine" rather than "copy the leader's first `prefix`", which would bake
+/// Log Matching into the transition instead of leaving it to be proved.
 pub open spec fn appended_log(follower: Seq<Entry>, leader: Seq<Entry>, prefix: nat) -> Seq<Entry> {
-    follower.take(prefix as int).push(leader[prefix as int])
+    if prefix < follower.len() && follower[prefix as int].term == leader[prefix as int].term {
+        follower
+    } else {
+        follower.take(prefix as int).push(leader[prefix as int])
+    }
 }
 
 pub open spec fn min_nat(a: nat, b: nat) -> nat {
@@ -372,6 +396,57 @@ pub open spec fn max_nat(a: nat, b: nat) -> nat {
     } else {
         b
     }
+}
+
+/// The commit index a follower ends up with after accepting an entry.
+///
+/// `min(leaderCommit, index of last new entry)` as figure 2 has it, and then
+/// **clamped to the length of the log**.
+///
+/// # The clamp gives up monotonicity, and that is a choice
+///
+/// Raft's commit index is supposed to be monotone. This expression is not, and
+/// the earlier version of this comment claimed both "never backwards" and
+/// "never past the end of the log" — which cannot both hold, because a
+/// truncation that cuts *below* the commit point forces one of them to give.
+/// A follower with `commit = 5` told to replace the entry at index 0 ends with
+/// a one-entry log, and either its commit point still says 5 — naming four
+/// entries that no longer exist — or it retreats to 1.
+///
+/// This model retreats, and the trade is worth stating rather than
+/// discovering. A commit point naming absent entries is a state no later
+/// reader can make sense of: every query about "what has been applied" reads
+/// past the end of the log. A commit point that went backwards is a broken
+/// *promise* but a readable state, and the breach is visible.
+///
+/// # What is actually proved about it
+///
+/// Not "never backwards", which is false. Instead, in
+/// `crate::raft::proofs::log`:
+///
+/// * [`crate::raft::proofs::log::theorem_the_commit_point_never_outruns_the_log`]
+///   — the clamp does what it is for.
+/// * `theorem_the_commit_point_does_not_retreat_above_a_truncation` — commit
+///   **is** monotone whenever the truncation point is at or above it, which is
+///   every step of a healthy cluster.
+/// * `theorem_the_commit_point_retreats_only_below_a_truncation` — and when it
+///   does retreat, the truncation was strictly below the old commit point.
+///
+/// So monotonicity holds conditionally, on exactly the condition **Leader
+/// Completeness would discharge**: a leader never asks a follower to delete a
+/// committed entry, because a committed entry is in every future leader's log.
+/// This repository does not prove Leader Completeness, so the model may not
+/// treat that case as unreachable — it has to handle it, and the theorems above
+/// say precisely how. When Leader Completeness lands, the condition becomes
+/// vacuous and monotonicity becomes unconditional; until then it is a
+/// hypothesis with a name.
+///
+/// It is a named function rather than an expression inside [`tr_append_entries`]
+/// because the proof of `lemma_append_entries_preserves_inv` has to hand its
+/// frame lemma a `Server` that is *exactly* what the transition inserts. Two
+/// copies of one rule drift, and did.
+pub open spec fn accepted_commit(follower_commit: nat, leader_commit: nat, new_log_len: nat) -> nat {
+    min_nat(max_nat(follower_commit, min_nat(leader_commit, new_log_len)), new_log_len)
 }
 
 // ---------------------------------------------------------------------------
@@ -603,18 +678,10 @@ pub open spec fn tr_append_entries(
             role: Role::Follower,
             current_term: pre.servers[follower].current_term,
             log: appended_log(pre.servers[follower].log, pre.servers[leader].log, prefix),
-            // `min(leaderCommit, index of last new entry)`, and never
-            // backwards.
-            commit: max_nat(
+            commit: accepted_commit(
                 pre.servers[follower].commit,
-                min_nat(
-                    pre.servers[leader].commit,
-                    appended_log(
-                        pre.servers[follower].log,
-                        pre.servers[leader].log,
-                        prefix,
-                    ).len(),
-                ),
+                pre.servers[leader].commit,
+                appended_log(pre.servers[follower].log, pre.servers[leader].log, prefix).len(),
             ),
         },
     )

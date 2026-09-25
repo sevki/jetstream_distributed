@@ -478,12 +478,10 @@ proof fn lemma_append_entries_preserves_inv(
             role: Role::Follower,
             current_term: pre.servers[follower].current_term,
             log: appended_log(pre.servers[follower].log, pre.servers[leader].log, prefix),
-            commit: max_nat(
+            commit: accepted_commit(
                 pre.servers[follower].commit,
-                min_nat(
-                    pre.servers[leader].commit,
-                    appended_log(pre.servers[follower].log, pre.servers[leader].log, prefix).len(),
-                ),
+                pre.servers[leader].commit,
+                appended_log(pre.servers[follower].log, pre.servers[leader].log, prefix).len(),
             ),
         },
     );

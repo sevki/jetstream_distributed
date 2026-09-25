@@ -1,3 +1,18 @@
+# `vendor/pmemlog` is Microsoft's verified persistent-memory log, vendored
+# rather than fetched, so that its proofs are checked by this repository's CI
+# against this repository's pinned Verus. See `vendor/pmemlog/README.md`.
+#
+# It is a workspace member and not a module because it is somebody else's code
+# under somebody else's licence. The one-crate rule this repository follows is
+# about the protocols in `src/{algorithm}`; it is not a reason to paste a
+# dependency into them.
+#
+# `fuzz/` stays excluded: it needs nightly, and `rust-toolchain.toml` pins the
+# stable release Verus was built against.
+[workspace]
+members = ["vendor/pmemlog"]
+exclude = ["fuzz"]
+
 [package]
 name = "distributed-ownership"
 version = "0.1.0"
@@ -30,11 +45,11 @@ service = ["dep:jetstream", "dep:tokio"]
 
 [dependencies]
 # `vstd` is the Verus standard library. This is the version that ships with
-# Verus release 0.2026.09.13.671956e (per the cargo-verus toolchain manifest).
+# Verus release 0.2026.09.20.aef82ed (per the cargo-verus toolchain manifest).
 # It is only used when driving verification through `cargo verus`; the primary
 # CI entry point (`verus --crate-type=lib src/lib.rs`) uses the prebuilt vstd
 # inside the Verus release archive instead.
-vstd = "=0.0.0-2026-09-06-0133"
+vstd = "=0.0.0-2026-09-20-0158"
 
 # Not `"16.3.1"` from crates.io — that version is not published there (16.0.0 is
 # the latest release), and the services are written against the working tree,
@@ -122,4 +137,9 @@ required-features = ["service"]
 [[test]]
 name = "raft_log"
 path = "tests/raft_log.rs"
+required-features = ["service"]
+
+[[test]]
+name = "raft_store"
+path = "tests/raft_store.rs"
 required-features = ["service"]

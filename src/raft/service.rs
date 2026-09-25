@@ -77,13 +77,20 @@
 //! coupling `has_quorum == won_election` that the proof rests on is only as good
 //! as that.
 //!
-//! Two of the three also take **the term the request went out in**, and drop
-//! replies that do not name the term this server is in now. A reply carries no
-//! clock: an `Accepted(3)` looks the same whenever it was sent, and one that
-//! crossed a leadership boundary would be counted against a log the terms in
-//! between may have rewritten. Every stale-reply hazard in this file is the same
-//! shape — state that outlives the leadership it was collected for — which is
-//! also what `crate::raft::proofs::history` is about on the other side.
+//! **One of the three used to take the term the request went out in as an
+//! argument, and no longer does.** A reply carries no clock: an acknowledgement
+//! looks the same whenever it was sent, and one that crossed a leadership
+//! boundary would be counted against a log the terms in between may have
+//! rewritten. [`Appended::Accepted`] now carries [`Acceptance`], which states
+//! the term the follower accepted at, so [`Peer::observe_appended`] compares
+//! that against its own term and there is no argument left for a caller to get
+//! wrong. [`Peer::count_ballot`] and [`Peer::observe_standing`] still take the
+//! term, because a `Ballot` and a `Standing` are answers about a term rather
+//! than about a log, and the term they name is the one being asked about.
+//!
+//! Every stale-reply hazard in this file is the same shape — state that outlives
+//! the leadership it was collected for — which is also what
+//! `crate::raft::proofs::history` is about on the other side.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -92,6 +99,7 @@ use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use crate::raft::store::{apply_record, replay_exec, ExecEntry, ExecRecord};
 use crate::raft::steps::{
     become_leader_step, follow_step, grant_vote_step, is_majority, step_down_step, timeout_step,
     ExecRole, ExecServer, RaftOutcome, RaftRefusal,
@@ -134,12 +142,33 @@ pub struct LogEntry {
     pub value: u64,
 }
 
+/// **What a follower says when it takes an entry.**
+///
+/// Two fields, and the term is the one that matters. A reply carrying only a
+/// length says *what* the follower has and nothing about *when* — and a length
+/// read in a later term is an acknowledgement of a log the terms in between may
+/// have rewritten. [`Peer::observe_appended`] used to take the term as a
+/// *caller* argument, which put the whole staleness check in the hands of
+/// whoever remembered to pass the right number.
+///
+/// Now the reply says which term it was accepted at, and the leader compares
+/// that against its own. There is no argument left to get wrong.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, JetStreamWireFormat)]
+pub struct Acceptance {
+    /// The term the follower accepted at — which is the term the request
+    /// carried, since `append_entries` refuses anything behind its own and
+    /// steps up to anything ahead.
+    pub term: u64,
+    /// The follower's log length afterwards, which is what the leader tracks to
+    /// decide what is replicated.
+    pub len: u64,
+}
+
 /// The reply to `append_entries`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, JetStreamWireFormat)]
 pub enum Appended {
-    /// Taken. This is the follower's log length afterwards, which is what the
-    /// leader tracks to decide what is replicated.
-    Accepted(u64),
+    /// Taken, at a stated term. See [`Acceptance`].
+    Accepted(Acceptance),
     /// Refused. This is the follower's term, so a stale leader finds out.
     Rejected(u64),
 }
@@ -227,6 +256,290 @@ impl LogStore for MemoryLogStore {
         let mut g = self.0.lock().expect("log lock");
         g.truncate(prefix as usize);
         g.push(entry);
+        Ok(())
+    }
+}
+
+/// **A `LogStore` whose device is append-only**, and the executable form of
+/// [`crate::raft::store`].
+///
+/// [`MemoryLogStore`] is a `Vec<LogEntry>` that shrinks when it truncates,
+/// which is a log no durable device can be. This one keeps a **record log** —
+/// appends and truncation markers, only ever growing — and its entries are
+/// `replay_exec` of that. `crate::raft::proofs::store` is what says the two
+/// agree: C27 says memory and device never disagree, C28 says a crash can only
+/// rewind, C29 says accepting a replicated entry costs at most two records.
+///
+/// It is still in memory. The point is not durability yet — it is that the
+/// shape is the shape a device can serve, so wiring one underneath changes
+/// where the bytes go and not what the store does. [`Self::after_crash`] is
+/// that claim made testable: drop any suffix of the records and replay, which
+/// is exactly what C28 says a crash can do.
+///
+/// # Order of writes
+///
+/// The record goes onto the device **before** the in-memory log is updated. A
+/// crash between the two leaves memory behind the device, and recovery replays
+/// the device, so nothing is lost. The other order leaves memory *ahead* of the
+/// device — a store that believes an entry it never wrote down, which is the
+/// failure `LogStore`'s durability requirement exists to forbid.
+#[derive(Clone)]
+pub struct RecordLogStore(Arc<Mutex<RecordInner>>);
+
+struct RecordInner {
+    /// The device. Only ever grows — C30.
+    records: Vec<ExecRecord>,
+    /// The log, kept equal to `replay_exec(&records)` — C27.
+    log: Vec<ExecEntry>,
+    /// How many records have been reported durable — C35. A crash may not go
+    /// below this, and it only lags inside a multi-record operation.
+    durable: usize,
+}
+
+/// **When the device has outgrown the log enough to be worth rewriting.**
+///
+/// A compacted device is `log.len() + 1` records — the marker, then one append
+/// per entry — so compacting at twice that keeps the device within a constant
+/// factor of the log and does amortised O(1) work per write: each compaction
+/// costs `log.len() + 1` writes and cannot recur until at least `log.len() + 1`
+/// more records have accumulated.
+///
+/// Two is a choice, not a derivation. Lower thrashes on a follower that is
+/// being rewritten repeatedly; higher lets the device grow further between
+/// rewrites. The bound is what matters and the constant is tunable.
+fn worth_compacting(records: usize, entries: usize) -> bool {
+    records > 2 * (entries + 1)
+}
+
+impl Default for RecordLogStore {
+    fn default() -> Self {
+        RecordLogStore::new()
+    }
+}
+
+impl RecordLogStore {
+    pub fn new() -> Self {
+        RecordLogStore(Arc::new(Mutex::new(RecordInner {
+            records: Vec::new(),
+            log: Vec::new(),
+            durable: 0,
+        })))
+    }
+
+    /// Start from a device. This is recovery, and it is the whole of it:
+    /// `replay_exec` and nothing else.
+    pub fn recovered(records: Vec<ExecRecord>) -> Self {
+        let log = replay_exec(&records);
+        // Everything that survived is on the device, so it is durable.
+        let durable = records.len();
+        RecordLogStore(Arc::new(Mutex::new(RecordInner { records, log, durable })))
+    }
+
+    /// What is on the device.
+    pub fn records(&self) -> Vec<ExecRecord> {
+        self.0.lock().expect("record log lock").records.clone()
+    }
+
+    /// How many records are on the device. Distinct from `len()`, which is the
+    /// number of *entries* — a truncation is a record and not an entry, so
+    /// these diverge, and watching them diverge is what C31's compaction is
+    /// for.
+    pub fn device_len(&self) -> usize {
+        self.0.lock().expect("record log lock").records.len()
+    }
+
+    /// How many records have been reported durable.
+    ///
+    /// Equal to `device_len()` whenever no operation is in flight, because
+    /// every `LogStore` method here syncs before it returns. It lags only
+    /// *inside* a two-record `overwrite`, which is the one window a crash can
+    /// lose anything at all.
+    pub fn durable_len(&self) -> usize {
+        self.0.lock().expect("record log lock").durable
+    }
+
+    /// **The crash.** A new store recovered from the first `survived` records.
+    ///
+    /// C28 in executable form: the device keeps a prefix, recovery is `replay`
+    /// of it, and what comes back is a log this store had.
+    ///
+    /// `survived` past the end is clamped, because a caller asking about more
+    /// records than exist is asking about no crash at all. It is **not**
+    /// clamped up to `durable`: this is a test facility, and a crash landing
+    /// below the durable line is precisely what
+    /// `theorem_durability_never_retreats` says cannot happen — so being able
+    /// to ask for one is how a test can check that the store never puts itself
+    /// in a position where it would matter. Between operations `durable`
+    /// equals the record count, so no such point exists;
+    /// `nothing_is_lost_between_operations` is the test that says so.
+    pub fn after_crash(&self, survived: usize) -> Self {
+        let all = self.records();
+        let keep = if survived < all.len() { survived } else { all.len() };
+        RecordLogStore::recovered(all[..keep].to_vec())
+    }
+
+    /// **Rewrite the device as pure appends**, which is C31 and C36.
+    ///
+    /// Two steps, and the order matters. First the **batch** — a
+    /// `Truncate { len: 0 }` followed by one append per entry — is written and
+    /// synced as a unit. Then the old generation is dropped, which on
+    /// `pmemlog` is `advance_head` and here is a `drain`.
+    ///
+    /// The leading marker is what makes the middle state safe. Without it a
+    /// crash between the two steps would leave the old records followed by the
+    /// new generation, which replays to `log + log` — every entry twice.
+    /// `theorem_a_staged_compaction_is_inert` is the proof that with it, the
+    /// device means the same log before the reclaim and after it, so a crash
+    /// on either side of that step recovers the same thing.
+    ///
+    /// The batch is synced **as one**: a crash inside it would leave the
+    /// marker and a prefix of the log, which is a rewind and could go below
+    /// the durable line. On `pmemlog` that is a single `append`, whose crash
+    /// view of the **abstract log** is the log before it or after it and
+    /// nothing between — earned by its CRC rather than given by byte-atomic
+    /// hardware, since its own model permits any subset of 8-byte chunks to
+    /// have been flushed. `crate::raft::store::store_write_batch` says this at
+    /// length; the short version is that the guarantee is as strong as the two
+    /// corruption assumptions `vendor/pmemlog/README.md` enumerates, and no
+    /// stronger.
+    ///
+    /// What this does *not* do is schedule itself: nothing calls it, and a
+    /// store that never compacts grows without bound. Stated in
+    /// `crate::raft::store` and repeated here because this is where a reader
+    /// would look for the bound.
+    pub fn compact(&self) {
+        let mut g = self.0.lock().expect("record log lock");
+
+        // The batch: a marker that clears whatever came before, then one
+        // append per entry.
+        let mut batch: Vec<ExecRecord> = Vec::with_capacity(g.log.len() + 1);
+        batch.push(ExecRecord { is_truncate: true, a: 0, b: 0 });
+        batch.extend(
+            g.log.iter().map(|e| ExecRecord { is_truncate: false, a: e.term, b: e.value }),
+        );
+
+        // **Installed as one.** Not `write_record` in a loop: every
+        // intermediate state of that loop is the marker plus a *prefix* of the
+        // log, which replays to a shorter log than the store had, and a crash
+        // in the middle of it is data loss on an operation whose whole purpose
+        // is to change nothing. `theorem_a_partial_batch_can_rewind` proves
+        // that hazard is exact rather than theoretical.
+        //
+        // On a real `InfiniteLogImpl` this is one `append` of the encoded
+        // batch, whose crash view is the device before the call or after it and
+        // nothing between — `store_write_batch`, and the one property this
+        // design asks of the device that it cannot itself check. Here the lock
+        // gives the same guarantee: no reader sees a half-installed `records`.
+        //
+        // The old generation is dropped in the same step, which is sound
+        // because the batch replays to the same log with it there and with it
+        // gone (`theorem_after_compaction_the_old_records_are_dead`) — so the
+        // reclaim is a no-op and needs no crash window of its own.
+        g.records = batch;
+        g.durable = g.records.len();
+    }
+
+    /// The whole log, for tests to compare against.
+    pub fn entries(&self) -> Vec<LogEntry> {
+        self.0
+            .lock()
+            .expect("record log lock")
+            .log
+            .iter()
+            .map(|e| LogEntry { term: e.term, value: e.value })
+            .collect()
+    }
+}
+
+/// Put one record on the device, then apply it.
+///
+/// The only way this store changes. `apply_record` is the verified function
+/// from `crate::raft::store`, so the in-memory log is not maintained by
+/// hand-written logic that could disagree with `replay` — it is maintained by
+/// the function `replay` is defined in terms of.
+fn write_record(g: &mut RecordInner, r: ExecRecord) {
+    g.records.push(r);
+    apply_record(&mut g.log, r);
+}
+
+/// Everything written has landed. What `LogStore`'s *"durable before it
+/// returns"* means, and the only thing that moves the line a crash may not go
+/// below.
+fn sync(g: &mut RecordInner) {
+    g.durable = g.records.len();
+}
+
+/// **Rewrite the device if it has outgrown the log.**
+///
+/// Called after every write that syncs, which is the end of every `LogStore`
+/// method. This is what closes the limitation C31 left open: compaction was
+/// proved sound and nothing ran it, so a store that never compacted grew
+/// without bound. It runs now, on the policy [`worth_compacting`] states.
+///
+/// Safe to call at the end of an operation and nowhere else: it installs its
+/// batch atomically (C36), so it introduces no crash window of its own, and it
+/// leaves the durable line at the end of the device — which is what the caller
+/// was about to be promised anyway.
+fn compact_if_worthwhile(g: &mut RecordInner) {
+    if !worth_compacting(g.records.len(), g.log.len()) {
+        return;
+    }
+    let mut batch: Vec<ExecRecord> = Vec::with_capacity(g.log.len() + 1);
+    batch.push(ExecRecord { is_truncate: true, a: 0, b: 0 });
+    batch.extend(g.log.iter().map(|e| ExecRecord { is_truncate: false, a: e.term, b: e.value }));
+    g.records = batch;
+    g.durable = g.records.len();
+}
+
+impl LogStore for RecordLogStore {
+    fn len(&self) -> io::Result<u64> {
+        Ok(self.0.lock().expect("record log lock").log.len() as u64)
+    }
+
+    fn entry_at(&self, index: u64) -> io::Result<Option<LogEntry>> {
+        Ok(self
+            .0
+            .lock()
+            .expect("record log lock")
+            .log
+            .get(index as usize)
+            .map(|e| LogEntry { term: e.term, value: e.value }))
+    }
+
+    fn append(&self, entry: LogEntry) -> io::Result<u64> {
+        let mut g = self.0.lock().expect("record log lock");
+        write_record(&mut g, ExecRecord { is_truncate: false, a: entry.term, b: entry.value });
+        sync(&mut g);
+        compact_if_worthwhile(&mut g);
+        Ok(g.log.len() as u64)
+    }
+
+    /// **One record when extending, two on a conflict**, which is C29 and
+    /// `theorem_extending_the_log_costs_one_record`.
+    ///
+    /// `Peer::append_entries` calls this whenever the entry at `prefix` is not
+    /// already the leader's — which covers both *extending past the end* and
+    /// *replacing a divergent entry*, and those cost different amounts. When
+    /// `prefix` is the current length there is no tail to delete, so the marker
+    /// would be `Truncate { len: len }`: the identity. Writing it would double
+    /// the cost of the steady state of replication for nothing, so it is not
+    /// written.
+    ///
+    /// The branch that costs *nothing at all* is not here. `append_entries`
+    /// decides whether the entry conflicts and does not call this if it does
+    /// not, so a duplicate `AppendEntries` never reaches the device.
+    fn overwrite(&self, prefix: u64, entry: LogEntry) -> io::Result<()> {
+        let mut g = self.0.lock().expect("record log lock");
+        if (prefix as usize) < g.log.len() {
+            write_record(&mut g, ExecRecord { is_truncate: true, a: prefix, b: 0 });
+        }
+        write_record(&mut g, ExecRecord { is_truncate: false, a: entry.term, b: entry.value });
+        // One sync, at the end, so the two records land together or not at
+        // all. The window between them is the only place a crash can lose
+        // anything, and what it leaves — the marker without the entry — is a
+        // truncation and no more.
+        sync(&mut g);
+        compact_if_worthwhile(&mut g);
         Ok(())
     }
 }
@@ -905,18 +1218,25 @@ impl Peer {
     ///
     /// Returns `Some(commit)` when the reply advanced replication and `None`
     /// when it did not.
-    pub fn observe_appended(&self, from: u64, term: u64, reply: Appended) -> Result<Option<u64>> {
+    pub fn observe_appended(&self, from: u64, reply: Appended) -> Result<Option<u64>> {
         match reply {
-            Appended::Accepted(len) => {
+            Appended::Accepted(ack) => {
                 {
                     let g = self.inner.lock().expect("peer lock");
-                    if g.server.current_term != term || !matches!(g.server.role, ExecRole::Leader) {
+                    // **The term comes off the wire, not from the caller.** A
+                    // reply that crossed a leadership boundary names the term it
+                    // was accepted at, and this server is entitled to count it
+                    // only against the term it is in now — the log of any term in
+                    // between may have been rewritten.
+                    if g.server.current_term != ack.term
+                        || !matches!(g.server.role, ExecRole::Leader)
+                    {
                         // An acknowledgement of a log this server no longer has,
                         // or one it is no longer entitled to count.
                         return Ok(None);
                     }
                 }
-                self.record_match(from, len).map(Some)
+                self.record_match(from, ack.len).map(Some)
             },
             Appended::Rejected(seen) => {
                 let mut g = self.inner.lock().expect("peer lock");
@@ -1146,7 +1466,12 @@ impl Consensus for Peer {
             g.commit = learned;
         }
         g.log.push(Event::Accepted { term, prefix, len: new_len });
-        Ok(Appended::Accepted(new_len))
+        // The term this follower accepted at, which is `term`: `follow_step`
+        // refuses anything behind and steps up to anything ahead, so by here
+        // `g.server.current_term == term`. Stating it from the server's own
+        // record rather than from the argument, so the reply cannot claim a term
+        // the follower is not actually in.
+        Ok(Appended::Accepted(Acceptance { term: g.server.current_term, len: new_len }))
     }
 
     async fn heartbeat(&self, ctx: Context, term: u64, leader_commit: u64) -> Result<Standing> {

@@ -1,5 +1,6 @@
 //! Raft's theorems.
 
+pub mod commit;
 pub mod election;
 pub mod history;
 pub mod log;

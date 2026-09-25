@@ -65,6 +65,7 @@ pub open spec fn timeout_post(c: Cluster, n: ServerId) -> Cluster {
         ),
         created: c.created,
         led: c.led,
+        committed: c.committed,
     }
 }
 
@@ -92,6 +93,7 @@ pub open spec fn grant_vote_post(
         ),
         created: c.created,
         led: c.led,
+        committed: c.committed,
     }
 }
 
@@ -112,6 +114,7 @@ pub open spec fn become_leader_post(c: Cluster, n: ServerId, term: Term) -> Clus
         messages: c.messages.insert(RaftMessage::Heartbeat { term: term, leader: n }),
         created: c.created,
         led: c.led.insert(Led { server: n, term: term }),
+        committed: c.committed,
     }
 }
 
@@ -132,6 +135,7 @@ pub open spec fn step_down_post(c: Cluster, n: ServerId, term: Term) -> Cluster 
         messages: c.messages,
         created: c.created,
         led: c.led,
+        committed: c.committed,
     }
 }
 

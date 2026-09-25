@@ -238,16 +238,41 @@ pub open spec fn term_before(log: Seq<Entry>, i: nat) -> Term {
 /// **What a leader's commit records**: every index it makes committed, with the
 /// entry there and the term of the leader doing it.
 ///
-/// A set rather than a length, for the reason [`Commit`] gives. Written as a
-/// comprehension over `Commit` rather than as a map from indices because the
-/// question every theorem about it asks is *"is this entry committed at this
-/// index"*, which is a membership test.
-pub open spec fn committed_by(s: Server, upto: nat) -> Set<Commit> {
-    Set::new(
-        |k: Commit|
-            k.index < upto && k.index < s.log.len() && k.entry == s.log[k.index as int]
-                && k.leader_term == s.current_term,
-    )
+/// A set rather than a length, for the reason [`Commit`] gives.
+///
+/// # Why this is a recursion and not a comprehension
+///
+/// The obvious way to write it is `Set::new(|k| k.index < upto && ..)`. In this
+/// vstd `Set` is the **finite** set type — `ISet` is the unrestricted one — and
+/// `Set::new` accordingly returns `Option<Set<A>>`, `None` when the predicate
+/// picks out infinitely many elements. This predicate does not, but saying so
+/// would mean discharging finiteness at every use.
+///
+/// Built up one index at a time it is finite *structurally*, with nothing to
+/// discharge: `Set::empty()` and `Set::insert` are total. The price is that
+/// membership is no longer syntactic, which is what
+/// [`crate::raft::proofs::commit::lemma_committed_by_members`] pays once.
+///
+/// The `upto > s.log.len()` arm cannot be reached from [`tr_advance_commit`],
+/// whose guard bounds `upto` by the log. It skips rather than stopping so that
+/// the recursion means the same thing at every `upto` — stopping would make the
+/// set jump from empty to full as the recursion descended into range.
+pub open spec fn committed_by(s: Server, upto: nat) -> Set<Commit>
+    decreases upto,
+{
+    if upto == 0 {
+        Set::empty()
+    } else if upto > s.log.len() {
+        committed_by(s, (upto - 1) as nat)
+    } else {
+        committed_by(s, (upto - 1) as nat).insert(
+            Commit {
+                leader_term: s.current_term,
+                index: (upto - 1) as nat,
+                entry: s.log[upto - 1],
+            },
+        )
+    }
 }
 
 /// The whole cluster.

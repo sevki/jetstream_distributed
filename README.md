@@ -781,6 +781,15 @@ over all three histories, so for *any* `created`, `led` and `committed`
 whatsoever every step is available from the same real state and lands in the same
 real state.
 
+**The record is a recursion, not a comprehension**, and the reason is worth
+recording because it is not a matter of taste. In the pinned vstd, `Set` is the
+**finite** set type — `ISet` is the unrestricted one — so `Set::new(|k| ..)`
+returns `Option<Set<A>>`, `None` when the predicate picks out infinitely many
+elements. The obvious comprehension would therefore have to discharge finiteness
+at every use. Built up one index at a time, `committed_by` is finite
+*structurally*, with nothing to discharge, and the price — membership is no
+longer syntactic — is paid once by `lemma_committed_by_members`.
+
 **C46 is the one to read**, and it is worth being exact about what it does and
 does not say. State Machine Safety is *"if two servers apply the entry at index
 `i`, they apply the same one"*. C46 is that sentence with **one hypothesis

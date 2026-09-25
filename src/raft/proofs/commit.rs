@@ -97,6 +97,42 @@ use crate::raft::proofs::terms::*;
 verus! {
 
 // ---------------------------------------------------------------------------
+// Membership in the commit record
+// ---------------------------------------------------------------------------
+
+/// **What [`committed_by`] contains**, once and for all.
+///
+/// `committed_by` is built one index at a time rather than as a comprehension —
+/// its own docs say why, and the short version is that in this vstd `Set` is the
+/// *finite* set type and `Set::new` hands back an `Option`. The cost of that is
+/// that membership is no longer something the solver can read off the
+/// definition. This is the lemma that pays it, and every theorem below that asks
+/// whether an entry is in the record calls it.
+pub proof fn lemma_committed_by_members(s: Server, upto: nat, k: Commit)
+    ensures
+        committed_by(s, upto).contains(k) <==> (k.index < upto && k.index < s.log.len()
+            && k.entry == s.log[k.index as int] && k.leader_term == s.current_term),
+    decreases upto,
+{
+    if upto > 0 {
+        let below = (upto - 1) as nat;
+        lemma_committed_by_members(s, below, k);
+        if upto <= s.log.len() {
+            let top = Commit {
+                leader_term: s.current_term,
+                index: below,
+                entry: s.log[upto - 1],
+            };
+            assert(committed_by(s, upto) == committed_by(s, below).insert(top));
+            if k.index == below && k.entry == s.log[k.index as int] && k.leader_term
+                == s.current_term {
+                assert(k == top);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The invariants
 // ---------------------------------------------------------------------------
 
@@ -310,6 +346,7 @@ pub proof fn lemma_advance_commit_preserves_commit(
         if pre.committed.contains(k) {
         } else {
             assert(committed_by(pre.servers[n], upto).contains(k));
+            lemma_committed_by_members(pre.servers[n], upto, k);
             assert(k.index < log.len());
             assert(k.entry == log[k.index as int]);
             assert(slot_of(log, k.index) == Slot { term: k.entry.term, index: k.index });
@@ -322,6 +359,7 @@ pub proof fn lemma_advance_commit_preserves_commit(
         if pre.committed.contains(k) {
         } else {
             assert(committed_by(pre.servers[n], upto).contains(k));
+            lemma_committed_by_members(pre.servers[n], upto, k);
             assert(k.index < log.len());
             assert(k.entry == log[k.index as int]);
             assert(k.leader_term == t);
@@ -498,13 +536,15 @@ pub proof fn theorem_the_record_covers_the_count(
         },
     ) by {
         assert(i < pre.servers[n].log.len());
-        assert(committed_by(pre.servers[n], upto).contains(
+        lemma_committed_by_members(
+            pre.servers[n],
+            upto,
             Commit {
                 leader_term: pre.servers[n].current_term,
                 index: i,
                 entry: pre.servers[n].log[i as int],
             },
-        ));
+        );
     }
 }
 
@@ -535,6 +575,7 @@ pub proof fn theorem_a_commit_was_on_a_quorum(
                 == k.entry,
 {
     let held = replicated_on(pre, pre.servers[n].log, upto);
+    lemma_committed_by_members(pre.servers[n], upto, k);
     assert(k.index < upto);
     assert(k.entry == pre.servers[n].log[k.index as int]);
 

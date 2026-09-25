@@ -73,14 +73,16 @@
 //!
 //! * a **record of what was committed**, which the state does not keep: `commit`
 //!   is a count per server and says nothing about which entry a quorum once
-//!   held;
+//!   held. **This one now exists** — [`Cluster::committed`], spent in
+//!   [`crate::raft::proofs::commit`];
 //! * a **record of the voter's log at the moment of the vote**, because
 //!   `tr_grant_vote` compares against a log that has since moved on;
 //! * the **strong induction over terms** itself, which is the part of Raft that
 //!   took Verdi a person-scale Coq development.
 //!
-//! (4) and (5) are the two lemmas that induction calls; the induction is not
-//! written. Read any claim about this module against that line.
+//! (4) and (5) are the two lemmas that induction calls, and
+//! [`crate::raft::proofs::commit`] supplies the first of the three records it
+//! needs. The induction is not written. Read any claim about this module against that line.
 #![allow(unused_imports)]
 
 use vstd::prelude::*;

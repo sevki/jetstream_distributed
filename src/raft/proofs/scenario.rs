@@ -54,6 +54,7 @@ pub open spec fn start() -> Cluster {
         messages: Set::empty(),
         created: Map::empty(),
         led: Set::empty(),
+        committed: Set::empty(),
     }
 }
 
@@ -151,6 +152,7 @@ pub proof fn scenario_a_leader_is_elected()
         ),
         created: c0.created,
         led: c0.led,
+        committed: c0.committed,
     };
     assert(c0.servers[0].current_term == 0);
     assert(!is_leader(c0.servers[0]));
@@ -175,6 +177,7 @@ pub proof fn scenario_a_leader_is_elected()
         ),
         created: c1.created,
         led: c1.led,
+        committed: c1.committed,
     };
     assert(c1.messages.contains(
         RaftMessage::RequestVote { term: 1, candidate: 0, last_term: 0, last_index: 0 },
@@ -213,6 +216,7 @@ pub proof fn scenario_a_leader_is_elected()
         messages: c2.messages.insert(RaftMessage::Heartbeat { term: 1, leader: 0 }),
         created: c2.created,
         led: c2.led.insert(Led { server: 0, term: 1 }),
+        committed: c2.committed,
     };
     assert(is_candidate(c2.servers[0]));
     assert(tr_become_leader(c2, c3, 0, 1));

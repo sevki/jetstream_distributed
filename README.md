@@ -279,6 +279,10 @@ verifying, the build fails.
 | C41 | **A follower that already agrees with the leader at an index keeps its entry there.** The payoff of C25's conditional truncation, and the reason it is load-bearing rather than merely faithful to figure 2. If `prefix <= i`, Log Matching says the two logs agree at `prefix` as well, so the guard fires and the follower's log is **not touched at all**; if `prefix > i`, the truncation is above `i`. Under an *unconditional* truncation the first case is false — a duplicate `AppendEntries` for an early index would delete an entry the follower already agreed on — and the induction Leader Completeness needs would have no base | `raft::proofs::terms::theorem_a_follower_that_agrees_keeps_the_entry` | Log Matching (C26) |
 | C42 | **An entry leaves a log only to a leader that disagrees with it there.** C41 lifted from one transition to the whole relation, which is the shape the missing induction consumes: it has to rule out an entry vanishing from a voter's log between the moment a quorum stored it and the moment that voter cast its next vote, and this says the only step that can is an `AppendEntries` from a leader whose own log differs at that index | `raft::proofs::terms::theorem_an_agreed_entry_survives_any_step` | Log Matching (C26) |
 | C43 | **A candidate behind on terms is refused, and cannot collect that vote.** A voter holding *any* entry of term `T` refuses every candidate whose last term is below `T` — so `tr_grant_vote` cannot fire, stated over the transition relation rather than over the guard. An empty log is the special case that makes C39's *lower* bound worth having: `last_term` of an empty log is 0, no entry is ever at term 0, so an empty log is strictly behind every non-empty one rather than incomparable with it | `raft::proofs::terms::theorem_a_candidate_missing_a_term_is_refused`, `theorem_a_stale_candidate_cannot_collect_that_vote`, `theorem_an_empty_log_cannot_win_a_vote`, `theorem_a_stale_candidate_cannot_collect_that_vote_reachable` | none |
+| C44 | **Every committed entry matches the creation record of its slot**, and its own term is at least 1 and no later than the term of the leader that committed it. The bridge from the new `committed` ghost record to the `created` record Log Matching is stated over. It survives `tr_client_request` — the one transition that *inserts* into `created`, where an insert at a slot already written would silently replace a record a committed entry is matched against — because C22's `inv_creator_holds` puts every slot already created at a leader's term *inside* that leader's log, and the slot being written is one past its end | `raft::proofs::commit::inv_committed_is_created`, `inv_committed_within_its_term`, `theorem_reachable_commit_inv` | none |
+| C45 | **At the moment of commitment a majority held that entry at that index** — entry for entry, not "a prefix of that length". The difference is the whole point: quorum intersection hands the induction a voter, and what it needs from that voter is the entry in its log, not a count. Stated over the transition, because it is the one fact about commitment that is about a moment rather than a state | `raft::proofs::commit::theorem_a_commit_was_on_a_quorum` | none |
+| C46 | **Two commits at one index whose entries carry the same term are the same entry** — so **State Machine Safety holds with exactly one hypothesis added**, that the two commits agree on the entry's term. The value half is free: one `(term, index)` names one act of creation by one leader, which Election Safety and the `created` record give unconditionally. Nothing about values, quorums or counting is missing. What is missing is the answer to one question — can two leaders commit entries of *different terms* at one index? — and that question is Leader Completeness | `raft::proofs::commit::theorem_two_commits_at_one_slot_agree`, `theorem_state_machine_safety_at_agreeing_terms` | that the two commits agree on the entry's term, which is precisely Leader Completeness |
+| C47 | **A commit is a commit for ever**, across a whole run, and the ghost record covers the real count at the moment it is written. The first is what makes the record usable where `Server::commit` is not — a count on one server that C38 proves *retreats*. The second is what stops it becoming a second bookkeeping scheme that drifts from the first, a hazard this repository was already bitten by once in `records_fit` (C37) | `raft::proofs::commit::theorem_a_commit_is_a_commit_for_ever`, `theorem_the_record_covers_the_count`, `raft::proofs::history::theorem_history_is_monotone` | none |
 | I | The inductive invariant holds in every reachable state (`init ==> inv`, `inv /\ next ==> inv`) | `ownership::proofs::invariant::theorem_reachable_inv` | the model's transition relation |
 | S | **The headline scenario**: `A` owns X@41, a transfer and a crash/recovery occur, `B` owns X@42, `A` returns still holding its epoch-41 token - and cannot perform an authoritative mutation. The postcondition exports the whole nine-step run, so the crash, the recovery and the outcome are the same execution — exported as separate existentials they need not have been, and an ordinary live handover could supply the outcome | `ownership::proofs::adversarial::scenario_stale_owner_returns` | `A != B` |
 | S1 | A stale `Grant` cannot resurrect a superseded epoch | `ownership::proofs::adversarial::theorem_stale_grant_cannot_be_used` | none |
@@ -755,6 +759,54 @@ argument needs and this repository does not have:
 
 C42 and C43 are the two lemmas that induction will call. The induction is not
 written, and nothing here pretends otherwise.
+
+### What was committed, as a fact that survives the state (C44–C47)
+
+The first of those three missing pieces is now there. `Cluster` carries a third
+ghost field, `committed`, written at `tr_advance_commit` and never removed from,
+and `src/raft/proofs/commit.rs` is what it buys.
+
+**Why the state could not say it.** `Server::commit` is a count on one server,
+and two things are wrong with it as the subject of a safety property. It says
+*how much* is committed, not *what* — and Leader Completeness is a claim about a
+particular entry at a particular index. And **it retreats**: C38 proves exactly
+when, and proves that when it does, a committed entry was deleted. After that
+retreat nothing anywhere in the state records that the entry was ever committed,
+so a theorem about committed entries has nothing left to quantify over in the one
+state where it matters most.
+
+**The ghost field is still not an escape hatch**, and still as a theorem rather
+than a promise: C21's `theorem_history_does_not_gate_the_protocol` now quantifies
+over all three histories, so for *any* `created`, `led` and `committed`
+whatsoever every step is available from the same real state and lands in the same
+real state.
+
+**C46 is the one to read**, and it is worth being exact about what it does and
+does not say. State Machine Safety is *"if two servers apply the entry at index
+`i`, they apply the same one"*. C46 is that sentence with **one hypothesis
+added**: that the two commits agree on the entry's *term*. So the whole of the
+remaining risk is concentrated into a single question — can two leaders commit
+entries of different terms at one index? — and that question is Leader
+Completeness.
+
+See how little is left over. The value half is free: one `(term, index)` names
+one act of creation by one leader, which Election Safety (C13) and the creation
+record (C22) give unconditionally. Nothing about **values**, **quorums** or
+**counting** is missing. What is missing is the argument that a later leader's log
+cannot carry a different term at an index a quorum has already agreed on, and
+that argument has three steps:
+
+1. the leader of term `T'` won a quorum in `T'`, and that quorum meets the
+   commit-time quorum of **C45** in some voter;
+2. the voter still held the entry when it voted — **C42**;
+3. so the candidate's log was at least as up to date as a log holding that entry,
+   and **C43** closes the case where its last term is *behind*.
+
+Steps 1 and 2 are theorems here. Step 3 is half a theorem: the case where the
+candidate's last term is at or above the voter's needs the induction hypothesis
+at the intermediate term, and it needs the voter's log **as it stood at the
+vote**, which is the one ghost record still missing. Two of the three pieces
+`terms.rs` named are now in place; the third, and the induction itself, are not.
 
 **C38 is what that gap costs, stated concretely.** Because the model may not
 assume that state unreachable, it has to handle it, and handling it means a

@@ -57,10 +57,16 @@
 //!   enough unless the last entry of that prefix is of the committing leader's
 //!   own term.
 //!
-//! * The history: [`Cluster::created`] and [`Cluster::led`], two **ghost**
-//!   fields recording what the state cannot — every entry any leader ever made,
-//!   and every `(server, term)` ever led. Written and never read, which
-//!   `crate::raft::proofs::history` proves rather than promises.
+//! * The history: [`Cluster::created`], [`Cluster::led`] and
+//!   [`Cluster::committed`], three **ghost** fields recording what the state
+//!   cannot — every entry any leader ever made, every `(server, term)` ever
+//!   led, and every entry any leader ever committed. Written and never read,
+//!   which `crate::raft::proofs::history` proves rather than promises.
+//!
+//!   The third is the one whose absence is felt most sharply. `Server::commit`
+//!   is a count, and it *retreats* when a truncation cuts below it — so without
+//!   [`Cluster::committed`] a safety property about committed entries has
+//!   nothing to quantify over once the retreat has happened.
 //!
 //! # What is proved
 //!
@@ -200,6 +206,26 @@ pub struct Led {
     pub term: Term,
 }
 
+/// **Ghost.** An entry a leader has committed, and the term it did it in.
+///
+/// `leader_term` is the term of the **leader that committed it**, not the
+/// entry's own term. The two are equal for the newest entry of a commit — that
+/// is figure 8's restriction, the guard on [`tr_advance_commit`] — and can
+/// differ below it, because a leader that commits its own entry carries
+/// everything before it along.
+///
+/// Recording the entry rather than an index is the point. `Server::commit` is a
+/// count, and a count cannot answer the question Leader Completeness asks:
+/// *which* entry did a quorum agree on at that index. A count is also lost the
+/// moment the log is truncated under it — see
+/// [`crate::raft::proofs::log::theorem_a_commit_retreat_means_a_committed_entry_was_deleted`]
+/// — whereas this set never shrinks.
+pub struct Commit {
+    pub leader_term: Term,
+    pub index: nat,
+    pub entry: Entry,
+}
+
 /// The term of the entry before index `i`, or `0` if there is none.
 pub open spec fn term_before(log: Seq<Entry>, i: nat) -> Term {
     if i == 0 {
@@ -207,6 +233,21 @@ pub open spec fn term_before(log: Seq<Entry>, i: nat) -> Term {
     } else {
         log[i - 1].term
     }
+}
+
+/// **What a leader's commit records**: every index it makes committed, with the
+/// entry there and the term of the leader doing it.
+///
+/// A set rather than a length, for the reason [`Commit`] gives. Written as a
+/// comprehension over `Commit` rather than as a map from indices because the
+/// question every theorem about it asks is *"is this entry committed at this
+/// index"*, which is a membership test.
+pub open spec fn committed_by(s: Server, upto: nat) -> Set<Commit> {
+    Set::new(
+        |k: Commit|
+            k.index < upto && k.index < s.log.len() && k.entry == s.log[k.index as int]
+                && k.leader_term == s.current_term,
+    )
 }
 
 /// The whole cluster.
@@ -236,6 +277,20 @@ pub struct Cluster {
     /// second leader of the same term creating a second entry at the same
     /// index.
     pub led: Set<Led>,
+    /// **Ghost: every entry any leader has ever committed.**
+    ///
+    /// The third record, and the same discipline as the other two: written at
+    /// [`tr_advance_commit`], read by no guard,
+    /// [`crate::raft::proofs::history::theorem_history_does_not_gate_the_protocol`]
+    /// proving that rather than promising it.
+    ///
+    /// It exists because commitment is the one thing the state genuinely cannot
+    /// say. `Server::commit` is a count on one server, and it *retreats* when a
+    /// truncation cuts below it — so after the retreat nothing anywhere records
+    /// that the entry was ever committed, and a safety property about committed
+    /// entries has nothing to quantify over. This set is what Leader
+    /// Completeness and State Machine Safety are statements about.
+    pub committed: Set<Commit>,
 }
 
 // ---------------------------------------------------------------------------
@@ -488,6 +543,7 @@ pub open spec fn tr_timeout(pre: Cluster, post: Cluster, n: ServerId) -> bool {
     )
     &&& post.created == pre.created
     &&& post.led == pre.led
+    &&& post.committed == pre.committed
 }
 
 /// A member grants its vote for `term` to `cand`.
@@ -545,6 +601,7 @@ pub open spec fn tr_grant_vote(
     )
     &&& post.created == pre.created
     &&& post.led == pre.led
+    &&& post.committed == pre.committed
 }
 
 /// A candidate that has collected a quorum of votes for its own term declares
@@ -572,6 +629,7 @@ pub open spec fn tr_become_leader(pre: Cluster, post: Cluster, n: ServerId, term
     // it ever was — which is exactly the fact a later `tr_client_request`
     // needs, so it is recorded here rather than reconstructed later.
     &&& post.led == pre.led.insert(Led { server: n, term: term })
+    &&& post.committed == pre.committed
 }
 
 /// A server learns of a strictly higher term and steps down into it.
@@ -596,6 +654,7 @@ pub open spec fn tr_step_down(pre: Cluster, post: Cluster, n: ServerId, term: Te
     &&& post.messages == pre.messages
     &&& post.created == pre.created
     &&& post.led == pre.led
+    &&& post.committed == pre.committed
 }
 
 /// A client command reaches the leader, which appends it **at its own term**.
@@ -639,6 +698,7 @@ pub open spec fn tr_client_request(pre: Cluster, post: Cluster, n: ServerId, val
         },
     )
     &&& post.led == pre.led
+    &&& post.committed == pre.committed
 }
 
 /// The leader replicates the entry at `prefix` to a follower.
@@ -689,6 +749,7 @@ pub open spec fn tr_append_entries(
     &&& post.messages == pre.messages
     &&& post.created == pre.created
     &&& post.led == pre.led
+    &&& post.committed == pre.committed
 }
 
 /// The leader commits a prefix once a majority holds it.
@@ -720,6 +781,11 @@ pub open spec fn tr_advance_commit(pre: Cluster, post: Cluster, n: ServerId, upt
     &&& post.messages == pre.messages
     &&& post.created == pre.created
     &&& post.led == pre.led
+    // **The mark commitment leaves.** The only transition that writes it, and
+    // the only one that needs to: `commit` is a count on one server and it can
+    // retreat, so without this the fact that a quorum once agreed on an entry
+    // is erasable by a later truncation. See `Cluster::committed`.
+    &&& post.committed == pre.committed.union(committed_by(pre.servers[n], upto))
 }
 
 /// Some message on the network names `term`.
@@ -746,6 +812,7 @@ pub open spec fn tr_replay(pre: Cluster, post: Cluster, m: RaftMessage) -> bool 
     &&& post.votes == pre.votes
     &&& post.created == pre.created
     &&& post.led == pre.led
+    &&& post.committed == pre.committed
 }
 
 /// Nothing happens (an arbitrary delay).
@@ -756,6 +823,7 @@ pub open spec fn tr_stutter(pre: Cluster, post: Cluster) -> bool {
     &&& post.messages == pre.messages
     &&& post.created == pre.created
     &&& post.led == pre.led
+    &&& post.committed == pre.committed
 }
 
 /// The labelled transitions.
@@ -827,6 +895,7 @@ pub open spec fn raft_init(c: Cluster) -> bool {
     &&& (forall|m: RaftMessage| !(#[trigger] c.messages.contains(m)))
     &&& (forall|s: Slot| !(#[trigger] c.created.contains_key(s)))
     &&& (forall|l: Led| !(#[trigger] c.led.contains(l)))
+    &&& (forall|k: Commit| !(#[trigger] c.committed.contains(k)))
 }
 
 /// `tr` is a finite execution of the cluster.

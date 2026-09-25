@@ -265,7 +265,7 @@ verifying, the build fails.
 | C28 | **A crash can only rewind.** `replay` is total on every sequence of records, so there is no prefix a crash can leave that recovery cannot read, and what comes back is a log the store had rather than one no sequence of writes could produce. Records that reached the device are unchanged and at the same indices | `raft::proofs::store::theorem_a_crash_can_only_rewind`, `theorem_a_crash_keeps_what_reached_the_device` | that a crash keeps a **prefix** — the property an append-only device gives you, and what pmemlog's write restriction enforces |
 | C29 | **Accepting a replicated entry costs at most two records**, and `appended_log` is what they replay to — so figure 2's rule 3, which deletes a suffix, is implementable on a device that deletes nothing. **Three costs, and which one you pay says what just happened**: *nothing* when the entry is already there, so a duplicate `AppendEntries` never reaches the device; *one record* when extending, since the marker would be `Truncate { len: log.len() }` and writing the identity would double the cost of the steady state; *two* on a genuine conflict, however long the tail it deletes. The zero-cost branch is C25's conditional again, as an operational fact | `raft::proofs::store::theorem_accepting_an_entry_is_at_most_two_records`, `theorem_extending_the_log_costs_one_record`, `theorem_a_follower_accepts_with_at_most_two_writes` | the store invariant (C27) |
 | C30 | **The device is append-only.** No operation moves its tail back: the records that were there are still there, in order, at the same indices. A `Record::Truncate` shortens the *log* and lengthens the device. This is the property that lets the whole store sit on `vendor/pmemlog`, whose abstract state has `append` and `advance_head` and nothing that shortens a tail | `raft::proofs::store::theorem_the_device_is_append_only` | none |
-| C31 | **Compaction is sound**, costs one record per entry, and leaves no truncation behind — so a store can rewrite itself as pure appends. Soundness only: **nothing schedules it**, and a store that never compacts grows without bound | `raft::proofs::store::theorem_compaction_replays_the_same`, `theorem_compaction_is_one_record_per_entry`, `theorem_compaction_leaves_no_truncations` | none |
+| C31 | **Compaction is sound**, costs one record per entry, and leaves no truncation behind — so a store can rewrite itself as pure appends. It is also **scheduled**: `worth_compacting` fires at `records > 2 * (entries + 1)`, which is amortised O(1) per operation, and the bound is asserted every round over sixty rounds of the worst shape. This row read *"soundness only: nothing schedules it"* for three PRs after the policy landed — the code and the claim drifted apart in the direction that understates the code, which is rarer and no better | `raft::proofs::store::theorem_compaction_replays_the_same`, `theorem_compaction_is_one_record_per_entry`, `theorem_compaction_leaves_no_truncations` | none |
 | C32 | **Cut the bytes anywhere and a record prefix comes back** — for *every* `k`, not for multiples of seventeen. The tear can land in the middle of a `u64` and the theorem still holds, because fixed width means no byte of a half-written record can be mistaken for the start of a whole one. This is what C28 needs and cannot state for itself: `store_recover` is written over a *record* prefix, and a device gives back a *byte* prefix | `raft::proofs::wire::theorem_a_torn_tail_is_a_record_prefix`, `theorem_recovery_from_a_torn_device` | every record fits in 64 bits (`records_fit`) |
 | C33 | **What was written is what is read**, and the encoding is exactly seventeen bytes per record — which is what makes `bytes.len() / 17` the record count and the parser's stopping condition an observation rather than an argument | `raft::proofs::wire::theorem_parse_of_encode`, `theorem_the_encoding_is_fixed_width`, `lemma_a_record_round_trips`, `lemma_a_record_is_seventeen_bytes` | `records_fit` |
 | C34 | Eight bytes, least significant first, and back again | `raft::proofs::wire::lemma_le_round_trip` (by `bit_vector`) | none |
@@ -689,9 +689,16 @@ a majority of the committing leader's own term. **Log Matching is proved too**
 > appends at the end of its own log, and nothing in the *state* says no leader of
 > that term ever appended at that index before.
 
-So `Cluster` carries two ghost fields: `led`, every `(server, term)` ever led,
-and `created`, every entry any leader ever made — keyed by the slot naming it,
-recording its value **and the term of the entry before it**. That second
+So `Cluster` carries ghost fields — four of them now, and each exists because
+some question about the *run* has no answer in any single state. `led`, every
+`(server, term)` ever led; `created`, every entry any leader ever made, keyed by
+the slot naming it and recording its value **and the term of the entry before
+it**; `committed` (C44–C47), every entry any leader ever committed, because
+`Server::commit` is a count that *retreats*; and `voted_with` (C49–C50), every
+vote together with the voter's log as it stood when the vote was cast, because
+`tr_grant_vote`'s guard compares against a log that has since moved on.
+`created`'s second component is what makes Log Matching an induction rather than
+a wish. That second
 component is what makes Log Matching an induction rather than a wish: two
 servers whose entries at an index carry the same term are reading the same slot,
 so they agree on the value *and* on the recorded predecessor, which is the same
@@ -707,17 +714,22 @@ the log went in, and it turns out to be exactly the guard the proof wants rather
 than something added for it (C25).
 
 **The ghost state is not an escape hatch, and that is a theorem** (C21): for any
-history whatsoever, every step still fires from the same real state and lands in
-the same real state. A guard that read the history could not satisfy that. The
-fields are written and never read, which is what makes them auxiliary variables
-in the standard sense.
+history whatsoever — all four records, not merely the two this section
+introduces — every step still fires from the same real state and lands in the
+same real state. A guard that read the history could not satisfy that. The fields
+are written and never read, which is what makes them auxiliary variables in the
+standard sense.
 
-**Leader Completeness and State Machine Safety are still not proved**, and the
-reason is not "we ran out of time": they need this plus an induction over terms
-relating the up-to-date vote guard to what has been committed. A follower here
-will still truncate entries it had committed, which is faithful Raft — the
-protection against that is supposed to come from the election restriction, and
-the election restriction's proof is what is still missing.
+**Leader Completeness is still not proved**, and the sections that follow are the
+four pushes that narrowed the gap rather than four restatements of it. Read them
+in order: C39–C43 the ground it stands on, C44–C47 what was committed, C49–C50
+what a vote was a judgement of. By the end, **State Machine Safety holds with one
+hypothesis** (C46) and only the induction that discharges it is missing.
+
+A follower here will still truncate entries it had committed, which is faithful
+Raft — the protection against that is supposed to come from the election
+restriction, and the election restriction is now half a theorem (C43) rather than
+an absence.
 
 ### The ground that induction has to stand on (C39–C43)
 
@@ -1027,14 +1039,22 @@ Two limitations, stated rather than assumed away:
   reachable, so the store half and the wire half could not be composed at all
   (C37). A cluster reaching term 2^64 now has a store that cannot advance,
   rather than one that silently writes the wrong record.
-* **The device grows even when the log does not.** A follower thrashing between
-  two leaders writes a record per round. C31 says the way out is sound —
-  rewrite as pure appends, let `advance_head` reclaim the rest — and nothing
-  *schedules* it. A store that never compacts grows without bound.
-* **Nothing in `src/` depends on `vendor/pmemlog` yet.** The store layer is the
-  shape of the interface, proved; wiring `LogStore` onto `InfiniteLogImpl` is
-  the next step. Until it happens, pmemlog's two corruption assumptions are not
-  assumptions of anything proved here.
+* ~~**The device grows even when the log does not**, because nothing schedules
+  compaction~~ — **closed.** A follower thrashing between two leaders writes a
+  record per round, and `worth_compacting` now fires at
+  `records > 2 * (entries + 1)`: amortised O(1), with the bound asserted every
+  round over sixty rounds of the worst shape. C31 says the rewrite is sound;
+  `compact_if_worthwhile` is what makes it happen.
+* **Nothing in `src/` depends on `vendor/pmemlog` yet**, and the reason is no
+  longer "the executable layer does not exist" — `replay_exec`, `encode_exec`
+  and `parse_exec` do. What is missing is a **device**, and the obstacle there is
+  not an interface but a crash model: pmemlog's `persistence_chunk_size` is 8 and
+  a write must be safe for *any subset* of 8-byte chunks having flushed, which
+  **POSIX does not promise** for a write crossing a chunk. An `fsync`-per-write
+  file would not satisfy it. That needs a target platform — real PM, `O_DIRECT`
+  with aligned single-sector writes, or an explicitly weaker documented device.
+  Until one exists, pmemlog's two corruption assumptions are not assumptions of
+  anything proved here.
 
 ### The consensus service
 
@@ -1117,6 +1137,9 @@ distributed-ownership/
 │           ├── election.rs     Election Safety, via quorum intersection
 │           ├── history.rs      the ghost record, and Log Matching out of it
 │           ├── log.rs          what one replication step gives you (and what it does not)
+│           ├── terms.rs        term structure, entry durability, the election restriction
+│           ├── commit.rs       what was committed, and State Machine Safety minus one hypothesis
+│           ├── votes.rs        what a vote was a judgement of
 │           ├── refinement.rs   steps.rs agrees with the model's tr_* transitions
 │           ├── scenario.rs     a run in which an election actually happens
 │           ├── store.rs        recovery is exact; a crash can only rewind
@@ -1717,7 +1740,24 @@ CI, with no `assume`/`admit`/`external_body`/`axiom`):
 * the coupling itself, as an invariant of the composed machine: in every
   reachable composed state the only node that may mutate the actor is the node
   holding the token;
-* Raft: Election Safety, Log Matching, and the single-step log properties;
+* Raft: Election Safety (C1–C11), Log Matching (C26) and the single-step log
+  properties (C12–C19);
+* Raft's term structure and the election restriction: a log's terms never
+  decrease and none exceeds its holder's own, so the last term is the largest;
+  **a follower that already agrees with the leader at an index keeps its entry
+  there**, which is what makes figure 2's *conditional* truncation load-bearing
+  rather than merely faithful; and a candidate behind on terms cannot collect a
+  vote at all (C39–C43);
+* **State Machine Safety, with exactly one hypothesis** — that two commits at an
+  index agree on the entry's *term* (C46). The value half is unconditional,
+  because one `(term, index)` names one act of creation by one leader. Nothing
+  about values, quorums or counting is missing;
+* what a commit was: a majority held **that entry at that index**, entry for
+  entry rather than as a prefix length, and the record of it never shrinks
+  (C44–C47, C50);
+* what a vote was a **judgement of**: every vote is on the record with the
+  voter's log as it stood, and every recorded vote went to a candidate at least
+  as up to date as that log (C49);
 * the durable log: recovery is exact, a crash can only rewind, and a byte
   prefix of the device parses back to a record prefix — so figure 2's suffix
   deletion is implementable on a device that deletes nothing.
@@ -1743,14 +1783,17 @@ invariant preservation):
   restores. Routing termination would need the liveness the model does not
   claim.
 
-* **The durable log is not wired to a device.** `raft::store` and `raft::wire`
-  prove the shape of the interface — what a store does, what a crash leaves,
-  what the bytes mean — and nothing in `src/` calls `vendor/pmemlog` yet. The
-  layer that does will need an executable `replay` refining the spec one, and
-  until it exists pmemlog's two corruption assumptions are not assumptions of
-  anything proved here.
-* **Compaction is proved sound and is not scheduled.** A store that never
-  compacts grows without bound (C31).
+* **The durable log is not wired to a device**, and the reason has moved. The
+  executable layer exists — `replay_exec`, `encode_exec` and `parse_exec` refine
+  their spec counterparts, and verifying them found two bugs no test could have.
+  What is missing is a device, and the obstacle is a **crash model**, not an
+  interface: pmemlog's `persistence_chunk_size` is 8 and a write must be safe for
+  *any subset* of 8-byte chunks having flushed, which POSIX does not promise for
+  a write crossing a chunk. Until a device supplies it, pmemlog's two corruption
+  assumptions are not assumptions of anything proved here.
+* ~~**Compaction is proved sound and is not scheduled**~~ — **closed** by
+  `worth_compacting` at `records > 2 * (entries + 1)`. Left struck through rather
+  than deleted because it stood here for three PRs after the policy landed.
 
 **Not modelled at all** (a gap, stated rather than papered over):
 
@@ -1791,13 +1834,33 @@ invariant preservation):
   [Network resiliency](#network-resiliency-the-model-run-for-real)), which is
   evidence rather than proof: nothing machine-checks that the coordinator in
   `tests/` refines the transition relation in `src/`;
-* **Raft's Leader Completeness and State Machine Safety.** Log Matching is
-  proved (C26), so two servers that agree on an entry agree on everything below
-  it. What is missing is the argument that a leader's log contains every
-  *committed* entry, which needs an induction over terms relating the up-to-date
-  vote guard to what has been committed, and State Machine Safety on top of
-  that. Until they exist the registry's contents agree *where servers overlap*
-  but are not yet guaranteed to survive a leader change — which is the half of
+* **Raft's Leader Completeness**, and with it State Machine Safety
+  unconditionally. This is now a *much* smaller gap than the sentence that used
+  to sit here, and worth stating precisely rather than as a caveat.
+
+  **State Machine Safety already holds with one hypothesis** (C46): that two
+  commits at an index agree on the entry's *term*. So the whole of the remaining
+  risk is one question — *can two leaders commit entries of different terms at
+  one index?* — and that question is Leader Completeness.
+
+  **All three ghost records the induction needs are in place**: what was
+  committed (C44–C47), the voter's log as it stood at the vote (C49–C50), and
+  the creation/leadership history Log Matching is built on (C20–C26). So are the
+  four theorems it will call:
+
+  * **C45** — a majority held the entry at commit time, entry for entry;
+  * **C42/C48** — that voter still held it when it voted. *Conditional*, and the
+    condition is the induction hypothesis at the intervening terms, which is why
+    this one cannot be cited as though it were settled;
+  * **C50** — the winner's voters meet any quorum, with the judgement attached;
+  * **C43** — a candidate *behind* on terms is refused.
+
+  What is missing is the **strong induction over terms** that assembles them.
+  Every theorem above is about one state or one step; the induction relates a
+  commit in term `T` to an election in a later `T'` and has to carry the
+  commit-time quorum *across the run between them*, which is exactly what C48's
+  hypothesis is. Until it lands, the registry's contents agree *where servers
+  overlap* but are not yet guaranteed to survive a leader change — the half of
   the atomicity assumption that is load-bearing for `System::actors`;
 * **reconfiguration.** Membership is fixed. Joint consensus is a real and
   well-known source of Raft unsafety and is not attempted here.

@@ -86,11 +86,12 @@
 //! though it settled step 2. It does not.
 //! [`theorem_an_entry_persists_while_leaders_agree`] is the run-level form, and
 //! its signature says what the prose had left out: the entry persists from one
-//! state to a later one **exactly while every leader that replicates to that
-//! voter already agrees with it at that index**. Discharging *that* for the
-//! intervening leaders is the induction hypothesis at the intervening terms. So
-//! it is the inductive step's tool, not a free-standing fact, and reading it as
-//! one makes this roadmap circular.
+//! state to a later one **whenever every leader that replicates to that voter
+//! already agrees with it at that index** — a *sufficient* condition, see the
+//! theorem's own docs. Discharging it for the intervening leaders is the
+//! induction hypothesis at the intervening terms. So it is the inductive step's
+//! tool, not a free-standing fact, and reading it as one makes this roadmap
+//! circular.
 //!
 //! Step 1 is a theorem. Step 2 is a theorem **with a hypothesis the induction
 //! discharges**. Step 3 is half a theorem. And step 2 additionally wants the
@@ -683,8 +684,8 @@ pub open spec fn replication_agrees_at(c: Cluster, s: RaftStep, n: ServerId, i: 
     }
 }
 
-/// **An entry persists across a run exactly while every leader replicating to
-/// its holder already agrees with it there.**
+/// **An entry persists across a run whenever every leader replicating to its
+/// holder already agrees with it there.**
 ///
 /// The run-level form of C42, and it exists because the *prose* around C42 was
 /// wrong in a way the theorem itself never was. The roadmap in this module's
@@ -698,6 +699,25 @@ pub open spec fn replication_agrees_at(c: Cluster, s: RaftStep, n: ServerId, i: 
 /// can drift. Here it is, as a quantifier over the steps between the two
 /// states: this is the lemma the induction will call at its inductive step,
 /// with the induction hypothesis discharging the quantifier.
+///
+/// # Sufficient, not necessary — and this sentence is itself a correction
+///
+/// The first version of this comment said the entry persists *exactly while*
+/// the leaders agree. That claims necessity too, and it is false. Consider a
+/// replication at `prefix < i` where the two logs happen to agree at `prefix`:
+/// [`appended_log`]'s no-conflict branch returns the follower's log **unchanged**,
+/// so the entry at `i` survives — whatever the leader holds at `i`, and even if
+/// the leader's log does not reach `i` at all, in which case
+/// [`replication_agrees_at`] is false outright.
+///
+/// Sufficiency is all the induction needs, so this is a description bug rather
+/// than a weakness in the theorem. It is recorded because of where it happened:
+/// this theorem exists to stop prose overstating machine-checked content, and
+/// its own headline overstated it. The lesson is not "be careful" — it is that
+/// **a quantifier in a signature constrains the code and still does not
+/// constrain the sentence above it**, so the sentence has to be read against
+/// the signature every time, including when the signature was written to make
+/// exactly that kind of reading unnecessary.
 pub proof fn theorem_an_entry_persists_while_leaders_agree(
     tr: Seq<Cluster>,
     labels: Seq<RaftStep>,

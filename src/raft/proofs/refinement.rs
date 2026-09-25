@@ -66,6 +66,7 @@ pub open spec fn timeout_post(c: Cluster, n: ServerId) -> Cluster {
         created: c.created,
         led: c.led,
         committed: c.committed,
+        voted_with: c.voted_with,
     }
 }
 
@@ -94,6 +95,7 @@ pub open spec fn grant_vote_post(
         created: c.created,
         led: c.led,
         committed: c.committed,
+        voted_with: c.voted_with,
     }
 }
 
@@ -115,6 +117,7 @@ pub open spec fn become_leader_post(c: Cluster, n: ServerId, term: Term) -> Clus
         created: c.created,
         led: c.led.insert(Led { server: n, term: term }),
         committed: c.committed,
+        voted_with: c.voted_with,
     }
 }
 
@@ -136,6 +139,7 @@ pub open spec fn step_down_post(c: Cluster, n: ServerId, term: Term) -> Cluster 
         created: c.created,
         led: c.led,
         committed: c.committed,
+        voted_with: c.voted_with,
     }
 }
 

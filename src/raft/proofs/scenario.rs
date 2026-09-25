@@ -55,6 +55,7 @@ pub open spec fn start() -> Cluster {
         created: Map::empty(),
         led: Set::empty(),
         committed: Set::empty(),
+        voted_with: Set::empty(),
     }
 }
 
@@ -153,6 +154,16 @@ pub proof fn scenario_a_leader_is_elected()
         created: c0.created,
         led: c0.led,
         committed: c0.committed,
+        voted_with: c0.voted_with.insert(
+            VoteLog {
+                voter: 0,
+                term: 1,
+                candidate: 0,
+                voter_log: c0.servers[0].log,
+                cand_last_term: last_term(c0.servers[0].log),
+                cand_last_index: c0.servers[0].log.len(),
+            },
+        ),
     };
     assert(c0.servers[0].current_term == 0);
     assert(!is_leader(c0.servers[0]));
@@ -178,6 +189,16 @@ pub proof fn scenario_a_leader_is_elected()
         created: c1.created,
         led: c1.led,
         committed: c1.committed,
+        voted_with: c1.voted_with.insert(
+            VoteLog {
+                voter: 1,
+                term: 1,
+                candidate: 0,
+                voter_log: c1.servers[1].log,
+                cand_last_term: 0,
+                cand_last_index: 0,
+            },
+        ),
     };
     assert(c1.messages.contains(
         RaftMessage::RequestVote { term: 1, candidate: 0, last_term: 0, last_index: 0 },
@@ -217,6 +238,7 @@ pub proof fn scenario_a_leader_is_elected()
         created: c2.created,
         led: c2.led.insert(Led { server: 0, term: 1 }),
         committed: c2.committed,
+        voted_with: c2.voted_with,
     };
     assert(is_candidate(c2.servers[0]));
     assert(tr_become_leader(c2, c3, 0, 1));

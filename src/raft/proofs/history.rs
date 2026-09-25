@@ -8,8 +8,9 @@
 //! run, not about the state, and no invariant over `Cluster` as it was could
 //! express it.
 //!
-//! So `Cluster` carries ghost fields — [`Cluster::created`], [`Cluster::led`] and
-//! [`Cluster::committed`] — and this module is what the first two buy. The third
+//! So `Cluster` carries ghost fields — [`Cluster::created`], [`Cluster::led`],
+//! [`Cluster::committed`] and [`Cluster::voted_with`] — and this module is what
+//! the first two buy. The third
 //! is spent in [`crate::raft::proofs::commit`]; it is maintained here only in
 //! the sense that [`theorem_history_does_not_gate_the_protocol`] covers it too.
 //!
@@ -107,6 +108,7 @@ pub open spec fn with_history(
     cr: Map<Slot, Creation>,
     l: Set<Led>,
     cm: Set<Commit>,
+    vw: Set<VoteLog>,
 ) -> Cluster {
     Cluster {
         members: c.members,
@@ -116,6 +118,7 @@ pub open spec fn with_history(
         created: cr,
         led: l,
         committed: cm,
+        voted_with: vw,
     }
 }
 
@@ -165,6 +168,35 @@ pub open spec fn committed_after(pre: Cluster, cm: Set<Commit>, s: RaftStep) -> 
     }
 }
 
+/// What a step does to `voted_with`. Likewise a function of the pre-state, and
+/// the only one with *two* writing arms — the self-vote and the granted vote.
+pub open spec fn voted_with_after(pre: Cluster, vw: Set<VoteLog>, s: RaftStep) -> Set<VoteLog> {
+    match s {
+        RaftStep::Timeout { server } => vw.insert(
+            VoteLog {
+                voter: server,
+                term: pre.servers[server].current_term + 1,
+                candidate: server,
+                voter_log: pre.servers[server].log,
+                cand_last_term: last_term(pre.servers[server].log),
+                cand_last_index: pre.servers[server].log.len(),
+            },
+        ),
+        RaftStep::GrantVote { voter, candidate, term, cand_last_term, cand_last_index } =>
+            vw.insert(
+                VoteLog {
+                    voter: voter,
+                    term: term,
+                    candidate: candidate,
+                    voter_log: pre.servers[voter].log,
+                    cand_last_term: cand_last_term,
+                    cand_last_index: cand_last_index,
+                },
+            ),
+        _ => vw,
+    }
+}
+
 /// Changing the history leaves the set of voters alone.
 ///
 /// Needed, and not obvious. `voters_for` is `members.filter(..)` and the
@@ -178,14 +210,15 @@ pub proof fn lemma_history_keeps_voters(
     cr: Map<Slot, Creation>,
     l: Set<Led>,
     cm: Set<Commit>,
+    vw: Set<VoteLog>,
     cand: ServerId,
     term: Term,
 )
     ensures
-        voters_for(with_history(c, cr, l, cm), cand, term) == voters_for(c, cand, term),
-        won_election(with_history(c, cr, l, cm), cand, term) == won_election(c, cand, term),
+        voters_for(with_history(c, cr, l, cm, vw), cand, term) == voters_for(c, cand, term),
+        won_election(with_history(c, cr, l, cm, vw), cand, term) == won_election(c, cand, term),
 {
-    assert(voters_for(with_history(c, cr, l, cm), cand, term) =~= voters_for(c, cand, term));
+    assert(voters_for(with_history(c, cr, l, cm, vw), cand, term) =~= voters_for(c, cand, term));
 }
 
 /// The same for `replicated_on`, which is the same shape for the same reason:
@@ -195,13 +228,14 @@ pub proof fn lemma_history_keeps_replication(
     cr: Map<Slot, Creation>,
     l: Set<Led>,
     cm: Set<Commit>,
+    vw: Set<VoteLog>,
     log: Seq<Entry>,
     n: nat,
 )
     ensures
-        replicated_on(with_history(c, cr, l, cm), log, n) == replicated_on(c, log, n),
+        replicated_on(with_history(c, cr, l, cm, vw), log, n) == replicated_on(c, log, n),
 {
-    assert(replicated_on(with_history(c, cr, l, cm), log, n) =~= replicated_on(c, log, n));
+    assert(replicated_on(with_history(c, cr, l, cm, vw), log, n) =~= replicated_on(c, log, n));
 }
 
 /// The nine below are one per transition, and they exist in that shape for a
@@ -218,11 +252,31 @@ pub proof fn lemma_timeout_ignores_history(
     cr: Map<Slot, Creation>,
     l: Set<Led>,
     cm: Set<Commit>,
+    vw: Set<VoteLog>,
 )
     requires
         tr_timeout(pre, post, n),
     ensures
-        tr_timeout(with_history(pre, cr, l, cm), with_history(post, cr, l, cm), n),
+        tr_timeout(
+            with_history(pre, cr, l, cm, vw),
+            with_history(
+                post,
+                cr,
+                l,
+                cm,
+                vw.insert(
+                    VoteLog {
+                        voter: n,
+                        term: pre.servers[n].current_term + 1,
+                        candidate: n,
+                        voter_log: pre.servers[n].log,
+                        cand_last_term: last_term(pre.servers[n].log),
+                        cand_last_index: pre.servers[n].log.len(),
+                    },
+                ),
+            ),
+            n,
+        ),
 {
 }
 
@@ -239,13 +293,29 @@ pub proof fn lemma_grant_vote_ignores_history(
     cr: Map<Slot, Creation>,
     l: Set<Led>,
     cm: Set<Commit>,
+    vw: Set<VoteLog>,
 )
     requires
         tr_grant_vote(pre, post, voter, cand, term, cand_last_term, cand_last_index),
     ensures
         tr_grant_vote(
-            with_history(pre, cr, l, cm),
-            with_history(post, cr, l, cm),
+            with_history(pre, cr, l, cm, vw),
+            with_history(
+                post,
+                cr,
+                l,
+                cm,
+                vw.insert(
+                    VoteLog {
+                        voter: voter,
+                        term: term,
+                        candidate: cand,
+                        voter_log: pre.servers[voter].log,
+                        cand_last_term: cand_last_term,
+                        cand_last_index: cand_last_index,
+                    },
+                ),
+            ),
             voter,
             cand,
             term,
@@ -253,7 +323,7 @@ pub proof fn lemma_grant_vote_ignores_history(
             cand_last_index,
         ),
 {
-    assert forall|c0: ServerId| !with_history(pre, cr, l, cm).votes.contains(
+    assert forall|c0: ServerId| !with_history(pre, cr, l, cm, vw).votes.contains(
         Vote { voter: voter, term: term, candidate: c0 },
     ) by {
         assert(!pre.votes.contains(Vote { voter: voter, term: term, candidate: c0 }));
@@ -269,18 +339,19 @@ pub proof fn lemma_become_leader_ignores_history(
     cr: Map<Slot, Creation>,
     l: Set<Led>,
     cm: Set<Commit>,
+    vw: Set<VoteLog>,
 )
     requires
         tr_become_leader(pre, post, n, term),
     ensures
         tr_become_leader(
-            with_history(pre, cr, l, cm),
-            with_history(post, cr, l.insert(Led { server: n, term: term }), cm),
+            with_history(pre, cr, l, cm, vw),
+            with_history(post, cr, l.insert(Led { server: n, term: term }), cm, vw),
             n,
             term,
         ),
 {
-    lemma_history_keeps_voters(pre, cr, l, cm, n, term);
+    lemma_history_keeps_voters(pre, cr, l, cm, vw, n, term);
 }
 
 /// Stepping down. `carries_term` is an existential over `messages`.
@@ -292,13 +363,14 @@ pub proof fn lemma_step_down_ignores_history(
     cr: Map<Slot, Creation>,
     l: Set<Led>,
     cm: Set<Commit>,
+    vw: Set<VoteLog>,
 )
     requires
         tr_step_down(pre, post, n, term),
     ensures
-        tr_step_down(with_history(pre, cr, l, cm), with_history(post, cr, l, cm), n, term),
+        tr_step_down(with_history(pre, cr, l, cm, vw), with_history(post, cr, l, cm, vw), n, term),
 {
-    assert(with_history(pre, cr, l, cm).messages =~= pre.messages);
+    assert(with_history(pre, cr, l, cm, vw).messages =~= pre.messages);
 }
 
 /// Appending a client command — the one transition that writes `created`.
@@ -310,12 +382,13 @@ pub proof fn lemma_client_request_ignores_history(
     cr: Map<Slot, Creation>,
     l: Set<Led>,
     cm: Set<Commit>,
+    vw: Set<VoteLog>,
 )
     requires
         tr_client_request(pre, post, n, value),
     ensures
         tr_client_request(
-            with_history(pre, cr, l, cm),
+            with_history(pre, cr, l, cm, vw),
             with_history(
                 post,
                 cr.insert(
@@ -347,13 +420,14 @@ pub proof fn lemma_append_entries_ignores_history(
     cr: Map<Slot, Creation>,
     l: Set<Led>,
     cm: Set<Commit>,
+    vw: Set<VoteLog>,
 )
     requires
         tr_append_entries(pre, post, leader, follower, prefix),
     ensures
         tr_append_entries(
-            with_history(pre, cr, l, cm),
-            with_history(post, cr, l, cm),
+            with_history(pre, cr, l, cm, vw),
+            with_history(post, cr, l, cm, vw),
             leader,
             follower,
             prefix,
@@ -373,18 +447,19 @@ pub proof fn lemma_advance_commit_ignores_history(
     cr: Map<Slot, Creation>,
     l: Set<Led>,
     cm: Set<Commit>,
+    vw: Set<VoteLog>,
 )
     requires
         tr_advance_commit(pre, post, n, upto),
     ensures
         tr_advance_commit(
-            with_history(pre, cr, l, cm),
-            with_history(post, cr, l, cm.union(committed_by(pre.servers[n], upto))),
+            with_history(pre, cr, l, cm, vw),
+            with_history(post, cr, l, cm.union(committed_by(pre.servers[n], upto)), vw),
             n,
             upto,
         ),
 {
-    lemma_history_keeps_replication(pre, cr, l, cm, pre.servers[n].log, upto);
+    lemma_history_keeps_replication(pre, cr, l, cm, vw, pre.servers[n].log, upto);
 }
 
 /// Replay.
@@ -395,11 +470,12 @@ pub proof fn lemma_replay_ignores_history(
     cr: Map<Slot, Creation>,
     l: Set<Led>,
     cm: Set<Commit>,
+    vw: Set<VoteLog>,
 )
     requires
         tr_replay(pre, post, m),
     ensures
-        tr_replay(with_history(pre, cr, l, cm), with_history(post, cr, l, cm), m),
+        tr_replay(with_history(pre, cr, l, cm, vw), with_history(post, cr, l, cm, vw), m),
 {
 }
 
@@ -410,11 +486,12 @@ pub proof fn lemma_stutter_ignores_history(
     cr: Map<Slot, Creation>,
     l: Set<Led>,
     cm: Set<Commit>,
+    vw: Set<VoteLog>,
 )
     requires
         tr_stutter(pre, post),
     ensures
-        tr_stutter(with_history(pre, cr, l, cm), with_history(post, cr, l, cm)),
+        tr_stutter(with_history(pre, cr, l, cm, vw), with_history(post, cr, l, cm, vw)),
 {
 }
 
@@ -436,17 +513,19 @@ pub proof fn theorem_history_does_not_gate_the_protocol(
     cr: Map<Slot, Creation>,
     l: Set<Led>,
     cm: Set<Commit>,
+    vw: Set<VoteLog>,
 )
     requires
         raft_step(pre, post, s),
     ensures
         raft_step(
-            with_history(pre, cr, l, cm),
+            with_history(pre, cr, l, cm, vw),
             with_history(
                 post,
                 created_after(pre, cr, s),
                 led_after(pre, l, s),
                 committed_after(pre, cm, s),
+                voted_with_after(pre, vw, s),
             ),
             s,
         ),
@@ -460,12 +539,32 @@ pub proof fn theorem_history_does_not_gate_the_protocol(
             assert(created_after(pre, cr, s) == cr);
             assert(led_after(pre, l, s) == l);
             assert(committed_after(pre, cm, s) == cm);
-            lemma_timeout_ignores_history(pre, post, server, cr, l, cm);
+            assert(voted_with_after(pre, vw, s) == vw.insert(
+                VoteLog {
+                    voter: server,
+                    term: pre.servers[server].current_term + 1,
+                    candidate: server,
+                    voter_log: pre.servers[server].log,
+                    cand_last_term: last_term(pre.servers[server].log),
+                    cand_last_index: pre.servers[server].log.len(),
+                },
+            ));
+            lemma_timeout_ignores_history(pre, post, server, cr, l, cm, vw);
         },
         RaftStep::GrantVote { voter, candidate, term, cand_last_term, cand_last_index } => {
             assert(created_after(pre, cr, s) == cr);
             assert(led_after(pre, l, s) == l);
             assert(committed_after(pre, cm, s) == cm);
+            assert(voted_with_after(pre, vw, s) == vw.insert(
+                VoteLog {
+                    voter: voter,
+                    term: term,
+                    candidate: candidate,
+                    voter_log: pre.servers[voter].log,
+                    cand_last_term: cand_last_term,
+                    cand_last_index: cand_last_index,
+                },
+            ));
             lemma_grant_vote_ignores_history(
                 pre,
                 post,
@@ -477,19 +576,22 @@ pub proof fn theorem_history_does_not_gate_the_protocol(
                 cr,
                 l,
                 cm,
+                vw,
             );
         },
         RaftStep::BecomeLeader { server, term } => {
             assert(created_after(pre, cr, s) == cr);
             assert(led_after(pre, l, s) == l.insert(Led { server: server, term: term }));
             assert(committed_after(pre, cm, s) == cm);
-            lemma_become_leader_ignores_history(pre, post, server, term, cr, l, cm);
+            assert(voted_with_after(pre, vw, s) == vw);
+            lemma_become_leader_ignores_history(pre, post, server, term, cr, l, cm, vw);
         },
         RaftStep::StepDown { server, term } => {
             assert(created_after(pre, cr, s) == cr);
             assert(led_after(pre, l, s) == l);
             assert(committed_after(pre, cm, s) == cm);
-            lemma_step_down_ignores_history(pre, post, server, term, cr, l, cm);
+            assert(voted_with_after(pre, vw, s) == vw);
+            lemma_step_down_ignores_history(pre, post, server, term, cr, l, cm, vw);
         },
         RaftStep::ClientRequest { server, value } => {
             assert(created_after(pre, cr, s) == cr.insert(
@@ -507,13 +609,15 @@ pub proof fn theorem_history_does_not_gate_the_protocol(
             ));
             assert(led_after(pre, l, s) == l);
             assert(committed_after(pre, cm, s) == cm);
-            lemma_client_request_ignores_history(pre, post, server, value, cr, l, cm);
+            assert(voted_with_after(pre, vw, s) == vw);
+            lemma_client_request_ignores_history(pre, post, server, value, cr, l, cm, vw);
         },
         RaftStep::AppendEntries { leader, follower, prefix } => {
             assert(created_after(pre, cr, s) == cr);
             assert(led_after(pre, l, s) == l);
             assert(committed_after(pre, cm, s) == cm);
-            lemma_append_entries_ignores_history(pre, post, leader, follower, prefix, cr, l, cm);
+            assert(voted_with_after(pre, vw, s) == vw);
+            lemma_append_entries_ignores_history(pre, post, leader, follower, prefix, cr, l, cm, vw);
         },
         RaftStep::AdvanceCommit { server, upto } => {
             assert(created_after(pre, cr, s) == cr);
@@ -521,19 +625,21 @@ pub proof fn theorem_history_does_not_gate_the_protocol(
             assert(committed_after(pre, cm, s) == cm.union(
                 committed_by(pre.servers[server], upto),
             ));
-            lemma_advance_commit_ignores_history(pre, post, server, upto, cr, l, cm);
+            lemma_advance_commit_ignores_history(pre, post, server, upto, cr, l, cm, vw);
         },
         RaftStep::Replay { msg } => {
             assert(created_after(pre, cr, s) == cr);
             assert(led_after(pre, l, s) == l);
             assert(committed_after(pre, cm, s) == cm);
-            lemma_replay_ignores_history(pre, post, msg, cr, l, cm);
+            assert(voted_with_after(pre, vw, s) == vw);
+            lemma_replay_ignores_history(pre, post, msg, cr, l, cm, vw);
         },
         RaftStep::Stutter => {
             assert(created_after(pre, cr, s) == cr);
             assert(led_after(pre, l, s) == l);
             assert(committed_after(pre, cm, s) == cm);
-            lemma_stutter_ignores_history(pre, post, cr, l, cm);
+            assert(voted_with_after(pre, vw, s) == vw);
+            lemma_stutter_ignores_history(pre, post, cr, l, cm, vw);
         },
     }
 }
@@ -546,11 +652,20 @@ pub proof fn theorem_history_is_monotone(pre: Cluster, post: Cluster, s: RaftSte
     ensures
         pre.led.subset_of(post.led),
         pre.committed.subset_of(post.committed),
+        pre.voted_with.subset_of(post.voted_with),
         forall|sl: Slot| #[trigger] pre.created.contains_key(sl) ==> post.created.contains_key(sl),
 {
     match s {
         RaftStep::BecomeLeader { server: _, term: _ } => {},
         RaftStep::ClientRequest { server: _, value: _ } => {},
+        RaftStep::Timeout { server: _ } => {},
+        RaftStep::GrantVote {
+            voter: _,
+            candidate: _,
+            term: _,
+            cand_last_term: _,
+            cand_last_index: _,
+        } => {},
         RaftStep::AdvanceCommit { server, upto } => {
             assert(post.committed == pre.committed.union(
                 committed_by(pre.servers[server], upto),

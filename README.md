@@ -284,6 +284,8 @@ verifying, the build fails.
 | C46 | **Two commits at one index whose entries carry the same term are the same entry** — so **State Machine Safety holds with exactly one hypothesis added**, that the two commits agree on the entry's term. The value half is free: one `(term, index)` names one act of creation by one leader, which Election Safety and the `created` record give unconditionally. Nothing about values, quorums or counting is missing. What is missing is the answer to one question — can two leaders commit entries of *different terms* at one index? — and that question is Leader Completeness | `raft::proofs::commit::theorem_two_commits_at_one_slot_agree`, `theorem_state_machine_safety_at_agreeing_terms` | that the two commits agree on the entry's term, which is precisely Leader Completeness |
 | C47 | **A commit is a commit for ever**, across a whole run, and the ghost record covers the real count at the moment it is written. The first is what makes the record usable where `Server::commit` is not — a count on one server that C38 proves *retreats*. The second is what stops it becoming a second bookkeeping scheme that drifts from the first, a hazard this repository was already bitten by once in `records_fit` (C37) | `raft::proofs::commit::theorem_a_commit_is_a_commit_for_ever`, `theorem_the_record_covers_the_count`, `raft::proofs::history::theorem_history_is_monotone` | none |
 | C48 | **An entry persists across a run whenever every leader replicating to its holder already agrees with it there.** The run-level form of C42, and it exists because the *prose* around C42 was wrong in a way the theorem never was: this README said the persistence step was already a theorem, when C42 carries a hypothesis — the replicating leader must already agree at that index — whose discharge for every intervening leader **is** Leader Completeness at the intervening terms. The condition now lives in a signature, quantified over the steps between the two states. **Sufficient, not necessary**: a replication at a `prefix` below the index, where the logs happen to agree at `prefix`, leaves the follower's log untouched and the entry survives whatever the leader holds above it. Sufficiency is all the induction needs. This is the lemma it calls at its inductive step, with the induction hypothesis discharging the quantifier | `raft::proofs::commit::theorem_an_entry_persists_while_leaders_agree`, `replication_agrees_at`, `lemma_a_labelled_execution_is_an_execution` | the quantifier in its own statement, which is exactly the induction hypothesis |
+| C49 | **Every vote has its judgement on the record, and every recorded vote went to a candidate at least as up to date as the voter's log at that moment.** `tr_grant_vote`'s guard compares against a log *at an instant*; by the time any later theorem asks what the comparison was, the voter has extended, truncated or replaced that log. `Cluster::voted_with` records both sides — the voter's log as it stood and the candidate summary it was weighed against — because storing one side would leave the other to be reconstructed from a state that no longer holds it. The completeness clause matters as much as the judgement clause: a record written in some arms and not others would be silently partial, and a theorem quantified over it would say nothing about the votes it had missed. That is why `tr_timeout`'s self-vote is recorded even though it constrains nothing | `raft::proofs::votes::inv_every_vote_has_its_log`, `inv_a_vote_was_up_to_date`, `inv_a_recorded_log_is_shaped`, `theorem_reachable_vote_inv` | none |
+| C50 | **A candidate that won a vote was at least as late, in terms, as every entry in that voter's log** — C43 read off the record rather than off a live state, which is the whole reason the record exists. And **quorum intersection with the judgement attached**: any quorum whatsoever meets the winner's voters in a server for which the record says what its log was when it voted, and that the winner's summary dominated it. Instantiate that quorum with the one C45 produces — the majority that held a committed entry — and the shared voter is a server that both held the entry and judged the winner at least as up to date as its own log. This is the induction's first and third steps joined at a single voter | `raft::proofs::votes::theorem_a_voter_saw_nothing_later_than_the_candidate`, `theorem_a_winner_shares_a_judged_voter_with_any_quorum` | none — but it is a statement about **one state**, and the induction needs the commit-time quorum carried *across the run* to the election, which is C48's conditional job |
 | I | The inductive invariant holds in every reachable state (`init ==> inv`, `inv /\ next ==> inv`) | `ownership::proofs::invariant::theorem_reachable_inv` | the model's transition relation |
 | S | **The headline scenario**: `A` owns X@41, a transfer and a crash/recovery occur, `B` owns X@42, `A` returns still holding its epoch-41 token - and cannot perform an authoritative mutation. The postcondition exports the whole nine-step run, so the crash, the recovery and the outcome are the same execution — exported as separate existentials they need not have been, and an ordinary live handover could supply the outcome | `ownership::proofs::adversarial::scenario_stale_owner_returns` | `A != B` |
 | S1 | A stale `Grant` cannot resurrect a superseded epoch | `ownership::proofs::adversarial::theorem_stale_grant_cannot_be_used` | none |
@@ -824,9 +826,30 @@ free-standing again.
 So: step 1 is a theorem; step 2 is a theorem **with a hypothesis the induction
 discharges**; step 3 is half a theorem, because the case where the candidate's
 last term is at or above the voter's needs the induction hypothesis at the
-intermediate term. Step 2 additionally wants the voter's log **as it stood at the
-vote**, which is the one ghost record still missing. Two of the three pieces
-`terms.rs` named are now in place; the third, and the induction itself, are not.
+intermediate term.
+
+### All three records are now in place — and the induction still is not (C49–C50)
+
+The third, `Cluster::voted_with`, records every vote with **the voter's log as it
+stood when the vote was cast** and the candidate summary it was judged against.
+`tr_grant_vote`'s guard is a comparison at an instant, and by the time anything
+asks what it was, the voter's log has moved on.
+
+C49 promotes that guard from a side-condition on one transition to a fact about
+every reachable state, and adds the clause that makes quantifying over the record
+mean anything: **every vote is on it**, self-votes included. C50 spends it —
+quorum intersection that hands back not just a shared voter but *what that voter
+saw*.
+
+It is worth being exact about why this is not the induction. Every theorem here
+is about **one state**. The induction relates a commit in term `T` to an election
+in a later term `T'`, and it has to compare the quorum that held the entry at
+commit time with the quorum that voted at election time **across the run between
+them** — which is C48's job, and C48's hypothesis is discharged only by the
+induction hypothesis at the intervening terms.
+
+So the materials are all here and the argument that assembles them is not. That
+is a smaller gap than it was three pushes ago, and it is still a gap.
 
 **C38 is what that gap costs, stated concretely.** Because the model may not
 assume that state unreachable, it has to handle it, and handling it means a

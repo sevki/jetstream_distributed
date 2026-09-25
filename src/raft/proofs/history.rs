@@ -618,7 +618,17 @@ pub proof fn theorem_history_does_not_gate_the_protocol(
             assert(led_after(pre, l, s) == l);
             assert(committed_after(pre, cm, s) == cm);
             assert(voted_with_after(pre, vw, s) == vw);
-            lemma_append_entries_ignores_history(pre, post, leader, follower, prefix, cr, l, cm, vw);
+            lemma_append_entries_ignores_history(
+                pre,
+                post,
+                leader,
+                follower,
+                prefix,
+                cr,
+                l,
+                cm,
+                vw,
+            );
         },
         RaftStep::AdvanceCommit { server, upto } => {
             assert(created_after(pre, cr, s) == cr);

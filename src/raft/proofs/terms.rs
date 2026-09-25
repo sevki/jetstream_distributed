@@ -153,13 +153,16 @@ pub proof fn lemma_push_keeps_shape(log: Seq<Entry>, t: Term, value: nat)
         terms_sorted(log.push(Entry { term: t, value: value })),
 {
     let nw = log.push(Entry { term: t, value: value });
-    assert forall|i: nat| i < nw.len() implies 0 < nw[i as int].term <= t by {
+    assert forall|i: nat|
+        #![trigger nw[i as int]]
+        i < nw.len() implies 0 < nw[i as int].term <= t by {
         if i < log.len() {
             assert(nw[i as int] == log[i as int]);
         }
     }
-    assert forall|j: nat, k: nat| j <= k && k < nw.len() implies nw[j as int].term
-        <= nw[k as int].term by {
+    assert forall|j: nat, k: nat|
+        #![trigger nw[j as int], nw[k as int]]
+        j <= k && k < nw.len() implies nw[j as int].term <= nw[k as int].term by {
         if k < log.len() {
             assert(nw[j as int] == log[j as int]);
             assert(nw[k as int] == log[k as int]);
@@ -185,11 +188,14 @@ pub proof fn lemma_take_keeps_shape(log: Seq<Entry>, t: Term, p: nat)
         terms_sorted(log.take(p as int)),
 {
     let nw = log.take(p as int);
-    assert forall|i: nat| i < nw.len() implies 0 < nw[i as int].term <= t by {
+    assert forall|i: nat|
+        #![trigger nw[i as int]]
+        i < nw.len() implies 0 < nw[i as int].term <= t by {
         assert(nw[i as int] == log[i as int]);
     }
-    assert forall|j: nat, k: nat| j <= k && k < nw.len() implies nw[j as int].term
-        <= nw[k as int].term by {
+    assert forall|j: nat, k: nat|
+        #![trigger nw[j as int], nw[k as int]]
+        j <= k && k < nw.len() implies nw[j as int].term <= nw[k as int].term by {
         assert(nw[j as int] == log[j as int]);
         assert(nw[k as int] == log[k as int]);
         assert(log[j as int].term <= log[k as int].term);
@@ -233,15 +239,18 @@ pub proof fn lemma_accepting_keeps_shape(
         assert(kept.len() == p);
         assert(0 < leader[p as int].term <= t);
 
-        assert forall|i: nat| i < nw.len() implies 0 < nw[i as int].term <= t by {
+        assert forall|i: nat|
+            #![trigger nw[i as int]]
+            i < nw.len() implies 0 < nw[i as int].term <= t by {
             if i < kept.len() {
                 assert(nw[i as int] == kept[i as int]);
             } else {
                 assert(nw[i as int] == leader[p as int]);
             }
         }
-        assert forall|j: nat, k: nat| j <= k && k < nw.len() implies nw[j as int].term
-            <= nw[k as int].term by {
+        assert forall|j: nat, k: nat|
+            #![trigger nw[j as int], nw[k as int]]
+            j <= k && k < nw.len() implies nw[j as int].term <= nw[k as int].term by {
             if k < kept.len() {
                 assert(nw[j as int] == kept[j as int]);
                 assert(nw[k as int] == kept[k as int]);
@@ -315,7 +324,9 @@ pub proof fn lemma_untouched_logs_keep_shape(pre: Cluster, post: Cluster)
     ensures
         inv_log_shape(post),
 {
-    assert forall|m: ServerId| post.servers.contains_key(m) implies terms_within(
+    assert forall|m: ServerId|
+        #![trigger post.servers[m]]
+        post.servers.contains_key(m) implies terms_within(
         post.servers[m].log,
         post.servers[m].current_term,
     ) && terms_sorted(post.servers[m].log) by {
@@ -344,6 +355,7 @@ pub proof fn lemma_unchanged_standing_keeps_positive(pre: Cluster, post: Cluster
         inv_standing_term_positive(post),
 {
     assert forall|m: ServerId|
+        #![trigger post.servers[m]]
         post.servers.contains_key(m) && (is_leader(post.servers[m]) || is_candidate(
             post.servers[m],
         )) implies post.servers[m].current_term > 0 by {
@@ -370,6 +382,7 @@ pub proof fn lemma_timeout_preserves_terms(pre: Cluster, post: Cluster, n: Serve
     assert(post.servers.dom() =~= pre.servers.dom());
     lemma_untouched_logs_keep_shape(pre, post);
     assert forall|m: ServerId|
+        #![trigger post.servers[m]]
         post.servers.contains_key(m) && (is_leader(post.servers[m]) || is_candidate(
             post.servers[m],
         )) implies post.servers[m].current_term > 0 by {
@@ -408,6 +421,7 @@ pub proof fn lemma_grant_vote_preserves_terms(
     assert(post.servers.dom() =~= pre.servers.dom());
     lemma_untouched_logs_keep_shape(pre, post);
     assert forall|m: ServerId|
+        #![trigger post.servers[m]]
         post.servers.contains_key(m) && (is_leader(post.servers[m]) || is_candidate(
             post.servers[m],
         )) implies post.servers[m].current_term > 0 by {
@@ -437,6 +451,7 @@ pub proof fn lemma_become_leader_preserves_terms(
     assert(is_candidate(pre.servers[n]));
     assert(pre.servers[n].current_term > 0);
     assert forall|m: ServerId|
+        #![trigger post.servers[m]]
         post.servers.contains_key(m) && (is_leader(post.servers[m]) || is_candidate(
             post.servers[m],
         )) implies post.servers[m].current_term > 0 by {
@@ -463,6 +478,7 @@ pub proof fn lemma_step_down_preserves_terms(
     assert(post.servers.dom() =~= pre.servers.dom());
     lemma_untouched_logs_keep_shape(pre, post);
     assert forall|m: ServerId|
+        #![trigger post.servers[m]]
         post.servers.contains_key(m) && (is_leader(post.servers[m]) || is_candidate(
             post.servers[m],
         )) implies post.servers[m].current_term > 0 by {
@@ -497,7 +513,9 @@ pub proof fn lemma_client_request_preserves_terms(
     assert(t > 0);
     lemma_push_keeps_shape(pre.servers[n].log, t, value);
 
-    assert forall|m: ServerId| post.servers.contains_key(m) implies terms_within(
+    assert forall|m: ServerId|
+        #![trigger post.servers[m]]
+        post.servers.contains_key(m) implies terms_within(
         post.servers[m].log,
         post.servers[m].current_term,
     ) && terms_sorted(post.servers[m].log) by {
@@ -511,6 +529,7 @@ pub proof fn lemma_client_request_preserves_terms(
         }
     }
     assert forall|m: ServerId|
+        #![trigger post.servers[m]]
         post.servers.contains_key(m) && (is_leader(post.servers[m]) || is_candidate(
             post.servers[m],
         )) implies post.servers[m].current_term > 0 by {
@@ -545,7 +564,9 @@ pub proof fn lemma_append_entries_preserves_terms(
     assert(terms_within(pre.servers[leader].log, t));
     lemma_accepting_keeps_shape(pre.servers[follower].log, pre.servers[leader].log, prefix, t);
 
-    assert forall|m: ServerId| post.servers.contains_key(m) implies terms_within(
+    assert forall|m: ServerId|
+        #![trigger post.servers[m]]
+        post.servers.contains_key(m) implies terms_within(
         post.servers[m].log,
         post.servers[m].current_term,
     ) && terms_sorted(post.servers[m].log) by {
@@ -561,6 +582,7 @@ pub proof fn lemma_append_entries_preserves_terms(
         }
     }
     assert forall|m: ServerId|
+        #![trigger post.servers[m]]
         post.servers.contains_key(m) && (is_leader(post.servers[m]) || is_candidate(
             post.servers[m],
         )) implies post.servers[m].current_term > 0 by {
@@ -587,6 +609,7 @@ pub proof fn lemma_advance_commit_preserves_terms(
     assert(post.servers.dom() =~= pre.servers.dom());
     lemma_untouched_logs_keep_shape(pre, post);
     assert forall|m: ServerId|
+        #![trigger post.servers[m]]
         post.servers.contains_key(m) && (is_leader(post.servers[m]) || is_candidate(
             post.servers[m],
         )) implies post.servers[m].current_term > 0 by {
@@ -678,7 +701,9 @@ pub proof fn lemma_init_term_inv(c: Cluster)
         raft_term_inv(c),
 {
     lemma_init_hist_inv(c);
-    assert forall|m: ServerId| c.servers.contains_key(m) implies terms_within(
+    assert forall|m: ServerId|
+        #![trigger c.servers[m]]
+        c.servers.contains_key(m) implies terms_within(
         c.servers[m].log,
         c.servers[m].current_term,
     ) && terms_sorted(c.servers[m].log) by {
@@ -876,7 +901,13 @@ pub proof fn theorem_an_agreed_entry_survives_any_step(
                 assert(post.servers[n].log == pre.servers[n].log);
             }
         },
-        RaftStep::GrantVote { voter, candidate: _, term: _, cand_last_term: _, cand_last_index: _ } => {
+        RaftStep::GrantVote {
+            voter,
+            candidate: _,
+            term: _,
+            cand_last_term: _,
+            cand_last_index: _,
+        } => {
             if voter != n {
                 assert(post.servers[n] == pre.servers[n]);
             } else {

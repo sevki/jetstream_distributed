@@ -286,6 +286,8 @@ verifying, the build fails.
 | C48 | **An entry persists across a run whenever every leader replicating to its holder already agrees with it there.** The run-level form of C42, and it exists because the *prose* around C42 was wrong in a way the theorem never was: this README said the persistence step was already a theorem, when C42 carries a hypothesis — the replicating leader must already agree at that index — whose discharge for every intervening leader **is** Leader Completeness at the intervening terms. The condition now lives in a signature, quantified over the steps between the two states. **Sufficient, not necessary**: a replication at a `prefix` below the index, where the logs happen to agree at `prefix`, leaves the follower's log untouched and the entry survives whatever the leader holds above it. Sufficiency is all the induction needs. This is the lemma it calls at its inductive step, with the induction hypothesis discharging the quantifier | `raft::proofs::commit::theorem_an_entry_persists_while_leaders_agree`, `replication_agrees_at`, `lemma_a_labelled_execution_is_an_execution` | the quantifier in its own statement, which is exactly the induction hypothesis |
 | C49 | **Every vote has its judgement on the record, and every recorded vote went to a candidate at least as up to date as the voter's log at that moment.** `tr_grant_vote`'s guard compares against a log *at an instant*; by the time any later theorem asks what the comparison was, the voter has extended, truncated or replaced that log. `Cluster::voted_with` records both sides — the voter's log as it stood and the candidate summary it was weighed against — because storing one side would leave the other to be reconstructed from a state that no longer holds it. The completeness clause matters as much as the judgement clause: a record written in some arms and not others would be silently partial, and a theorem quantified over it would say nothing about the votes it had missed. That is why `tr_timeout`'s self-vote is recorded even though it constrains nothing | `raft::proofs::votes::inv_every_vote_has_its_log`, `inv_a_vote_was_up_to_date`, `inv_a_recorded_log_is_shaped`, `theorem_reachable_vote_inv` | none |
 | C50 | **A candidate that won a vote was at least as late, in terms, as every entry in that voter's log** — C43 read off the record rather than off a live state, which is the whole reason the record exists. And **quorum intersection with the judgement attached**: any quorum whatsoever meets the winner's voters in a server for which the record says what its log was when it voted, and that the winner's summary dominated it. Instantiate that quorum with the one C45 produces — the majority that held a committed entry — and the shared voter is a server that both held the entry and judged the winner at least as up to date as its own log. This is the induction's first and third steps joined at a single voter | `raft::proofs::votes::theorem_a_voter_saw_nothing_later_than_the_candidate`, `theorem_a_winner_shares_a_judged_voter_with_any_quorum`, `theorem_a_winner_shares_a_judged_voter_with_any_quorum_reachable` — the reachable wrapper **repeats** the existential rather than forwarding it, because a wrapper's contract is written and not inferred: a caller sees only what the wrapper's own `ensures` says, so forwarding a call does not forward its postconditions | none — but it is a statement about **one state**, and the induction needs the commit-time quorum carried *across the run* to the election, which is C48's conditional job |
+| C51 | **A `RequestVote`'s summary is a snapshot of the log it summarises**, for as long as its sender is still a standing candidate of that term — and every judgement on the record quotes a `RequestVote` that is still on the wire. No fifth ghost record was needed for this — `Cluster` already carries four, and the reason is worth naming: **`Cluster::messages` never shrinks**, so the network is already a history variable. The third clause, that a `RequestVote` never names a term its sender has not reached, looks like bookkeeping and is what makes the second *inductive*: the awkward case is `tr_timeout` itself, where a server becoming a candidate of `t` makes every `RequestVote` for `(t, n)` on the wire suddenly have to summarise its new log. The one it just sent does; an **older** one would not, and would sink the invariant. There is no older one, because a server enters a term once — which is that third clause, machine-checked | `raft::proofs::summary::inv_a_recorded_summary_was_on_the_wire`, `inv_a_requestvote_is_not_ahead_of_its_sender`, `inv_a_requestvote_summarises_a_candidate`, `theorem_reachable_summary_inv` | none — and no other invariant bundle is carried either, which is unusual here: the argument is entirely about the network and one server's role |
+| C52 | **At the instant it wins, a new leader's own log is at least as up to date as the log of a voter it shares with any quorum whatsoever** — and its last term dominates every entry that voter held. This is C50 with the winner's *log* in place of the pair of integers C50 actually produced. Read C50's conclusion again: `at_least_as_up_to_date(ct, ci, lg)`, where `ct` and `ci` are two numbers that arrived over the network, and nothing anywhere said they had anything to do with the winner's log. The induction's third step was therefore not available, and this README asserted it was. `tr_become_leader` is the right place to state it, because it is the last instant at which the winner is still a candidate and so the last instant at which its summary is its log — afterwards the log grows and the `RequestVote` is spent | `raft::proofs::summary::theorem_a_candidate_is_judged_on_its_own_log`, `theorem_a_candidate_dominates_its_judged_voter`, `theorem_a_candidates_log_is_the_latest_its_voters_saw`, `theorem_the_new_leaders_log_dominates_a_judged_voter`, `theorem_the_new_leaders_log_dominates_a_judged_voter_reachable` — the reachable wrapper repeats its existential, per the rule C50 learned | none |
 | I | The inductive invariant holds in every reachable state (`init ==> inv`, `inv /\ next ==> inv`) | `ownership::proofs::invariant::theorem_reachable_inv` | the model's transition relation |
 | S | **The headline scenario**: `A` owns X@41, a transfer and a crash/recovery occur, `B` owns X@42, `A` returns still holding its epoch-41 token - and cannot perform an authoritative mutation. The postcondition exports the whole nine-step run, so the crash, the recovery and the outcome are the same execution — exported as separate existentials they need not have been, and an ordinary live handover could supply the outcome | `ownership::proofs::adversarial::scenario_stale_owner_returns` | `A != B` |
 | S1 | A stale `Grant` cannot resurrect a superseded epoch | `ownership::proofs::adversarial::theorem_stale_grant_cannot_be_used` | none |
@@ -721,10 +723,16 @@ are written and never read, which is what makes them auxiliary variables in the
 standard sense.
 
 **Leader Completeness is still not proved**, and the sections that follow are the
-four pushes that narrowed the gap rather than four restatements of it. Read them
+five pushes that narrowed the gap rather than five restatements of it. Read them
 in order: C39–C43 the ground it stands on, C44–C47 what was committed, C49–C50
-what a vote was a judgement of. By the end, **State Machine Safety holds with one
-hypothesis** (C46) and only the induction that discharges it is missing.
+what a vote was a judgement of, C51–C52 what the summary that vote judged was a
+summary *of*. By the end, **State Machine Safety holds with one hypothesis**
+(C46) and only the induction that discharges it is missing.
+
+The fourth record is the last one. C51 needed no fifth, because the thing it
+wanted — the candidate's log at the moment it asked — is recoverable from a field
+that was already there: `messages` never shrinks, so **the network is a history
+variable too**, and the link could be proved instead of recorded.
 
 A follower here will still truncate entries it had committed, which is faithful
 Raft — the protection against that is supposed to come from the election
@@ -862,6 +870,50 @@ induction hypothesis at the intervening terms.
 
 So the materials are all here and the argument that assembles them is not. That
 is a smaller gap than it was three pushes ago, and it is still a gap.
+
+### ~~So the materials are all here~~ — they were not, and C52 is the one that was missing
+
+That sentence stood for one push, and it was wrong in a way worth keeping rather
+than editing away, because it is the third time the same mistake has been made in
+this README and the first time it was found by reading the *signatures* instead of
+the prose.
+
+C50 ends with `at_least_as_up_to_date(ct, ci, lg)`. Read it: `ct` and `ci` are
+**two numbers**. They came off a `RequestVote`, and nothing in C50, or anywhere
+before it, said they had anything to do with the winner's log. So the induction's
+third step — *the winner's log dominates what the voter had* — was not a theorem
+here; what was a theorem was *the winner's summary dominates what the voter had*,
+and a summary is a pair of integers that arrived over the network. As far as the
+machine-checked content went, a candidate could have been elected on a summary it
+made up.
+
+**C51 closes it without a fifth ghost record.** The first four exist because the
+state throws information away. This one does not need to, because `messages`
+never shrinks: the `RequestVote` the candidate sent is still there, carrying the
+summary, so the link is provable. Both writing transitions make the first clause
+true by construction — `tr_timeout` sends the message it records, and
+`tr_grant_vote` is *guarded* by the message whose summary it copies — and the
+second clause holds because nothing that can change a server's log leaves it a
+candidate: `tr_append_entries` demotes its receiver and `tr_client_request` needs
+a leader.
+
+The clause that looks like bookkeeping is the one doing the work. *A `RequestVote`
+never names a term its sender has not reached* is what makes the snapshot clause
+inductive, and the case it settles is `tr_timeout` itself: a server stepping up to
+`t` becomes a candidate of `t`, so every `RequestVote` for `(t, n)` on the wire
+now has to summarise its new log. The one it just sent does. An **older** one
+would not have to, and would sink the invariant — and there is none, because a
+server enters a term once. That last sentence is the whole of the third clause.
+
+**C52 is C50 restated about a log**, at `tr_become_leader` — the last instant at
+which the winner is still a candidate, and so the last instant at which its
+summary is its log. Afterwards the log grows and the `RequestVote` is spent, which
+is faithful rather than a limitation.
+
+What is *still* missing is the induction's second step, unchanged: the voter has
+to have still held the entry when it voted, which is C48 and its hypothesis. The
+difference C52 makes is that when that lands there is now something for it to
+meet — a statement about the new leader's log rather than about two integers.
 
 **C38 is what that gap costs, stated concretely.** Because the model may not
 assume that state unreachable, it has to handle it, and handling it means a
@@ -1140,6 +1192,7 @@ distributed-ownership/
 │           ├── terms.rs        term structure, entry durability, the election restriction
 │           ├── commit.rs       what was committed, and State Machine Safety minus one hypothesis
 │           ├── votes.rs        what a vote was a judgement of
+│           ├── summary.rs      the summary a voter judged, tied back to the log it summarised
 │           ├── refinement.rs   steps.rs agrees with the model's tr_* transitions
 │           ├── scenario.rs     a run in which an election actually happens
 │           ├── store.rs        recovery is exact; a crash can only rewind
@@ -1754,10 +1807,12 @@ CI, with no `assume`/`admit`/`external_body`/`axiom`):
   about values, quorums or counting is missing;
 * what a commit was: a majority held **that entry at that index**, entry for
   entry rather than as a prefix length, and the record of it never shrinks
-  (C44–C47, C50);
+  (C44–C47, C50, C52);
 * what a vote was a **judgement of**: every vote is on the record with the
   voter's log as it stood, and every recorded vote went to a candidate at least
-  as up to date as that log (C49);
+  as up to date as that log (C49) — and what the summary it was judged against
+  was a summary *of*, so that a winner's own log, rather than a pair of integers
+  off the network, is what dominates its voters' logs (C51–C52);
 * the durable log: recovery is exact, a crash can only rewind, and a byte
   prefix of the device parses back to a record prefix — so figure 2's suffix
   deletion is implementable on a device that deletes nothing.
@@ -1844,15 +1899,20 @@ invariant preservation):
   one index?* — and that question is Leader Completeness.
 
   **All three ghost records the induction needs are in place**: what was
-  committed (C44–C47), the voter's log as it stood at the vote (C49–C50), and
-  the creation/leadership history Log Matching is built on (C20–C26). So are the
-  four theorems it will call:
+  committed (C44–C47), the voter's log as it stood at the vote (C49–C50), and the
+  creation/leadership history Log Matching is built on (C20–C26). No fifth was
+  needed for the summary that vote was judged against, because `messages` never
+  shrinks (C51). So are the theorems the induction will call:
 
   * **C45** — a majority held the entry at commit time, entry for entry;
   * **C42/C48** — that voter still held it when it voted. *Conditional*, and the
     condition is the induction hypothesis at the intervening terms, which is why
     this one cannot be cited as though it were settled;
-  * **C50** — the winner's voters meet any quorum, with the judgement attached;
+  * **C50/C52** — the winner's voters meet any quorum, with the judgement
+    attached, and the judgement is about the winner's **own log**. C50 alone was
+    not enough for this step and the earlier version of this list said it was:
+    its conclusion is about the pair of integers a `RequestVote` carried, and C52
+    is what ties those to the log;
   * **C43** — a candidate *behind* on terms is refused.
 
   What is missing is the **strong induction over terms** that assembles them.

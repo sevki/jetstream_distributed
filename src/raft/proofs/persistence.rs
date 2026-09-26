@@ -34,29 +34,35 @@
 //! So every member of the quorum is already at term `T` or beyond. Terms never
 //! fall ([`theorem_a_term_never_falls_across_a_run`]), so it stays that way.
 //!
-//! # Therefore only a leader of a term at or past `T` can ever touch it again
+//! # Therefore only a leader at the holder's own term can ever touch it again
 //!
-//! [`theorem_only_a_leader_at_or_past_can_replicate`]. `tr_append_entries` is the
-//! only transition that can shorten a log, and its guard requires the leader's
-//! `current_term` to **equal** the follower's. A quorum member is at `T` or
-//! beyond, so any leader that can replicate to it is too.
+//! [`theorem_a_replicating_leader_shares_the_followers_term`]. `tr_append_entries`
+//! is the only transition that can shorten a log, and its guard requires the
+//! leader's `current_term` to **equal** the follower's.
 //!
 //! That is what turns C48's quantifier over steps into a quantifier over
-//! leaders, because it says the steps that could hurt are exactly the ones
-//! driven by a leader the induction hypothesis already covers.
+//! leaders: the steps that could hurt are driven by leaders at one known term.
 //!
-//! # The hypothesis, in the induction's own words
+//! # The hypothesis, in the induction's own words — and bounded on both sides
 //!
-//! [`standing_leaders_from_hold`] — *every server that is now a leader of a term
-//! at or past `t0` holds `e` at index `i`*. That is Leader Completeness
-//! restricted to terms `>= t0`, written as a predicate on one state so it can be
-//! quantified over a run.
+//! [`replicators_hold`] is the tight form: *every standing leader that could
+//! replicate to `n` right now holds `e` at `i`*. No term bound appears in it,
+//! because persistence does not need one.
 //!
-//! [`theorem_an_entry_survives_leaders_that_hold_it`] consumes it and gives
-//! C48's conclusion. [`theorem_a_commit_quorum_still_holds_it`] composes that
-//! with the commit-time quorum: **a member of the quorum that committed an entry
-//! still holds it at any later point, provided every leader from the commit's
-//! term onwards held it.**
+//! [`leaders_within_hold`] is the form the induction supplies: Leader
+//! Completeness over the **closed range** `[t0, t1]`.
+//! [`lemma_a_bounded_hypothesis_covers_the_replicators`] is where they meet.
+//!
+//! The upper bound is there because `@codex` found that the first version of
+//! this module did not have one, and that an unbounded hypothesis is not what
+//! strong induction supplies — see [`replicators_hold`] for the finding, which
+//! is the most interesting thing in the module.
+//!
+//! [`theorem_an_entry_survives_leaders_that_could_reach_it`] consumes the tight
+//! form and gives C48's conclusion. [`theorem_a_commit_quorum_still_holds_it`]
+//! composes that with the commit-time quorum: **a member of the quorum that
+//! committed an entry still holds it at any later point, provided every leader of
+//! a term between the commit's and `t1` held it.**
 //!
 //! # What is left
 //!
@@ -65,7 +71,9 @@
 //! 1. a quorum held the entry at commit time —
 //!    [`crate::raft::proofs::commit::theorem_a_commit_was_on_a_quorum`] (C45);
 //! 2. a member of that quorum still held it when it voted — this module, with the
-//!    hypothesis in the form the induction supplies;
+//!    hypothesis in the form the induction supplies, over a closed range of
+//!    terms whose upper endpoint the induction still owes (see
+//!    [`theorem_a_commit_quorum_still_holds_it`]);
 //! 3. the winner's own log dominates that voter's —
 //!    [`crate::raft::proofs::summary::theorem_the_new_leaders_log_dominates_a_judged_voter`]
 //!    (C52).
@@ -173,35 +181,31 @@ pub proof fn theorem_a_commit_quorum_is_at_or_past_its_term(
     assert(pre.servers[m].log[k as int].term <= pre.servers[m].current_term);
 }
 
-/// **Only a standing leader at or past a server's own term can replicate to
-/// it.**
+/// **A replicating leader is at the follower's own term.**
 ///
 /// [`tr_append_entries`] is the only transition that can shorten a log — that is
 /// [`step_replicates_to`]'s whole purpose — and its guard requires the leader's
-/// `current_term` to *equal* the follower's. So a server at term `t0` or beyond
-/// can only be written to by a leader at `t0` or beyond.
+/// `current_term` to *equal* the follower's.
 ///
 /// This is the step that changes the shape of the argument: C48 quantifies over
-/// *steps*, the induction hypothesis is about *leaders of terms*, and this says
-/// the steps that could hurt are driven by exactly the leaders the hypothesis
-/// covers.
-pub proof fn theorem_only_a_leader_at_or_past_can_replicate(
+/// *steps*, the induction hypothesis is about *leaders*, and this says the steps
+/// that could hurt are driven by leaders at one known term — the holder's. What
+/// range of terms that is, is [`theorem_a_commit_quorum_is_at_or_past_its_term`]'s
+/// business and the induction's, not this lemma's.
+pub proof fn theorem_a_replicating_leader_shares_the_followers_term(
     pre: Cluster,
     post: Cluster,
     s: RaftStep,
     n: ServerId,
-    t0: Term,
 )
     requires
         raft_step(pre, post, s),
         pre.servers.contains_key(n),
-        pre.servers[n].current_term >= t0,
         step_replicates_to(s, n),
     ensures
         pre.servers.contains_key(replicating_leader(s)),
         is_leader(pre.servers[replicating_leader(s)]),
         pre.servers[replicating_leader(s)].current_term == pre.servers[n].current_term,
-        pre.servers[replicating_leader(s)].current_term >= t0,
 {
     match s {
         RaftStep::AppendEntries { leader, follower, prefix: _ } => {
@@ -220,38 +224,101 @@ pub proof fn theorem_only_a_leader_at_or_past_can_replicate(
 // The hypothesis, in the induction's own words
 // ---------------------------------------------------------------------------
 
-/// **Leader Completeness restricted to terms at or past `t0`**, as a predicate on
-/// one state.
+/// **Every standing leader that could replicate to `n` *right now* holds `e` at
+/// index `i`.**
 ///
-/// *Every server that is now a leader of a term at or past `t0` holds `e` at
-/// index `i`.* This is what the strong induction over terms will have in hand
-/// when it reaches term `t0`, and writing it as a predicate on a single state is
-/// what lets it be quantified over a stretch of a run.
+/// The tight form, and the only one the persistence argument actually needs.
+/// "Could replicate to `n`" is `current_term == n`'s: that is
+/// [`tr_append_entries`]' guard, and
+/// [`theorem_a_replicating_leader_shares_the_followers_term`] is the proof that
+/// nothing else can shorten `n`'s log.
 ///
-/// It says nothing about servers that *have* led such a term and stepped down.
-/// It does not need to: a demoted leader cannot replicate, so it cannot take the
-/// entry from anyone.
-pub open spec fn standing_leaders_from_hold(c: Cluster, t0: Term, i: nat, e: Entry) -> bool {
+/// It says nothing about servers that *have* led and stepped down. It does not
+/// need to: a demoted leader cannot replicate, so it cannot take the entry from
+/// anyone.
+///
+/// # This replaced an unbounded predicate, and the difference is the whole point
+///
+/// The first version of this module quantified over every standing leader of a
+/// term **at or past** `t0`, with no upper bound, and claimed that was the
+/// strong induction's hypothesis. `@codex` found that it is not, and the finding
+/// is exact: strong induction on the election's term `T` supplies Leader
+/// Completeness for terms *below* `T`, and an unbounded predicate demands it for
+/// terms **above** `T` as well.
+///
+/// Those leaders exist. Nothing in this model orders terms cluster-wide —
+/// [`tr_grant_vote`] only requires the request's term to be at least the voter's
+/// own — so a leader of some far higher term can be running elsewhere while a
+/// delayed campaign at `T` is still collecting votes. Such a leader is *harmless*
+/// to the entry, precisely because it cannot replicate to a voter at a lower
+/// term. But the old predicate still demanded that it hold `e`, so C54 could not
+/// have been discharged from the induction hypothesis without assuming Leader
+/// Completeness for terms the induction had not reached.
+///
+/// A hypothesis that is stronger than the argument needs is not a safe
+/// over-approximation when the hypothesis is what someone else has to supply.
+pub open spec fn replicators_hold(c: Cluster, n: ServerId, i: nat, e: Entry) -> bool {
     forall|m: ServerId|
         #![trigger c.servers[m]]
-        c.servers.contains_key(m) && is_leader(c.servers[m]) && c.servers[m].current_term >= t0
+        c.servers.contains_key(m) && is_leader(c.servers[m]) && c.servers[m].current_term
+            == c.servers[n].current_term ==> i < c.servers[m].log.len()
+            && c.servers[m].log[i as int] == e
+}
+
+/// **Leader Completeness over a closed range of terms**, as a predicate on one
+/// state — the form the induction supplies.
+///
+/// Both bounds are load-bearing. `t0` is the commit's term, and
+/// [`theorem_a_commit_quorum_is_at_or_past_its_term`] is why the holder is at or
+/// past it. `t1` is the election's term, and it is there because strong
+/// induction reaches *up to* a term and no further: see
+/// [`replicators_hold`] for the finding that put it there.
+pub open spec fn leaders_within_hold(c: Cluster, t0: Term, t1: Term, i: nat, e: Entry) -> bool {
+    forall|m: ServerId|
+        #![trigger c.servers[m]]
+        c.servers.contains_key(m) && is_leader(c.servers[m]) && t0 <= c.servers[m].current_term <= t1
             ==> i < c.servers[m].log.len() && c.servers[m].log[i as int] == e
 }
 
-/// **An entry survives on a server at term `t0` or beyond, for as long as every
-/// leader from `t0` onwards holds it.**
+/// **A hypothesis bounded by `[t0, t1]` covers every leader that could reach a
+/// holder whose own term lies in that range.**
 ///
-/// C48 with its hypothesis translated: a quantifier over the leaders of a range
-/// of terms in place of a quantifier over steps. The proof is the same recursion,
-/// with [`theorem_only_a_leader_at_or_past_can_replicate`] discharging
+/// One line, and it is where the two forms meet: a leader that can replicate to
+/// `n` has `n`'s term, so if `n`'s term is in range then so is that leader's.
+pub proof fn lemma_a_bounded_hypothesis_covers_the_replicators(
+    c: Cluster,
+    n: ServerId,
+    t0: Term,
+    t1: Term,
+    i: nat,
+    e: Entry,
+)
+    requires
+        c.servers.contains_key(n),
+        t0 <= c.servers[n].current_term,
+        c.servers[n].current_term <= t1,
+        leaders_within_hold(c, t0, t1, i, e),
+    ensures
+        replicators_hold(c, n, i, e),
+{
+}
+
+/// **An entry survives on a server for as long as every leader that could reach
+/// it holds it.**
+///
+/// C48 with its hypothesis translated: a quantifier over the leaders that could
+/// write to the holder, in place of a quantifier over steps. The proof is the
+/// same recursion, with
+/// [`theorem_a_replicating_leader_shares_the_followers_term`] discharging
 /// [`replication_agrees_at`] at each step — which it can, because the entry is
 /// still there one step earlier (the recursion) and the replicating leader holds
 /// it too (the hypothesis).
 ///
-/// The `t0` hypothesis on the *holder* is what makes the leader bound available:
-/// without it, a leader of some term far below `t0` could be at the follower's
-/// term and replicate freely, and nothing would constrain its log.
-pub proof fn theorem_an_entry_survives_leaders_that_hold_it(
+/// No term bound appears here at all, which is the shape the fix produced: the
+/// bounds belong to what the *induction* can supply, not to what persistence
+/// needs, and mixing the two is what made the first version's hypothesis
+/// undischargeable.
+pub proof fn theorem_an_entry_survives_leaders_that_could_reach_it(
     tr: Seq<Cluster>,
     labels: Seq<RaftStep>,
     a: int,
@@ -259,7 +326,6 @@ pub proof fn theorem_an_entry_survives_leaders_that_hold_it(
     n: ServerId,
     i: nat,
     e: Entry,
-    t0: Term,
 )
     requires
         raft_labelled_execution(tr, labels),
@@ -267,8 +333,7 @@ pub proof fn theorem_an_entry_survives_leaders_that_hold_it(
         tr[a].servers.contains_key(n),
         i < tr[a].servers[n].log.len(),
         tr[a].servers[n].log[i as int] == e,
-        tr[a].servers[n].current_term >= t0,
-        forall|t: int| a <= t < b ==> #[trigger] standing_leaders_from_hold(tr[t], t0, i, e),
+        forall|t: int| a <= t < b ==> #[trigger] replicators_hold(tr[t], n, i, e),
     ensures
         tr[b].servers.contains_key(n),
         i < tr[b].servers[n].log.len(),
@@ -276,28 +341,26 @@ pub proof fn theorem_an_entry_survives_leaders_that_hold_it(
     decreases b - a,
 {
     if a < b {
-        theorem_an_entry_survives_leaders_that_hold_it(tr, labels, a, b - 1, n, i, e, t0);
+        theorem_an_entry_survives_leaders_that_could_reach_it(tr, labels, a, b - 1, n, i, e);
         lemma_a_labelled_execution_is_an_execution(tr, labels);
         lemma_raft_execution_hist_inv(tr, b - 1);
-        theorem_a_term_never_falls_across_a_run(tr, a, b - 1, n);
 
-        assert(standing_leaders_from_hold(tr[b - 1], t0, i, e));
+        assert(replicators_hold(tr[b - 1], n, i, e));
         assert(raft_step(tr[b - 1], tr[b - 1 + 1], labels[b - 1]));
         assert(tr[b - 1 + 1] == tr[b]);
 
         assert(replication_agrees_at(tr[b - 1], labels[b - 1], n, i)) by {
             if step_replicates_to(labels[b - 1], n) {
-                theorem_only_a_leader_at_or_past_can_replicate(
+                theorem_a_replicating_leader_shares_the_followers_term(
                     tr[b - 1],
                     tr[b],
                     labels[b - 1],
                     n,
-                    t0,
                 );
                 let l = replicating_leader(labels[b - 1]);
-                // The hypothesis at `l`: it is a standing leader at or past
-                // `t0`, so it holds `e` at `i` — and so does `n`, one step of
-                // the recursion ago.
+                // `l` is a standing leader at `n`'s own term, so the hypothesis
+                // reaches it — and `n` still holds `e` one step of the recursion
+                // ago.
                 assert(tr[b - 1].servers[l].log[i as int] == e);
                 assert(tr[b - 1].servers[n].log[i as int] == e);
             }
@@ -312,17 +375,29 @@ pub proof fn theorem_an_entry_survives_leaders_that_hold_it(
 // ---------------------------------------------------------------------------
 
 /// **A member of the quorum that committed an entry still holds it at any later
-/// point, provided every leader from the commit's term onwards held it.**
+/// point, provided every leader of a term between the commit's and `t1` held
+/// it.**
 ///
 /// The induction's steps 1 and 2 joined, and the point of the module. The
-/// hypothesis is [`standing_leaders_from_hold`] at the committing leader's own
-/// term — which is to say, Leader Completeness at the terms *between* this commit
-/// and whatever comes next.
+/// hypothesis is [`leaders_within_hold`] over `[T, t1]`, where `T` is the
+/// committing leader's own term — which is to say, Leader Completeness at the
+/// terms between this commit and whatever comes next.
 ///
-/// So the induction's remaining job is exactly this: supply that hypothesis for
-/// the terms it has already settled, and instantiate the quorum with the one
-/// [`crate::raft::proofs::summary::theorem_the_new_leaders_log_dominates_a_judged_voter`]
-/// meets.
+/// # Where each bound comes from, and why both are in the signature
+///
+/// * the **lower** bound is established at the window's start:
+///   [`theorem_a_commit_quorum_is_at_or_past_its_term`] puts the quorum at `T` or
+///   beyond, and terms never fall;
+/// * the **upper** bound is established at the window's **end**, by
+///   `tr[later].servers[m].current_term <= t1`, and then holds backwards through
+///   the window for the same reason — terms never fall.
+///
+/// That asymmetry is worth naming. In the use the induction will make of this,
+/// the window ends when the voter grants its vote in term `t1`, and
+/// [`tr_grant_vote`] requires the request's term to be at least the voter's own —
+/// so the voter is at `t1` or below *then*, and monotonicity carries it back over
+/// the whole window. The upper bound is not an extra assumption about the run; it
+/// is the vote.
 ///
 /// # What it does not say
 ///
@@ -331,9 +406,16 @@ pub proof fn theorem_an_entry_survives_leaders_that_hold_it(
 /// will truncate it away, which is faithful Raft and is precisely what the
 /// election restriction exists to make impossible. Read
 /// `crate::raft::proofs::commit::theorem_an_entry_persists_while_leaders_agree`
-/// on why a conditional persistence theorem is the honest kind, and on the
-/// earlier version of that comment which claimed necessity as well as
-/// sufficiency.
+/// on why a conditional persistence theorem is the honest kind.
+///
+/// Nor does it say the induction can discharge the hypothesis. It needs Leader
+/// Completeness on the *closed* range `[T, t1]`, and the `t1` endpoint is the
+/// interesting one: a leader of `t1` may already exist while this voter has not
+/// yet voted in `t1`, because winning `t1` needs *a* quorum and not this one. So
+/// the induction will have to establish its case at `t1` before it may use this
+/// theorem at `t1` — or restrict the window to end strictly before any leader of
+/// `t1` exists. That is a real obligation, it is stated here rather than in a
+/// paragraph elsewhere, and this PR does not discharge it.
 pub proof fn theorem_a_commit_quorum_still_holds_it(
     tr: Seq<Cluster>,
     labels: Seq<RaftStep>,
@@ -343,6 +425,7 @@ pub proof fn theorem_a_commit_quorum_still_holds_it(
     upto: nat,
     m: ServerId,
     i: nat,
+    t1: Term,
 )
     requires
         raft_labelled_execution(tr, labels),
@@ -352,10 +435,13 @@ pub proof fn theorem_a_commit_quorum_still_holds_it(
         labels[at] == (RaftStep::AdvanceCommit { server: n, upto: upto }),
         replicated_on(tr[at], tr[at].servers[n].log, upto).contains(m),
         i < upto,
+        tr[later].servers.contains_key(m),
+        tr[later].servers[m].current_term <= t1,
         forall|t: int|
-            at <= t < later ==> #[trigger] standing_leaders_from_hold(
+            at <= t < later ==> #[trigger] leaders_within_hold(
                 tr[t],
                 tr[at].servers[n].current_term,
+                t1,
                 i,
                 tr[at].servers[n].log[i as int],
             ),
@@ -377,7 +463,19 @@ pub proof fn theorem_a_commit_quorum_still_holds_it(
     assert(i < upto);
     assert(tr[at].servers[m].log[i as int] == e);
 
-    theorem_an_entry_survives_leaders_that_hold_it(tr, labels, at, later, m, i, e, t0);
+    // The holder's term is inside `[t0, t1]` at every state of the window: at or
+    // above `t0` because it was at the commit and terms never fall, and at or
+    // below `t1` because it is at `later` and terms never fall.
+    assert forall|t: int|
+        #![trigger replicators_hold(tr[t], m, i, e)]
+        at <= t < later implies replicators_hold(tr[t], m, i, e) by {
+        theorem_a_term_never_falls_across_a_run(tr, at, t, m);
+        theorem_a_term_never_falls_across_a_run(tr, t, later, m);
+        assert(leaders_within_hold(tr[t], t0, t1, i, e));
+        lemma_a_bounded_hypothesis_covers_the_replicators(tr[t], m, t0, t1, i, e);
+    }
+
+    theorem_an_entry_survives_leaders_that_could_reach_it(tr, labels, at, later, m, i, e);
 }
 
 } // verus!

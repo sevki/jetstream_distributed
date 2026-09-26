@@ -288,8 +288,8 @@ verifying, the build fails.
 | C50 | **A candidate that won a vote was at least as late, in terms, as every entry in that voter's log** — C43 read off the record rather than off a live state, which is the whole reason the record exists. And **quorum intersection with the judgement attached**: any quorum whatsoever meets the winner's voters in a server for which the record says what its log was when it voted, and that the winner's summary dominated it. Instantiate that quorum with the one C45 produces — the majority that held a committed entry — and the shared voter is a server that both held the entry and judged the winner at least as up to date as its own log. This is the induction's first and third steps joined at a single voter | `raft::proofs::votes::theorem_a_voter_saw_nothing_later_than_the_candidate`, `theorem_a_winner_shares_a_judged_voter_with_any_quorum`, `theorem_a_winner_shares_a_judged_voter_with_any_quorum_reachable` — the reachable wrapper **repeats** the existential rather than forwarding it, because a wrapper's contract is written and not inferred: a caller sees only what the wrapper's own `ensures` says, so forwarding a call does not forward its postconditions | none — but it is a statement about **one state**, and the induction needs the commit-time quorum carried *across the run* to the election, which is C48's conditional job |
 | C51 | **A `RequestVote`'s summary is a snapshot of the log it summarises**, for as long as its sender is still a standing candidate of that term — and every judgement on the record quotes a `RequestVote` that is still on the wire. No fifth ghost record was needed for this — `Cluster` already carries four, and the reason is worth naming: **`Cluster::messages` never shrinks**, so the network is already a history variable. The third clause, that a `RequestVote` never names a term its sender has not reached, looks like bookkeeping and is what makes the second *inductive*: the awkward case is `tr_timeout` itself, where a server becoming a candidate of `t` makes every `RequestVote` for `(t, n)` on the wire suddenly have to summarise its new log. The one it just sent does; an **older** one would not, and would sink the invariant. There is no older one, because a server enters a term once — which is that third clause, machine-checked | `raft::proofs::summary::inv_a_recorded_summary_was_on_the_wire`, `inv_a_requestvote_is_not_ahead_of_its_sender`, `inv_a_requestvote_summarises_a_candidate`, `theorem_reachable_summary_inv` | none — and no other invariant bundle is carried either, which is unusual here: the argument is entirely about the network and one server's role |
 | C52 | **At the instant it wins, a new leader's own log is at least as up to date as the log of a voter it shares with any quorum whatsoever** — and its last term dominates every entry that voter held. This is C50 with the winner's *log* in place of the pair of integers C50 actually produced. Read C50's conclusion again: `at_least_as_up_to_date(ct, ci, lg)`, where `ct` and `ci` are two numbers that arrived over the network, and nothing anywhere said they had anything to do with the winner's log. The induction's third step was therefore not available, and this README asserted it was. `tr_become_leader` is the right place to state it, because it is the last instant at which the winner is still a candidate and so the last instant at which its summary is its log — afterwards the log grows and the `RequestVote` is spent | `raft::proofs::summary::theorem_a_candidate_is_judged_on_its_own_log`, `theorem_a_candidate_dominates_its_judged_voter`, `theorem_a_candidates_log_is_the_latest_its_voters_saw`, `theorem_the_new_leaders_log_dominates_a_judged_voter`, `theorem_the_new_leaders_log_dominates_a_judged_voter_reachable` — the reachable wrapper repeats its existential, per the rule C50 learned | none |
-| C53 | **Every member of a commit's quorum is already at the committing leader's term or past it — so only a leader at or past that term can ever write to it again.** Three lines and a guard: figure 8's restriction says the last entry of the committed prefix carries the leader's own term `T`, a quorum member holds that prefix so it holds an entry of term `T`, and `terms_within` says no entry's term exceeds its holder's own. Terms never fall across a run, so it stays true. And `tr_append_entries` — the only transition that can shorten a log — requires the leader's term to **equal** the follower's, so nothing below `T` can touch it. Note which guard is load-bearing: without figure 8, the committed prefix could end in an *old* term and this would be false. That restriction is usually explained as ruling out one counterexample; here it is what gives the whole argument its shape | `raft::proofs::persistence::theorem_a_term_never_falls_across_a_run`, `theorem_a_commit_quorum_is_at_or_past_its_term`, `theorem_only_a_leader_at_or_past_can_replicate` | none |
-| C54 | **A member of the quorum that committed an entry still holds it at any later point, provided every leader from the commit's term onwards held it** — which is C48 with its hypothesis translated out of *steps* and into *leaders of terms*. That translation is the content. C48 quantifies over every step of the run; the induction hypothesis is a statement about leaders, so between the two sat a gap that the roadmap crossed **in prose** by saying C48's hypothesis "is the induction hypothesis at the intervening terms" — true, and not a translation. C53 is what performs it: the steps that could hurt are driven by exactly the leaders the hypothesis covers. `standing_leaders_from_hold` is Leader Completeness restricted to terms at or past `t0`, written as a predicate on one state so it can be quantified over a run | `raft::proofs::persistence::standing_leaders_from_hold`, `theorem_an_entry_survives_leaders_that_hold_it`, `theorem_a_commit_quorum_still_holds_it` | the hypothesis in its own statement, which is now the induction hypothesis **verbatim** rather than something a paragraph claims is equivalent to it |
+| C53 | **Every member of a commit's quorum is already at the committing leader's term or past it — so only a leader at or past that term can ever write to it again.** Three lines and a guard: figure 8's restriction says the last entry of the committed prefix carries the leader's own term `T`, a quorum member holds that prefix so it holds an entry of term `T`, and `terms_within` says no entry's term exceeds its holder's own. Terms never fall across a run, so it stays true. And `tr_append_entries` — the only transition that can shorten a log — requires the leader's term to **equal** the follower's, so nothing below `T` can touch it. Note which guard is load-bearing: without figure 8, the committed prefix could end in an *old* term and this would be false. That restriction is usually explained as ruling out one counterexample; here it is what gives the whole argument its shape | `raft::proofs::persistence::theorem_a_term_never_falls_across_a_run`, `theorem_a_commit_quorum_is_at_or_past_its_term`, `theorem_a_replicating_leader_shares_the_followers_term` | none |
+| C54 | **A member of the quorum that committed an entry still holds it at any later point, provided every leader from the commit's term onwards held it** — which is C48 with its hypothesis translated out of *steps* and into *leaders of terms*. That translation is the content. C48 quantifies over every step of the run; the induction hypothesis is a statement about leaders, so between the two sat a gap that the roadmap crossed **in prose** by saying C48's hypothesis "is the induction hypothesis at the intervening terms" — true, and not a translation. C53 is what performs it: the steps that could hurt are driven by leaders at one known term, the holder's. `replicators_hold` is the tight form — every standing leader that could reach the holder *right now* — and carries no term bound, because persistence needs none; `leaders_within_hold` is what the induction supplies, Leader Completeness over the **closed range** `[t0, t1]`. **Both bounds are load-bearing, and the upper one is there because `@codex` found the first version of this module without it**: strong induction on the election's term supplies Leader Completeness *below* that term, and an unbounded predicate demands it above as well. Such leaders exist — nothing here orders terms cluster-wide, so a far-higher-term leader can be running while a delayed campaign still collects votes — and they are harmless, since they cannot replicate to a voter at a lower term. The old predicate demanded they hold the entry anyway, so C54 could not have been discharged without assuming the conclusion at terms the induction had not reached | `raft::proofs::persistence::replicators_hold`, `leaders_within_hold`, `lemma_a_bounded_hypothesis_covers_the_replicators`, `theorem_an_entry_survives_leaders_that_could_reach_it`, `theorem_a_commit_quorum_still_holds_it` | the hypothesis in its own statement — now the induction hypothesis over a closed range, whose **upper endpoint the induction still owes**: a leader of `t1` can exist before this voter has voted in `t1`, because winning `t1` needs *a* quorum and not this one |
 | I | The inductive invariant holds in every reachable state (`init ==> inv`, `inv /\ next ==> inv`) | `ownership::proofs::invariant::theorem_reachable_inv` | the model's transition relation |
 | S | **The headline scenario**: `A` owns X@41, a transfer and a crash/recovery occur, `B` owns X@42, `A` returns still holding its epoch-41 token - and cannot perform an authoritative mutation. The postcondition exports the whole nine-step run, so the crash, the recovery and the outcome are the same execution — exported as separate existentials they need not have been, and an ordinary live handover could supply the outcome | `ownership::proofs::adversarial::scenario_stale_owner_returns` | `A != B` |
 | S1 | A stale `Grant` cannot resurrect a superseded epoch | `ownership::proofs::adversarial::theorem_stale_grant_cannot_be_used` | none |
@@ -948,14 +948,49 @@ a specific counterexample — a leader committing an old entry on a bare majorit
 Here it is what makes "the quorum is at term `T`" true, and without that the
 reduction from steps to leaders does not exist.
 
-**C54 is C48 restated in the induction's own words.** `standing_leaders_from_hold`
-is Leader Completeness restricted to terms at or past `t0`, written as a predicate
-on a single state so it can be quantified over a stretch of a run; the theorem
-consumes it and yields C48's conclusion; and `theorem_a_commit_quorum_still_holds_it`
-composes that with the commit-time quorum. The hypothesis is still a hypothesis —
-an intervening leader that does *not* hold the entry will truncate it away, which
-is faithful Raft — but it is now the induction hypothesis **verbatim** rather than
-something a sentence asserts is equivalent to it.
+**C54 is C48 restated in the induction's own words.** `replicators_hold` is the
+tight form — every standing leader that could replicate to the holder right now —
+and it carries no term bound, because persistence does not need one;
+`leaders_within_hold` is what the induction supplies, Leader Completeness over the
+closed range `[t0, t1]`; and `theorem_a_commit_quorum_still_holds_it` composes
+that with the commit-time quorum. The hypothesis is still a hypothesis — an
+intervening leader that does *not* hold the entry will truncate it away, which is
+faithful Raft — but it is now the induction hypothesis rather than something a
+sentence asserts is equivalent to it.
+
+**The upper bound is there because the first version did not have it.** `@codex`
+found that, and the finding is the most interesting thing in the push. Strong
+induction on the election's term `T` supplies Leader Completeness for terms
+*below* `T`; a predicate reading "every standing leader of a term at or past `t0`"
+demands it for terms **above** `T` too. Those leaders exist — nothing in this
+model orders terms cluster-wide, since `tr_grant_vote` only requires the request's
+term to be at least the voter's own, so a leader of a far higher term can be
+running elsewhere while a delayed campaign at `T` is still collecting votes. They
+are *harmless*, because `tr_append_entries` needs equal terms and so they cannot
+reach a voter at a lower term. But the old predicate demanded they hold the entry
+anyway, and C54 could not have been discharged from the induction hypothesis
+without assuming Leader Completeness at terms the induction had not reached.
+
+A hypothesis stronger than the argument needs is not a safe over-approximation
+when the hypothesis is what somebody else has to supply. That is the general form
+of the lesson, and it is the fourth time on this branch that the machine-checked
+content was fine and the *claim about* it was not.
+
+**Where the two bounds come from is asymmetric, and worth reading.** The lower one
+is established at the window's start — C53 puts the quorum at `T` or beyond, and
+terms never fall. The upper one is established at the window's **end**: in the use
+the induction will make of this, the window closes when the voter grants its vote
+in term `t1`, and `tr_grant_vote` requires the request's term to be at least the
+voter's own, so the voter is at `t1` or below *then* — and monotonicity carries it
+backwards over the whole window. The upper bound is not an extra assumption about
+the run; it is the vote.
+
+**And the `t1` endpoint is an open obligation**, stated in the theorem's own docs
+rather than deferred to a paragraph: the range is closed, so the induction needs
+its case at `t1` before it may use C54 at `t1`, and a leader of `t1` *can* exist
+before this voter has voted in `t1`, because winning `t1` needs *a* quorum and not
+this one. Either the induction establishes `t1` first, or it restricts the window
+to end strictly before any leader of `t1` exists. This push does not settle which.
 
 **So all three steps now speak about the same objects** — an entry, an index, a
 term, a log:
@@ -1967,10 +2002,13 @@ invariant preservation):
 
   * **C45** — a majority held the entry at commit time, entry for entry;
   * **C54** — that voter still held it when it voted. Still *conditional*, and
-    the condition is still the induction hypothesis at the intervening terms —
-    but it is now that hypothesis **verbatim**, a quantifier over the leaders of
-    those terms, rather than C48's quantifier over steps with a paragraph
-    claiming the two are the same thing. C53 is what performs the translation;
+    the condition is the induction hypothesis over the **closed range** of terms
+    from the commit's to the election's: a quantifier over the leaders of those
+    terms, rather than C48's quantifier over steps with a paragraph claiming the
+    two are the same thing. C53 performs the translation. **The upper endpoint is
+    an obligation, not a formality** — a leader of the election's term can exist
+    before this voter has voted in it — so the induction must settle its own case
+    at that term before using C54 there, or close the window earlier;
   * **C50/C52** — the winner's voters meet any quorum, with the judgement
     attached, and the judgement is about the winner's **own log**. C50 alone was
     not enough for this step and the earlier version of this list said it was:

@@ -63,6 +63,11 @@
 //!   led, and every entry any leader ever committed. Written and never read,
 //!   which `crate::raft::proofs::history` proves rather than promises.
 //!
+//!   A fourth, [`Cluster::voted_with`], records every vote together with the
+//!   voter's log *as it stood when the vote was cast* — the comparison
+//!   [`tr_grant_vote`] actually made, which the state cannot reproduce once the
+//!   voter's log has moved on.
+//!
 //!   The third is the one whose absence is felt most sharply. `Server::commit`
 //!   is a count, and it *retreats* when a truncation cuts below it — so without
 //!   [`Cluster::committed`] a safety property about committed entries has
@@ -206,6 +211,30 @@ pub struct Led {
     pub term: Term,
 }
 
+/// **Ghost.** A vote, together with **the voter's log as it stood when it was
+/// cast** and the candidate summary it was judged against.
+///
+/// The third record, and the last of the three
+/// [`crate::raft::proofs::terms`] named as missing. It exists because
+/// [`tr_grant_vote`]'s guard is a comparison against a log that has since moved
+/// on: by the time anyone asks *why* a vote was granted, the voter has
+/// truncated, extended or replaced the log the question is about. `Vote` says a
+/// vote happened; this says what it was a judgement of.
+///
+/// The candidate's summary is recorded too, and not merely the voter's log,
+/// because the judgement is a relation between the two. Storing one side would
+/// leave the other to be reconstructed from a state that no longer holds it —
+/// which is the problem this record exists to solve.
+pub struct VoteLog {
+    pub voter: ServerId,
+    pub term: Term,
+    pub candidate: ServerId,
+    /// The voter's log at the instant of the vote.
+    pub voter_log: Seq<Entry>,
+    pub cand_last_term: Term,
+    pub cand_last_index: nat,
+}
+
 /// **Ghost.** An entry a leader has committed, and the term it did it in.
 ///
 /// `leader_term` is the term of the **leader that committed it**, not the
@@ -316,6 +345,15 @@ pub struct Cluster {
     /// entries has nothing to quantify over. This set is what Leader
     /// Completeness and State Machine Safety are statements about.
     pub committed: Set<Commit>,
+    /// **Ghost: every vote ever cast, with the log it was cast on.**
+    ///
+    /// Same discipline as the other three: written at [`tr_timeout`] (the
+    /// self-vote) and [`tr_grant_vote`], read by no guard, and covered by
+    /// `crate::raft::proofs::history::theorem_history_does_not_gate_the_protocol`.
+    ///
+    /// See [`VoteLog`] for why the state cannot answer the question this
+    /// record answers.
+    pub voted_with: Set<VoteLog>,
 }
 
 // ---------------------------------------------------------------------------
@@ -569,6 +607,20 @@ pub open spec fn tr_timeout(pre: Cluster, post: Cluster, n: ServerId) -> bool {
     &&& post.created == pre.created
     &&& post.led == pre.led
     &&& post.committed == pre.committed
+    // **The self-vote is a vote, so it is judged like one.** A candidate is
+    // trivially at least as up to date as itself, which is why this arm never
+    // constrains anything — but leaving it out would make the record of votes
+    // incomplete exactly where `inv_every_vote_has_its_log` needs it whole.
+    &&& post.voted_with == pre.voted_with.insert(
+        VoteLog {
+            voter: n,
+            term: pre.servers[n].current_term + 1,
+            candidate: n,
+            voter_log: pre.servers[n].log,
+            cand_last_term: last_term(pre.servers[n].log),
+            cand_last_index: pre.servers[n].log.len(),
+        },
+    )
 }
 
 /// A member grants its vote for `term` to `cand`.
@@ -627,6 +679,20 @@ pub open spec fn tr_grant_vote(
     &&& post.created == pre.created
     &&& post.led == pre.led
     &&& post.committed == pre.committed
+    // **The judgement, recorded with both sides of it.** The guard above
+    // compares the candidate's summary against `pre.servers[voter].log`; by the
+    // time any later theorem asks what that comparison was, the voter's log has
+    // moved on. This is the only place that log is still available.
+    &&& post.voted_with == pre.voted_with.insert(
+        VoteLog {
+            voter: voter,
+            term: term,
+            candidate: cand,
+            voter_log: pre.servers[voter].log,
+            cand_last_term: cand_last_term,
+            cand_last_index: cand_last_index,
+        },
+    )
 }
 
 /// A candidate that has collected a quorum of votes for its own term declares
@@ -655,6 +721,7 @@ pub open spec fn tr_become_leader(pre: Cluster, post: Cluster, n: ServerId, term
     // needs, so it is recorded here rather than reconstructed later.
     &&& post.led == pre.led.insert(Led { server: n, term: term })
     &&& post.committed == pre.committed
+    &&& post.voted_with == pre.voted_with
 }
 
 /// A server learns of a strictly higher term and steps down into it.
@@ -680,6 +747,7 @@ pub open spec fn tr_step_down(pre: Cluster, post: Cluster, n: ServerId, term: Te
     &&& post.created == pre.created
     &&& post.led == pre.led
     &&& post.committed == pre.committed
+    &&& post.voted_with == pre.voted_with
 }
 
 /// A client command reaches the leader, which appends it **at its own term**.
@@ -724,6 +792,7 @@ pub open spec fn tr_client_request(pre: Cluster, post: Cluster, n: ServerId, val
     )
     &&& post.led == pre.led
     &&& post.committed == pre.committed
+    &&& post.voted_with == pre.voted_with
 }
 
 /// The leader replicates the entry at `prefix` to a follower.
@@ -775,6 +844,7 @@ pub open spec fn tr_append_entries(
     &&& post.created == pre.created
     &&& post.led == pre.led
     &&& post.committed == pre.committed
+    &&& post.voted_with == pre.voted_with
 }
 
 /// The leader commits a prefix once a majority holds it.
@@ -811,6 +881,7 @@ pub open spec fn tr_advance_commit(pre: Cluster, post: Cluster, n: ServerId, upt
     // retreat, so without this the fact that a quorum once agreed on an entry
     // is erasable by a later truncation. See `Cluster::committed`.
     &&& post.committed == pre.committed.union(committed_by(pre.servers[n], upto))
+    &&& post.voted_with == pre.voted_with
 }
 
 /// Some message on the network names `term`.
@@ -838,6 +909,7 @@ pub open spec fn tr_replay(pre: Cluster, post: Cluster, m: RaftMessage) -> bool 
     &&& post.created == pre.created
     &&& post.led == pre.led
     &&& post.committed == pre.committed
+    &&& post.voted_with == pre.voted_with
 }
 
 /// Nothing happens (an arbitrary delay).
@@ -849,6 +921,7 @@ pub open spec fn tr_stutter(pre: Cluster, post: Cluster) -> bool {
     &&& post.created == pre.created
     &&& post.led == pre.led
     &&& post.committed == pre.committed
+    &&& post.voted_with == pre.voted_with
 }
 
 /// The labelled transitions.
@@ -921,6 +994,7 @@ pub open spec fn raft_init(c: Cluster) -> bool {
     &&& (forall|s: Slot| !(#[trigger] c.created.contains_key(s)))
     &&& (forall|l: Led| !(#[trigger] c.led.contains(l)))
     &&& (forall|k: Commit| !(#[trigger] c.committed.contains(k)))
+    &&& (forall|r: VoteLog| !(#[trigger] c.voted_with.contains(r)))
 }
 
 /// `tr` is a finite execution of the cluster.

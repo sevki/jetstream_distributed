@@ -265,7 +265,7 @@ verifying, the build fails.
 | C28 | **A crash can only rewind.** `replay` is total on every sequence of records, so there is no prefix a crash can leave that recovery cannot read, and what comes back is a log the store had rather than one no sequence of writes could produce. Records that reached the device are unchanged and at the same indices | `raft::proofs::store::theorem_a_crash_can_only_rewind`, `theorem_a_crash_keeps_what_reached_the_device` | that a crash keeps a **prefix** — the property an append-only device gives you, and what pmemlog's write restriction enforces |
 | C29 | **Accepting a replicated entry costs at most two records**, and `appended_log` is what they replay to — so figure 2's rule 3, which deletes a suffix, is implementable on a device that deletes nothing. **Three costs, and which one you pay says what just happened**: *nothing* when the entry is already there, so a duplicate `AppendEntries` never reaches the device; *one record* when extending, since the marker would be `Truncate { len: log.len() }` and writing the identity would double the cost of the steady state; *two* on a genuine conflict, however long the tail it deletes. The zero-cost branch is C25's conditional again, as an operational fact | `raft::proofs::store::theorem_accepting_an_entry_is_at_most_two_records`, `theorem_extending_the_log_costs_one_record`, `theorem_a_follower_accepts_with_at_most_two_writes` | the store invariant (C27) |
 | C30 | **The device is append-only.** No operation moves its tail back: the records that were there are still there, in order, at the same indices. A `Record::Truncate` shortens the *log* and lengthens the device. This is the property that lets the whole store sit on `vendor/pmemlog`, whose abstract state has `append` and `advance_head` and nothing that shortens a tail | `raft::proofs::store::theorem_the_device_is_append_only` | none |
-| C31 | **Compaction is sound**, costs one record per entry, and leaves no truncation behind — so a store can rewrite itself as pure appends. Soundness only: **nothing schedules it**, and a store that never compacts grows without bound | `raft::proofs::store::theorem_compaction_replays_the_same`, `theorem_compaction_is_one_record_per_entry`, `theorem_compaction_leaves_no_truncations` | none |
+| C31 | **Compaction is sound**, costs one record per entry, and leaves no truncation behind — so a store can rewrite itself as pure appends. It is also **scheduled**: `worth_compacting` fires at `records > 2 * (entries + 1)`, which is amortised O(1) per operation, and the bound is asserted every round over sixty rounds of the worst shape. This row read *"soundness only: nothing schedules it"* for three PRs after the policy landed — the code and the claim drifted apart in the direction that understates the code, which is rarer and no better | `raft::proofs::store::theorem_compaction_replays_the_same`, `theorem_compaction_is_one_record_per_entry`, `theorem_compaction_leaves_no_truncations` | none |
 | C32 | **Cut the bytes anywhere and a record prefix comes back** — for *every* `k`, not for multiples of seventeen. The tear can land in the middle of a `u64` and the theorem still holds, because fixed width means no byte of a half-written record can be mistaken for the start of a whole one. This is what C28 needs and cannot state for itself: `store_recover` is written over a *record* prefix, and a device gives back a *byte* prefix | `raft::proofs::wire::theorem_a_torn_tail_is_a_record_prefix`, `theorem_recovery_from_a_torn_device` | every record fits in 64 bits (`records_fit`) |
 | C33 | **What was written is what is read**, and the encoding is exactly seventeen bytes per record — which is what makes `bytes.len() / 17` the record count and the parser's stopping condition an observation rather than an argument | `raft::proofs::wire::theorem_parse_of_encode`, `theorem_the_encoding_is_fixed_width`, `lemma_a_record_round_trips`, `lemma_a_record_is_seventeen_bytes` | `records_fit` |
 | C34 | Eight bytes, least significant first, and back again | `raft::proofs::wire::lemma_le_round_trip` (by `bit_vector`) | none |
@@ -284,6 +284,8 @@ verifying, the build fails.
 | C46 | **Two commits at one index whose entries carry the same term are the same entry** — so **State Machine Safety holds with exactly one hypothesis added**, that the two commits agree on the entry's term. The value half is free: one `(term, index)` names one act of creation by one leader, which Election Safety and the `created` record give unconditionally. Nothing about values, quorums or counting is missing. What is missing is the answer to one question — can two leaders commit entries of *different terms* at one index? — and that question is Leader Completeness | `raft::proofs::commit::theorem_two_commits_at_one_slot_agree`, `theorem_state_machine_safety_at_agreeing_terms` | that the two commits agree on the entry's term, which is precisely Leader Completeness |
 | C47 | **A commit is a commit for ever**, across a whole run, and the ghost record covers the real count at the moment it is written. The first is what makes the record usable where `Server::commit` is not — a count on one server that C38 proves *retreats*. The second is what stops it becoming a second bookkeeping scheme that drifts from the first, a hazard this repository was already bitten by once in `records_fit` (C37) | `raft::proofs::commit::theorem_a_commit_is_a_commit_for_ever`, `theorem_the_record_covers_the_count`, `raft::proofs::history::theorem_history_is_monotone` | none |
 | C48 | **An entry persists across a run whenever every leader replicating to its holder already agrees with it there.** The run-level form of C42, and it exists because the *prose* around C42 was wrong in a way the theorem never was: this README said the persistence step was already a theorem, when C42 carries a hypothesis — the replicating leader must already agree at that index — whose discharge for every intervening leader **is** Leader Completeness at the intervening terms. The condition now lives in a signature, quantified over the steps between the two states. **Sufficient, not necessary**: a replication at a `prefix` below the index, where the logs happen to agree at `prefix`, leaves the follower's log untouched and the entry survives whatever the leader holds above it. Sufficiency is all the induction needs. This is the lemma it calls at its inductive step, with the induction hypothesis discharging the quantifier | `raft::proofs::commit::theorem_an_entry_persists_while_leaders_agree`, `replication_agrees_at`, `lemma_a_labelled_execution_is_an_execution` | the quantifier in its own statement, which is exactly the induction hypothesis |
+| C49 | **Every vote has its judgement on the record, and every recorded vote went to a candidate at least as up to date as the voter's log at that moment.** `tr_grant_vote`'s guard compares against a log *at an instant*; by the time any later theorem asks what the comparison was, the voter has extended, truncated or replaced that log. `Cluster::voted_with` records both sides — the voter's log as it stood and the candidate summary it was weighed against — because storing one side would leave the other to be reconstructed from a state that no longer holds it. The completeness clause matters as much as the judgement clause: a record written in some arms and not others would be silently partial, and a theorem quantified over it would say nothing about the votes it had missed. That is why `tr_timeout`'s self-vote is recorded even though it constrains nothing | `raft::proofs::votes::inv_every_vote_has_its_log`, `inv_a_vote_was_up_to_date`, `inv_a_recorded_log_is_shaped`, `theorem_reachable_vote_inv` | none |
+| C50 | **A candidate that won a vote was at least as late, in terms, as every entry in that voter's log** — C43 read off the record rather than off a live state, which is the whole reason the record exists. And **quorum intersection with the judgement attached**: any quorum whatsoever meets the winner's voters in a server for which the record says what its log was when it voted, and that the winner's summary dominated it. Instantiate that quorum with the one C45 produces — the majority that held a committed entry — and the shared voter is a server that both held the entry and judged the winner at least as up to date as its own log. This is the induction's first and third steps joined at a single voter | `raft::proofs::votes::theorem_a_voter_saw_nothing_later_than_the_candidate`, `theorem_a_winner_shares_a_judged_voter_with_any_quorum`, `theorem_a_winner_shares_a_judged_voter_with_any_quorum_reachable` — the reachable wrapper **repeats** the existential rather than forwarding it, because a wrapper's contract is written and not inferred: a caller sees only what the wrapper's own `ensures` says, so forwarding a call does not forward its postconditions | none — but it is a statement about **one state**, and the induction needs the commit-time quorum carried *across the run* to the election, which is C48's conditional job |
 | I | The inductive invariant holds in every reachable state (`init ==> inv`, `inv /\ next ==> inv`) | `ownership::proofs::invariant::theorem_reachable_inv` | the model's transition relation |
 | S | **The headline scenario**: `A` owns X@41, a transfer and a crash/recovery occur, `B` owns X@42, `A` returns still holding its epoch-41 token - and cannot perform an authoritative mutation. The postcondition exports the whole nine-step run, so the crash, the recovery and the outcome are the same execution — exported as separate existentials they need not have been, and an ordinary live handover could supply the outcome | `ownership::proofs::adversarial::scenario_stale_owner_returns` | `A != B` |
 | S1 | A stale `Grant` cannot resurrect a superseded epoch | `ownership::proofs::adversarial::theorem_stale_grant_cannot_be_used` | none |
@@ -687,9 +689,16 @@ a majority of the committing leader's own term. **Log Matching is proved too**
 > appends at the end of its own log, and nothing in the *state* says no leader of
 > that term ever appended at that index before.
 
-So `Cluster` carries two ghost fields: `led`, every `(server, term)` ever led,
-and `created`, every entry any leader ever made — keyed by the slot naming it,
-recording its value **and the term of the entry before it**. That second
+So `Cluster` carries ghost fields — four of them now, and each exists because
+some question about the *run* has no answer in any single state. `led`, every
+`(server, term)` ever led; `created`, every entry any leader ever made, keyed by
+the slot naming it and recording its value **and the term of the entry before
+it**; `committed` (C44–C47), every entry any leader ever committed, because
+`Server::commit` is a count that *retreats*; and `voted_with` (C49–C50), every
+vote together with the voter's log as it stood when the vote was cast, because
+`tr_grant_vote`'s guard compares against a log that has since moved on.
+`created`'s second component is what makes Log Matching an induction rather than
+a wish. That second
 component is what makes Log Matching an induction rather than a wish: two
 servers whose entries at an index carry the same term are reading the same slot,
 so they agree on the value *and* on the recorded predecessor, which is the same
@@ -705,17 +714,22 @@ the log went in, and it turns out to be exactly the guard the proof wants rather
 than something added for it (C25).
 
 **The ghost state is not an escape hatch, and that is a theorem** (C21): for any
-history whatsoever, every step still fires from the same real state and lands in
-the same real state. A guard that read the history could not satisfy that. The
-fields are written and never read, which is what makes them auxiliary variables
-in the standard sense.
+history whatsoever — all four records, not merely the two this section
+introduces — every step still fires from the same real state and lands in the
+same real state. A guard that read the history could not satisfy that. The fields
+are written and never read, which is what makes them auxiliary variables in the
+standard sense.
 
-**Leader Completeness and State Machine Safety are still not proved**, and the
-reason is not "we ran out of time": they need this plus an induction over terms
-relating the up-to-date vote guard to what has been committed. A follower here
-will still truncate entries it had committed, which is faithful Raft — the
-protection against that is supposed to come from the election restriction, and
-the election restriction's proof is what is still missing.
+**Leader Completeness is still not proved**, and the sections that follow are the
+four pushes that narrowed the gap rather than four restatements of it. Read them
+in order: C39–C43 the ground it stands on, C44–C47 what was committed, C49–C50
+what a vote was a judgement of. By the end, **State Machine Safety holds with one
+hypothesis** (C46) and only the induction that discharges it is missing.
+
+A follower here will still truncate entries it had committed, which is faithful
+Raft — the protection against that is supposed to come from the election
+restriction, and the election restriction is now half a theorem (C43) rather than
+an absence.
 
 ### The ground that induction has to stand on (C39–C43)
 
@@ -824,9 +838,30 @@ free-standing again.
 So: step 1 is a theorem; step 2 is a theorem **with a hypothesis the induction
 discharges**; step 3 is half a theorem, because the case where the candidate's
 last term is at or above the voter's needs the induction hypothesis at the
-intermediate term. Step 2 additionally wants the voter's log **as it stood at the
-vote**, which is the one ghost record still missing. Two of the three pieces
-`terms.rs` named are now in place; the third, and the induction itself, are not.
+intermediate term.
+
+### All three records are now in place — and the induction still is not (C49–C50)
+
+The third, `Cluster::voted_with`, records every vote with **the voter's log as it
+stood when the vote was cast** and the candidate summary it was judged against.
+`tr_grant_vote`'s guard is a comparison at an instant, and by the time anything
+asks what it was, the voter's log has moved on.
+
+C49 promotes that guard from a side-condition on one transition to a fact about
+every reachable state, and adds the clause that makes quantifying over the record
+mean anything: **every vote is on it**, self-votes included. C50 spends it —
+quorum intersection that hands back not just a shared voter but *what that voter
+saw*.
+
+It is worth being exact about why this is not the induction. Every theorem here
+is about **one state**. The induction relates a commit in term `T` to an election
+in a later term `T'`, and it has to compare the quorum that held the entry at
+commit time with the quorum that voted at election time **across the run between
+them** — which is C48's job, and C48's hypothesis is discharged only by the
+induction hypothesis at the intervening terms.
+
+So the materials are all here and the argument that assembles them is not. That
+is a smaller gap than it was three pushes ago, and it is still a gap.
 
 **C38 is what that gap costs, stated concretely.** Because the model may not
 assume that state unreachable, it has to handle it, and handling it means a
@@ -1004,14 +1039,22 @@ Two limitations, stated rather than assumed away:
   reachable, so the store half and the wire half could not be composed at all
   (C37). A cluster reaching term 2^64 now has a store that cannot advance,
   rather than one that silently writes the wrong record.
-* **The device grows even when the log does not.** A follower thrashing between
-  two leaders writes a record per round. C31 says the way out is sound —
-  rewrite as pure appends, let `advance_head` reclaim the rest — and nothing
-  *schedules* it. A store that never compacts grows without bound.
-* **Nothing in `src/` depends on `vendor/pmemlog` yet.** The store layer is the
-  shape of the interface, proved; wiring `LogStore` onto `InfiniteLogImpl` is
-  the next step. Until it happens, pmemlog's two corruption assumptions are not
-  assumptions of anything proved here.
+* ~~**The device grows even when the log does not**, because nothing schedules
+  compaction~~ — **closed.** A follower thrashing between two leaders writes a
+  record per round, and `worth_compacting` now fires at
+  `records > 2 * (entries + 1)`: amortised O(1), with the bound asserted every
+  round over sixty rounds of the worst shape. C31 says the rewrite is sound;
+  `compact_if_worthwhile` is what makes it happen.
+* **Nothing in `src/` depends on `vendor/pmemlog` yet**, and the reason is no
+  longer "the executable layer does not exist" — `replay_exec`, `encode_exec`
+  and `parse_exec` do. What is missing is a **device**, and the obstacle there is
+  not an interface but a crash model: pmemlog's `persistence_chunk_size` is 8 and
+  a write must be safe for *any subset* of 8-byte chunks having flushed, which
+  **POSIX does not promise** for a write crossing a chunk. An `fsync`-per-write
+  file would not satisfy it. That needs a target platform — real PM, `O_DIRECT`
+  with aligned single-sector writes, or an explicitly weaker documented device.
+  Until one exists, pmemlog's two corruption assumptions are not assumptions of
+  anything proved here.
 
 ### The consensus service
 
@@ -1094,6 +1137,9 @@ distributed-ownership/
 │           ├── election.rs     Election Safety, via quorum intersection
 │           ├── history.rs      the ghost record, and Log Matching out of it
 │           ├── log.rs          what one replication step gives you (and what it does not)
+│           ├── terms.rs        term structure, entry durability, the election restriction
+│           ├── commit.rs       what was committed, and State Machine Safety minus one hypothesis
+│           ├── votes.rs        what a vote was a judgement of
 │           ├── refinement.rs   steps.rs agrees with the model's tr_* transitions
 │           ├── scenario.rs     a run in which an election actually happens
 │           ├── store.rs        recovery is exact; a crash can only rewind
@@ -1694,7 +1740,24 @@ CI, with no `assume`/`admit`/`external_body`/`axiom`):
 * the coupling itself, as an invariant of the composed machine: in every
   reachable composed state the only node that may mutate the actor is the node
   holding the token;
-* Raft: Election Safety, Log Matching, and the single-step log properties;
+* Raft: Election Safety (C1–C11), Log Matching (C26) and the single-step log
+  properties (C12–C19);
+* Raft's term structure and the election restriction: a log's terms never
+  decrease and none exceeds its holder's own, so the last term is the largest;
+  **a follower that already agrees with the leader at an index keeps its entry
+  there**, which is what makes figure 2's *conditional* truncation load-bearing
+  rather than merely faithful; and a candidate behind on terms cannot collect a
+  vote at all (C39–C43);
+* **State Machine Safety, with exactly one hypothesis** — that two commits at an
+  index agree on the entry's *term* (C46). The value half is unconditional,
+  because one `(term, index)` names one act of creation by one leader. Nothing
+  about values, quorums or counting is missing;
+* what a commit was: a majority held **that entry at that index**, entry for
+  entry rather than as a prefix length, and the record of it never shrinks
+  (C44–C47, C50);
+* what a vote was a **judgement of**: every vote is on the record with the
+  voter's log as it stood, and every recorded vote went to a candidate at least
+  as up to date as that log (C49);
 * the durable log: recovery is exact, a crash can only rewind, and a byte
   prefix of the device parses back to a record prefix — so figure 2's suffix
   deletion is implementable on a device that deletes nothing.
@@ -1720,14 +1783,17 @@ invariant preservation):
   restores. Routing termination would need the liveness the model does not
   claim.
 
-* **The durable log is not wired to a device.** `raft::store` and `raft::wire`
-  prove the shape of the interface — what a store does, what a crash leaves,
-  what the bytes mean — and nothing in `src/` calls `vendor/pmemlog` yet. The
-  layer that does will need an executable `replay` refining the spec one, and
-  until it exists pmemlog's two corruption assumptions are not assumptions of
-  anything proved here.
-* **Compaction is proved sound and is not scheduled.** A store that never
-  compacts grows without bound (C31).
+* **The durable log is not wired to a device**, and the reason has moved. The
+  executable layer exists — `replay_exec`, `encode_exec` and `parse_exec` refine
+  their spec counterparts, and verifying them found two bugs no test could have.
+  What is missing is a device, and the obstacle is a **crash model**, not an
+  interface: pmemlog's `persistence_chunk_size` is 8 and a write must be safe for
+  *any subset* of 8-byte chunks having flushed, which POSIX does not promise for
+  a write crossing a chunk. Until a device supplies it, pmemlog's two corruption
+  assumptions are not assumptions of anything proved here.
+* ~~**Compaction is proved sound and is not scheduled**~~ — **closed** by
+  `worth_compacting` at `records > 2 * (entries + 1)`. Left struck through rather
+  than deleted because it stood here for three PRs after the policy landed.
 
 **Not modelled at all** (a gap, stated rather than papered over):
 
@@ -1768,13 +1834,33 @@ invariant preservation):
   [Network resiliency](#network-resiliency-the-model-run-for-real)), which is
   evidence rather than proof: nothing machine-checks that the coordinator in
   `tests/` refines the transition relation in `src/`;
-* **Raft's Leader Completeness and State Machine Safety.** Log Matching is
-  proved (C26), so two servers that agree on an entry agree on everything below
-  it. What is missing is the argument that a leader's log contains every
-  *committed* entry, which needs an induction over terms relating the up-to-date
-  vote guard to what has been committed, and State Machine Safety on top of
-  that. Until they exist the registry's contents agree *where servers overlap*
-  but are not yet guaranteed to survive a leader change — which is the half of
+* **Raft's Leader Completeness**, and with it State Machine Safety
+  unconditionally. This is now a *much* smaller gap than the sentence that used
+  to sit here, and worth stating precisely rather than as a caveat.
+
+  **State Machine Safety already holds with one hypothesis** (C46): that two
+  commits at an index agree on the entry's *term*. So the whole of the remaining
+  risk is one question — *can two leaders commit entries of different terms at
+  one index?* — and that question is Leader Completeness.
+
+  **All three ghost records the induction needs are in place**: what was
+  committed (C44–C47), the voter's log as it stood at the vote (C49–C50), and
+  the creation/leadership history Log Matching is built on (C20–C26). So are the
+  four theorems it will call:
+
+  * **C45** — a majority held the entry at commit time, entry for entry;
+  * **C42/C48** — that voter still held it when it voted. *Conditional*, and the
+    condition is the induction hypothesis at the intervening terms, which is why
+    this one cannot be cited as though it were settled;
+  * **C50** — the winner's voters meet any quorum, with the judgement attached;
+  * **C43** — a candidate *behind* on terms is refused.
+
+  What is missing is the **strong induction over terms** that assembles them.
+  Every theorem above is about one state or one step; the induction relates a
+  commit in term `T` to an election in a later `T'` and has to carry the
+  commit-time quorum *across the run between them*, which is exactly what C48's
+  hypothesis is. Until it lands, the registry's contents agree *where servers
+  overlap* but are not yet guaranteed to survive a leader change — the half of
   the atomicity assumption that is load-bearing for `System::actors`;
 * **reconfiguration.** Membership is fixed. Joint consensus is a real and
   well-known source of Raft unsafety and is not attempted here.

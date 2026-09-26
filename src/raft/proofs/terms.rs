@@ -76,7 +76,9 @@
 //!   held. **This one now exists** — [`Cluster::committed`], spent in
 //!   [`crate::raft::proofs::commit`];
 //! * a **record of the voter's log at the moment of the vote**, because
-//!   `tr_grant_vote` compares against a log that has since moved on;
+//!   `tr_grant_vote` compares against a log that has since moved on. **This one
+//!   now exists too** — [`Cluster::voted_with`], spent in
+//!   [`crate::raft::proofs::votes`];
 //! * the **strong induction over terms** itself, which is the part of Raft that
 //!   took Verdi a person-scale Coq development.
 //!

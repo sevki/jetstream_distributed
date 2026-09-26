@@ -66,15 +66,35 @@ pub open spec fn timeout_post(c: Cluster, n: ServerId) -> Cluster {
         created: c.created,
         led: c.led,
         committed: c.committed,
+        // The self-vote's judgement. `tr_timeout` writes it, so a post-state
+        // that left `voted_with` alone would no longer be where the transition
+        // sends the cluster — which is what this module exists to check.
+        voted_with: c.voted_with.insert(
+            VoteLog {
+                voter: n,
+                term: c.servers[n].current_term + 1,
+                candidate: n,
+                voter_log: c.servers[n].log,
+                cand_last_term: last_term(c.servers[n].log),
+                cand_last_index: c.servers[n].log.len(),
+            },
+        ),
     }
 }
 
 /// Where granting a vote sends it.
+///
+/// It takes the candidate's summary now, and did not before: the post-state
+/// records the *judgement*, and a judgement is a relation between the voter's
+/// log and what it was weighed against. A post-state that dropped the summary
+/// would be describing a different transition.
 pub open spec fn grant_vote_post(
     c: Cluster,
     voter: ServerId,
     cand: ServerId,
     term: Term,
+    cand_last_term: Term,
+    cand_last_index: nat,
 ) -> Cluster {
     Cluster {
         members: c.members,
@@ -94,6 +114,16 @@ pub open spec fn grant_vote_post(
         created: c.created,
         led: c.led,
         committed: c.committed,
+        voted_with: c.voted_with.insert(
+            VoteLog {
+                voter: voter,
+                term: term,
+                candidate: cand,
+                voter_log: c.servers[voter].log,
+                cand_last_term: cand_last_term,
+                cand_last_index: cand_last_index,
+            },
+        ),
     }
 }
 
@@ -115,6 +145,7 @@ pub open spec fn become_leader_post(c: Cluster, n: ServerId, term: Term) -> Clus
         created: c.created,
         led: c.led.insert(Led { server: n, term: term }),
         committed: c.committed,
+        voted_with: c.voted_with,
     }
 }
 
@@ -136,6 +167,7 @@ pub open spec fn step_down_post(c: Cluster, n: ServerId, term: Term) -> Cluster 
         created: c.created,
         led: c.led,
         committed: c.committed,
+        voted_with: c.voted_with,
     }
 }
 
@@ -202,16 +234,19 @@ pub proof fn theorem_grant_vote_step_refines_tr_grant_vote(
     ensures
         tr_grant_vote(
             c,
-            grant_vote_post(c, voter, cand, term),
+            grant_vote_post(c, voter, cand, term, cand_last_term, cand_last_index),
             voter,
             cand,
             term,
             cand_last_term,
             cand_last_index,
         ),
-        grant_vote_post(c, voter, cand, term).servers[voter].role == Role::Follower,
-        grant_vote_post(c, voter, cand, term).servers[voter].current_term == term,
-        grant_vote_post(c, voter, cand, term).servers[voter].log == c.servers[voter].log,
+        grant_vote_post(c, voter, cand, term, cand_last_term, cand_last_index).servers[voter].role
+            == Role::Follower,
+        grant_vote_post(c, voter, cand, term, cand_last_term, cand_last_index).servers[voter]
+            .current_term == term,
+        grant_vote_post(c, voter, cand, term, cand_last_term, cand_last_index).servers[voter].log
+            == c.servers[voter].log,
 {
 }
 

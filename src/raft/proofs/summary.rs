@@ -20,13 +20,22 @@
 //! not in a wrapper's `ensures`, but in the *absence* of a link between two
 //! parts of the model that the surrounding prose had been quietly assuming.
 //!
-//! # No fourth ghost record: the network is already a history variable
+//! # No fifth ghost record: the network is already a history variable
 //!
-//! The first three records exist because the state throws information away:
-//! `created` because a log can be overwritten, `led` because a leader steps
-//! down, `committed` because `Server::commit` retreats, `voted_with` because a
-//! voter's log moves on. The obvious fourth would be *the candidate's log at
-//! the moment it asked*.
+//! `Cluster` already carries four, and each exists because the state throws
+//! information away: `created` because a log can be overwritten, `led` because a
+//! leader steps down, `committed` because `Server::commit` retreats,
+//! `voted_with` because a voter's log moves on. The obvious fifth would be *the
+//! candidate's log at the moment it asked*.
+//!
+//! > These four sentences originally opened "the first three records", under the
+//! > heading "No fourth ghost record", and then listed four. `@codex` caught it.
+//! > Recorded rather than quietly corrected, because of where it was: this
+//! > module exists to stop prose asserting more than the machine-checked content
+//! > supports, and its own headline miscounted a number that is *four struct
+//! > fields away*. Verus does not check module docs — nothing does — which is
+//! > the whole argument for reading them against the code, and the argument is
+//! > not weakened by its author needing it.
 //!
 //! It is not needed, and the reason is worth naming: **`Cluster::messages` never
 //! shrinks.** The `RequestVote` a candidate sent is still there, and it carries

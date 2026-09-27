@@ -1977,9 +1977,9 @@ CI, with no `assume`/`admit`/`external_body`/`axiom`):
   prefix of the device parses back to a record prefix — so figure 2's suffix
   deletion is implementable on a device that deletes nothing;
 * SWIM's merge rule: idempotent, absorbs a repeated message, never accepts a
-  record that does not out-rank the local one, and is commutative — and, lifted
-  through every step of a run, no node's record about any peer ever moves
-  backward (S1–S5).
+  record that does not out-rank the local one, is commutative and associative
+  — and, lifted through every step of a run, no node's record about any peer
+  ever moves backward (S1–S6).
 
 **Modelled but not proven** (present in the state machine, no theorem beyond
 invariant preservation):

@@ -4,6 +4,7 @@ pub mod commit;
 pub mod election;
 pub mod history;
 pub mod log;
+pub mod persistence;
 pub mod refinement;
 pub mod scenario;
 pub mod store;

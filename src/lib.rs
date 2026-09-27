@@ -23,6 +23,8 @@
 //!                   them proved rather than assumed.
 //! * [`raft`]      — consensus, where exclusivity is bought by counting
 //!                   instead of by assuming an atomic registry.
+//! * [`swim`]      — gossip membership, which buys neither exclusivity nor
+//!                   agreement, and promises only that disagreements resolve.
 //!
 //! Within each, `model` defines only the state space and the transition
 //! relation and never imports the specification layer, so a specification
@@ -48,3 +50,4 @@ pub mod composed;
 pub mod ownership;
 pub mod raft;
 pub mod raymond;
+pub mod swim;

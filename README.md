@@ -1238,6 +1238,65 @@ reported `false` when the model's `has_voted` was true. `tests/raft_election.rs`
 runs that in both directions: a restarted voter that refuses the second request,
 and a forgetful one that grants it and elects two leaders.
 
+## SWIM: gossip membership, bought by merge rather than majority
+
+Ownership and Raft both spend a majority round-trip to get one authoritative
+answer. SWIM does not try to agree on anything: every node keeps its own view
+of who else is alive, those views disagree constantly, and the protocol's
+only promise is that disagreements resolve rather than compound. That is a
+different kind of promise from Election Safety or exclusive ownership, and it
+is bought a different way — by an algebraic property of a merge rule, not by
+quorum intersection.
+
+**This is the first piece, not the whole protocol**, in the same sense
+`src/raft/model.rs` was the first piece of Raft: the state space and one
+transition, proved correct on their own terms, with the probe timer,
+indirect-ping fallback and dissemination piggyback still to come. The piece
+chosen first is the one everything else depends on being right: `state.go`'s
+merge rule, the one function every gossip message, probe timeout and
+self-refutation in [hashicorp/memberlist](https://github.com/hashicorp/memberlist)
+ultimately calls.
+
+### The record, and the rule for merging two of them
+
+A `MemberRecord` is an incarnation number and a status — `Alive`, `Suspect` or
+`Dead` — and `key_geq` compares two of them: a higher incarnation always wins,
+and at equal incarnations the more-dead status wins. `merge` keeps whichever
+side has the larger key. That is the entire rule; `tr_gossip` is `merge`
+applied to whatever a peer's own view already holds and whatever record just
+arrived, and a probe timeout or a self-refutation is only a different choice
+of *which* record arrived, not a different rule for applying it.
+
+| | claim | theorem | assumes |
+|---|---|---|---|
+| S1 | **Merging a record with itself changes nothing** | `swim::proofs::merge::theorem_merge_is_idempotent` | none |
+| S2 | **Merging in the same message twice has no more effect than merging it in once** — the fact that lets gossip's real delivery model, at-least-once and arbitrarily duplicated, survive contact with `merge` at all | `swim::proofs::merge::theorem_merge_absorbs_a_repeat` | none |
+| S3 | **A record that does not out-rank the local one cannot change it** — the safety half: a stale or weaker report is accepted nowhere, at any incarnation | `swim::proofs::merge::theorem_merge_never_regresses` | none |
+| S4 | **`merge` does not care which side is called local and which is called incoming** — true of what it returns even though the comparison it is built from is not symmetric, because the one case where the asymmetry could show, a tie, is a tie between two copies of the same record | `swim::proofs::merge::theorem_merge_is_commutative` | `status_rank` is injective (`swim::model::lemma_rank_is_injective`) |
+| S5 | **No node's record about any peer ever moves backward, across a whole run** — S1–S4 are arithmetic about two records; this is what they add up to once lifted through every step of an execution, and it is the actual convergence argument SWIM needs: not that gossip arrives in order, or even that it arrives at all, only that whatever arrives never makes a view of the world *less* accurate than it already was | `swim::proofs::monotone::theorem_a_record_key_never_falls_across_a_run` | none beyond `key_geq`'s own transitivity (`swim::proofs::merge::lemma_key_geq_transitive`) |
+| S6 | **`merge` does not care how three records are grouped** — S4 alone only says swapping two arguments doesn't matter; a node's view is built by folding in one delivered record after another, so order-independence needs grouping not to matter either, which is what associativity says | `swim::proofs::merge::theorem_merge_is_associative` | `key_geq` is total and antisymmetric up to record equality (`swim::proofs::merge::lemma_key_geq_total`, `lemma_key_geq_antisymmetric`) |
+
+**S4 is worth pausing on, because the asymmetry it dismisses is real.**
+`key_geq(a, b)` and `key_geq(b, a)` are different expressions, and reading
+`merge`'s definition — `if key_geq(incoming, local) { incoming } else {
+local }` — the incoming side breaks a tie. So `merge(a, b)` and `merge(b, a)`
+each hand a *different call* the tie-breaking advantage. What makes the
+theorem true anyway is `status_rank`'s injectivity: a `MemberRecord` is
+exactly its incarnation and its status, and if two records tie on
+`key_geq` — equal incarnation, equal rank — then by injectivity they have
+equal status too, so they were never two different records to begin with.
+`lemma_rank_is_injective` is a three-line case split on three enum variants;
+S4 is the only theorem in this module that spends it.
+
+**What this module is not** is a claim that gossip converges *in practice*.
+Convergence needs every node's view to eventually receive every update, which
+is a property of the dissemination schedule — how often a node piggybacks
+which records onto which probes — and that schedule is not modelled here at
+all. S5 is the half of the argument that has nothing to do with scheduling:
+whatever arrives, however late or however duplicated, can only move things
+forward. The other half — that something eventually arrives — is exactly the
+network-timing piece the module docs say is still future work.
+
 ## Repository layout
 
 ```text
@@ -1270,25 +1329,30 @@ distributed-ownership/
 │   ├── composed/           ownership and Raymond as one machine
 │   │   ├── model.rs        the coupling enforced by guards, not assumed
 │   │   └── proofs/{coupling.rs, scenario.rs}
-│   └── raft/               consensus: terms, votes, quorums, the log
-│       ├── model.rs        state space + transition relation
-│       ├── steps.rs        the election decisions as executable u64 functions
-│       ├── store.rs        a log that truncates, on a device that cannot
-│       ├── wire.rs         the record encoding, and what a torn write leaves
-│       ├── service.rs      the protocol over Jetstream RPC   [feature = "service"]
+│   ├── raft/               consensus: terms, votes, quorums, the log
+│   │   ├── model.rs        state space + transition relation
+│   │   ├── steps.rs        the election decisions as executable u64 functions
+│   │   ├── store.rs        a log that truncates, on a device that cannot
+│   │   ├── wire.rs         the record encoding, and what a torn write leaves
+│   │   ├── service.rs      the protocol over Jetstream RPC   [feature = "service"]
+│   │   └── proofs/
+│   │       ├── election.rs     Election Safety, via quorum intersection
+│   │       ├── history.rs      the ghost record, and Log Matching out of it
+│   │       ├── log.rs          what one replication step gives you (and what it does not)
+│   │       ├── terms.rs        term structure, entry durability, the election restriction
+│   │       ├── commit.rs       what was committed, and State Machine Safety minus one hypothesis
+│   │       ├── votes.rs        what a vote was a judgement of
+│   │       ├── summary.rs      the summary a voter judged, tied back to the log it summarised
+│   │       ├── persistence.rs  why the entry was still there when the voter judged it
+│   │       ├── refinement.rs   steps.rs agrees with the model's tr_* transitions
+│   │       ├── scenario.rs     a run in which an election actually happens
+│   │       ├── store.rs        recovery is exact; a crash can only rewind
+│   │       └── wire.rs         cut the bytes anywhere; a record prefix comes back
+│   └── swim/               gossip membership: merge, not majority
+│       ├── model.rs        the record, the merge rule, one transition
 │       └── proofs/
-│           ├── election.rs     Election Safety, via quorum intersection
-│           ├── history.rs      the ghost record, and Log Matching out of it
-│           ├── log.rs          what one replication step gives you (and what it does not)
-│           ├── terms.rs        term structure, entry durability, the election restriction
-│           ├── commit.rs       what was committed, and State Machine Safety minus one hypothesis
-│           ├── votes.rs        what a vote was a judgement of
-│           ├── summary.rs      the summary a voter judged, tied back to the log it summarised
-│           ├── persistence.rs  why the entry was still there when the voter judged it
-│           ├── refinement.rs   steps.rs agrees with the model's tr_* transitions
-│           ├── scenario.rs     a run in which an election actually happens
-│           ├── store.rs        recovery is exact; a crash can only rewind
-│           └── wire.rs         cut the bytes anywhere; a record prefix comes back
+│           ├── merge.rs        idempotent, absorbs a repeat, never regresses, commutative, associative
+│           └── monotone.rs     lifted through a step and then through a run
 ├── tests/
 │   ├── scenario_body/mod.rs    the executable protocol + the runtime oracles
 │   ├── turmoil_ownership.rs    named stories, each with an expected ending
@@ -1911,7 +1975,11 @@ CI, with no `assume`/`admit`/`external_body`/`axiom`):
   the induction hypothesis, stated as one;
 * the durable log: recovery is exact, a crash can only rewind, and a byte
   prefix of the device parses back to a record prefix — so figure 2's suffix
-  deletion is implementable on a device that deletes nothing.
+  deletion is implementable on a device that deletes nothing;
+* SWIM's merge rule: idempotent, absorbs a repeated message, never accepts a
+  record that does not out-rank the local one, and is commutative — and, lifted
+  through every step of a run, no node's record about any peer ever moves
+  backward (S1–S5).
 
 **Modelled but not proven** (present in the state machine, no theorem beyond
 invariant preservation):
@@ -1965,6 +2033,21 @@ invariant preservation):
   case epochs exist for, was not among them. That was a real narrowing of the
   composed claim, and it is fixed rather than documented away
   (`scenario_composed_crash_takeover` exhibits the execution).
+
+* **SWIM has no probe scheduler, no indirect-ping fallback and no
+  dissemination piggyback.** `swim::model` is the merge rule and one
+  transition; a real deployment's failure detection and gossip *timing* — how
+  often, and by piggybacking on what — is not modelled at all, so nothing here
+  says gossip eventually arrives, only that whatever arrives cannot move a
+  view of the world backward (S5). See
+  [SWIM](#swim-gossip-membership-bought-by-merge-rather-than-majority) for
+  which half of the convergence argument that is.
+
+* **SWIM has no voluntary-leave state.** memberlist distinguishes a graceful
+  departure (`StateLeft`) from a failure-detected one (`StateDead`), with its
+  own precedence and rejoin rules; `swim::model::Status` covers only failure
+  detection — `Alive`, `Suspect`, `Dead` — so a node that leaves on purpose is
+  not representable here at all, rather than misrepresented as a failure.
 
 **Future work** (deliberately out of scope):
 
@@ -2025,6 +2108,13 @@ invariant preservation):
   the atomicity assumption that is load-bearing for `System::actors`;
 * **reconfiguration.** Membership is fixed. Joint consensus is a real and
   well-known source of Raft unsafety and is not attempted here.
+* **the rest of SWIM.** The probe timer and its schedule, the indirect-ping
+  fallback a probe target's neighbours run when a direct probe times out, the
+  piggyback encoding that actually moves records between nodes, and an
+  executable `service.rs` behind the `service` feature — the same order this
+  repository built Raft in: model and proofs, then an executable layer, then a
+  service. `swim::model`'s docs and the [SWIM](#swim-gossip-membership-bought-by-merge-rather-than-majority)
+  section above say which one piece is done and why it was chosen first.
 
 ### The holder graph is a tree, and now says so
 

@@ -1,0 +1,155 @@
+//! **The merge algebra.** Four facts about [`merge`], none of which mentions
+//! a cluster, a step or a run — the point of proving them at this level is
+//! that [`crate::swim::proofs::monotone`] then gets to lift them without
+//! re-deriving any arithmetic.
+#![allow(unused_imports)]
+
+use vstd::prelude::*;
+
+use crate::swim::model::*;
+
+verus! {
+
+/// **Merging a record with itself is a no-op.**
+///
+/// The base case every other theorem here eventually reduces to: `key_geq`
+/// is reflexive (equal incarnation, equal rank, `>=` holds), so `merge`'s
+/// condition is true and it returns the incoming copy — which is `a` again.
+pub proof fn theorem_merge_is_idempotent(a: MemberRecord)
+    ensures
+        merge(a, a) == a,
+{
+}
+
+/// **Merging in the same message twice has no more effect than merging it in
+/// once.**
+///
+/// This is the fact that makes gossip's actual delivery model — at-least-once,
+/// unordered, arbitrarily duplicated — survive contact with `merge` at all:
+/// whatever `b` did to a view the first time, replaying it changes nothing
+/// further.
+pub proof fn theorem_merge_absorbs_a_repeat(a: MemberRecord, b: MemberRecord)
+    ensures
+        merge(merge(a, b), b) == merge(a, b),
+{
+    if key_geq(b, a) {
+        // merge(a, b) == b, and merge(b, b) == b by idempotence.
+        assert(merge(a, b) == b);
+        assert(key_geq(b, b));
+        assert(merge(b, b) == b);
+    } else {
+        // merge(a, b) == a, and the same condition that made it so the first
+        // time — !key_geq(b, a) — is unchanged the second time.
+        assert(merge(a, b) == a);
+        assert(merge(a, b) == a);
+    }
+}
+
+/// **A record that does not out-rank the local one cannot change it.**
+///
+/// The safety half of the algebra, and the one with an operational name: a
+/// stale or weaker gossip message — a `Suspect` report about a peer this
+/// view already knows is `Dead` at the same incarnation, say — is accepted
+/// nowhere. `merge`'s condition is `key_geq(incoming, local)`, and the
+/// hypothesis here is exactly its negation.
+pub proof fn theorem_merge_never_regresses(a: MemberRecord, b: MemberRecord)
+    requires
+        !key_geq(b, a),
+    ensures
+        merge(a, b) == a,
+{
+}
+
+/// **`merge` does not care which record is called `local` and which is
+/// called `incoming`.**
+///
+/// Not true of the *rule* `key_geq(incoming, local)` read literally — that
+/// expression is asymmetric, and swapping its arguments is a different
+/// comparison — but true of what `merge` returns, because on the one case
+/// where the asymmetry could show up, the tie, [`lemma_rank_is_injective`]
+/// says the two records being tied between are the same record.
+///
+/// The case split is on incarnation first, because a strict incarnation
+/// difference settles the comparison outright regardless of status; only the
+/// equal-incarnation case needs the tie-breaking argument at all.
+pub proof fn theorem_merge_is_commutative(a: MemberRecord, b: MemberRecord)
+    ensures
+        merge(a, b) == merge(b, a),
+{
+    if a.incarnation > b.incarnation {
+        assert(key_geq(a, b));
+        assert(!key_geq(b, a));
+        assert(merge(a, b) == a);
+        assert(merge(b, a) == a);
+    } else if a.incarnation < b.incarnation {
+        assert(key_geq(b, a));
+        assert(!key_geq(a, b));
+        assert(merge(a, b) == b);
+        assert(merge(b, a) == b);
+    } else {
+        // Equal incarnations: the comparison is entirely on rank.
+        assert(a.incarnation == b.incarnation);
+        if status_rank(a.status) > status_rank(b.status) {
+            assert(key_geq(a, b));
+            assert(!key_geq(b, a));
+            assert(merge(a, b) == a);
+            assert(merge(b, a) == a);
+        } else if status_rank(a.status) < status_rank(b.status) {
+            assert(key_geq(b, a));
+            assert(!key_geq(a, b));
+            assert(merge(a, b) == b);
+            assert(merge(b, a) == b);
+        } else {
+            // Equal incarnation and equal rank: by injectivity, the same
+            // status too, and a record is exactly its incarnation and its
+            // status — so `a` and `b` are the same record, and it does not
+            // matter which one either side of the equation names.
+            lemma_rank_is_injective(a.status, b.status);
+            assert(a.status == b.status);
+            assert(a =~= b);
+            assert(key_geq(a, b));
+            assert(key_geq(b, a));
+            assert(merge(a, b) == b);
+            assert(merge(b, a) == a);
+        }
+    }
+}
+
+/// **`key_geq` is transitive.**
+///
+/// Not needed by anything in this file — every theorem above is about one
+/// application of `merge` — but needed the moment
+/// [`crate::swim::proofs::monotone::theorem_a_record_key_never_falls_across_a_run`]
+/// chains one step's "did not fall" onto the previous steps' "did not
+/// fall": each step gives `key_geq` between adjacent states, and turning a
+/// chain of those into a `key_geq` between the ends is exactly this.
+pub proof fn lemma_key_geq_transitive(a: MemberRecord, b: MemberRecord, c: MemberRecord)
+    requires
+        key_geq(a, b),
+        key_geq(b, c),
+    ensures
+        key_geq(a, c),
+{
+    if a.incarnation > b.incarnation {
+        // Either disjunct of key_geq(b, c) gives b.incarnation >= c.incarnation.
+        assert(b.incarnation >= c.incarnation);
+        assert(a.incarnation > c.incarnation);
+        assert(key_geq(a, c));
+    } else {
+        // key_geq(a, b)'s first disjunct is false, so its second must hold.
+        assert(a.incarnation == b.incarnation);
+        assert(status_rank(a.status) >= status_rank(b.status));
+        if b.incarnation > c.incarnation {
+            assert(a.incarnation > c.incarnation);
+            assert(key_geq(a, c));
+        } else {
+            assert(b.incarnation == c.incarnation);
+            assert(status_rank(b.status) >= status_rank(c.status));
+            assert(a.incarnation == c.incarnation);
+            assert(status_rank(a.status) >= status_rank(c.status));
+            assert(key_geq(a, c));
+        }
+    }
+}
+
+} // verus!

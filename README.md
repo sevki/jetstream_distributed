@@ -1183,6 +1183,7 @@ of *which* record arrived, not a different rule for applying it.
 | S3 | **A record that does not out-rank the local one cannot change it** — the safety half: a stale or weaker report is accepted nowhere, at any incarnation | `swim::proofs::merge::theorem_merge_never_regresses` | none |
 | S4 | **`merge` does not care which side is called local and which is called incoming** — true of what it returns even though the comparison it is built from is not symmetric, because the one case where the asymmetry could show, a tie, is a tie between two copies of the same record | `swim::proofs::merge::theorem_merge_is_commutative` | `status_rank` is injective (`swim::model::lemma_rank_is_injective`) |
 | S5 | **No node's record about any peer ever moves backward, across a whole run** — S1–S4 are arithmetic about two records; this is what they add up to once lifted through every step of an execution, and it is the actual convergence argument SWIM needs: not that gossip arrives in order, or even that it arrives at all, only that whatever arrives never makes a view of the world *less* accurate than it already was | `swim::proofs::monotone::theorem_a_record_key_never_falls_across_a_run` | none beyond `key_geq`'s own transitivity (`swim::proofs::merge::lemma_key_geq_transitive`) |
+| S6 | **`merge` does not care how three records are grouped** — S4 alone only says swapping two arguments doesn't matter; a node's view is built by folding in one delivered record after another, so order-independence needs grouping not to matter either, which is what associativity says | `swim::proofs::merge::theorem_merge_is_associative` | `key_geq` is total and antisymmetric up to record equality (`swim::proofs::merge::lemma_key_geq_total`, `lemma_key_geq_antisymmetric`) |
 
 **S4 is worth pausing on, because the asymmetry it dismisses is real.**
 `key_geq(a, b)` and `key_geq(b, a)` are different expressions, and reading
@@ -1946,6 +1947,12 @@ invariant preservation):
   view of the world backward (S5). See
   [SWIM](#swim-gossip-membership-bought-by-merge-rather-than-majority) for
   which half of the convergence argument that is.
+
+* **SWIM has no voluntary-leave state.** memberlist distinguishes a graceful
+  departure (`StateLeft`) from a failure-detected one (`StateDead`), with its
+  own precedence and rejoin rules; `swim::model::Status` covers only failure
+  detection — `Alive`, `Suspect`, `Dead` — so a node that leaves on purpose is
+  not representable here at all, rather than misrepresented as a failure.
 
 **Future work** (deliberately out of scope):
 

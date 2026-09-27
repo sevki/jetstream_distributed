@@ -48,6 +48,14 @@ pub type NodeId = nat;
 /// Where SWIM's gossip currently says a node stands, ordered by how dead it
 /// is. The order — not the declaration order, which Rust does not expose to
 /// spec code anyway — is fixed by [`status_rank`].
+///
+/// memberlist also has a `StateLeft`, for a node that announced its own
+/// departure rather than being suspected or declared dead by others, and
+/// gives it different precedence and join-handling rules from `StateDead`.
+/// That distinction is deliberately not modeled here: this increment covers
+/// only failure detection — a peer that stops responding — not voluntary
+/// membership changes. A `Left` variant, and the precedence rule for it,
+/// belongs with whatever future increment models graceful leave and rejoin.
 pub enum Status {
     Alive,
     Suspect,

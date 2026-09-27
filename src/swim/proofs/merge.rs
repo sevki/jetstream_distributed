@@ -115,6 +115,134 @@ pub proof fn theorem_merge_is_commutative(a: MemberRecord, b: MemberRecord)
     }
 }
 
+/// **`key_geq` is total.**
+///
+/// Every two records compare, one way or the other: a strict incarnation
+/// difference decides it outright, and at equal incarnations, `nat`'s own
+/// totality on `status_rank`'s three possible values decides it. Needed
+/// below because [`theorem_merge_is_associative`]'s case split has to know
+/// that failing to establish `key_geq(x, y)` still leaves `key_geq(y, x)`
+/// available, rather than leaving a case where neither holds.
+pub proof fn lemma_key_geq_total(a: MemberRecord, b: MemberRecord)
+    ensures
+        key_geq(a, b) || key_geq(b, a),
+{
+    if a.incarnation > b.incarnation {
+        assert(key_geq(a, b));
+    } else if a.incarnation < b.incarnation {
+        assert(key_geq(b, a));
+    } else {
+        assert(a.incarnation == b.incarnation);
+        if status_rank(a.status) >= status_rank(b.status) {
+            assert(key_geq(a, b));
+        } else {
+            assert(key_geq(b, a));
+        }
+    }
+}
+
+/// **`key_geq` is antisymmetric — up to record equality, not just key
+/// equality.**
+///
+/// If `a` is at least as authoritative as `b` and `b` is at least as
+/// authoritative as `a`, the two are not merely tied in key: by
+/// [`lemma_rank_is_injective`], a tie in key is a tie in status too, and a
+/// record is exactly its incarnation and its status. Needed below for the
+/// one case [`theorem_merge_is_associative`] cannot settle by strict
+/// domination alone.
+pub proof fn lemma_key_geq_antisymmetric(a: MemberRecord, b: MemberRecord)
+    requires
+        key_geq(a, b),
+        key_geq(b, a),
+    ensures
+        a == b,
+{
+    if a.incarnation > b.incarnation {
+        assert(false);
+    } else if a.incarnation < b.incarnation {
+        assert(false);
+    } else {
+        assert(a.incarnation == b.incarnation);
+        assert(status_rank(a.status) >= status_rank(b.status));
+        assert(status_rank(b.status) >= status_rank(a.status));
+        assert(status_rank(a.status) == status_rank(b.status));
+        lemma_rank_is_injective(a.status, b.status);
+        assert(a.status == b.status);
+        assert(a =~= b);
+    }
+}
+
+/// **`merge` does not care how three records are grouped.**
+///
+/// The fact `S4`'s commutativity alone does not give: with three or more
+/// records in play — the case gossip is actually in, since a node's view is
+/// built by folding in one record after another — order-independence needs
+/// more than "swapping two arguments doesn't matter." It needs that
+/// grouping doesn't matter either, and that is exactly what associativity
+/// says. Both together are what let [`crate::swim::proofs::monotone`]'s
+/// run-level argument, and any future fold over an arbitrary delivery
+/// order, treat `merge` as commutative-monoid-style accumulation rather
+/// than as an operation sensitive to the shape of the expression it
+/// appears in.
+///
+/// The proof is a case split on which of the three records' keys
+/// dominates, using [`lemma_key_geq_total`] to be sure every case is
+/// covered and [`lemma_key_geq_antisymmetric`] for the one case — two
+/// records tied in key — that domination alone cannot settle.
+pub proof fn theorem_merge_is_associative(a: MemberRecord, b: MemberRecord, c: MemberRecord)
+    ensures
+        merge(merge(a, b), c) == merge(a, merge(b, c)),
+{
+    lemma_key_geq_total(a, b);
+    lemma_key_geq_total(b, c);
+    lemma_key_geq_total(a, c);
+
+    if key_geq(b, a) {
+        assert(merge(a, b) == b);
+        if key_geq(c, b) {
+            assert(merge(b, c) == c);
+            lemma_key_geq_transitive(c, b, a);
+            assert(merge(a, c) == c);
+            assert(merge(merge(a, b), c) == c);
+            assert(merge(a, merge(b, c)) == c);
+        } else {
+            assert(key_geq(b, c));
+            assert(merge(b, c) == b);
+            assert(merge(merge(a, b), c) == b);
+            assert(merge(a, merge(b, c)) == b);
+        }
+    } else {
+        assert(merge(a, b) == a);
+        if key_geq(c, b) {
+            assert(merge(b, c) == c);
+            if key_geq(c, a) {
+                assert(merge(a, c) == c);
+                assert(merge(merge(a, b), c) == c);
+                assert(merge(a, merge(b, c)) == c);
+            } else {
+                assert(key_geq(a, c));
+                assert(merge(a, c) == a);
+                assert(merge(merge(a, b), c) == a);
+                assert(merge(a, merge(b, c)) == a);
+            }
+        } else {
+            assert(key_geq(b, c));
+            assert(merge(b, c) == b);
+            assert(key_geq(a, b));
+            lemma_key_geq_transitive(a, b, c);
+            if key_geq(c, a) {
+                lemma_key_geq_antisymmetric(a, c);
+                assert(a == c);
+                assert(merge(a, c) == a);
+            } else {
+                assert(merge(a, c) == a);
+            }
+            assert(merge(merge(a, b), c) == a);
+            assert(merge(a, merge(b, c)) == a);
+        }
+    }
+}
+
 /// **`key_geq` is transitive.**
 ///
 /// Not needed by anything in this file — every theorem above is about one

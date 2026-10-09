@@ -31,9 +31,13 @@
 //! (the caller still holds the privilege, so the coupling lets it), and then the
 //! privilege moves: authority stranded at a node that no longer holds the
 //! privilege. So every method takes one **gate** first, and the two layers
-//! underneath it are never shared with anything else. The registry and router a
-//! [`Coordinator`] is built from must not be used directly afterwards, which is
-//! why construction takes them by value.
+//! underneath it are never shared with anything else. That is enforced rather
+//! than asked for: [`Coordinator::new`] builds both layers itself, from one
+//! roster, and exposes only read-only views of them. Handing in a `Registry` and
+//! a `Router` would let a caller keep them, and every method of their service
+//! traits takes `&self` — it could pass the privilege while authority sat at the
+//! old owner. It would also let the layers disagree about which address is which
+//! node.
 //!
 //! # Liveness, stated
 //!

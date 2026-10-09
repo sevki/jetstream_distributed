@@ -17,8 +17,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
 use distributed_ownership::composed::service::{Composed, Coordinator, Event};
-use distributed_ownership::ownership::service::{MemoryFloor, Offer, Registry};
-use distributed_ownership::raymond::service::Router;
+use distributed_ownership::ownership::service::{MemoryFloor, Offer};
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
 
@@ -46,10 +45,7 @@ fn code(e: Error) -> Option<String> {
 /// The actor starts offered to `A`, and the privilege starts at `A`: the two
 /// layers agree about who is first.
 fn system() -> Coordinator {
-    let registry =
-        Registry::new(roster(), A, Arc::new(MemoryFloor::new())).expect("A is on the roster");
-    let router = Router::star(roster(), A).expect("a star rooted at A");
-    Coordinator::new(registry, router, roster())
+    Coordinator::star(roster(), A, Arc::new(MemoryFloor::new()), A).expect("a star rooted at A")
 }
 
 /// `A` takes the actor at epoch 1 and writes once.
@@ -84,7 +80,7 @@ async fn the_privilege_moves_only_after_the_actor_has_been_released() {
         code(c.assign_privilege(from(ADDR_A)).await.unwrap_err()),
         Some("NO".into())
     );
-    assert_eq!(c.router().privilege(), A, "and nothing moved");
+    assert_eq!(c.privilege(), A, "and nothing moved");
 
     // A acknowledges. Now the actor is Unowned, offered to B...
     assert_eq!(c.poll(from(ADDR_A)).await.unwrap(), Offer::Revoke(2));
@@ -100,7 +96,7 @@ async fn the_privilege_moves_only_after_the_actor_has_been_released() {
 
     // The privilege moves.
     assert_eq!(c.assign_privilege(from(ADDR_A)).await.unwrap(), B);
-    assert_eq!(c.router().privilege(), B);
+    assert_eq!(c.privilege(), B);
 
     // And now B may take the actor.
     c.acquire(from(ADDR_B), 2).await.unwrap();
@@ -112,8 +108,8 @@ async fn the_privilege_moves_only_after_the_actor_has_been_released() {
         Some("FENCED".into())
     );
 
-    assert!(c.router().well_formed());
-    assert!(c.router().stale_holders().is_empty());
+    assert!(c.well_formed());
+    assert!(c.stale_holders().is_empty());
     assert!(c.seized().is_empty());
 }
 
@@ -149,17 +145,17 @@ async fn the_privilege_can_be_seized_from_a_holder_that_does_not_cooperate() {
     // The privilege cannot be seized while the actor is owned: someone has
     // authority and it would be stranded.
     assert_eq!(code(c.seize_token(B).await.unwrap_err()), Some("NO".into()));
-    assert_eq!(c.router().privilege(), A);
+    assert_eq!(c.privilege(), A);
 
     // Revoke. The epoch is burned; the actor is Unowned at 2, offered to B.
     assert_eq!(c.force(B).await.unwrap(), B);
     assert_eq!(c.seize_token(B).await.unwrap(), A);
 
-    assert_eq!(c.router().privilege(), B);
-    assert_eq!(c.router().stale_holders(), vec![A], "A still believes");
+    assert_eq!(c.privilege(), B);
+    assert_eq!(c.stale_holders(), vec![A], "A still believes");
     assert_eq!(c.seized(), vec![A], "and owes a reconciliation");
     assert!(
-        c.router().well_formed(),
+        c.well_formed(),
         "a stale holder is a state the routing layer admits"
     );
     assert_eq!(c.log(), vec![Event::Seized { from: A, to: B }]);
@@ -182,9 +178,9 @@ async fn the_privilege_can_be_seized_from_a_holder_that_does_not_cooperate() {
     c.reconcile(from(ADDR_A)).await.unwrap();
     let a = c.standing(from(ADDR_A)).await.unwrap();
     assert_eq!(a.holder, B, "A now points at the real holder");
-    assert!(c.router().stale_holders().is_empty());
+    assert!(c.stale_holders().is_empty());
     assert!(c.seized().is_empty());
-    assert!(c.router().well_formed());
+    assert!(c.well_formed());
     assert_eq!(
         c.log(),
         vec![
@@ -202,22 +198,22 @@ async fn reconciling_takes_a_stale_holder_out_of_its_critical_section() {
     let c = system();
     c.request_cs(from(ADDR_A)).await.unwrap();
     c.enter_cs(from(ADDR_A)).await.unwrap();
-    assert!(c.router().standing_of(A).unwrap().using);
+    assert!(c.standing_of(A).unwrap().using);
 
     // The actor is Unowned from the start (offered to A, never acquired), so the
     // privilege can be seized from A while A is inside its critical section.
     c.seize_token(B).await.unwrap();
     assert!(
-        c.router().standing_of(A).unwrap().using,
+        c.standing_of(A).unwrap().using,
         "A does not know; nothing reached it"
     );
     assert!(
-        c.router().well_formed(),
+        c.well_formed(),
         "using => believes still holds, so the layer's invariant does"
     );
 
     c.reconcile(from(ADDR_A)).await.unwrap();
-    assert!(!c.router().standing_of(A).unwrap().using);
+    assert!(!c.standing_of(A).unwrap().using);
 }
 
 #[tokio::test]
@@ -235,7 +231,7 @@ async fn seizure_has_its_own_refusals() {
         code(c.reconcile(from(ADDR_A)).await.unwrap_err()),
         Some("NO".into())
     );
-    assert_eq!(c.router().privilege(), A);
+    assert_eq!(c.privilege(), A);
     assert!(c.log().is_empty());
 }
 
@@ -283,4 +279,20 @@ async fn a_stranger_is_refused_by_every_door() {
         Some("NO".into())
     );
     assert!(c.log().is_empty());
+}
+
+/// Both layers are built from the one roster the coordinator is given, so a
+/// bad first owner or a bad routing tree is refused at construction rather than
+/// discovered as a disagreement between layers.
+#[test]
+fn both_layers_are_built_from_one_roster_or_not_at_all() {
+    let floor = || Arc::new(MemoryFloor::new());
+    // The actor cannot be offered to a node that is not on the roster.
+    assert!(Coordinator::star(roster(), 9, floor(), A).is_err());
+    // Nor can the privilege start at one.
+    assert!(Coordinator::star(roster(), A, floor(), 9).is_err());
+    // And the routing tree is checked: B and C point at each other, off to one
+    // side of the root A.
+    let cycle = HashMap::from([(B, C), (C, B)]);
+    assert!(Coordinator::new(roster(), A, floor(), A, cycle).is_err());
 }

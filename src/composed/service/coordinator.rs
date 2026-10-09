@@ -1,6 +1,7 @@
 //! The coordinator: the two layers, and the coupling between them.
 
 use std::collections::{HashMap, HashSet};
+use std::io;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 
@@ -9,8 +10,8 @@ use super::Composed;
 use crate::composed::steps::{
     acquire_under_token_step, pass_token_step, reconcile_step, seize_step,
 };
-use crate::ownership::service::{Offer, Ownership, Registry};
-use crate::raymond::service::{Router, Routing, Standing};
+use crate::ownership::service::{EpochFloor, Event as OwnershipEvent, Offer, Ownership, Registry};
+use crate::raymond::service::{Event as RoutingEvent, Router, Routing, Standing};
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
 
@@ -32,6 +33,11 @@ struct Debts {
 }
 
 /// The two layers and the coupling between them.
+///
+/// Neither layer is reachable from outside: they are built inside
+/// [`Coordinator::new`] and only read-only views are exposed, because every
+/// method of the layers' service traits takes `&self` and would bypass the gate
+/// and the coupling.
 #[derive(Clone)]
 pub struct Coordinator {
     registry: Registry,
@@ -45,12 +51,31 @@ pub struct Coordinator {
 }
 
 impl Coordinator {
-    /// Compose a registry and a router built over the same roster.
+    /// Build both layers from **one** roster and compose them.
     ///
-    /// By value, because the coupling is only sound if nothing else touches
-    /// either: see the module docs.
-    pub fn new(registry: Registry, router: Router, roster: HashMap<IpAddr, u64>) -> Self {
-        Coordinator {
+    /// The ownership actor starts offered to `first_owner`, and the privilege
+    /// starts at `root` with `parent[n]` the next hop from every other node
+    /// towards it (see [`Router::new`] for what is checked about that shape).
+    ///
+    /// The layers are built here rather than handed in, for two reasons that are
+    /// the same reason. The coupling reads both layers in one decision, so it is
+    /// only sound if nothing else can touch either: a caller holding the
+    /// `Registry` or `Router` could route a waiter and pass the privilege while
+    /// authority sat at the old owner, bypassing the gate and `pass_token_step`
+    /// both. And three rosters supplied separately can disagree about which
+    /// address is which node, so the coordinator would check one node's
+    /// privilege and then grant authority to another with the same `Context`.
+    /// One roster, owned here, closes both.
+    pub fn new(
+        roster: HashMap<IpAddr, u64>,
+        first_owner: u64,
+        floor: Arc<dyn EpochFloor>,
+        root: u64,
+        parent: HashMap<u64, u64>,
+    ) -> io::Result<Self> {
+        let registry = Registry::new(roster.clone(), first_owner, floor)?;
+        let router = Router::new(roster.clone(), root, parent)?;
+        Ok(Coordinator {
             registry,
             router,
             gate: Arc::new(tokio::sync::Mutex::new(())),
@@ -59,17 +84,55 @@ impl Coordinator {
                 log: Vec::new(),
             })),
             roster: Arc::new(roster),
-        }
+        })
     }
 
-    /// The ownership layer, for reading its audit log. Not for calling.
-    pub fn registry(&self) -> &Registry {
-        &self.registry
+    /// As [`Coordinator::new`], with every other node pointing straight at
+    /// `root`.
+    pub fn star(
+        roster: HashMap<IpAddr, u64>,
+        first_owner: u64,
+        floor: Arc<dyn EpochFloor>,
+        root: u64,
+    ) -> io::Result<Self> {
+        let parent = roster
+            .values()
+            .filter(|&&n| n != root)
+            .map(|&n| (n, root))
+            .collect();
+        Coordinator::new(roster, first_owner, floor, root, parent)
     }
 
-    /// The routing layer, for reading its table. Not for calling.
-    pub fn router(&self) -> &Router {
-        &self.router
+    /// Where the privilege actually is.
+    pub fn privilege(&self) -> u64 {
+        self.router.privilege()
+    }
+
+    /// The routing layer's invariant, checked on the live table. See
+    /// [`Router::well_formed`].
+    pub fn well_formed(&self) -> bool {
+        self.router.well_formed()
+    }
+
+    /// The nodes that believe they hold the privilege and do not. See
+    /// [`Router::stale_holders`].
+    pub fn stale_holders(&self) -> Vec<u64> {
+        self.router.stale_holders()
+    }
+
+    /// A node's own routing entries, or `None` for a non-node.
+    pub fn standing_of(&self, node: u64) -> Option<Standing> {
+        self.router.standing_of(node)
+    }
+
+    /// The routing layer's log, oldest first.
+    pub fn routing_log(&self) -> Vec<RoutingEvent> {
+        self.router.log()
+    }
+
+    /// The ownership layer's audit log, oldest first.
+    pub fn ownership_log(&self) -> Vec<OwnershipEvent> {
+        self.registry.log()
     }
 
     /// What the coordinator itself has done, oldest first.

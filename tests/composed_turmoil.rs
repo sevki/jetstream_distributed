@@ -16,8 +16,7 @@ use distributed_ownership::composed::service::{
     composed_protocol::{ComposedChannel, ComposedService},
     Composed, Coordinator,
 };
-use distributed_ownership::ownership::service::{MemoryFloor, Offer, Registry};
-use distributed_ownership::raymond::service::Router;
+use distributed_ownership::ownership::service::{MemoryFloor, Offer};
 use jetstream::prelude::*;
 use jetstream_rpc::session::{Session, SingleLaneSession};
 use turmoil::net::{TcpListener, TcpStream};
@@ -80,10 +79,8 @@ fn the_privilege_moves_only_after_the_release_over_the_wire() {
         async move {
             let coordinator = hosted
                 .get_or_init(|| {
-                    let registry = Registry::new(roster(), A, Arc::new(MemoryFloor::new()))
-                        .expect("A is on the roster");
-                    let router = Router::star(roster(), A).expect("a star rooted at A");
-                    Coordinator::new(registry, router, roster())
+                    Coordinator::star(roster(), A, Arc::new(MemoryFloor::new()), A)
+                        .expect("a star rooted at A")
                 })
                 .clone();
             let listener = TcpListener::bind((IpAddr::from(Ipv4Addr::UNSPECIFIED), PORT)).await?;
@@ -150,6 +147,6 @@ fn the_privilege_moves_only_after_the_release_over_the_wire() {
 
     sim.run().expect("the simulation runs to completion");
     let c = slot.get().expect("the coordinator was built");
-    assert_eq!(c.router().privilege(), B);
-    assert!(c.router().well_formed());
+    assert_eq!(c.privilege(), B);
+    assert!(c.well_formed());
 }

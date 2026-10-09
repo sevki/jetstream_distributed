@@ -33,6 +33,21 @@ fn roster() -> HashMap<IpAddr, u64> {
     HashMap::from([(turmoil::lookup("a"), A), (turmoil::lookup("b"), B)])
 }
 
+/// Wait until `secs` of *simulated* time have passed since the simulation began.
+///
+/// Absolute rather than a chain of relative sleeps: relative sleeps add up in
+/// each client separately, so two clients that mean to act "one after the other"
+/// can land on the same instant and race. Steps here are ten seconds apart, far
+/// more than the simulated network's latency, so the order is the schedule's and
+/// not the scheduler's.
+async fn at(secs: u64) {
+    let target = Duration::from_secs(secs);
+    let now = turmoil::sim_elapsed().expect("inside a simulation");
+    if let Some(wait) = target.checked_sub(now) {
+        tokio::time::sleep(wait).await;
+    }
+}
+
 macro_rules! connect {
     ($session:ident, $channel:ident) => {
         let stream = TcpStream::connect(("coord", PORT))
@@ -52,7 +67,11 @@ macro_rules! connect {
 
 #[test]
 fn the_privilege_moves_only_after_the_release_over_the_wire() {
-    let mut sim = turmoil::Builder::new().build();
+    // Turmoil ends a simulation after ten simulated seconds unless told
+    // otherwise, and this schedule runs to t = 90.
+    let mut sim = turmoil::Builder::new()
+        .simulation_duration(Duration::from_secs(120))
+        .build();
 
     let slot: Arc<OnceLock<Coordinator>> = Arc::new(OnceLock::new());
     let hosted = slot.clone();
@@ -83,17 +102,17 @@ fn the_privilege_moves_only_after_the_release_over_the_wire() {
         }
     });
 
-    // B asks for the privilege at t = 1.
+    // B asks for the privilege at t = 10.
     sim.client("b", async move {
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        at(10).await;
         {
             connect!(_s, ch);
             ch.request_cs(Context::default()).await.unwrap();
             assert_eq!(ch.make_request(Context::default()).await.unwrap(), A);
         }
-        // Offered the actor once A releases at t = 5, but cannot take it until
-        // the privilege arrives at t = 8.
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        // Offered the actor once A releases at t = 50, but cannot take it until
+        // the privilege arrives at t = 80.
+        at(60).await;
         connect!(_s, ch);
         assert_eq!(ch.poll(Context::default()).await.unwrap(), Offer::Grant(2));
         let early = ch.acquire(Context::default(), 2).await.unwrap_err();
@@ -102,13 +121,13 @@ fn the_privilege_moves_only_after_the_release_over_the_wire() {
             Some("NO"),
             "offered the actor, but not yet elected"
         );
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        at(90).await;
         ch.acquire(Context::default(), 2).await.unwrap();
         Ok(())
     });
 
     sim.client("a", async move {
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        at(20).await;
         connect!(_s, ch);
         assert_eq!(ch.poll(Context::default()).await.unwrap(), Offer::Grant(1));
         ch.acquire(Context::default(), 1).await.unwrap();
@@ -120,11 +139,11 @@ fn the_privilege_moves_only_after_the_release_over_the_wire() {
         let held = ch.assign_privilege(Context::default()).await.unwrap_err();
         assert_eq!(held.code(), Some("NO"), "the actor is mid-transfer");
 
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        at(50).await;
         ch.release(Context::default(), 2).await.unwrap();
 
         // Released. The privilege may move now.
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        at(80).await;
         assert_eq!(ch.assign_privilege(Context::default()).await.unwrap(), B);
         Ok(())
     });

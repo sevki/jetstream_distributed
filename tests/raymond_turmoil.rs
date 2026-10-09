@@ -45,6 +45,21 @@ fn roster() -> HashMap<IpAddr, u64> {
     ])
 }
 
+/// Wait until `secs` of *simulated* time have passed since the simulation began.
+///
+/// Absolute rather than a chain of relative sleeps: relative sleeps add up in
+/// each client separately, so two clients that mean to act "one after the other"
+/// can land on the same instant and race. Steps here are ten seconds apart, far
+/// more than the simulated network's latency, so the order is the schedule's and
+/// not the scheduler's.
+async fn at(secs: u64) {
+    let target = Duration::from_secs(secs);
+    let now = turmoil::sim_elapsed().expect("inside a simulation");
+    if let Some(wait) = target.checked_sub(now) {
+        tokio::time::sleep(wait).await;
+    }
+}
+
 macro_rules! connect {
     ($session:ident, $channel:ident) => {
         let stream = TcpStream::connect(("router", PORT))
@@ -64,7 +79,11 @@ macro_rules! connect {
 
 #[test]
 fn the_privilege_travels_back_along_the_request_path_over_the_wire() {
-    let mut sim = turmoil::Builder::new().build();
+    // Turmoil ends a simulation after ten simulated seconds unless told
+    // otherwise, and this schedule runs to t = 90.
+    let mut sim = turmoil::Builder::new()
+        .simulation_duration(Duration::from_secs(120))
+        .build();
 
     let slot: Arc<OnceLock<Router>> = Arc::new(OnceLock::new());
     let hosted = slot.clone();
@@ -95,16 +114,16 @@ fn the_privilege_travels_back_along_the_request_path_over_the_wire() {
     });
 
     // Each node acts at its own simulated instant, from its own address. The
-    // request goes D -> B -> A -> C at t = 1..3; C hands the privilege to A at
-    // t = 4, A to B at t = 5 and B to D at t = 6; D enters at t = 7.
+    // request goes D -> B -> A -> C at t = 10, 20, 30; C hands the privilege to
+    // A at t = 40, A to B at t = 50 and B to D at t = 60; D enters at t = 70.
     sim.client("d", async move {
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        at(10).await;
         {
             connect!(_s, ch);
             ch.request_cs(Context::default()).await.unwrap();
             assert_eq!(ch.make_request(Context::default()).await.unwrap(), B);
         }
-        tokio::time::sleep(Duration::from_secs(6)).await;
+        at(70).await;
         connect!(_s, ch);
         // D believes it holds the privilege, and does: it was told in the same
         // step that B handed it over.
@@ -116,31 +135,31 @@ fn the_privilege_travels_back_along_the_request_path_over_the_wire() {
         Ok(())
     });
     sim.client("b", async move {
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        at(20).await;
         {
             connect!(_s, ch);
             ch.receive_request(Context::default(), D).await.unwrap();
             assert_eq!(ch.make_request(Context::default()).await.unwrap(), A);
         }
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        at(60).await;
         connect!(_s, ch);
         assert_eq!(ch.assign_privilege(Context::default()).await.unwrap(), D);
         Ok(())
     });
     sim.client("a", async move {
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        at(30).await;
         {
             connect!(_s, ch);
             ch.receive_request(Context::default(), B).await.unwrap();
             assert_eq!(ch.make_request(Context::default()).await.unwrap(), C);
         }
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        at(50).await;
         connect!(_s, ch);
         assert_eq!(ch.assign_privilege(Context::default()).await.unwrap(), B);
         Ok(())
     });
     sim.client("c", async move {
-        tokio::time::sleep(Duration::from_secs(4)).await;
+        at(40).await;
         connect!(_s, ch);
         ch.receive_request(Context::default(), A).await.unwrap();
         assert_eq!(ch.assign_privilege(Context::default()).await.unwrap(), A);

@@ -1323,7 +1323,9 @@ member being spoken *about*, which has to be content.
 Raft's `stand_for_election` is not on its: they are things a node does about its
 own view, and putting them in the trait would let any caller make this node
 believe anything. `Node::suspect` and `Node::declare_dead` are what the caller's
-probe loop calls when a probe times out; the refutation happens inside the merge,
+probe loop calls when a probe times out, and both take the incarnation the
+probe or timer *began* with — a refutation can land while either is running, and
+a timer that re-read the table would kill an incarnation nobody suspected; the refutation happens inside the merge,
 the moment the record that changed is the node's own.
 
 **The node writes nothing down, and that is deliberate.** Raft's server and the
@@ -1347,7 +1349,7 @@ sharpens it, because any rostered caller may gossip about any member, so a
 rostered node that lies about a third party is believed. SWIM's failure model is
 crash faults, not Byzantine ones. There is no probe timer, no indirect-ping
 fallback (`ping_req`), and no piggyback *budget*: a node sends what its caller
-hands it. That loop — pick a peer, wait out a timeout, call `suspect` — is where
+hands it. That loop — pick a peer, note its incarnation, wait out a timeout, call `suspect` with the incarnation it noted — is where
 timing lives, and nothing in `swim::model` says anything about timing.
 
 ## Repository layout

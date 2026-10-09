@@ -57,7 +57,8 @@
 //! The probe timer — *when* a node decides to ping whom — and the indirect-ping
 //! fallback (`ping_req`) are not in this file. A node here is a table that obeys
 //! the merge rule and answers its peers; the loop that picks a peer, waits out a
-//! timeout, and calls [`Node::suspect`] is the caller's. That is where timing
+//! timeout, and calls [`Node::suspect`] and [`Node::declare_dead`] with the
+//! incarnation it started from is the caller's. That is where timing
 //! lives, and nothing in `crate::swim::model` says anything about timing.
 
 mod node;

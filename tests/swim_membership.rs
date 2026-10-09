@@ -73,15 +73,15 @@ fn a_new_node_believes_everyone_alive_at_incarnation_zero() {
 #[test]
 fn suspicion_then_death_and_neither_is_undone_by_a_weaker_report() {
     let n = node(0);
-    assert!(n.suspect(1).unwrap());
+    assert!(n.suspect(1, 0).unwrap());
     assert_eq!(n.record(1), Some(u(1, 0, Liveness::Suspect)));
 
     assert!(
-        !n.suspect(1).unwrap(),
+        !n.suspect(1, 0).unwrap(),
         "suspecting the suspect changes nothing"
     );
 
-    assert!(n.declare_dead(1).unwrap());
+    assert!(n.declare_dead(1, 0).unwrap());
     assert_eq!(n.record(1), Some(u(1, 0, Liveness::Dead)));
 
     // `theorem_merge_never_regresses`: a Suspect at the same incarnation does
@@ -96,7 +96,8 @@ fn suspicion_then_death_and_neither_is_undone_by_a_weaker_report() {
 #[test]
 fn only_a_higher_incarnation_undoes_a_death() {
     let n = node(0);
-    n.declare_dead(1).unwrap();
+    n.suspect(1, 0).unwrap();
+    n.declare_dead(1, 0).unwrap();
     n.apply(&[u(1, 1, Liveness::Alive)]).unwrap();
     assert_eq!(n.record(1), Some(u(1, 1, Liveness::Alive)));
 }
@@ -143,9 +144,9 @@ fn hearing_ones_own_current_record_is_not_a_reason_to_refute() {
 #[test]
 fn a_node_does_not_suspect_itself() {
     let n = node(0);
-    assert_eq!(n.suspect(0).unwrap_err().code(), Some("NO"));
-    assert_eq!(n.declare_dead(0).unwrap_err().code(), Some("NO"));
-    assert_eq!(n.suspect(9).unwrap_err().code(), Some("ERR"));
+    assert_eq!(n.suspect(0, 0).unwrap_err().code(), Some("NO"));
+    assert_eq!(n.declare_dead(0, 0).unwrap_err().code(), Some("NO"));
+    assert_eq!(n.suspect(9, 0).unwrap_err().code(), Some("ERR"));
 }
 
 /// The incarnation space is `u64`, and an accusation at the top of it has no
@@ -290,7 +291,8 @@ async fn a_stranger_is_refused_before_anything_is_read() {
 #[tokio::test]
 async fn ping_answers_with_what_it_was_asked_about_and_sync_with_everything() {
     let b = node(1);
-    b.declare_dead(2).unwrap();
+    b.suspect(2, 0).unwrap();
+    b.declare_dead(2, 0).unwrap();
 
     let ack = b
         .ping(from(A), vec![u(2, 0, Liveness::Suspect)])
@@ -318,8 +320,9 @@ async fn ping_answers_with_what_it_was_asked_about_and_sync_with_everything() {
 #[tokio::test]
 async fn nodes_that_drifted_apart_converge_by_syncing() {
     let (a, b, c) = (node(0), node(1), node(2));
-    a.suspect(2).unwrap();
-    b.declare_dead(0).unwrap();
+    a.suspect(2, 0).unwrap();
+    b.suspect(0, 0).unwrap();
+    b.declare_dead(0, 0).unwrap();
     c.apply(&[u(1, 5, Liveness::Alive)]).unwrap();
 
     // A round of pushes in a ring, twice, so everything has gone all the way
@@ -339,4 +342,60 @@ async fn nodes_that_drifted_apart_converge_by_syncing() {
     // Node 1 was told it was alive at 5 -- a record about itself that out-ranks
     // its own, which is the same situation as a restart -- and went one higher.
     assert_eq!(c.record(1), Some(u(1, 6, Liveness::Alive)));
+}
+
+/// **A suspicion timer that outlives its suspicion does nothing.**
+///
+/// A suspicion at incarnation 0 starts a timer. Before it fires the suspected
+/// node refutes, and this node learns `Alive` at 1. The timer then fires for
+/// incarnation 0: it must not kill incarnation 1, which nobody suspected.
+#[test]
+fn a_stale_suspicion_timer_cannot_kill_a_refuted_node() {
+    let n = node(0);
+    assert!(n.suspect(1, 0).unwrap());
+
+    // The refutation lands while the timer is running.
+    n.apply(&[u(1, 1, Liveness::Alive)]).unwrap();
+
+    assert!(
+        !n.declare_dead(1, 0).unwrap(),
+        "the timer was for incarnation 0"
+    );
+    assert_eq!(n.record(1), Some(u(1, 1, Liveness::Alive)));
+}
+
+/// The same race on the way in: a probe that began at incarnation 0 and failed
+/// after the refutation arrived suspects nothing, because the suspicion it
+/// carries is already out-ranked.
+#[test]
+fn a_stale_probe_cannot_suspect_a_refuted_node() {
+    let n = node(0);
+    n.apply(&[u(1, 1, Liveness::Alive)]).unwrap();
+    assert!(!n.suspect(1, 0).unwrap());
+    assert_eq!(n.record(1), Some(u(1, 1, Liveness::Alive)));
+}
+
+/// Death needs a suspicion first: a timer cannot declare dead a node this node
+/// never suspected at that incarnation.
+#[test]
+fn death_needs_a_suspicion_at_that_incarnation() {
+    let n = node(0);
+    assert!(!n.declare_dead(1, 0).unwrap(), "never suspected");
+    n.suspect(1, 0).unwrap();
+    assert!(!n.declare_dead(1, 7).unwrap(), "suspected at 0, not 7");
+    assert!(n.declare_dead(1, 0).unwrap());
+    assert_eq!(n.record(1), Some(u(1, 0, Liveness::Dead)));
+}
+
+/// A roster too big for one message could never complete its own push/pull: the
+/// whole-table reply would exceed what `apply` accepts.
+#[test]
+fn a_roster_too_big_for_one_message_is_refused() {
+    let big = |n: usize| -> HashMap<IpAddr, u64> {
+        (0..n as u64)
+            .map(|i| (IpAddr::V4(Ipv4Addr::from(0x0a00_0000 + i as u32)), i))
+            .collect()
+    };
+    assert!(Node::new(big(MAX_UPDATES), 0).is_ok());
+    assert!(Node::new(big(MAX_UPDATES + 1), 0).is_err());
 }

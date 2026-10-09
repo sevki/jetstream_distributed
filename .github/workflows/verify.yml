@@ -475,7 +475,10 @@ jobs:
       # The ownership stories: the handover that fences its outgoing owner, and
       # the restart that must not rewind the actor. The Raft stories: an
       # election, a split vote that elects exactly one leader, and a voter that
-      # must not vote twice across a restart.
+      # must not vote twice across a restart. The SWIM stories: the merge rule
+      # delivered in every order and with every duplicate, an accused node that
+      # refutes, and a suspicion that crosses a healed partition and comes back
+      # refuted.
       - name: The service stories
         run: |
           cargo +stable test --features service --locked \
@@ -485,4 +488,6 @@ jobs:
             --test raft_wire \
             --test raft_log \
             --test raft_store \
+            --test swim_membership \
+            --test swim_wire \
             -- --nocapture

@@ -14,19 +14,25 @@
 //!
 //! [`model`] is the anti-entropy core: the merge rule memberlist's `state.go`
 //! applies whenever a gossip message, a probe timeout or a self-refutation
-//! updates what a node believes about a peer. It is deliberately the *first*
-//! piece rather than the whole protocol, for the reason [`model`]'s own docs
-//! give: it is the one piece a full SWIM implementation cannot get away with
-//! getting wrong, because every other piece — the probe schedule, indirect
-//! pings, piggybacked dissemination — is built on the assumption that this
-//! merge converges no matter what order messages arrive in or how many times
-//! they are replayed.
+//! updates what a node believes about a peer. It is the piece a full SWIM
+//! implementation cannot get away with getting wrong, because everything else —
+//! the probe schedule, indirect pings, piggybacked dissemination — is built on
+//! the assumption that this merge converges no matter what order messages
+//! arrive in or how many times they are replayed.
 //!
-//! Not here yet: the probe timer, indirect-ping fallback, and the piggyback
-//! encoding that actually moves records between nodes. Those are a real
-//! network protocol with real timing, and belong in a `service` built on top
-//! of this core once it exists — the same order this repository built Raft
-//! in, model and proofs first.
+//! Following it, in the order this repository built Raft in:
+//!
+//! * [`steps`]   — the merge and the refutation as executable `u64` functions,
+//!                 verified against the model.
+//! * `service`   — the protocol over Jetstream RPC, behind the `service`
+//!                 feature: a `Membership` trait with `ping` and `sync`.
+//!
+//! Not here yet: the probe timer, the indirect-ping fallback, and the piggyback
+//! *selection* that decides which records ride on which probe. Those are a real
+//! network protocol with real timing, and nothing in [`model`] says anything
+//! about timing. A `service::Node` is a table that obeys the merge
+//! rule and answers its peers; the loop that picks a peer, waits out a timeout
+//! and calls `suspect` is the caller's.
 //!
 //! * [`model`]  — state space: a member's record, the merge rule, one
 //!                transition (`tr_gossip`) and the run it generates.
@@ -34,3 +40,7 @@
 
 pub mod model;
 pub mod proofs;
+pub mod steps;
+
+#[cfg(feature = "service")]
+pub mod service;

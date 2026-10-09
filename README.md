@@ -1275,6 +1275,9 @@ of *which* record arrived, not a different rule for applying it.
 | S4 | **`merge` does not care which side is called local and which is called incoming** — true of what it returns even though the comparison it is built from is not symmetric, because the one case where the asymmetry could show, a tie, is a tie between two copies of the same record | `swim::proofs::merge::theorem_merge_is_commutative` | `status_rank` is injective (`swim::model::lemma_rank_is_injective`) |
 | S5 | **No node's record about any peer ever moves backward, across a whole run** — S1–S4 are arithmetic about two records; this is what they add up to once lifted through every step of an execution, and it is the actual convergence argument SWIM needs: not that gossip arrives in order, or even that it arrives at all, only that whatever arrives never makes a view of the world *less* accurate than it already was | `swim::proofs::monotone::theorem_a_record_key_never_falls_across_a_run` | none beyond `key_geq`'s own transitivity (`swim::proofs::merge::lemma_key_geq_transitive`) |
 | S6 | **`merge` does not care how three records are grouped** — S4 alone only says swapping two arguments doesn't matter; a node's view is built by folding in one delivered record after another, so order-independence needs grouping not to matter either, which is what associativity says | `swim::proofs::merge::theorem_merge_is_associative` | `key_geq` is total and antisymmetric up to record equality (`swim::proofs::merge::lemma_key_geq_total`, `lemma_key_geq_antisymmetric`) |
+| S7 | **The executable `merge_step` is the model's `merge`, and applying it is the model's `tr_gossip`** — the service's merge is not a second implementation that the algebra above is merely about; it is the function those theorems quantify over, and a node that merges an arrival into its table and writes the result back has taken exactly the model's step | `swim::steps::merge_step` (its `ensures`), `swim::proofs::refinement::theorem_merge_step_is_a_gossip_step` | the executable record is the model's (`local.view() == record_of(pre, n)`), which the service keeps true by holding its table under one lock |
+| S8 | **A refutation out-ranks the accusation it answers, and everything its author could have held when it was made** — alive at one incarnation above beats suspect *and* dead at the accusation's, because a higher incarnation wins at any status | `swim::proofs::refinement::theorem_a_refutation_outranks_what_it_answers` | `held.incarnation <= accused` |
+| S9 | **A refutation is a gossip step, not a new kind of step, and `refute_step` computes it** — the model gains no transition for answering an accusation; the node applies `tr_gossip` to a record it made itself, and the executable step makes exactly that record or refuses at the top of the `u64` space | `swim::proofs::refinement::theorem_a_refutation_is_a_gossip_step`, `theorem_refute_step_is_the_refutation`, `swim::steps::refute_step` (its `ensures`) | none |
 
 **S4 is worth pausing on, because the asymmetry it dismisses is real.**
 `key_geq(a, b)` and `key_geq(b, a)` are different expressions, and reading
@@ -1288,14 +1291,61 @@ equal status too, so they were never two different records to begin with.
 `lemma_rank_is_injective` is a three-line case split on three enum variants;
 S4 is the only theorem in this module that spends it.
 
-**What this module is not** is a claim that gossip converges *in practice*.
+**What the proofs are not** is a claim that gossip converges *in practice*.
 Convergence needs every node's view to eventually receive every update, which
 is a property of the dissemination schedule — how often a node piggybacks
 which records onto which probes — and that schedule is not modelled here at
 all. S5 is the half of the argument that has nothing to do with scheduling:
 whatever arrives, however late or however duplicated, can only move things
 forward. The other half — that something eventually arrives — is exactly the
-network-timing piece the module docs say is still future work.
+network-timing piece that is still future work.
+
+### The service
+
+`src/swim/service/` serves the protocol over
+[Jetstream](https://github.com/sevki/jetstream) RPC: `#[service] trait
+Membership` with `ping` and `sync`, implemented by a `Node` whose table is
+written in exactly one place, by `steps::merge_step`.
+
+Both methods do the same thing to the receiver — merge every `Update` in the
+message — and differ in the reply. `ping` answers with the receiver's records
+for the members the message mentioned plus its own (SWIM's ping/ack, with the
+dissemination riding on it); `sync` answers with the whole table
+(memberlist's push/pull, the anti-entropy that repairs what a piggyback
+missed). As in the other two services, **no method takes the sender's number**:
+who is calling is the `Context`, and an `Update`'s `node` field names the
+member being spoken *about*, which has to be content.
+
+**Suspecting, declaring dead and refuting are not on the wire**, for the reason
+Raft's `stand_for_election` is not on its: they are things a node does about its
+own view, and putting them in the trait would let any caller make this node
+believe anything. `Node::suspect` and `Node::declare_dead` are what the caller's
+probe loop calls when a probe times out; the refutation happens inside the merge,
+the moment the record that changed is the node's own.
+
+**The node writes nothing down, and that is deliberate.** Raft's server and the
+ownership registry both keep a durable record because forgetting it breaks their
+safety. Incarnations are self-correcting: a node restarted at incarnation 0,
+whose peers remember it dead at 3, is told so by the first message that mentions
+it, and answers with 4 (`a_restarted_node_is_told_what_it_was_and_outranks_it`).
+
+`tests/swim_membership.rs` delivers one set of updates in all 120 orders, with
+every message repeated, and checks the table is the same each time — S2, S4 and
+S6 exercised through the service rather than assumed of it.
+`tests/swim_turmoil.rs` runs SWIM's own story across a simulated network: a node
+that cannot reach a peer suspects it, the partition heals, the suspicion reaches
+the suspected node, which is alive and refutes it, and the refutation comes back
+in the reply and clears the suspicion.
+
+**What the service does not have**, and what it does not claim. A caller is
+identified by address against a fixed roster, and *an address is not a
+credential* (the stated assumption every service here makes) — and SWIM
+sharpens it, because any rostered caller may gossip about any member, so a
+rostered node that lies about a third party is believed. SWIM's failure model is
+crash faults, not Byzantine ones. There is no probe timer, no indirect-ping
+fallback (`ping_req`), and no piggyback *budget*: a node sends what its caller
+hands it. That loop — pick a peer, wait out a timeout, call `suspect` — is where
+timing lives, and nothing in `swim::model` says anything about timing.
 
 ## Repository layout
 
@@ -1350,9 +1400,15 @@ distributed-ownership/
 │   │       └── wire.rs         cut the bytes anywhere; a record prefix comes back
 │   └── swim/               gossip membership: merge, not majority
 │       ├── model.rs        the record, the merge rule, one transition
+│       ├── steps.rs        the merge and the refutation as executable u64 functions
+│       ├── service/        the protocol over Jetstream RPC   [feature = "service"]
+│       │   ├── mod.rs          the Membership trait and what goes on the wire
+│       │   ├── node.rs         the table, and the merge into it
+│       │   └── refusal.rs      the refusals, in the line protocol's alphabet
 │       └── proofs/
 │           ├── merge.rs        idempotent, absorbs a repeat, never regresses, commutative, associative
-│           └── monotone.rs     lifted through a step and then through a run
+│           ├── monotone.rs     lifted through a step and then through a run
+│           └── refinement.rs   steps.rs agrees with the model's tr_gossip
 ├── tests/
 │   ├── scenario_body/mod.rs    the executable protocol + the runtime oracles
 │   ├── turmoil_ownership.rs    named stories, each with an expected ending
@@ -1363,6 +1419,8 @@ distributed-ownership/
 │   ├── raft_election.rs        a split vote elects one leader  [feature = "service"]
 │   ├── raft_log.rs             the consistency check and figure 8 [feature = "service"]
 │   ├── raft_wire.rs            the service over a simulated network [feature = "service"]
+│   ├── swim_membership.rs      the merge rule in every order, and the refutation [feature = "service"]
+│   ├── swim_turmoil.rs         a suspicion crosses a healed partition and is refuted [feature = "service"]
 │   └── seeds/scenarios.txt     seeds that once broke something
 ├── vendor/
 │   └── pmemlog/                Microsoft's verified persistent-memory log
@@ -1979,7 +2037,9 @@ CI, with no `assume`/`admit`/`external_body`/`axiom`):
 * SWIM's merge rule: idempotent, absorbs a repeated message, never accepts a
   record that does not out-rank the local one, is commutative and associative
   — and, lifted through every step of a run, no node's record about any peer
-  ever moves backward (S1–S6).
+  ever moves backward (S1–S6); the executable merge is that rule, and a
+  refutation out-ranks the accusation it answers and is itself a gossip step
+  (S7–S9).
 
 **Modelled but not proven** (present in the state machine, no theorem beyond
 invariant preservation):
@@ -2035,11 +2095,12 @@ invariant preservation):
   (`scenario_composed_crash_takeover` exhibits the execution).
 
 * **SWIM has no probe scheduler, no indirect-ping fallback and no
-  dissemination piggyback.** `swim::model` is the merge rule and one
-  transition; a real deployment's failure detection and gossip *timing* — how
-  often, and by piggybacking on what — is not modelled at all, so nothing here
-  says gossip eventually arrives, only that whatever arrives cannot move a
-  view of the world backward (S5). See
+  dissemination piggyback budget.** `swim::model` is the merge rule and one
+  transition, and `swim::service` is a table that obeys it; a real
+  deployment's failure detection and gossip *timing* — how often, and by
+  piggybacking on what — is not modelled at all, so nothing here says gossip
+  eventually arrives, only that whatever arrives cannot move a view of the
+  world backward (S5). See
   [SWIM](#swim-gossip-membership-bought-by-merge-rather-than-majority) for
   which half of the convergence argument that is.
 
@@ -2109,12 +2170,11 @@ invariant preservation):
 * **reconfiguration.** Membership is fixed. Joint consensus is a real and
   well-known source of Raft unsafety and is not attempted here.
 * **the rest of SWIM.** The probe timer and its schedule, the indirect-ping
-  fallback a probe target's neighbours run when a direct probe times out, the
-  piggyback encoding that actually moves records between nodes, and an
-  executable `service.rs` behind the `service` feature — the same order this
-  repository built Raft in: model and proofs, then an executable layer, then a
-  service. `swim::model`'s docs and the [SWIM](#swim-gossip-membership-bought-by-merge-rather-than-majority)
-  section above say which one piece is done and why it was chosen first.
+  fallback a probe target's neighbours run when a direct probe times out, and
+  the piggyback selection that decides which records ride on which probe. The
+  merge core, its executable steps and the `Membership` service are done; what
+  is left is the part with a clock in it. The [SWIM](#swim-gossip-membership-bought-by-merge-rather-than-majority)
+  section above says what is and is not claimed.
 
 ### The holder graph is a tree, and now says so
 

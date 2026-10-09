@@ -9,6 +9,10 @@
 //!   argument reduced to what it actually needs — not that gossip arrives in
 //!   order, or even that it arrives at all, only that whatever arrives never
 //!   makes a view of the world *less* accurate than it already was.
+//! * [`refinement`] — the executable steps in [`crate::swim::steps`] agree with
+//!   the model's `tr_gossip`, and a refutation is a gossip step rather than a
+//!   new kind of step.
 
 pub mod merge;
 pub mod monotone;
+pub mod refinement;

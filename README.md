@@ -235,6 +235,7 @@ verifying, the build fails.
 | R14 | **Reconciliation repairs the belief**: the stale holder drops it, leaves the critical section it thought it was in, and re-points at the real holder | `raymond::proofs::routing_layer::lemma_reconcile_preserves_inv` | Raymond invariant |
 | R11 | **The holder pointers are acyclic** — part of `ray_inv`, preserved by every transition. A handover rewrites two pointers and needs a new rank (the old one shifted up by one, new root at zero); a seizure only makes the new holder point at itself, which *removes* a constraint, so the old rank still works | `raymond::proofs::routing_layer::lemma_frame_acyclic`, `lemma_repoint_acyclic` | Raymond invariant |
 | R12 | **Every node reaches the privilege holder by following holder pointers** — what makes "requests travel hop-by-hop towards the token" a checked claim. Two hypotheses, both load-bearing: R11 says the walk terminates rather than circling, and `ray_no_stale_holders` says it terminates at the real holder rather than at somebody who merely thinks so. The second was free when authority *was* belief; it is not free now, and it should not be — after a seizure a node whose belief-path leads to the seized holder genuinely cannot route to the privilege | `raymond::proofs::routing_layer::theorem_every_node_reaches_the_token` | Raymond invariant, `ray_no_stale_holders` |
+| R15 | **The executable routing steps agree with the model, in both directions.** For each of `MakeRequest`, `ReceiveRequest`, `AssignPrivilege`, `EnterCs` and `ExitCs`: when the step fires the model's transition fires, to exactly the state computed; when it refuses, the model's transition is not enabled in *any* post-state. `AssignPrivilege`'s guard reads **both** `privilege == me` and `holder == me` — a step that read only the belief would let a stale holder pass a privilege it does not have — while `EnterCs`'s deliberately reads only the belief, as the model's does | `raymond::proofs::refinement::theorem_make_request_step_refines`, `theorem_receive_request_step_refines`, `theorem_assign_step_refines`, `theorem_enter_cs_step_refines`, `theorem_exit_cs_step_refines` and their `..._refuses_exactly_when_disabled` counterparts, `theorem_request_cs_post_is_the_model_step` | the couplings in the module's table: the scalars a step reads are the router's own table, read under its lock |
 | C1 | **Election Safety — at most one leader per term.** The headline. Three sentences: a leader won a majority; any two majorities share a member; a member votes once per term | `raft::proofs::election::theorem_election_safety`, `..._reachable` | the Raft invariant, discharged for reachable states by `theorem_reachable_raft_inv` |
 | C2 | **Any two majorities of a cluster share a member.** The one piece of real mathematics, and the reason Raft needs no coordinator: two disjoint subsets whose sizes sum past the whole would make a union larger than a set containing it | `raft::proofs::election::lemma_quorums_intersect` | none |
 | C3 | **A server votes at most once per term** — sentence three, and the clause `tr_grant_vote`'s guard exists to maintain | `raft::proofs::election::inv_votes_unique`, preserved by `lemma_raft_step_preserves_inv` | the Raft invariant |
@@ -242,6 +243,8 @@ verifying, the build fails.
 | C5 | **The Raft invariant holds in every reachable state** (`raft_init ==> inv`, `inv /\ raft_next ==> inv`) | `raft::proofs::election::theorem_reachable_raft_inv` | the model's transition relation |
 | C6 | **A majority, once won, stays won** — votes only accumulate and the cluster does not change size, so a leader elected at term 7 remains, as a matter of record, the winner of term 7 | `raft::proofs::election::lemma_quorum_survives` | none |
 | C7 | **Terms never decrease, and votes are never retracted.** The Raft counterparts of epoch monotonicity (claim 5) and token permanence (P1) — and a vote is physical in the same sense a token is, which is exactly why a returning server must not vote again in a term it has already voted in | `raft::proofs::election::theorem_term_monotone_step`, `theorem_votes_monotone_step` | none |
+| C8 | **The coupling guards agree with the composed model.** `PassToken` fires only once the actor is `Unowned` and the routing layer's own step fires; `SeizeToken` only from the holder, to a different node, with the actor `Unowned`; `AcquireUnderToken` only for the node holding the privilege; `Reconcile` only for a node that owes one and whose belief is stale. Each refuses exactly when the composed model's transition is not enabled | `composed::proofs::refinement::theorem_pass_token_step_refines`, `theorem_pass_token_refuses_while_the_actor_is_held`, `theorem_pass_token_refuses_when_the_routing_step_does`, `theorem_seize_step_refines`, `theorem_seize_step_refuses_exactly_when_disabled`, `theorem_acquire_under_token_step_refines`, `theorem_acquire_under_token_refuses_a_node_without_the_privilege`, `theorem_reconcile_step_refines`, `theorem_reconcile_step_refuses_exactly_when_disabled` | **every node is live** (`own.live.contains(..)`) — the service has no `Crash` step, so it refines the composed machine's crash-free executions; see below |
+| C9 | **A step a layer already proved is carried by the composed machine without a second proof.** `cs_ray` adds only that the step does not move the privilege and that its actor is live; `cs_own` adds only that the step does not create authority over this actor and does not bring back a node owing a reconciliation | `composed::proofs::refinement::theorem_a_routing_step_is_carried`, `theorem_an_ownership_step_is_carried` | the hypotheses of the carried step |
 | C8 | **A lone self-vote is not a majority** in a cluster of more than one. The check that the `>` in the quorum threshold is load-bearing rather than decorative: with `>=` a single server could elect itself | `raft::proofs::election::theorem_a_lone_vote_is_not_a_majority` | a cluster of at least two |
 | C9 | **An election actually happens.** A concrete three-server cluster walked from initialisation through a real election, exported with every step named, so C1 is not a safety property of a protocol that never elects anybody | `raft::proofs::scenario::scenario_a_leader_is_elected` | none: the cluster is exhibited |
 | C10 | **The election steps refine the model**, in both directions: each executable step fires exactly when the model's transition is enabled, and lands where the model lands | `raft::proofs::refinement::theorem_timeout_step_refines_tr_timeout`, `..._grant_vote_...`, `..._become_leader_...`, `..._step_down_...`, and the `..._refuses_exactly_when_disabled` for each | the couplings, tabulated in `raft::proofs::refinement`'s module docs |
@@ -1275,6 +1278,9 @@ of *which* record arrived, not a different rule for applying it.
 | S4 | **`merge` does not care which side is called local and which is called incoming** — true of what it returns even though the comparison it is built from is not symmetric, because the one case where the asymmetry could show, a tie, is a tie between two copies of the same record | `swim::proofs::merge::theorem_merge_is_commutative` | `status_rank` is injective (`swim::model::lemma_rank_is_injective`) |
 | S5 | **No node's record about any peer ever moves backward, across a whole run** — S1–S4 are arithmetic about two records; this is what they add up to once lifted through every step of an execution, and it is the actual convergence argument SWIM needs: not that gossip arrives in order, or even that it arrives at all, only that whatever arrives never makes a view of the world *less* accurate than it already was | `swim::proofs::monotone::theorem_a_record_key_never_falls_across_a_run` | none beyond `key_geq`'s own transitivity (`swim::proofs::merge::lemma_key_geq_transitive`) |
 | S6 | **`merge` does not care how three records are grouped** — S4 alone only says swapping two arguments doesn't matter; a node's view is built by folding in one delivered record after another, so order-independence needs grouping not to matter either, which is what associativity says | `swim::proofs::merge::theorem_merge_is_associative` | `key_geq` is total and antisymmetric up to record equality (`swim::proofs::merge::lemma_key_geq_total`, `lemma_key_geq_antisymmetric`) |
+| S7 | **The executable `merge_step` is the model's `merge`, and applying it is the model's `tr_gossip`** — the service's merge is not a second implementation that the algebra above is merely about; it is the function those theorems quantify over, and a node that merges an arrival into its table and writes the result back has taken exactly the model's step | `swim::steps::merge_step` (its `ensures`), `swim::proofs::refinement::theorem_merge_step_is_a_gossip_step` | the executable record is the model's (`local.view() == record_of(pre, n)`), which the service keeps true by holding its table under one lock |
+| S8 | **A refutation out-ranks the accusation it answers, and everything its author could have held when it was made** — alive at one incarnation above beats suspect *and* dead at the accusation's, because a higher incarnation wins at any status | `swim::proofs::refinement::theorem_a_refutation_outranks_what_it_answers` | `held.incarnation <= accused` |
+| S9 | **A refutation is a gossip step, not a new kind of step, and `refute_step` computes it** — the model gains no transition for answering an accusation; the node applies `tr_gossip` to a record it made itself, and the executable step makes exactly that record or refuses at the top of the `u64` space | `swim::proofs::refinement::theorem_a_refutation_is_a_gossip_step`, `theorem_refute_step_is_the_refutation`, `swim::steps::refute_step` (its `ensures`) | none |
 
 **S4 is worth pausing on, because the asymmetry it dismisses is real.**
 `key_geq(a, b)` and `key_geq(b, a)` are different expressions, and reading
@@ -1288,14 +1294,63 @@ equal status too, so they were never two different records to begin with.
 `lemma_rank_is_injective` is a three-line case split on three enum variants;
 S4 is the only theorem in this module that spends it.
 
-**What this module is not** is a claim that gossip converges *in practice*.
+**What the proofs are not** is a claim that gossip converges *in practice*.
 Convergence needs every node's view to eventually receive every update, which
 is a property of the dissemination schedule — how often a node piggybacks
 which records onto which probes — and that schedule is not modelled here at
 all. S5 is the half of the argument that has nothing to do with scheduling:
 whatever arrives, however late or however duplicated, can only move things
 forward. The other half — that something eventually arrives — is exactly the
-network-timing piece the module docs say is still future work.
+network-timing piece that is still future work.
+
+### The service
+
+`src/swim/service/` serves the protocol over
+[Jetstream](https://github.com/sevki/jetstream) RPC: `#[service] trait
+Membership` with `ping` and `sync`, implemented by a `Node` whose table is
+written in exactly one place, by `steps::merge_step`.
+
+Both methods do the same thing to the receiver — merge every `Update` in the
+message — and differ in the reply. `ping` answers with the receiver's records
+for the members the message mentioned plus its own (SWIM's ping/ack, with the
+dissemination riding on it); `sync` answers with the whole table
+(memberlist's push/pull, the anti-entropy that repairs what a piggyback
+missed). As in the other two services, **no method takes the sender's number**:
+who is calling is the `Context`, and an `Update`'s `node` field names the
+member being spoken *about*, which has to be content.
+
+**Suspecting, declaring dead and refuting are not on the wire**, for the reason
+Raft's `stand_for_election` is not on its: they are things a node does about its
+own view, and putting them in the trait would let any caller make this node
+believe anything. `Node::suspect` and `Node::declare_dead` are what the caller's
+probe loop calls when a probe times out, and both take the incarnation the
+probe or timer *began* with — a refutation can land while either is running, and
+a timer that re-read the table would kill an incarnation nobody suspected; the refutation happens inside the merge,
+the moment the record that changed is the node's own.
+
+**The node writes nothing down, and that is deliberate.** Raft's server and the
+ownership registry both keep a durable record because forgetting it breaks their
+safety. Incarnations are self-correcting: a node restarted at incarnation 0,
+whose peers remember it dead at 3, is told so by the first message that mentions
+it, and answers with 4 (`a_restarted_node_is_told_what_it_was_and_outranks_it`).
+
+`tests/swim_membership.rs` delivers one set of updates in all 120 orders, with
+every message repeated, and checks the table is the same each time — S2, S4 and
+S6 exercised through the service rather than assumed of it.
+`tests/swim_turmoil.rs` runs SWIM's own story across a simulated network: a node
+that cannot reach a peer suspects it, the partition heals, the suspicion reaches
+the suspected node, which is alive and refutes it, and the refutation comes back
+in the reply and clears the suspicion.
+
+**What the service does not have**, and what it does not claim. A caller is
+identified by address against a fixed roster, and *an address is not a
+credential* (the stated assumption every service here makes) — and SWIM
+sharpens it, because any rostered caller may gossip about any member, so a
+rostered node that lies about a third party is believed. SWIM's failure model is
+crash faults, not Byzantine ones. There is no probe timer, no indirect-ping
+fallback (`ping_req`), and no piggyback *budget*: a node sends what its caller
+hands it. That loop — pick a peer, note its incarnation, wait out a timeout, call `suspect` with the incarnation it noted — is where
+timing lives, and nothing in `swim::model` says anything about timing.
 
 ## Repository layout
 
@@ -1325,10 +1380,20 @@ distributed-ownership/
 │   │       └── refinement.rs   steps.rs agrees with the model's tr_* transitions
 │   ├── raymond/            Raymond's mutual-exclusion routing layer
 │   │   ├── model.rs
-│   │   └── proofs/{routing_layer.rs, routing_run.rs}
+│   │   ├── steps.rs        the routing decisions as executable u64 functions
+│   │   ├── service/        the protocol over Jetstream RPC   [feature = "service"]
+│   │   │   ├── mod.rs      the Routing trait and what a node can see of itself
+│   │   │   ├── router.rs   the whole routing record, behind one lock
+│   │   │   └── refusal.rs  the refusals, in the line protocol's alphabet
+│   │   └── proofs/{routing_layer.rs, routing_run.rs, refinement.rs}
 │   ├── composed/           ownership and Raymond as one machine
 │   │   ├── model.rs        the coupling enforced by guards, not assumed
-│   │   └── proofs/{coupling.rs, scenario.rs}
+│   │   ├── steps.rs        the coupling guards as executable functions
+│   │   ├── service/        the two layers behind one coordinator [feature = "service"]
+│   │   │   ├── mod.rs      the Composed trait: ownership + routing + the coupling
+│   │   │   ├── coordinator.rs  both layers, and the gate that serialises them
+│   │   │   └── refusal.rs  the refusals, in the line protocol's alphabet
+│   │   └── proofs/{coupling.rs, scenario.rs, refinement.rs}
 │   ├── raft/               consensus: terms, votes, quorums, the log
 │   │   ├── model.rs        state space + transition relation
 │   │   ├── steps.rs        the election decisions as executable u64 functions
@@ -1350,9 +1415,15 @@ distributed-ownership/
 │   │       └── wire.rs         cut the bytes anywhere; a record prefix comes back
 │   └── swim/               gossip membership: merge, not majority
 │       ├── model.rs        the record, the merge rule, one transition
+│       ├── steps.rs        the merge and the refutation as executable u64 functions
+│       ├── service/        the protocol over Jetstream RPC   [feature = "service"]
+│       │   ├── mod.rs          the Membership trait and what goes on the wire
+│       │   ├── node.rs         the table, and the merge into it
+│       │   └── refusal.rs      the refusals, in the line protocol's alphabet
 │       └── proofs/
 │           ├── merge.rs        idempotent, absorbs a repeat, never regresses, commutative, associative
-│           └── monotone.rs     lifted through a step and then through a run
+│           ├── monotone.rs     lifted through a step and then through a run
+│           └── refinement.rs   steps.rs agrees with the model's tr_gossip
 ├── tests/
 │   ├── scenario_body/mod.rs    the executable protocol + the runtime oracles
 │   ├── turmoil_ownership.rs    named stories, each with an expected ending
@@ -1363,6 +1434,12 @@ distributed-ownership/
 │   ├── raft_election.rs        a split vote elects one leader  [feature = "service"]
 │   ├── raft_log.rs             the consistency check and figure 8 [feature = "service"]
 │   ├── raft_wire.rs            the service over a simulated network [feature = "service"]
+│   ├── raymond_routing.rs      the textbook request path, and every refusal [feature = "service"]
+│   ├── raymond_turmoil.rs      the same path across hosts, on a simulated network [feature = "service"]
+│   ├── composed_handover.rs    the coupling: no move while held, no acquire without it [feature = "service"]
+│   ├── composed_turmoil.rs     the privilege moves only after the release, across hosts [feature = "service"]
+│   ├── swim_membership.rs      the merge rule in every order, and the refutation [feature = "service"]
+│   ├── swim_turmoil.rs         a suspicion crosses a healed partition and is refuted [feature = "service"]
 │   └── seeds/scenarios.txt     seeds that once broke something
 ├── vendor/
 │   └── pmemlog/                Microsoft's verified persistent-memory log
@@ -1417,6 +1494,25 @@ specification layer, so a specification cannot be quietly weakened to fit the
 model.
 
 ## The protocol as a Jetstream service
+
+**Every algorithm in this repository has a service**, and each is a `#[service]
+trait` over Jetstream RPC implemented by a type that holds the algorithm's state
+behind one lock and calls the algorithm's verified step functions:
+
+| Algorithm | Trait | Implemented by | Executable steps | What the trait leaves off the wire |
+| --- | --- | --- | --- | --- |
+| ownership | `Ownership` | `Registry` | `ownership::steps` | `force` — the coordinator's own transition |
+| Raft | `Consensus` | `Peer` | `raft::steps` | standing for election, tallying votes, taking a term |
+| SWIM | `Membership` | `Node` | `swim::steps` | suspecting, declaring dead, refuting |
+| Raymond | `Routing` | `Router` | `raymond::steps` | — (every method acts on the caller's own entries) |
+| composed | `Composed` | `Coordinator` | `composed::steps` | seizing the privilege |
+
+The shape is the same each time, and so is what it buys: **no method takes the
+acting node's number**, because who is calling is the `Context` and a caller
+cannot forge it; and what a node does *to itself* is not something a peer can
+ask it to do on the wire. The sections below go through ownership in detail, and
+SWIM has its own [service section](#the-service); Raymond and the composed
+machine are summarised here.
 
 Everything above is a model and a simulation of it. `src/ownership/service.rs` is the
 protocol served over [Jetstream](https://github.com/sevki/jetstream) RPC — a
@@ -1520,6 +1616,56 @@ Its dependency graph resolves, but the environment it was written in cannot
 reach crates.io's tarballs, so **CI is the first place it is compiled**. That is
 the same footing the fuzz target was on when it was added, and it is stated here
 rather than discovered.
+
+### Raymond and the composed machine
+
+**Raymond's `Router` hosts the whole routing record in one process**, the way the
+ownership `Registry` hosts `System::actors`. That is the model's own shape —
+`Raymond` is one struct — and it is what lets the router tell `privilege` (where
+the privilege *is*) from `holder` (what a node *believes*), the split the whole
+stale-holder analysis rests on. It is also a limit worth saying plainly: **this
+checks Raymond's rules, it does not distribute them.** A deployment where each
+node keeps only its own entries and messages carry the rest is a different
+system with a different failure model, and nothing in `raymond::model` says it
+is refined by this one. `Routing` has one method per labelled model step a node
+takes (`request_cs`, `make_request`, `receive_request`, `assign_privilege`,
+`enter_cs`, `exit_cs`), each acting on the caller's own entries.
+`receive_request` does take a `from`, and that is not the same thing as naming
+the acting node: it is the node the request is *about*, checked against the
+router's own record of what has been sent, so naming a node that never sent one
+is refused rather than believed.
+
+**The composed `Coordinator` is the two services and the guards between them.**
+Almost all of it is delegation, because `cs_own` and `cs_ray` carry a step the
+layers have already proved (C9). What it adds is the coupling: the privilege moves
+only once the actor has been released (`assign_privilege`), authority is taken
+only by the node holding the privilege (`acquire`), and the privilege can be
+seized from a holder that does not cooperate (`Coordinator::seize_token`,
+inherent — no node may cause it) leaving that holder owing a reconciliation
+(`reconcile`). Every method takes one **gate** first, because the coupling reads
+both layers' state in one decision: with two locks taken one after the other, an
+`acquire` could slip in between the registry's "unowned" and the privilege
+moving, stranding authority at a node that no longer holds the privilege.
+
+**What the composed service does not claim.** The composed *model* guards some
+steps on `own.live`, which is ground truth — whether a node has crashed is not
+something any process can evaluate. The service has no `Crash` or `Recover`, so
+it refines the composed machine's **crash-free** executions, where every liveness
+guard is vacuously true; C8 states `live.contains(..)` as a hypothesis rather than
+dropping it. That cut does not lose the case the machine exists for:
+`SeizeToken` has no liveness guard on the node it takes the privilege *from*, so
+seizing from a holder that is merely unreachable — the wrongly-suspected node a
+real coordinator cannot tell from a dead one — is inside the fragment. And a
+standalone `Router` never creates a stale holder; seizure is the composed
+machine's step, because the revocation that justifies it is visible there.
+
+`tests/raymond_routing.rs` runs the textbook request path (`D -> B -> A -> C` and
+the privilege back) and every refusal; `tests/composed_handover.rs` checks the
+refusals that make the composition mean something — the privilege will not move
+while the actor is held, a node offered the actor without the privilege cannot
+take it, a seized holder is fenced and must reconcile. `tests/raymond_turmoil.rs`
+and `tests/composed_turmoil.rs` run the same stories across simulated hosts, one
+host per node, so the coordinator learns who is acting from the connection.
 
 ## Verifying locally
 
@@ -1979,7 +2125,13 @@ CI, with no `assume`/`admit`/`external_body`/`axiom`):
 * SWIM's merge rule: idempotent, absorbs a repeated message, never accepts a
   record that does not out-rank the local one, is commutative and associative
   — and, lifted through every step of a run, no node's record about any peer
-  ever moves backward (S1–S6).
+  ever moves backward (S1–S6); the executable merge is that rule, and a
+  refutation out-ranks the accusation it answers and is itself a gossip step
+  (S7–S9);
+* the Raymond routing steps and the composed machine's coupling guards agree
+  with their models in both directions — each fires exactly when the model's
+  transition is enabled — and a step a layer already proved is carried by the
+  composed machine without a second proof (R15, C8–C9).
 
 **Modelled but not proven** (present in the state machine, no theorem beyond
 invariant preservation):
@@ -2035,13 +2187,29 @@ invariant preservation):
   (`scenario_composed_crash_takeover` exhibits the execution).
 
 * **SWIM has no probe scheduler, no indirect-ping fallback and no
-  dissemination piggyback.** `swim::model` is the merge rule and one
-  transition; a real deployment's failure detection and gossip *timing* — how
-  often, and by piggybacking on what — is not modelled at all, so nothing here
-  says gossip eventually arrives, only that whatever arrives cannot move a
-  view of the world backward (S5). See
+  dissemination piggyback budget.** `swim::model` is the merge rule and one
+  transition, and `swim::service` is a table that obeys it; a real
+  deployment's failure detection and gossip *timing* — how often, and by
+  piggybacking on what — is not modelled at all, so nothing here says gossip
+  eventually arrives, only that whatever arrives cannot move a view of the
+  world backward (S5). See
   [SWIM](#swim-gossip-membership-bought-by-merge-rather-than-majority) for
   which half of the convergence argument that is.
+
+* **The Raymond and composed services host the global record in one process.**
+  `raymond::service::Router` holds every node's entries under one lock because
+  the model's `Raymond` is one struct, and the composed `Coordinator` serialises
+  both layers behind a gate because the coupling reads both. They check
+  Raymond's rules; they do not distribute them. A deployment where each node
+  keeps only its own entries is a different system, and nothing here says it is
+  refined by this one.
+
+* **The composed service refines the crash-free executions only.** The composed
+  model guards some steps on `own.live`, which is ground truth and not something
+  a process can evaluate; the service has no `Crash` or `Recover`, and C8 states
+  liveness as a hypothesis. Seizing from a holder that is merely unreachable is
+  inside the fragment, because `SeizeToken` has no liveness guard on the node it
+  takes the privilege from.
 
 * **SWIM has no voluntary-leave state.** memberlist distinguishes a graceful
   departure (`StateLeft`) from a failure-detected one (`StateDead`), with its
@@ -2109,12 +2277,11 @@ invariant preservation):
 * **reconfiguration.** Membership is fixed. Joint consensus is a real and
   well-known source of Raft unsafety and is not attempted here.
 * **the rest of SWIM.** The probe timer and its schedule, the indirect-ping
-  fallback a probe target's neighbours run when a direct probe times out, the
-  piggyback encoding that actually moves records between nodes, and an
-  executable `service.rs` behind the `service` feature — the same order this
-  repository built Raft in: model and proofs, then an executable layer, then a
-  service. `swim::model`'s docs and the [SWIM](#swim-gossip-membership-bought-by-merge-rather-than-majority)
-  section above say which one piece is done and why it was chosen first.
+  fallback a probe target's neighbours run when a direct probe times out, and
+  the piggyback selection that decides which records ride on which probe. The
+  merge core, its executable steps and the `Membership` service are done; what
+  is left is the part with a clock in it. The [SWIM](#swim-gossip-membership-bought-by-merge-rather-than-majority)
+  section above says what is and is not claimed.
 
 ### The holder graph is a tree, and now says so
 

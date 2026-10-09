@@ -143,3 +143,33 @@ required-features = ["service"]
 name = "raft_store"
 path = "tests/raft_store.rs"
 required-features = ["service"]
+
+[[test]]
+name = "swim_membership"
+path = "tests/swim_membership.rs"
+required-features = ["service"]
+
+[[test]]
+name = "swim_turmoil"
+path = "tests/swim_turmoil.rs"
+required-features = ["service"]
+
+[[test]]
+name = "raymond_routing"
+path = "tests/raymond_routing.rs"
+required-features = ["service"]
+
+[[test]]
+name = "raymond_turmoil"
+path = "tests/raymond_turmoil.rs"
+required-features = ["service"]
+
+[[test]]
+name = "composed_handover"
+path = "tests/composed_handover.rs"
+required-features = ["service"]
+
+[[test]]
+name = "composed_turmoil"
+path = "tests/composed_turmoil.rs"
+required-features = ["service"]

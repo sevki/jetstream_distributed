@@ -524,6 +524,18 @@ impl Registry {
         self.inner.lock().expect("registry lock").log.clone()
     }
 
+    /// Is the actor `Unowned` — released, and offered to nobody yet in
+    /// possession?
+    ///
+    /// The one fact `crate::composed::service` needs from the registry to
+    /// enforce the coupling: the privilege may move only once the release has
+    /// *completed*. Read-only, and the caller is responsible for the answer not
+    /// going stale — the composed coordinator serialises every call that could
+    /// change it.
+    pub fn actor_is_unowned(&self) -> bool {
+        matches!(self.inner.lock().expect("registry lock").state, ExecState::Unowned { .. })
+    }
+
     /// Which node is calling, from the connection rather than from the request.
     ///
     /// `None` when the caller is not on the roster, which is the only honest

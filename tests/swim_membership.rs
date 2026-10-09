@@ -13,7 +13,7 @@
 //!
 //! These drive the `Node` directly. Identity still arrives the way the service
 //! insists on, a `Context` carrying the caller's address and never an argument
-//! naming a sender; the wire is `tests/swim_wire.rs`.
+//! naming a sender; the wire is `tests/swim_turmoil.rs`.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};

@@ -1302,7 +1302,7 @@ network-timing piece that is still future work.
 
 ### The service
 
-`src/swim/service.rs` serves the protocol over
+`src/swim/service/` serves the protocol over
 [Jetstream](https://github.com/sevki/jetstream) RPC: `#[service] trait
 Membership` with `ping` and `sync`, implemented by a `Node` whose table is
 written in exactly one place, by `steps::merge_step`.
@@ -1332,7 +1332,7 @@ it, and answers with 4 (`a_restarted_node_is_told_what_it_was_and_outranks_it`).
 `tests/swim_membership.rs` delivers one set of updates in all 120 orders, with
 every message repeated, and checks the table is the same each time — S2, S4 and
 S6 exercised through the service rather than assumed of it.
-`tests/swim_wire.rs` runs SWIM's own story across a simulated network: a node
+`tests/swim_turmoil.rs` runs SWIM's own story across a simulated network: a node
 that cannot reach a peer suspects it, the partition heals, the suspicion reaches
 the suspected node, which is alive and refutes it, and the refutation comes back
 in the reply and clears the suspicion.
@@ -1401,7 +1401,10 @@ distributed-ownership/
 │   └── swim/               gossip membership: merge, not majority
 │       ├── model.rs        the record, the merge rule, one transition
 │       ├── steps.rs        the merge and the refutation as executable u64 functions
-│       ├── service.rs      the protocol over Jetstream RPC   [feature = "service"]
+│       ├── service/        the protocol over Jetstream RPC   [feature = "service"]
+│       │   ├── mod.rs          the Membership trait and what goes on the wire
+│       │   ├── node.rs         the table, and the merge into it
+│       │   └── refusal.rs      the refusals, in the line protocol's alphabet
 │       └── proofs/
 │           ├── merge.rs        idempotent, absorbs a repeat, never regresses, commutative, associative
 │           ├── monotone.rs     lifted through a step and then through a run
@@ -1417,7 +1420,7 @@ distributed-ownership/
 │   ├── raft_log.rs             the consistency check and figure 8 [feature = "service"]
 │   ├── raft_wire.rs            the service over a simulated network [feature = "service"]
 │   ├── swim_membership.rs      the merge rule in every order, and the refutation [feature = "service"]
-│   ├── swim_wire.rs            a suspicion crosses a healed partition and is refuted [feature = "service"]
+│   ├── swim_turmoil.rs         a suspicion crosses a healed partition and is refuted [feature = "service"]
 │   └── seeds/scenarios.txt     seeds that once broke something
 ├── vendor/
 │   └── pmemlog/                Microsoft's verified persistent-memory log

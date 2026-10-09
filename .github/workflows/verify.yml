@@ -489,5 +489,5 @@ jobs:
             --test raft_log \
             --test raft_store \
             --test swim_membership \
-            --test swim_wire \
+            --test swim_turmoil \
             -- --nocapture

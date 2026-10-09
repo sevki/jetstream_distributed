@@ -6,8 +6,15 @@
 //! coupling, and here the coupling is a checked thing.
 //!
 //! * [`model`]  — both layers as a single machine.
-//! * [`proofs`] — the coupling as an invariant, and an end-to-end handover
-//!                across both layers.
+//! * [`steps`]  — the coupling guards as executable functions.
+//! * [`proofs`] — the coupling as an invariant, an end-to-end handover across
+//!                both layers, and that [`steps`] agrees with [`model`].
+//! * `service`  — the two layers behind one coordinator, over Jetstream RPC,
+//!                behind the `service` feature.
 
 pub mod model;
 pub mod proofs;
+pub mod steps;
+
+#[cfg(feature = "service")]
+pub mod service;

@@ -478,7 +478,10 @@ jobs:
       # must not vote twice across a restart. The SWIM stories: the merge rule
       # delivered in every order and with every duplicate, an accused node that
       # refutes, and a suspicion that crosses a healed partition and comes back
-      # refuted.
+      # refuted. The Raymond stories: the textbook request path and every
+      # refusal. The composed stories: the privilege that will not move while
+      # the actor is held, the offer that is not enough without the privilege,
+      # and a seizure that leaves its victim fenced and owing a reconciliation.
       - name: The service stories
         run: |
           cargo +stable test --features service --locked \
@@ -490,4 +493,8 @@ jobs:
             --test raft_store \
             --test swim_membership \
             --test swim_turmoil \
+            --test raymond_routing \
+            --test raymond_turmoil \
+            --test composed_handover \
+            --test composed_turmoil \
             -- --nocapture

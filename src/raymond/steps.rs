@@ -66,10 +66,6 @@ pub enum RayRefusal {
     HeadNotANode,
 }
 
-// ---------------------------------------------------------------------------
-// The guards, at the model's level
-// ---------------------------------------------------------------------------
-
 /// `ray_make_request`'s guard: this node is not the root, has something queued,
 /// and has not already asked.
 pub open spec fn make_request_fires(me: nat, holder: nat, queue_len: nat, asked: bool) -> bool {
@@ -128,10 +124,6 @@ pub open spec fn enter_cs_fires(
 pub open spec fn exit_cs_fires(using: bool) -> bool {
     using
 }
-
-// ---------------------------------------------------------------------------
-// The executable steps
-// ---------------------------------------------------------------------------
 
 /// Forward a request one hop towards the privilege. Returns where it goes: the
 /// holder pointer, resolved *now*, which is what the model records.

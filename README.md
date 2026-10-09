@@ -235,6 +235,7 @@ verifying, the build fails.
 | R14 | **Reconciliation repairs the belief**: the stale holder drops it, leaves the critical section it thought it was in, and re-points at the real holder | `raymond::proofs::routing_layer::lemma_reconcile_preserves_inv` | Raymond invariant |
 | R11 | **The holder pointers are acyclic** — part of `ray_inv`, preserved by every transition. A handover rewrites two pointers and needs a new rank (the old one shifted up by one, new root at zero); a seizure only makes the new holder point at itself, which *removes* a constraint, so the old rank still works | `raymond::proofs::routing_layer::lemma_frame_acyclic`, `lemma_repoint_acyclic` | Raymond invariant |
 | R12 | **Every node reaches the privilege holder by following holder pointers** — what makes "requests travel hop-by-hop towards the token" a checked claim. Two hypotheses, both load-bearing: R11 says the walk terminates rather than circling, and `ray_no_stale_holders` says it terminates at the real holder rather than at somebody who merely thinks so. The second was free when authority *was* belief; it is not free now, and it should not be — after a seizure a node whose belief-path leads to the seized holder genuinely cannot route to the privilege | `raymond::proofs::routing_layer::theorem_every_node_reaches_the_token` | Raymond invariant, `ray_no_stale_holders` |
+| R15 | **The executable routing steps agree with the model, in both directions.** For each of `MakeRequest`, `ReceiveRequest`, `AssignPrivilege`, `EnterCs` and `ExitCs`: when the step fires the model's transition fires, to exactly the state computed; when it refuses, the model's transition is not enabled in *any* post-state. `AssignPrivilege`'s guard reads **both** `privilege == me` and `holder == me` — a step that read only the belief would let a stale holder pass a privilege it does not have — while `EnterCs`'s deliberately reads only the belief, as the model's does | `raymond::proofs::refinement::theorem_make_request_step_refines`, `theorem_receive_request_step_refines`, `theorem_assign_step_refines`, `theorem_enter_cs_step_refines`, `theorem_exit_cs_step_refines` and their `..._refuses_exactly_when_disabled` counterparts, `theorem_request_cs_post_is_the_model_step` | the couplings in the module's table: the scalars a step reads are the router's own table, read under its lock |
 | C1 | **Election Safety — at most one leader per term.** The headline. Three sentences: a leader won a majority; any two majorities share a member; a member votes once per term | `raft::proofs::election::theorem_election_safety`, `..._reachable` | the Raft invariant, discharged for reachable states by `theorem_reachable_raft_inv` |
 | C2 | **Any two majorities of a cluster share a member.** The one piece of real mathematics, and the reason Raft needs no coordinator: two disjoint subsets whose sizes sum past the whole would make a union larger than a set containing it | `raft::proofs::election::lemma_quorums_intersect` | none |
 | C3 | **A server votes at most once per term** — sentence three, and the clause `tr_grant_vote`'s guard exists to maintain | `raft::proofs::election::inv_votes_unique`, preserved by `lemma_raft_step_preserves_inv` | the Raft invariant |
@@ -242,6 +243,8 @@ verifying, the build fails.
 | C5 | **The Raft invariant holds in every reachable state** (`raft_init ==> inv`, `inv /\ raft_next ==> inv`) | `raft::proofs::election::theorem_reachable_raft_inv` | the model's transition relation |
 | C6 | **A majority, once won, stays won** — votes only accumulate and the cluster does not change size, so a leader elected at term 7 remains, as a matter of record, the winner of term 7 | `raft::proofs::election::lemma_quorum_survives` | none |
 | C7 | **Terms never decrease, and votes are never retracted.** The Raft counterparts of epoch monotonicity (claim 5) and token permanence (P1) — and a vote is physical in the same sense a token is, which is exactly why a returning server must not vote again in a term it has already voted in | `raft::proofs::election::theorem_term_monotone_step`, `theorem_votes_monotone_step` | none |
+| C8 | **The coupling guards agree with the composed model.** `PassToken` fires only once the actor is `Unowned` and the routing layer's own step fires; `SeizeToken` only from the holder, to a different node, with the actor `Unowned`; `AcquireUnderToken` only for the node holding the privilege; `Reconcile` only for a node that owes one and whose belief is stale. Each refuses exactly when the composed model's transition is not enabled | `composed::proofs::refinement::theorem_pass_token_step_refines`, `theorem_pass_token_refuses_while_the_actor_is_held`, `theorem_pass_token_refuses_when_the_routing_step_does`, `theorem_seize_step_refines`, `theorem_seize_step_refuses_exactly_when_disabled`, `theorem_acquire_under_token_step_refines`, `theorem_acquire_under_token_refuses_a_node_without_the_privilege`, `theorem_reconcile_step_refines`, `theorem_reconcile_step_refuses_exactly_when_disabled` | **every node is live** (`own.live.contains(..)`) — the service has no `Crash` step, so it refines the composed machine's crash-free executions; see below |
+| C9 | **A step a layer already proved is carried by the composed machine without a second proof.** `cs_ray` adds only that the step does not move the privilege and that its actor is live; `cs_own` adds only that the step does not create authority over this actor and does not bring back a node owing a reconciliation | `composed::proofs::refinement::theorem_a_routing_step_is_carried`, `theorem_an_ownership_step_is_carried` | the hypotheses of the carried step |
 | C8 | **A lone self-vote is not a majority** in a cluster of more than one. The check that the `>` in the quorum threshold is load-bearing rather than decorative: with `>=` a single server could elect itself | `raft::proofs::election::theorem_a_lone_vote_is_not_a_majority` | a cluster of at least two |
 | C9 | **An election actually happens.** A concrete three-server cluster walked from initialisation through a real election, exported with every step named, so C1 is not a safety property of a protocol that never elects anybody | `raft::proofs::scenario::scenario_a_leader_is_elected` | none: the cluster is exhibited |
 | C10 | **The election steps refine the model**, in both directions: each executable step fires exactly when the model's transition is enabled, and lands where the model lands | `raft::proofs::refinement::theorem_timeout_step_refines_tr_timeout`, `..._grant_vote_...`, `..._become_leader_...`, `..._step_down_...`, and the `..._refuses_exactly_when_disabled` for each | the couplings, tabulated in `raft::proofs::refinement`'s module docs |
@@ -1375,10 +1378,20 @@ distributed-ownership/
 │   │       └── refinement.rs   steps.rs agrees with the model's tr_* transitions
 │   ├── raymond/            Raymond's mutual-exclusion routing layer
 │   │   ├── model.rs
-│   │   └── proofs/{routing_layer.rs, routing_run.rs}
+│   │   ├── steps.rs        the routing decisions as executable u64 functions
+│   │   ├── service/        the protocol over Jetstream RPC   [feature = "service"]
+│   │   │   ├── mod.rs      the Routing trait and what a node can see of itself
+│   │   │   ├── router.rs   the whole routing record, behind one lock
+│   │   │   └── refusal.rs  the refusals, in the line protocol's alphabet
+│   │   └── proofs/{routing_layer.rs, routing_run.rs, refinement.rs}
 │   ├── composed/           ownership and Raymond as one machine
 │   │   ├── model.rs        the coupling enforced by guards, not assumed
-│   │   └── proofs/{coupling.rs, scenario.rs}
+│   │   ├── steps.rs        the coupling guards as executable functions
+│   │   ├── service/        the two layers behind one coordinator [feature = "service"]
+│   │   │   ├── mod.rs      the Composed trait: ownership + routing + the coupling
+│   │   │   ├── coordinator.rs  both layers, and the gate that serialises them
+│   │   │   └── refusal.rs  the refusals, in the line protocol's alphabet
+│   │   └── proofs/{coupling.rs, scenario.rs, refinement.rs}
 │   ├── raft/               consensus: terms, votes, quorums, the log
 │   │   ├── model.rs        state space + transition relation
 │   │   ├── steps.rs        the election decisions as executable u64 functions
@@ -1419,6 +1432,10 @@ distributed-ownership/
 │   ├── raft_election.rs        a split vote elects one leader  [feature = "service"]
 │   ├── raft_log.rs             the consistency check and figure 8 [feature = "service"]
 │   ├── raft_wire.rs            the service over a simulated network [feature = "service"]
+│   ├── raymond_routing.rs      the textbook request path, and every refusal [feature = "service"]
+│   ├── raymond_turmoil.rs      the same path across hosts, on a simulated network [feature = "service"]
+│   ├── composed_handover.rs    the coupling: no move while held, no acquire without it [feature = "service"]
+│   ├── composed_turmoil.rs     the privilege moves only after the release, across hosts [feature = "service"]
 │   ├── swim_membership.rs      the merge rule in every order, and the refutation [feature = "service"]
 │   ├── swim_turmoil.rs         a suspicion crosses a healed partition and is refuted [feature = "service"]
 │   └── seeds/scenarios.txt     seeds that once broke something
@@ -1475,6 +1492,25 @@ specification layer, so a specification cannot be quietly weakened to fit the
 model.
 
 ## The protocol as a Jetstream service
+
+**Every algorithm in this repository has a service**, and each is a `#[service]
+trait` over Jetstream RPC implemented by a type that holds the algorithm's state
+behind one lock and calls the algorithm's verified step functions:
+
+| Algorithm | Trait | Implemented by | Executable steps | What the trait leaves off the wire |
+| --- | --- | --- | --- | --- |
+| ownership | `Ownership` | `Registry` | `ownership::steps` | `force` — the coordinator's own transition |
+| Raft | `Consensus` | `Peer` | `raft::steps` | standing for election, tallying votes, taking a term |
+| SWIM | `Membership` | `Node` | `swim::steps` | suspecting, declaring dead, refuting |
+| Raymond | `Routing` | `Router` | `raymond::steps` | — (every method acts on the caller's own entries) |
+| composed | `Composed` | `Coordinator` | `composed::steps` | seizing the privilege |
+
+The shape is the same each time, and so is what it buys: **no method takes the
+acting node's number**, because who is calling is the `Context` and a caller
+cannot forge it; and what a node does *to itself* is not something a peer can
+ask it to do on the wire. The sections below go through ownership in detail, and
+SWIM has its own [service section](#the-service); Raymond and the composed
+machine are summarised here.
 
 Everything above is a model and a simulation of it. `src/ownership/service.rs` is the
 protocol served over [Jetstream](https://github.com/sevki/jetstream) RPC — a
@@ -1578,6 +1614,56 @@ Its dependency graph resolves, but the environment it was written in cannot
 reach crates.io's tarballs, so **CI is the first place it is compiled**. That is
 the same footing the fuzz target was on when it was added, and it is stated here
 rather than discovered.
+
+### Raymond and the composed machine
+
+**Raymond's `Router` hosts the whole routing record in one process**, the way the
+ownership `Registry` hosts `System::actors`. That is the model's own shape —
+`Raymond` is one struct — and it is what lets the router tell `privilege` (where
+the privilege *is*) from `holder` (what a node *believes*), the split the whole
+stale-holder analysis rests on. It is also a limit worth saying plainly: **this
+checks Raymond's rules, it does not distribute them.** A deployment where each
+node keeps only its own entries and messages carry the rest is a different
+system with a different failure model, and nothing in `raymond::model` says it
+is refined by this one. `Routing` has one method per labelled model step a node
+takes (`request_cs`, `make_request`, `receive_request`, `assign_privilege`,
+`enter_cs`, `exit_cs`), each acting on the caller's own entries.
+`receive_request` does take a `from`, and that is not the same thing as naming
+the acting node: it is the node the request is *about*, checked against the
+router's own record of what has been sent, so naming a node that never sent one
+is refused rather than believed.
+
+**The composed `Coordinator` is the two services and the guards between them.**
+Almost all of it is delegation, because `cs_own` and `cs_ray` carry a step the
+layers have already proved (C9). What it adds is the coupling: the privilege moves
+only once the actor has been released (`assign_privilege`), authority is taken
+only by the node holding the privilege (`acquire`), and the privilege can be
+seized from a holder that does not cooperate (`Coordinator::seize_token`,
+inherent — no node may cause it) leaving that holder owing a reconciliation
+(`reconcile`). Every method takes one **gate** first, because the coupling reads
+both layers' state in one decision: with two locks taken one after the other, an
+`acquire` could slip in between the registry's "unowned" and the privilege
+moving, stranding authority at a node that no longer holds the privilege.
+
+**What the composed service does not claim.** The composed *model* guards some
+steps on `own.live`, which is ground truth — whether a node has crashed is not
+something any process can evaluate. The service has no `Crash` or `Recover`, so
+it refines the composed machine's **crash-free** executions, where every liveness
+guard is vacuously true; C8 states `live.contains(..)` as a hypothesis rather than
+dropping it. That cut does not lose the case the machine exists for:
+`SeizeToken` has no liveness guard on the node it takes the privilege *from*, so
+seizing from a holder that is merely unreachable — the wrongly-suspected node a
+real coordinator cannot tell from a dead one — is inside the fragment. And a
+standalone `Router` never creates a stale holder; seizure is the composed
+machine's step, because the revocation that justifies it is visible there.
+
+`tests/raymond_routing.rs` runs the textbook request path (`D -> B -> A -> C` and
+the privilege back) and every refusal; `tests/composed_handover.rs` checks the
+refusals that make the composition mean something — the privilege will not move
+while the actor is held, a node offered the actor without the privilege cannot
+take it, a seized holder is fenced and must reconcile. `tests/raymond_turmoil.rs`
+and `tests/composed_turmoil.rs` run the same stories across simulated hosts, one
+host per node, so the coordinator learns who is acting from the connection.
 
 ## Verifying locally
 
@@ -2039,7 +2125,11 @@ CI, with no `assume`/`admit`/`external_body`/`axiom`):
   — and, lifted through every step of a run, no node's record about any peer
   ever moves backward (S1–S6); the executable merge is that rule, and a
   refutation out-ranks the accusation it answers and is itself a gossip step
-  (S7–S9).
+  (S7–S9);
+* the Raymond routing steps and the composed machine's coupling guards agree
+  with their models in both directions — each fires exactly when the model's
+  transition is enabled — and a step a layer already proved is carried by the
+  composed machine without a second proof (R15, C8–C9).
 
 **Modelled but not proven** (present in the state machine, no theorem beyond
 invariant preservation):
@@ -2103,6 +2193,21 @@ invariant preservation):
   world backward (S5). See
   [SWIM](#swim-gossip-membership-bought-by-merge-rather-than-majority) for
   which half of the convergence argument that is.
+
+* **The Raymond and composed services host the global record in one process.**
+  `raymond::service::Router` holds every node's entries under one lock because
+  the model's `Raymond` is one struct, and the composed `Coordinator` serialises
+  both layers behind a gate because the coupling reads both. They check
+  Raymond's rules; they do not distribute them. A deployment where each node
+  keeps only its own entries is a different system, and nothing here says it is
+  refined by this one.
+
+* **The composed service refines the crash-free executions only.** The composed
+  model guards some steps on `own.live`, which is ground truth and not something
+  a process can evaluate; the service has no `Crash` or `Recover`, and C8 states
+  liveness as a hypothesis. Seizing from a holder that is merely unreachable is
+  inside the fragment, because `SeizeToken` has no liveness guard on the node it
+  takes the privilege from.
 
 * **SWIM has no voluntary-leave state.** memberlist distinguishes a graceful
   departure (`StateLeft`) from a failure-detected one (`StateDead`), with its

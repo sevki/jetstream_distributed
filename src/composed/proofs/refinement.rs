@@ -38,10 +38,6 @@ use crate::raymond::steps::*;
 
 verus! {
 
-// ---------------------------------------------------------------------------
-// The post-states, built explicitly
-// ---------------------------------------------------------------------------
-
 /// Where `PassToken` sends the composed machine: the routing layer's
 /// assignment, ownership untouched, and the recipient's debt discharged —
 /// receiving the privilege *is* learning the truth.
@@ -114,10 +110,6 @@ pub open spec fn acquire_under_token_post(c: Composed, n: NodeId) -> Composed {
     }
 }
 
-// ---------------------------------------------------------------------------
-// PassToken
-// ---------------------------------------------------------------------------
-
 /// When the routing layer's own step fires and the actor has been released, the
 /// composed machine passes the token — to exactly the state computed.
 pub proof fn theorem_pass_token_step_refines(c: Composed, n: NodeId, head: NodeId)
@@ -189,10 +181,7 @@ pub proof fn theorem_pass_token_refuses_when_the_routing_step_does(
     theorem_assign_step_refuses_exactly_when_disabled(c.ray, post.ray, n, head);
 }
 
-// ---------------------------------------------------------------------------
-// SeizeToken
-// ---------------------------------------------------------------------------
-
+/// When the seize step fires, `cs_seize_token` fires, to exactly the state computed: only `to` acts, and `from` now owes a reconciliation.
 pub proof fn theorem_seize_step_refines(c: Composed, from: NodeId, to: NodeId)
     requires
         c.own.actors.contains_key(c.actor),
@@ -212,6 +201,7 @@ pub proof fn theorem_seize_step_refines(c: Composed, from: NodeId, to: NodeId)
     assert(c.ray.nodes.contains(from));
 }
 
+/// A refused seizure is a transition the composed model could not have taken either.
 pub proof fn theorem_seize_step_refuses_exactly_when_disabled(
     c: Composed,
     post: Composed,
@@ -231,10 +221,6 @@ pub proof fn theorem_seize_step_refuses_exactly_when_disabled(
         !cs_seize_token(c, post, from, to),
 {
 }
-
-// ---------------------------------------------------------------------------
-// AcquireUnderToken
-// ---------------------------------------------------------------------------
 
 /// When the ownership layer's own acquire fires and the node holds the
 /// privilege, the composed machine acquires — to exactly the state computed.
@@ -270,10 +256,7 @@ pub proof fn theorem_acquire_under_token_refuses_a_node_without_the_privilege(
 {
 }
 
-// ---------------------------------------------------------------------------
-// Reconcile
-// ---------------------------------------------------------------------------
-
+/// When the reconcile step fires, `cs_reconcile` fires, to exactly the state computed.
 pub proof fn theorem_reconcile_step_refines(c: Composed, n: NodeId)
     requires
         ray_maps_total(c.ray),
@@ -284,6 +267,7 @@ pub proof fn theorem_reconcile_step_refines(c: Composed, n: NodeId)
 {
 }
 
+/// A refused reconciliation is a transition the composed model could not have taken either.
 pub proof fn theorem_reconcile_step_refuses_exactly_when_disabled(
     c: Composed,
     post: Composed,
@@ -297,10 +281,6 @@ pub proof fn theorem_reconcile_step_refuses_exactly_when_disabled(
         !cs_reconcile(c, post, n),
 {
 }
-
-// ---------------------------------------------------------------------------
-// The steps the layers already proved
-// ---------------------------------------------------------------------------
 
 /// **A routing step the Raymond layer proved is carried by the composed
 /// machine.** `cs_ray` adds only that the step does not move the privilege and

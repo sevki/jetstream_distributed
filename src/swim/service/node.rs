@@ -71,6 +71,20 @@ impl Node {
                 format!("node {me} is not on the roster"),
             ));
         }
+        // A `sync` reply is the whole table, and the node that asked feeds it
+        // through `apply`, which refuses more than `MAX_UPDATES` entries. A
+        // roster bigger than that could never complete its own push/pull, so it
+        // is refused here rather than discovered there.
+        let members: BTreeSet<u64> = roster.values().copied().collect();
+        if members.len() > MAX_UPDATES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "{} members exceed the {MAX_UPDATES}-update message limit",
+                    members.len()
+                ),
+            ));
+        }
         Ok(Node {
             inner: Arc::new(Mutex::new(Inner {
                 table: HashMap::new(),
@@ -109,21 +123,44 @@ impl Node {
         self.inner.lock().expect("node lock").log.clone()
     }
 
-    /// **A probe of `node` failed**: believe it suspect, at the incarnation this
-    /// node last heard for it.
+    /// **A probe of `node` failed**: believe it suspect, at `incarnation` — the
+    /// one this node had recorded for it *when the probe began*.
+    ///
+    /// The incarnation is an argument, not something re-read here, and that is
+    /// the point: a probe is slow, and a refutation can land while it is in
+    /// flight. A suspicion at the old incarnation then loses to the refutation
+    /// in [`merge_step`] and changes nothing; one that re-read the table would
+    /// accuse the *new* incarnation of a failure it never had.
     ///
     /// Inherent rather than on the trait, so that nobody can make this node
     /// suspect anything: a node suspects a peer because *its own* probe timed
-    /// out. Returns whether that changed what the node believes — suspecting
-    /// something already suspect, or already dead, changes nothing.
-    pub fn suspect(&self, node: u64) -> Result<bool> {
-        self.accuse(node, ExecStatus::Suspect)
+    /// out. Returns whether that changed what the node believes.
+    pub fn suspect(&self, node: u64, incarnation: u64) -> Result<bool> {
+        let accusation = ExecRecord {
+            incarnation,
+            status: ExecStatus::Suspect,
+        };
+        self.accuse(node, accusation, None)
     }
 
-    /// **A suspicion timed out**: believe `node` dead, at the incarnation this
-    /// node last heard for it.
-    pub fn declare_dead(&self, node: u64) -> Result<bool> {
-        self.accuse(node, ExecStatus::Dead)
+    /// **A suspicion timed out**: believe `node` dead — but only if it is still
+    /// suspect at `incarnation`, the one the timer was started for.
+    ///
+    /// A timer that outlives its suspicion is a no-op. If the node refuted in
+    /// the meantime its record is `Alive` at a higher incarnation, and declaring
+    /// *that* dead would kill an incarnation nobody suspected. The check is made
+    /// under the same lock as the write, so an RPC cannot slip a refutation in
+    /// between the two.
+    pub fn declare_dead(&self, node: u64, incarnation: u64) -> Result<bool> {
+        let accusation = ExecRecord {
+            incarnation,
+            status: ExecStatus::Dead,
+        };
+        let still_suspect = ExecRecord {
+            incarnation,
+            status: ExecStatus::Suspect,
+        };
+        self.accuse(node, accusation, Some(still_suspect))
     }
 
     /// Merge a batch of updates, as a received message would.
@@ -170,7 +207,14 @@ impl Node {
             .collect()
     }
 
-    fn accuse(&self, node: u64, status: ExecStatus) -> Result<bool> {
+    /// Merge an accusation about a peer, if `required` (when given) is still
+    /// exactly what this node holds for it.
+    fn accuse(
+        &self,
+        node: u64,
+        accusation: ExecRecord,
+        required: Option<ExecRecord>,
+    ) -> Result<bool> {
         if node == self.me {
             return Err(refuse_no("a node does not accuse itself"));
         }
@@ -179,17 +223,11 @@ impl Node {
         }
         let mut g = self.inner.lock().expect("node lock");
         let held = g.table.get(&node).copied().unwrap_or_else(fresh);
+        if required.is_some_and(|r| !same(held, r)) {
+            return Ok(false);
+        }
         let before = g.log.len();
-        self.merge_one(
-            &mut g,
-            Update::of(
-                node,
-                ExecRecord {
-                    incarnation: held.incarnation,
-                    status,
-                },
-            ),
-        )?;
+        self.merge_one(&mut g, Update::of(node, accusation))?;
         Ok(g.log.len() != before)
     }
 

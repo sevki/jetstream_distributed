@@ -150,7 +150,7 @@ fn a_suspected_node_that_is_alive_refutes_over_the_wire() {
             TcpStream::connect(("b", PORT)).await.is_err(),
             "the partition must actually cut b off"
         );
-        assert!(a.suspect(1).unwrap(), "a probe failed, so a suspects");
+        assert!(a.suspect(1, 0).unwrap(), "a probe failed, so a suspects");
         assert_eq!(a.record(1), Some(u(1, 0, Liveness::Suspect)));
 
         turmoil::repair("a", "b");

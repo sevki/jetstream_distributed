@@ -1,4 +1,4 @@
-//! # distributed-ownership
+//! # jetstream_distributed
 //!
 //! Machine-checked distributed protocols, and the Jetstream services that speak
 //! them.

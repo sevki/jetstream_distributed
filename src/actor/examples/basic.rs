@@ -6,11 +6,17 @@
 //! time. `ActorAImpl` is generic over `B: ActorB` and cannot tell. `main` reaches
 //! `A` the same way, through `A`'s mailbox.
 
+use std::num::NonZeroU32;
+
 use jetstream::prelude::*;
-use jetstream_distributed::actor::service::{Delivery, Mailbox, Session, serve};
+use jetstream_distributed::actor::service::{Capacity, Delivery, Mailbox, Session, serve};
 
 use actora_protocol::{ActorAChannel, ActorAService};
 use actorb_protocol::{ActorBChannel, ActorBService};
+
+/// How many messages each mailbox holds before a sender has to wait. Always the
+/// caller's to say.
+const MAILBOX: Capacity = Capacity::Bounded(NonZeroU32::new(16).unwrap());
 
 #[service]
 trait ActorA {
@@ -50,7 +56,7 @@ impl ActorB for ActorBImpl {
 #[tokio::main]
 async fn main() -> Result<()> {
     // B, behind its mailbox.
-    let b_mailbox = Mailbox::<Delivery<ActorBChannel>>::new();
+    let b_mailbox = Mailbox::<Delivery<ActorBChannel>>::new(MAILBOX);
     let mut b = ActorBService { inner: ActorBImpl };
     tokio::spawn({
         let mailbox = b_mailbox.clone();
@@ -60,7 +66,7 @@ async fn main() -> Result<()> {
     b_channel.negotiate_version(u32::MAX).await?;
 
     // A, holding a channel to B, behind its own mailbox.
-    let a_mailbox = Mailbox::<Delivery<ActorAChannel>>::new();
+    let a_mailbox = Mailbox::<Delivery<ActorAChannel>>::new(MAILBOX);
     let mut a = ActorAService {
         inner: ActorAImpl { b: b_channel },
     };

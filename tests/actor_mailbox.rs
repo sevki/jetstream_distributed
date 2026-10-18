@@ -7,10 +7,15 @@
 //! generic over `B: ActorB` and cannot tell.
 
 use std::collections::HashMap;
+use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use jetstream_distributed::actor::service::{serve, Delivery, Mailbox, Session};
+/// Room for more messages than any test here has in flight, so it never gets in
+/// the way. A mailbox's capacity is always the caller's to say.
+const ROOM: Capacity = Capacity::Bounded(NonZeroU32::new(64).unwrap());
+
+use jetstream_distributed::actor::service::{serve, Capacity, Delivery, Mailbox, Session};
 use jetstream::prelude::*;
 
 use actorb_protocol::{ActorBChannel, ActorBService};
@@ -75,7 +80,7 @@ struct Hosted {
 }
 
 fn host_b() -> Hosted {
-    let mailbox = Mailbox::new();
+    let mailbox = Mailbox::new(ROOM);
     let b = ActorBImpl::default();
     let mut service = ActorBService { inner: b.clone() };
     let drain = mailbox.clone();
@@ -128,7 +133,7 @@ impl ActorB for StuckB {
 #[tokio::test]
 async fn aborting_the_drain_mid_request_answers_only_that_request() {
     const WAIT: std::time::Duration = std::time::Duration::from_secs(5);
-    let mailbox: Mailbox<Delivery<ActorBChannel>> = Mailbox::new();
+    let mailbox: Mailbox<Delivery<ActorBChannel>> = Mailbox::new(ROOM);
     let mut stuck = ActorBService { inner: StuckB };
     let drain = tokio::spawn({
         let mailbox = mailbox.clone();
@@ -227,6 +232,76 @@ async fn a_closed_session_lets_go_of_its_tasks() {
     })
     .await
     .expect("closing the session ends the channel's tasks");
+}
+
+/// A `B` that handles nothing until it is let go.
+#[derive(Clone)]
+struct GatedB {
+    gate: Arc<tokio::sync::Semaphore>,
+}
+
+impl ActorB for GatedB {
+    async fn b(&self, _ctx: Context, _from: u64, n: u64) -> Result<u64> {
+        let _through = self.gate.acquire().await.expect("the gate is never closed");
+        Ok(n)
+    }
+}
+
+/// A mailbox holds what it was given room for. With the actor stuck and more
+/// callers than room, the rest wait for a slot instead of piling up in the queue
+/// — and once the actor goes on, every one of them is answered.
+#[tokio::test]
+async fn a_full_mailbox_holds_its_callers_back_not_its_queue() {
+    const WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+    const CALLERS: u64 = 12;
+    let room = NonZeroU32::new(2).unwrap();
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+
+    let mailbox: Mailbox<Delivery<ActorBChannel>> = Mailbox::new(Capacity::Bounded(room));
+    let mut service = ActorBService {
+        inner: GatedB { gate: gate.clone() },
+    };
+    tokio::spawn({
+        let mailbox = mailbox.clone();
+        async move { serve(mailbox, &mut service).await }
+    });
+
+    let session = Session::new(mailbox.clone(), Context::default());
+    let closer = session.closer();
+    let channel = Arc::new(ActorBChannel::new(64, Box::new(session)));
+    // The version handshake is a request too, and it is not gated.
+    channel
+        .negotiate_version(u32::MAX)
+        .await
+        .expect("the actor speaks this version");
+
+    let calls: Vec<_> = (0..CALLERS)
+        .map(|n| {
+            let channel = channel.clone();
+            tokio::spawn(async move { channel.b(Context::default(), 1, n).await })
+        })
+        .collect();
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    assert!(
+        mailbox.queued() <= u64::from(room.get()),
+        "{} queued in a mailbox with room for {room}",
+        mailbox.queued()
+    );
+    assert!(
+        calls.iter().all(|call| !call.is_finished()),
+        "nothing is answered while the actor is stuck"
+    );
+
+    gate.add_permits(CALLERS as usize);
+    for call in calls {
+        tokio::time::timeout(WAIT, call)
+            .await
+            .expect("every caller was answered once the actor went on")
+            .unwrap()
+            .expect("and succeeded");
+    }
+    drop(closer);
 }
 
 /// The same `A`, over the implementation itself: no mailbox, no channel. The

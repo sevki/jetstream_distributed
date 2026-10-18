@@ -14,7 +14,8 @@
 //!
 //! # The sender's steps are the sink's
 //!
-//! `start_send` is [`Mailbox::enqueue`]: the request is on the queue. `poll_flush`
+//! `poll_ready` reserves a slot ([`Mailbox::poll_reserve`]) and `start_send` is
+//! [`Permit::enqueue`]: the request is on the queue. `poll_flush`
 //! is the rest of the sender's operation — [`Mailbox::set_state`] and
 //! [`Mailbox::schedule`] — which is where the drain is woken. They are separate
 //! methods because they are separate steps in the model, and the protocol's bug
@@ -38,7 +39,8 @@
 //! * **Subscriptions.** Streaming methods, and cancelling them, are served by
 //!   `jetstream_rpc::server::run` on a lane, and a mailbox delivers one request
 //!   and takes one response.
-//! * **Backpressure.** The mailbox is unbounded, so `poll_ready` is always ready.
+//! * **Backpressure on replies.** The mailbox is bounded, and a full one makes
+//!   `poll_ready` wait; the reply channel back to each session is not.
 
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -50,7 +52,7 @@ use jetstream::prelude::jetstream_rpc::server::Server;
 use jetstream::prelude::*;
 use tokio::sync::mpsc;
 
-use super::Mailbox;
+use super::{Mailbox, Permit};
 
 /// One request, on its way to the actor: who sent it, what it says, and where
 /// the answer goes.
@@ -69,6 +71,9 @@ pub struct Session<P: Protocol> {
     replies: mpsc::UnboundedReceiver<Result<Frame<P::Response>>>,
     /// Requests enqueued whose `set_state` and `schedule` have not run.
     unannounced: AtomicU64,
+    /// The slot `poll_ready` reserved for the request `start_send` is about to
+    /// enqueue.
+    permit: Option<Permit<Delivery<P>>>,
 }
 
 impl<P: Protocol> Session<P> {
@@ -81,6 +86,7 @@ impl<P: Protocol> Session<P> {
             reply,
             replies,
             unannounced: AtomicU64::new(0),
+            permit: None,
         }
     }
 
@@ -122,17 +128,26 @@ impl<P: Protocol> Drop for Closer<P> {
 impl<P: Protocol> Sink<Frame<P::Request>> for Session<P> {
     type Error = Error;
 
-    fn poll_ready(self: Pin<&mut Self>, _: &mut task::Context<'_>) -> Poll<Result<()>> {
+    /// Ready once the mailbox has a slot for the request, reserved for it. A full
+    /// mailbox leaves the caller waiting here, and the drain wakes it.
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Result<()>> {
+        if self.permit.is_none() {
+            let permit = std::task::ready!(self.mailbox.poll_reserve(cx));
+            self.permit = Some(permit);
+        }
         Poll::Ready(Ok(()))
     }
 
-    fn start_send(self: Pin<&mut Self>, frame: Frame<P::Request>) -> Result<()> {
+    fn start_send(mut self: Pin<&mut Self>, frame: Frame<P::Request>) -> Result<()> {
+        let Some(permit) = self.permit.take() else {
+            return Err(Error::new("start_send without a successful poll_ready"));
+        };
         let delivery = Delivery {
             from: self.from.clone(),
             frame,
             reply: self.reply.clone(),
         };
-        self.mailbox.enqueue(delivery);
+        permit.enqueue(delivery);
         self.unannounced.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }

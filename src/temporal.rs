@@ -31,7 +31,7 @@
 //! * [`lemma_leads_to_trans`], [`lemma_leads_to_cases`] — chaining, and splitting
 //!   on cases.
 //!
-//! Every rule is *proved*, not assumed. Nothing in this file is an axiom.
+//! Every rule is *proved*, not assumed: the file introduces no unproved facts.
 #![allow(unused_imports)]
 
 use vstd::prelude::*;

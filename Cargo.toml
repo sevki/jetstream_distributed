@@ -173,3 +173,13 @@ required-features = ["service"]
 name = "composed_turmoil"
 path = "tests/composed_turmoil.rs"
 required-features = ["service"]
+
+[[test]]
+name = "actor_journal"
+path = "tests/actor_journal.rs"
+required-features = ["service"]
+
+[[test]]
+name = "actor_turmoil"
+path = "tests/actor_turmoil.rs"
+required-features = ["service"]

@@ -482,6 +482,9 @@ jobs:
       # refusal. The composed stories: the privilege that will not move while
       # the actor is held, the offer that is not enough without the privilege,
       # and a seizure that leaves its victim fenced and owing a reconciliation.
+      # The actor stories: a message accepted once and in order however it is
+      # delivered, a handover that keeps the journal and fences the old host, and
+      # the whole of it across simulated hosts.
       - name: The service stories
         run: |
           cargo +stable test --features service --locked \
@@ -497,4 +500,6 @@ jobs:
             --test raymond_turmoil \
             --test composed_handover \
             --test composed_turmoil \
+            --test actor_journal \
+            --test actor_turmoil \
             -- --nocapture

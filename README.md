@@ -30,8 +30,11 @@ shape - the actor is `Owned`, the caller is the owner, and the caller's fencing
 epoch is exactly the actor's current epoch - and because the protocol's
 transitions provably keep it that way.
 
-This is a *model*. There is no networking, no persistence and no actor runtime
-here, and that is deliberate.
+The core of this repository is a *model*, and the proofs are about the model.
+Each algorithm also has a service over Jetstream RPC, which runs the verified step
+functions; what those services do and do not claim is stated in
+[The protocol as a Jetstream service](#the-protocol-as-a-jetstream-service) and
+in each module's docs.
 
 ## Relation to Chubby
 
@@ -1241,6 +1244,68 @@ reported `false` when the model's `has_voted` was true. `tests/raft_election.rs`
 runs that in both directions: a restarted voter that refuses the second request,
 and a forgetful one that grants it and elects two leaders.
 
+## Actor: a journal fenced by ownership
+
+An actor in a single process is single-threaded by construction, so it never has
+to say what it guarantees. Spread over machines it does, and the guarantees are
+exactly the ones a single process gets for free: **one thing at a time**, **each
+message once**, **in the order sent**, and **state that survives** moving.
+
+`src/actor/` proves those four, and it does so by one decision: **the actor's
+state is not held by its host.** It is a *journal* — the ordered sequence of
+messages the actor has accepted — and the state is a fold over it
+(`actor::model::state_of`). Appending to the journal is the one thing a host does
+that matters, and it is **fenced by the ownership protocol**: `as_accept` requires
+`ownership::spec::can_mutate` at the epoch the host presents, which is
+`Owned { host, epoch }` and nothing else. A host that is not the owner, or owns a
+generation that has been superseded, cannot append. Nothing about the actor needs
+a second fence; the journal write *is* the mutation the ownership protocol fences.
+
+Everything else follows from three facts: only the owner at the current epoch can
+append (the ownership layer's exclusivity and fencing, used as-is); an append is
+accepted only if the message's sequence number is **exactly** the number already
+accepted from its sender (so a duplicate and a message ahead of its turn are the
+same refusal); and the journal is only ever extended.
+
+The network may delay, duplicate and reorder — `ActorSystem::sent` never shrinks,
+so a message can be offered to the host any number of times, in any order. None of
+that is a separate failure mode: it is what `as_accept` is already quantified over.
+
+| # | claim | theorem | assumes |
+| --- | --- | --- | --- |
+| A1 | **At most one host can accept at any instant**, and at only one epoch — in *no* state at all do two different hosts both satisfy the authority guard | `actor::proofs::exclusive::theorem_at_most_one_host_can_accept` | none |
+| A2 | **A superseded host cannot accept.** Present any epoch behind the actor's current one and no post-state, whatever the message, satisfies `as_accept` — a returning stale owner's first append is refused | `actor::proofs::exclusive::theorem_a_superseded_host_cannot_accept` | none |
+| A3 | **Nobody accepts between owners.** While the actor is `Transferring` or `Unowned` there is no host to append — in particular not the outgoing owner, whose epoch was burned the moment the transfer began | `actor::proofs::exclusive::theorem_nobody_accepts_between_owners` | none |
+| A4 | **Only the owner accepts, and only at the current epoch** | `actor::proofs::exclusive::theorem_only_the_owner_accepts` | none |
+| A5 | **One host per epoch.** Across the whole life of the actor, two entries written at the same epoch were written by the same host. This is not A1 restated: A1 says two hosts cannot append *at once*; this says they cannot append *under one generation*, however far apart in time | `actor::proofs::exclusive::theorem_one_host_per_epoch` | reachability |
+| A6 | **Epochs never fall along the journal.** Nobody writes behind a newer host | `actor::proofs::exclusive::theorem_epochs_never_fall_along_the_journal` | reachability |
+| A7 | **Nothing is written under an epoch the actor has already left.** From any point of an execution on, every entry appended afterwards carries an epoch at least the actor's epoch at that point. Fencing as a fact about the *log* rather than about one request: A2 says a superseded host's attempt is refused, this says none of its writes can be found afterwards | `actor::proofs::exclusive::theorem_nothing_is_written_under_a_superseded_epoch` | an execution |
+| A8 | **Nothing is invented.** Every message in the journal was sent | `actor::proofs::delivery::theorem_only_sent_messages_are_accepted` | reachability |
+| A9 | **The nth message accepted from a sender is numbered n**, and **one sender's messages are accepted in the order sent** — the journal holds each sender's messages as 0, 1, 2, ...: none out of place, none repeated, none skipped | `actor::proofs::delivery::theorem_the_nth_message_from_a_sender_is_numbered_n`, `theorem_one_senders_messages_are_accepted_in_order` | reachability |
+| A10 | **A message is accepted at most once**, however many times the network delivers it | `actor::proofs::delivery::theorem_a_message_is_accepted_at_most_once` | reachability |
+| A11 | **A redelivered message is refused**, by the current host at the current epoch — the one pair otherwise allowed to append — and **a message ahead of its turn is refused** until the ones before it arrive. The first needs only the invariant, so a service holding a journal can use it to classify an arrival | `actor::proofs::delivery::theorem_a_redelivered_message_is_refused`, `theorem_a_message_ahead_of_its_turn_is_refused` | `actor_inv` |
+| A12 | **The journal is append-only.** Along any execution an earlier journal is a prefix of every later one: what the actor accepted, it keeps, in the order it accepted it — including across a handover | `actor::proofs::state::theorem_the_journal_is_append_only` | an execution |
+| A13 | **State survives.** An append is exactly one application of the behaviour; a handover changes neither the journal nor the state; and a run continues the state rather than restarting it — between two points of an execution, the later state is the earlier one with the intervening entries replayed on top. The new owner does not receive the state from the old one; it reads the same journal and recomputes it | `actor::proofs::state::theorem_accepting_applies_the_behaviour`, `theorem_a_handover_preserves_the_state`, `theorem_the_state_continues_across_a_run` | an execution |
+| A14 | **The executable steps agree with the model, in both directions**: when `accept_step` fires the model's `Accept` fires to exactly the state computed, and when it refuses the model's transition is not enabled in any post-state; the host's count stays right across an append; and the fence answer the step is handed *is* the model's `can_mutate` | `actor::proofs::refinement::theorem_accept_step_refines`, `theorem_accept_step_refuses_exactly_when_disabled`, `theorem_send_step_refines`, `theorem_accepting_advances_the_count_by_one`, `theorem_the_fence_answer_is_the_models_authority` | the couplings in the module's table |
+| A15 | **The guarantees are not vacuous.** One concrete run, through the ownership protocol's real transitions: `A` takes the actor and accepts a message, it is handed to `B` through grant, acquire, begin-transfer, revoke, release and acquire, and `B` accepts the next. It ends with two hosts and two epochs in one journal, and the old host and a redelivery are both refused | `actor::proofs::scenario::scenario_the_run_is_an_execution`, `scenario_the_run_ends_with_both_hosts_in_the_journal`, `scenario_the_old_host_is_refused`, `scenario_a_redelivery_is_refused` | none: the run is exhibited |
+
+All of A5–A13 rest on one inductive invariant (`actor::proofs::invariant::actor_inv`)
+whose six clauses are the inductive forms of the guarantees: nothing invented,
+sequence numbers equal prior counts, epochs bounded by the actor's current one,
+epochs ordered along the journal, one host per epoch, and — the clause that makes
+the last one provable — an entry written at the actor's *current* epoch was
+written by its *current* owner. `lemma_step_preserves_inv` shows every step
+preserves it, and `theorem_reachable_inv` that it holds in every reachable state.
+
+**What this is not.** It is a set of *safety* properties. Nothing says a message is
+ever delivered, or that a sender retries. An out-of-order arrival is *refused*, not
+buffered, so the sender (or a mailbox in front of the host) must retry in order for
+anything to make progress — the same line the other protocols here draw between
+safety and liveness. And the journal is assumed **durable and linear**: the model
+has no crash that loses an accepted entry, which is the actor's counterpart of the
+atomic-registry assumption the ownership layer makes, and the service keeps the
+journal in memory (see [The actor](#the-actor)).
+
 ## SWIM: gossip membership, bought by merge rather than majority
 
 Ownership and Raft both spend a majority round-trip to get one authoritative
@@ -1394,6 +1459,21 @@ distributed-ownership/
 │   │   │   ├── coordinator.rs  both layers, and the gate that serialises them
 │   │   │   └── refusal.rs  the refusals, in the line protocol's alphabet
 │   │   └── proofs/{coupling.rs, scenario.rs, refinement.rs}
+│   ├── actor/              a distributed actor: a journal fenced by ownership
+│   │   ├── model.rs        envelopes, the journal, send / accept, the fold that is the state
+│   │   ├── steps.rs        accept, send and the behaviour as executable u64 functions
+│   │   ├── service/        the actor over Jetstream RPC   [feature = "service"]
+│   │   │   ├── mod.rs      the Actor trait and what goes on the wire
+│   │   │   ├── host.rs     the journal, the mailbox, and the registry that fences them
+│   │   │   └── refusal.rs  the refusals, in the line protocol's alphabet
+│   │   └── proofs/
+│   │       ├── journal.rs      counting and folding over push and take
+│   │       ├── invariant.rs    the six-clause invariant, and that every step preserves it
+│   │       ├── exclusive.rs    one host at a time; nothing written under a superseded epoch
+│   │       ├── delivery.rs     each message once, in order, none invented
+│   │       ├── state.rs        append-only; the state is a fold and survives a handover
+│   │       ├── refinement.rs   steps.rs agrees with the model's transitions
+│   │       └── scenario.rs     a run through a whole handover, and the refusals at its end
 │   ├── raft/               consensus: terms, votes, quorums, the log
 │   │   ├── model.rs        state space + transition relation
 │   │   ├── steps.rs        the election decisions as executable u64 functions
@@ -1434,6 +1514,8 @@ distributed-ownership/
 │   ├── raft_election.rs        a split vote elects one leader  [feature = "service"]
 │   ├── raft_log.rs             the consistency check and figure 8 [feature = "service"]
 │   ├── raft_wire.rs            the service over a simulated network [feature = "service"]
+│   ├── actor_journal.rs        the guarantees through the service, and every refusal [feature = "service"]
+│   ├── actor_turmoil.rs        an actor changes hands across hosts, nothing lost or repeated [feature = "service"]
 │   ├── raymond_routing.rs      the textbook request path, and every refusal [feature = "service"]
 │   ├── raymond_turmoil.rs      the same path across hosts, on a simulated network [feature = "service"]
 │   ├── composed_handover.rs    the coupling: no move while held, no acquire without it [feature = "service"]
@@ -1506,6 +1588,7 @@ behind one lock and calls the algorithm's verified step functions:
 | SWIM | `Membership` | `Node` | `swim::steps` | suspecting, declaring dead, refuting |
 | Raymond | `Routing` | `Router` | `raymond::steps` | — (every method acts on the caller's own entries) |
 | composed | `Composed` | `Coordinator` | `composed::steps` | seizing the privilege |
+| actor | `Actor` | `Host` | `actor::steps` | `force` — the coordinator's own transition |
 
 The shape is the same each time, and so is what it buys: **no method takes the
 acting node's number**, because who is calling is the `Context` and a caller
@@ -1666,6 +1749,53 @@ while the actor is held, a node offered the actor without the privilege cannot
 take it, a seized holder is fenced and must reconcile. `tests/raymond_turmoil.rs`
 and `tests/composed_turmoil.rs` run the same stories across simulated hosts, one
 host per node, so the coordinator learns who is acting from the connection.
+
+### The actor
+
+`actor::service::Host` holds an actor's journal and a mailbox of what has been sent,
+and **fences every append with the ownership `Registry` it is built around** — the
+same registry, with the same epoch floor, that the `Ownership` service serves. The
+actor adds nothing to the ownership protocol; it *uses* it. Four of `Actor`'s
+methods are the ownership calls, delegated (`poll`, `acquire`, `begin_transfer`,
+`release`); the others are `send`, `accept`, and two reads (`state`, `journal`).
+`accept` takes the `sender` whose message is being processed, and that is not the
+same thing as naming the acting node: it is checked against the mailbox, so a
+message that was never sent is refused rather than believed.
+
+An append reads the registry (is this host the owner at this epoch?) and writes the
+journal, so the registry is **built inside `Host::new`** from the one roster and
+every method takes a **gate** first — the same construction, for the same reason, as
+`composed::service`. The fence is asked first and about the registry's own record
+(`Registry::may_write`, which is `may_write_step`, which is `can_mutate`), so a host
+that is not the owner learns nothing about the journal. The behaviour is applied by
+the service, not the host: `accept` returns the state it produced, and a host that
+has just taken the actor catches up by reading the **journal**, not a copy of the
+previous host's memory.
+
+**What the actor service does not claim.**
+
+* **Its journal is in memory.** The model assumes the journal is durable and linear
+  — it has no crash that loses an accepted entry — and the service does not meet
+  that: a restarted `Host` has an empty journal and an epoch floor that remembers
+  only epochs. Durability is the next layer, and `raft::store`'s record store is the
+  shape it would take. Until then the guarantees hold for the lifetime of the
+  process, and not across its death.
+* **Crash-free executions only**, as in `composed::service`: no `Crash` or
+  `Recover`, because liveness is ground truth a process cannot evaluate.
+* **The behaviour is a pure fold.** The model's `apply` is a function from state and
+  message to state, taken modulo a machine word so the executable version is not
+  narrower. A real actor performs effects when it handles a message; nothing here
+  says what an effect does if its host is fenced halfway through. The guarantee is
+  about the *journal*, which is where the fence is.
+
+`tests/actor_journal.rs` runs the guarantees through the service — redelivery,
+messages ahead of their turn, the fence asked first, a handover that keeps the
+journal and fences the old host, a forced revocation, and all 24 orders of four
+messages from two senders each attempted twice, checked to give a well-formed
+journal whose state is the fold of whatever it holds. `tests/actor_turmoil.rs` runs
+the whole story across simulated hosts: a sender sends, the owner accepts, the
+actor is handed to another node, the old owner — still believing — is refused, and
+the new owner catches up from the journal.
 
 ## Verifying locally
 
@@ -2131,7 +2261,11 @@ CI, with no `assume`/`admit`/`external_body`/`axiom`):
 * the Raymond routing steps and the composed machine's coupling guards agree
   with their models in both directions — each fires exactly when the model's
   transition is enabled — and a step a layer already proved is carried by the
-  composed machine without a second proof (R15, C8–C9).
+  composed machine without a second proof (R15, C8–C9);
+* the distributed actor: at most one host appends, now and across handovers (one
+  host per epoch; nothing written under a superseded epoch); each message once, in
+  the order sent, none invented; the journal is append-only and the state is a fold
+  that a handover preserves; and the executable steps agree with the model (A1–A15).
 
 **Modelled but not proven** (present in the state machine, no theorem beyond
 invariant preservation):
@@ -2195,6 +2329,20 @@ invariant preservation):
   world backward (S5). See
   [SWIM](#swim-gossip-membership-bought-by-merge-rather-than-majority) for
   which half of the convergence argument that is.
+
+* **The actor's journal is assumed durable and linear, and the service's is in
+  memory.** The model has no crash that loses an accepted entry; the service's
+  journal dies with its process, so the guarantees hold for the lifetime of the
+  process and not across its death. Durability is the next layer.
+
+* **The actor proves safety, not delivery.** Nothing says a message is ever
+  delivered or that a sender retries; an out-of-order arrival is refused, not
+  buffered. The actor's behaviour is a pure fold, so what a message *does* beyond
+  changing the state — an effect, a reply — is not modelled, and neither is what
+  an effect does if its host is fenced halfway through.
+
+* **The actor service refines the crash-free executions only**, for the reason the
+  composed service does.
 
 * **The Raymond and composed services host the global record in one process.**
   `raymond::service::Router` holds every node's entries under one lock because

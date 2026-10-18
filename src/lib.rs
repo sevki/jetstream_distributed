@@ -23,6 +23,9 @@
 //!                   them proved rather than assumed.
 //! * [`raft`]      — consensus, where exclusivity is bought by counting
 //!                   instead of by assuming an atomic registry.
+//! * [`actor`]     — a distributed actor: a journal fenced by ownership, so one
+//!                   host at a time, each message once, in order, and state that
+//!                   survives a handover.
 //! * [`swim`]      — gossip membership, which buys neither exclusivity nor
 //!                   agreement, and promises only that disagreements resolve.
 //!
@@ -46,6 +49,7 @@
 //! `cargo +stable`, which is what Jetstream tracks.
 #![allow(unused_imports)]
 
+pub mod actor;
 pub mod composed;
 pub mod ownership;
 pub mod raft;

@@ -536,6 +536,17 @@ impl Registry {
         matches!(self.inner.lock().expect("registry lock").state, ExecState::Unowned { .. })
     }
 
+    /// Would the fence admit `node` presenting `epoch`, right now?
+    ///
+    /// Read-only, and it is [`may_write_step`] asked about the registry's own
+    /// record, so it is the model's `can_mutate`. `crate::actor::service` asks it
+    /// before deciding anything else about a message, so a host that is not the
+    /// owner learns nothing about the journal; the effect itself still goes
+    /// through [`Ownership::write`], which makes the same check under the lock.
+    pub fn may_write(&self, node: u64, epoch: u64) -> bool {
+        may_write_step(self.inner.lock().expect("registry lock").state, node, epoch)
+    }
+
     /// Which node is calling, from the connection rather than from the request.
     ///
     /// `None` when the caller is not on the roster, which is the only honest

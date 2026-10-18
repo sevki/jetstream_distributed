@@ -1477,7 +1477,7 @@ timing lives, and nothing in `swim::model` says anything about timing.
 
 ```text
 distributed-ownership/
-├── Cargo.toml              one crate; the services are behind a non-default feature
+├── Cargo.toml              one crate; the services are behind the `service` feature (on by default; the proofs build without it)
 ├── rust-toolchain.toml
 ├── README.md
 ├── src/
@@ -1602,13 +1602,14 @@ proof lived in one crate and whose implementation lived in another is a protocol
 where the two can drift without anything noticing; here they are compiled
 together and the service calls the functions the proofs are about.
 
-**The services are behind a feature that is off by default**, and that is what
-makes one crate workable. `verus --crate-type=lib src/lib.rs` and `cargo verus
-verify` both run with default features, so the verified build's dependency graph
-is `vstd` and nothing else — no Jetstream, no async runtime for Verus to be
-asked about, and no need for a single `#[verifier::external]` to keep service
-code out of the proofs. Turn the feature on and the same modules compile against
-the same verified step functions, under `cargo +stable`: `rust-toolchain.toml`
+**The services are behind a `service` feature**, which is on by default so that
+depending on the crate gives you them, and that feature is what makes one crate
+workable. `verus --crate-type=lib src/lib.rs` does not read features, and `cargo
+verus verify --no-default-features` turns it off, so the verified build's
+dependency graph is `vstd` and nothing else — no Jetstream, no async runtime for
+Verus to be asked about, and no need for a single `#[verifier::external]` to keep
+service code out of the proofs. With the feature on, the same modules compile
+against the same verified step functions, under `cargo +stable`: `rust-toolchain.toml`
 pins the Rust release the Verus build was made against so the **proofs** verify,
 not so a service is stuck on it.
 
@@ -1899,7 +1900,8 @@ ordinary rustc, verifies only `vstd`, prints *vstd's* `verification results`
 line and exits 0. It is a false green that survives a naive grep for the
 summary, because a summary is present — just not this crate's. The CI step
 therefore requires a summary emitted *after* Cargo starts compiling this
-crate.
+crate. It runs with `--no-default-features`, since `service` is a default feature
+and the proof build should not pull Jetstream and tokio in.
 
 ## Network resiliency: the model, run for real
 

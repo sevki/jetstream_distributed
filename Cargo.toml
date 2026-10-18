@@ -30,15 +30,16 @@ name = "actor_basic"
 path = "src/actor/examples/basic.rs"
 required-features = ["service"]
 
-# The services live in `src/{algorithm}/service.rs`, in this crate, behind a
-# feature that is **off by default**.
+# The services live in `src/{algorithm}/service.rs`, in this crate, behind the
+# `service` feature, which is **on by default** so that depending on the crate
+# gives you the services.
 #
-# That is not tidiness. The proofs are checked by `verus --crate-type=lib
-# src/lib.rs` and by `cargo verus verify`, both of which run with default
-# features, so the verified build's dependency graph is `vstd` and nothing else
-# — no Jetstream, no tokio, no async runtime for Verus to be asked about. Turn
-# the feature on and the same modules compile against the same verified step
-# functions.
+# The proofs do not use it. They are checked by `verus --crate-type=lib
+# src/lib.rs`, which does not read this file's features at all, and by `cargo
+# verus verify --no-default-features`, so the verified build's dependency graph
+# is `vstd` and nothing else — no Jetstream, no tokio, no async runtime for Verus
+# to be asked about. Turn the feature on and the same modules compile against the
+# same verified step functions.
 #
 # It also keeps the toolchain question honest. `rust-toolchain.toml` pins the
 # Rust release the Verus build was made against, and that pin exists so the

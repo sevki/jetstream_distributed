@@ -125,6 +125,37 @@ impl<P: Protocol> Stream for Session<P> {
     }
 }
 
+/// The reply to a request the actor is handling.
+///
+/// Dropped without having been answered — the drain was aborted while the handler
+/// was pending, or the handler panicked — it sends the caller an error. Without
+/// that the request is gone from the queue and from the round, the caller's
+/// [`Session`] still holds the reply channel's other end, and the call would stay
+/// pending for good, even after a new drain started and served everything after
+/// it.
+struct Unanswered<R> {
+    reply: Option<mpsc::UnboundedSender<Result<R>>>,
+}
+
+impl<R> Unanswered<R> {
+    /// Answer the request. The sender may have gone; its answer has nowhere to go.
+    fn answer(mut self, answer: Result<R>) {
+        if let Some(reply) = self.reply.take() {
+            let _ = reply.send(answer);
+        }
+    }
+}
+
+impl<R> Drop for Unanswered<R> {
+    fn drop(&mut self) {
+        if let Some(reply) = self.reply.take() {
+            let _ = reply.send(Err(super::refusal::refuse_no(
+                "the actor stopped before it answered",
+            )));
+        }
+    }
+}
+
 /// Run the actor: take rounds from the mailbox for as long as it is held, and
 /// hand each request to `service` in the order it was queued, one at a time.
 ///
@@ -144,12 +175,15 @@ where
         // The round is held for the whole loop: the drain is running until it
         // is dropped, at the end of the `for`.
         for Delivery { from, frame, reply } in mailbox.round().await {
+            // From here to the answer the request is in neither the queue nor the
+            // round: if this task is aborted, or the handler panics, `Unanswered`
+            // is what tells the caller.
+            let pending = Unanswered { reply: Some(reply) };
             let answer = service
                 .rpc(from, frame)
                 .await
                 .map_err(IntoError::into_error);
-            // The sender may have gone; its answer has nowhere to go.
-            let _ = reply.send(answer);
+            pending.answer(answer);
         }
     }
 }

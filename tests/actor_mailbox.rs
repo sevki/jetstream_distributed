@@ -108,6 +108,46 @@ async fn a_calls_b_without_knowing_there_is_a_mailbox() {
     assert_eq!(hosted.b.seen.lock().unwrap().1, 2);
 }
 
+/// A `B` that never answers.
+#[derive(Clone, Default)]
+struct StuckB;
+
+impl ActorB for StuckB {
+    async fn b(&self, _ctx: Context, _from: u64, _n: u64) -> Result<u64> {
+        std::future::pending().await
+    }
+}
+
+/// A request in flight when the drain is aborted is answered with an error rather
+/// than left pending, and a drain started afterwards serves what was behind it.
+#[tokio::test]
+async fn aborting_the_drain_mid_request_answers_the_caller() {
+    let mailbox: Mailbox<Delivery<ActorBChannel>> = Mailbox::new();
+    let mut stuck = ActorBService { inner: StuckB };
+    let drain = tokio::spawn({
+        let mailbox = mailbox.clone();
+        async move { serve(mailbox, &mut stuck).await }
+    });
+
+    let session = Session::new(mailbox.clone(), Context::default());
+    let channel = ActorBChannel::new(64, Box::new(session));
+    channel
+        .negotiate_version(u32::MAX)
+        .await
+        .expect("the actor speaks this version");
+
+    let call = tokio::spawn(async move { channel.b(Context::default(), 1, 0).await });
+    // Let the request reach the handler, which never returns.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    drain.abort();
+
+    let answer = tokio::time::timeout(std::time::Duration::from_secs(5), call)
+        .await
+        .expect("the abandoned request was answered, not left pending")
+        .unwrap();
+    assert!(answer.is_err(), "and the answer says it was not served");
+}
+
 /// The same `A`, over the implementation itself: no mailbox, no channel. The
 /// caller's code is identical, which is the point.
 #[tokio::test]

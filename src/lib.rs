@@ -39,12 +39,13 @@
 //! # The `service` feature
 //!
 //! The services are part of their algorithm's directory rather than a crate of
-//! their own, and they are behind a **non-default feature** for one reason: the
-//! verified build must not depend on Jetstream. `verus --crate-type=lib
-//! src/lib.rs` and `cargo verus verify` both run with the feature off, so the
-//! proofs are checked against a crate whose dependency graph is `vstd` and
-//! nothing else, while `--features service` builds the same modules against the
-//! same verified step functions.
+//! their own, and they are behind a **feature** for one reason: the verified
+//! build must not depend on Jetstream. The feature is on by default, so depending
+//! on the crate gives you the services; `verus --crate-type=lib src/lib.rs` does
+//! not read features at all and `cargo verus verify --no-default-features` turns
+//! it off, so the proofs are checked against a crate whose dependency graph is
+//! `vstd` and nothing else, while the default build compiles the same modules
+//! against the same verified step functions.
 //!
 //! It also keeps the toolchain question honest. `rust-toolchain.toml` pins the
 //! Rust release the Verus build was made against, and that pin exists so the

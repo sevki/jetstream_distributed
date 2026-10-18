@@ -173,7 +173,10 @@ jobs:
       - name: Verify through cargo-verus
         run: |
           set -euo pipefail
-          cargo verus verify 2>&1 | tee /tmp/cargo-verus.txt
+          # `service` is a default feature, so it is turned off here: the proofs
+          # are checked against a crate whose dependency graph is `vstd` and
+          # nothing else, not against Jetstream and tokio they never mention.
+          cargo verus verify --no-default-features 2>&1 | tee /tmp/cargo-verus.txt
 
           if grep -q 'did not find any crates that opted into verification' /tmp/cargo-verus.txt; then
             echo "::error::cargo verus verified nothing in this crate - is [package.metadata.verus] verify = true still in Cargo.toml?"

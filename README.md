@@ -1304,7 +1304,63 @@ anything to make progress — the same line the other protocols here draw betwee
 safety and liveness. And the journal is assumed **durable and linear**: the model
 has no crash that loses an accepted entry, which is the actor's counterpart of the
 atomic-registry assumption the ownership layer makes, and the service keeps the
-journal in memory (see [The actor](#the-actor)).
+journal in memory (see [The actor](#the-actor)). Delivery to the host is the next
+section's subject.
+
+### The mailbox, and the first liveness theorem
+
+The paragraph above says the actor proves nothing about a message ever being
+*offered* to its host. `src/actor/mailbox/` is the queue that would offer it, and
+it is where the lost-wakeup problem lives: a drain that is scheduled rather than
+polling must be woken by the sender that finds it asleep, and every sender checks,
+then acts, with other senders and the drain acting in between.
+
+The machine is the protocol of Apple's swift-distributed-actors mailbox, which
+keeps it as a PlusCal/TLA+ model
+([`Models/mailbox.tla`](https://github.com/apple/swift-distributed-actors/blob/main/Models/mailbox.tla)),
+with the same three flags (`has`, `processing`, `scheduled`) and the same step
+boundaries. A sender takes three steps — enqueue; read-and-set `has`; schedule if
+`has` was clear and the drain is not running — and the drain takes three — claim
+(clear `has`, mark running); take the queue; finish (stay scheduled exactly when
+`has` was set meanwhile). The TLA+ model fixes two senders, five messages each, and
+a drain that stops after ten, so a model checker can exhaust it. Here a sender is
+an *operation* tracked in `Mailbox::ops` rather than a process, so any number of
+senders each sending any number of messages are covered at once; the bound is what
+the proof removes.
+
+Safety is a corollary of one invariant. **Liveness is a different kind of claim**,
+and the proof says so: it is a statement about the infinite run, it is false of
+the bare machine (a run in which the drain is never given a turn processes
+nothing), and so it is stated under a fairness assumption written down as a
+definition (`mailbox_fair`) rather than left implicit. The temporal logic it uses
+is `src/temporal.rs`, in the idiom of
+[verus-tla](https://github.com/anvil-verifier/verus-tla) (Anvil's embedding of TLA
+in Verus) — executions as functions from step number to state, `leads_to`, weak
+fairness, and the WF1 rule — rebuilt in-crate rather than depended on, because
+`verus --crate-type=lib src/lib.rs` links `vstd` and nothing else. Every rule is
+proved, not assumed.
+
+| # | claim | theorem | assumes |
+| --- | --- | --- | --- |
+| MB1 | **The mailbox invariant holds at every step of every run**: the `processing` flag says whether the drain runs; messages are numbered by the count before them; each sender's next number is its count; a sender mid-operation is on a message the mailbox holds; and the two clauses that *are* the protocol — a set `has` with no wakeup pending is accounted for by a sender that has set it and not yet scheduled, and a queued message with `has` clear is accounted for by a sender that has enqueued it and not yet set `has` | `actor::mailbox::proofs::invariant::mb_inv`, `lemma_step_preserves_inv`, `theorem_run_inv` | a run |
+| MB2 | **Nothing is lost or reordered.** What the mailbox had taken in at one step is the beginning of what it has taken in at any later one, and the same of what it has processed | `actor::mailbox::proofs::safety::theorem_nothing_is_lost_or_reordered` | a run |
+| MB3 | **Each message is taken in once** — no message appears twice among those queued or processed | `actor::mailbox::proofs::safety::theorem_a_message_is_taken_in_once` | `mb_inv` |
+| MB4 | **One sender's messages keep their order**, and **nothing is skipped**: a message's number is the count of its sender's messages before it | `actor::mailbox::proofs::safety::theorem_one_senders_messages_keep_their_order`, `theorem_a_senders_messages_are_numbered_without_gaps` | `mb_inv` |
+| MB5 | **The drain never presents a message ahead of its turn.** The `i`th message processed is numbered the count of its sender's messages among the `i` before it — word for word the guard of the actor's accept (`env.seq == accepted_from(journal, sender)`), so a host accepting in this order is never refused for being early. And the processed messages are the front of what the mailbox holds | `actor::mailbox::proofs::safety::theorem_the_drain_never_presents_a_message_ahead_of_its_turn`, `theorem_the_drain_takes_the_front_of_the_queue` | `mb_inv` |
+| MB6 | **A message enqueued is a message processed.** In every run in which the drain's three steps and each sender's two remaining ones are not starved, a message on the queue is later in `processed`. The proof is the lost-wakeup argument: where the drain is decides the next stage, and when it is asleep with nothing scheduled the invariant says some sender is on its way to waking it, and fairness says it gets there. Senders are *not* required to send — `enqueue` is not on the fairness list | `actor::mailbox::proofs::liveness::theorem_every_enqueued_message_is_processed` | `mailbox_fair` |
+| MB7 | **The fairness rules are theorems**: WF1 (a step enabled while `p` holds, and the only way out of `p`, gives `p ~> q` under weak fairness of that step), transitivity, and case-splitting | `temporal::lemma_wf1`, `lemma_leads_to_trans`, `lemma_leads_to_cases`, `lemma_leads_to_implies` | none |
+| MB8 | **The liveness theorem is not vacuous.** A run of the machine that satisfies `mailbox_fair` and does work: one message is queued and processed, and a second that arrives *after* the drain took the queue is queued and processed, woken by the drain's last step seeing `has` — and the theorem applies to it | `actor::mailbox::proofs::scenario::scenario_a_fair_run_delivers_two_messages`, `scenario_the_theorem_applies_to_it` | none: the run is exhibited |
+| MB9 | **The fairness assumption is necessary.** A run of the machine in which a message is enqueued and never processed, and which is not fair: its sender's own `set_state` step stays possible forever and is never taken | `actor::mailbox::proofs::scenario::scenario_without_fairness_a_message_waits_forever` | none: the run is exhibited |
+
+**What this does not do.** The service does not run this protocol: `Host` keeps the
+sent set of the actor's model and the owning node calls `accept`. This is the
+specification and proof of the queue a host would sit behind; connecting a drain
+loop to the service is the step after it. The fairness assumption is *weak*
+fairness of those steps and nothing stronger, and it is an assumption about the
+scheduler, not something the protocol can enforce — a drain that is never run
+delivers nothing, which MB9 exhibits. And the mailbox hands the actor an *ordered*
+stream; the ownership fence that decides whether the actor may append it is the
+previous section's, unchanged.
 
 ## SWIM: gossip membership, bought by merge rather than majority
 
@@ -1426,6 +1482,7 @@ distributed-ownership/
 ├── README.md
 ├── src/
 │   ├── lib.rs
+│   ├── temporal.rs         leads-to, weak fairness and WF1: what a liveness proof is stated in
 │   ├── ownership/          exclusive mutable ownership with epoch fencing
 │   │   ├── model.rs        state space + transition relation (no specification)
 │   │   ├── spec.rs         may_mutate, tokens, the system invariant
@@ -1462,9 +1519,17 @@ distributed-ownership/
 │   ├── actor/              a distributed actor: a journal fenced by ownership
 │   │   ├── model.rs        envelopes, the journal, send / accept, the fold that is the state
 │   │   ├── steps.rs        accept, send and the behaviour as executable u64 functions
+│   │   ├── mailbox/        the queue in front of the actor, and its wakeup protocol
+│   │   │   ├── model.rs    the three flags, six steps, and the step boundaries between them
+│   │   │   └── proofs/
+│   │   │       ├── invariant.rs  the six-clause invariant, and that every step preserves it
+│   │   │       ├── safety.rs     nothing lost or repeated; per-sender order; no gaps
+│   │   │       ├── liveness.rs   a message enqueued is a message processed, under fairness
+│   │   │       └── scenario.rs   a fair run that delivers; an unfair one that does not
 │   │   ├── service/        the actor over Jetstream RPC   [feature = "service"]
 │   │   │   ├── mod.rs      the Actor trait and what goes on the wire
 │   │   │   ├── host.rs     the journal, the mailbox, and the registry that fences them
+│   │   │   ├── loopback.rs Host::connect: a Jetstream session to a host over an in-memory stream
 │   │   │   └── refusal.rs  the refusals, in the line protocol's alphabet
 │   │   └── proofs/
 │   │       ├── journal.rs      counting and folding over push and take
@@ -1514,7 +1579,7 @@ distributed-ownership/
 │   ├── raft_election.rs        a split vote elects one leader  [feature = "service"]
 │   ├── raft_log.rs             the consistency check and figure 8 [feature = "service"]
 │   ├── raft_wire.rs            the service over a simulated network [feature = "service"]
-│   ├── actor_journal.rs        the guarantees through the service, and every refusal [feature = "service"]
+│   ├── actor_journal.rs        the guarantees over a Jetstream session, and every refusal [feature = "service"]
 │   ├── actor_turmoil.rs        an actor changes hands across hosts, nothing lost or repeated [feature = "service"]
 │   ├── raymond_routing.rs      the textbook request path, and every refusal [feature = "service"]
 │   ├── raymond_turmoil.rs      the same path across hosts, on a simulated network [feature = "service"]
@@ -2268,7 +2333,13 @@ CI, with no `assume`/`admit`/`external_body`/`axiom`):
 * the distributed actor: at most one host appends, now and across handovers (one
   host per epoch; nothing written under a superseded epoch); each message once, in
   the order sent, none invented; the journal is append-only and the state is a fold
-  that a handover preserves; and the executable steps agree with the model (A1–A15).
+  that a handover preserves; and the executable steps agree with the model (A1–A15);
+* the actor's mailbox: nothing lost, repeated or reordered; each sender's messages
+  numbered without gaps, in the very form the actor's accept guard counts; and —
+  the first liveness theorem here — **every enqueued message is eventually
+  processed under weak fairness of the drain's and each sender's steps**, with the
+  fairness rules proved in `temporal` and both the fair run that satisfies the
+  assumption and the unfair one that shows it is needed exhibited (MB1–MB9).
 
 **Modelled but not proven** (present in the state machine, no theorem beyond
 invariant preservation):
@@ -2338,9 +2409,12 @@ invariant preservation):
   journal dies with its process, so the guarantees hold for the lifetime of the
   process and not across its death. Durability is the next layer.
 
-* **The actor proves safety, not delivery.** Nothing says a message is ever
-  delivered or that a sender retries; an out-of-order arrival is refused, not
-  buffered. The actor's behaviour is a pure fold, so what a message *does* beyond
+* **The actor proves safety; the mailbox proves delivery, but the service does not
+  run the mailbox.** The actor's own model says nothing about a message ever being
+  offered to its host, and an out-of-order arrival is refused, not buffered.
+  `actor::mailbox` proves that a queue in front of it delivers every enqueued
+  message, in order, under a stated fairness assumption — and `Host` still keeps the
+  actor's sent set and relies on its caller to call `accept`. The actor's behaviour is a pure fold, so what a message *does* beyond
   changing the state — an effect, a reply — is not modelled, and neither is what
   an effect does if its host is fenced halfway through.
 

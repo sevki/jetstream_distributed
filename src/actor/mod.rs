@@ -50,6 +50,7 @@
 //! progress. That is the same line the other protocols here draw between safety
 //! and liveness.
 
+pub mod mailbox;
 pub mod model;
 pub mod proofs;
 pub mod steps;

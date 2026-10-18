@@ -28,6 +28,9 @@
 //!                   survives a handover.
 //! * [`swim`]      — gossip membership, which buys neither exclusivity nor
 //!                   agreement, and promises only that disagreements resolve.
+//! * [`temporal`]  — not an algorithm: the small temporal logic (leads-to, weak
+//!                   fairness, WF1) that [`actor::mailbox`]'s liveness theorem
+//!                   is stated in.
 //!
 //! Within each, `model` defines only the state space and the transition
 //! relation and never imports the specification layer, so a specification
@@ -55,3 +58,4 @@ pub mod ownership;
 pub mod raft;
 pub mod raymond;
 pub mod swim;
+pub mod temporal;

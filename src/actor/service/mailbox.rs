@@ -140,10 +140,14 @@ impl<T> Drop for Permit<T> {
         if !self.spent {
             let mut s = self.mailbox.state();
             s.reserved -= 1;
-            // A slot is free: one waiting sender can use it.
-            let waiter = s.waiting.pop();
+            // A slot is free. Wake every waiter, as `take` does, not one: a
+            // registered waker can belong to a task that has since been
+            // cancelled, and waking only that one would leave the live waiters
+            // asleep on a free slot with nothing queued to wake them. The ones
+            // that lose the race register again when they poll.
+            let waiting = std::mem::take(&mut s.waiting);
             drop(s);
-            if let Some(waker) = waiter {
+            for waker in waiting {
                 waker.wake();
             }
         }
@@ -486,5 +490,37 @@ mod tests {
 
         let second: Vec<_> = mb.round().await.collect();
         assert_eq!(second, [2]);
+    }
+
+    /// A waiter that is cancelled does not take with it the wakeup meant for the
+    /// ones still waiting. Nothing is queued here, so no drain will wake them: the
+    /// permit being dropped is the only thing that can.
+    #[tokio::test]
+    async fn a_cancelled_waiter_does_not_swallow_the_wakeup() {
+        use std::time::Duration;
+        let mb = Mailbox::<u8>::new(cap(1));
+        let permit = mb.try_reserve().unwrap();
+
+        let first = {
+            let mb = mb.clone();
+            tokio::spawn(async move { mb.reserve().await })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let second = {
+            let mb = mb.clone();
+            tokio::spawn(async move { mb.reserve().await })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // The later waiter goes away; its waker is still registered.
+        second.abort();
+        drop(permit);
+
+        let got = tokio::time::timeout(Duration::from_secs(5), first)
+            .await
+            .expect("the waiter that is still there was woken")
+            .unwrap();
+        got.enqueue(1);
+        assert_eq!(mb.queued(), 1);
     }
 }

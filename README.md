@@ -270,7 +270,7 @@ verifying, the build fails.
 | C27 | **Recovery is exact.** The in-memory log equals `replay` of the device before and after every operation — append, truncate, *and* crash-recovery. The recovery case is trivial, and that is the design working: the device **is** the log, not a journal of intentions about it, so recovery reconciles nothing | `raft::proofs::store::theorem_recovery_is_exact`, `theorem_the_store_always_agrees`, `theorem_a_fresh_store_agrees` | none |
 | C28 | **A crash can only rewind.** `replay` is total on every sequence of records, so there is no prefix a crash can leave that recovery cannot read, and what comes back is a log the store had rather than one no sequence of writes could produce. Records that reached the device are unchanged and at the same indices | `raft::proofs::store::theorem_a_crash_can_only_rewind`, `theorem_a_crash_keeps_what_reached_the_device` | that a crash keeps a **prefix** — the property an append-only device gives you, and what pmemlog's write restriction enforces |
 | C29 | **Accepting a replicated entry costs at most two records**, and `appended_log` is what they replay to — so figure 2's rule 3, which deletes a suffix, is implementable on a device that deletes nothing. **Three costs, and which one you pay says what just happened**: *nothing* when the entry is already there, so a duplicate `AppendEntries` never reaches the device; *one record* when extending, since the marker would be `Truncate { len: log.len() }` and writing the identity would double the cost of the steady state; *two* on a genuine conflict, however long the tail it deletes. The zero-cost branch is C25's conditional again, as an operational fact | `raft::proofs::store::theorem_accepting_an_entry_is_at_most_two_records`, `theorem_extending_the_log_costs_one_record`, `theorem_a_follower_accepts_with_at_most_two_writes` | the store invariant (C27) |
-| C30 | **The device is append-only.** No operation moves its tail back: the records that were there are still there, in order, at the same indices. A `Record::Truncate` shortens the *log* and lengthens the device. This is the property that lets the whole store sit on `vendor/pmemlog`, whose abstract state has `append` and `advance_head` and nothing that shortens a tail | `raft::proofs::store::theorem_the_device_is_append_only` | none |
+| C30 | **The device is append-only.** No operation moves its tail back: the records that were there are still there, in order, at the same indices. A `Record::Truncate` shortens the *log* and lengthens the device. This is the property that lets the whole store sit on `vendor/verified-storage/pmemlog`, whose abstract state has `append` and `advance_head` and nothing that shortens a tail | `raft::proofs::store::theorem_the_device_is_append_only` | none |
 | C31 | **Compaction is sound**, costs one record per entry, and leaves no truncation behind — so a store can rewrite itself as pure appends. It is also **scheduled**: `worth_compacting` fires at `records > 2 * (entries + 1)`, which is amortised O(1) per operation, and the bound is asserted every round over sixty rounds of the worst shape. This row read *"soundness only: nothing schedules it"* for three PRs after the policy landed — the code and the claim drifted apart in the direction that understates the code, which is rarer and no better | `raft::proofs::store::theorem_compaction_replays_the_same`, `theorem_compaction_is_one_record_per_entry`, `theorem_compaction_leaves_no_truncations` | none |
 | C32 | **Cut the bytes anywhere and a record prefix comes back** — for *every* `k`, not for multiples of seventeen. The tear can land in the middle of a `u64` and the theorem still holds, because fixed width means no byte of a half-written record can be mistaken for the start of a whole one. This is what C28 needs and cannot state for itself: `store_recover` is written over a *record* prefix, and a device gives back a *byte* prefix | `raft::proofs::wire::theorem_a_torn_tail_is_a_record_prefix`, `theorem_recovery_from_a_torn_device` | every record fits in 64 bits (`records_fit`) |
 | C33 | **What was written is what is read**, and the encoding is exactly seventeen bytes per record — which is what makes `bytes.len() / 17` the record count and the parser's stopping condition an observation rather than an argument | `raft::proofs::wire::theorem_parse_of_encode`, `theorem_the_encoding_is_fixed_width`, `lemma_a_record_round_trips`, `lemma_a_record_is_seventeen_bytes` | `records_fit` |
@@ -1028,7 +1028,7 @@ it.
 
 Raft's log shrinks. Figure 2's rule 3 deletes a conflicting entry and everything
 after it, and `appended_log` is that rule. Every durable log worth trusting
-*grows*: `vendor/pmemlog`'s abstract state offers `append` and `advance_head` —
+*grows*: `vendor/verified-storage/pmemlog`'s abstract state offers `append` and `advance_head` —
 put bytes on the end, or forget bytes from the front — and nothing that takes
 the tail back.
 
@@ -1194,7 +1194,7 @@ Two limitations, stated rather than assumed away:
   `records > 2 * (entries + 1)`: amortised O(1), with the bound asserted every
   round over sixty rounds of the worst shape. C31 says the rewrite is sound;
   `compact_if_worthwhile` is what makes it happen.
-* **Nothing in `src/` depends on `vendor/pmemlog` yet**, and the reason is no
+* **Nothing in `src/` depends on `vendor/verified-storage/pmemlog` yet**, and the reason is no
   longer "the executable layer does not exist" — `replay_exec`, `encode_exec`
   and `parse_exec` do. What is missing is a **device**, and the obstacle there is
   not an interface but a crash model: pmemlog's `persistence_chunk_size` is 8 and
@@ -1589,10 +1589,12 @@ distributed-ownership/
 │   ├── swim_turmoil.rs         a suspicion crosses a healed partition and is refuted [feature = "service"]
 │   └── seeds/scenarios.txt     seeds that once broke something
 ├── vendor/
-│   └── pmemlog/                Microsoft's verified persistent-memory log
-│       ├── README.md           provenance, omissions, and its six assumptions
-│       ├── LICENSE.txt         upstream's MIT licence, unaltered
-│       └── src/                unmodified upstream source
+│   ├── README.md               provenance, what is built, and pmemlog's six assumptions
+│   └── verified-storage/       Microsoft's verified-storage, whole and verbatim (CI diffs it)
+│       ├── pmemlog/            the verified persistent-memory log [verified by CI]
+│       ├── multilog/           logs with atomic appends across them [not yet built]
+│       ├── capybaraKV/         a persistent-memory key-value store [not yet built]
+│       └── ...                 capybaraNS, soundness_proofs, unverified, LICENSE.txt
 └── .github/workflows/verify.yml
 ```
 
@@ -2610,7 +2612,7 @@ and a reader who greps for `assume` should also know what `by(...)` does.
 
 ### The one exception, and it is not in `src/`
 
-`vendor/pmemlog` is [Microsoft's verified persistent-memory
+`vendor/verified-storage/pmemlog` is [Microsoft's verified persistent-memory
 log](https://github.com/microsoft/verified-storage), vendored unmodified, and it
 has six. Three are I/O primitives and a CRC computation — the code that actually
 touches the device, with nothing beneath it to verify against. **Two are
@@ -2629,11 +2631,11 @@ on top of that log is conditional on them:
 These are stated here rather than buried because the repository's rule is that
 an assumption may be *an explicit documented part of the system model* and may
 not be a way of making verification pass. These are the former; they are
-enumerated one by one in `vendor/pmemlog/README.md`; and the CI grep covers
+enumerated one by one in `vendor/README.md`; and the CI grep covers
 `src/` and not `vendor/` for exactly this reason, with the reason written into
 the workflow.
 
-Nothing in `src/` depends on `vendor/pmemlog` yet. When something does, this
+Nothing in `src/` depends on `vendor/verified-storage/pmemlog` yet. When something does, this
 section is where the conditional lives.
 
 There are also no raised solver budgets: no `#[verifier::rlimit]` anywhere. The

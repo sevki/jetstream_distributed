@@ -13,7 +13,7 @@
 //!    already present and two when it is not.
 //! 4. [`theorem_the_device_is_append_only`] — no normal operation moves the
 //!    device's tail back, which is the property that lets this sit on
-//!    `vendor/pmemlog` at all.
+//!    `vendor/verified-storage/pmemlog` at all.
 //!
 //! Plus [`theorem_compaction_replays_the_same`], which is what stops the device
 //! growing for ever.
@@ -318,7 +318,7 @@ proof fn lemma_prefix_agrees(tr: Seq<Store>, i: int)
 /// **The device is append-only.** No normal operation moves its tail back: the
 /// records that were there are still there, in order, at the same indices.
 ///
-/// This is the property that lets the whole store sit on `vendor/pmemlog`,
+/// This is the property that lets the whole store sit on `vendor/verified-storage/pmemlog`,
 /// whose `AbstractInfiniteLogState` offers `append` and `advance_head` and
 /// nothing that shortens the tail. A `Record::Truncate` shortens the *log*; it
 /// lengthens the device.

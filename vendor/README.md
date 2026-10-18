@@ -1,9 +1,19 @@
-# `pmemlog`, vendored
+# `vendor/verified-storage`, vendored
 
-A verified append-only log on persistent memory, taken from Microsoft's
-[verified-storage](https://github.com/microsoft/verified-storage) at commit
+Microsoft's [verified-storage](https://github.com/microsoft/verified-storage)
+repository, whole and verbatim, at commit
 `41cab95051229ebd457b4eed7fc111e3e7c9099c` (*"Fix nightly-verita, update to
-version 2026-09-20"*). MIT licensed; `LICENSE.txt` is upstream's, unaltered.
+version 2026-09-20"*). MIT licensed; `verified-storage/LICENSE.txt` is upstream's,
+unaltered.
+
+| | |
+|---|---|
+| `pmemlog` | A verified append-only log on persistent memory. Crash consistent, and it detects bit corruption in its metadata. **The one crate CI verifies.** |
+| `multilog` (`multilog`, `pmsafe`) | A collection of logs, each in its own region, with **atomic appends across the logs** |
+| `capybaraKV` (`capybarakv`, `pmcopy`) | A persistent-memory key-value store |
+| `capybaraNS` | A notary service, written in Dafny |
+| `soundness_proofs` | Formalised soundness arguments for the PoWER approach to crash consistency |
+| `unverified` | Mocks and tests |
 
 ## Why this is here and not a `git` dependency
 
@@ -14,38 +24,48 @@ today. Vendoring puts the source in the diff, so a change to the storage layer's
 proofs is a change to this repository that CI checks — which is the same reason
 `Cargo.lock` is committed and `turmoil` is pinned exactly.
 
-It is a separate crate rather than a `src/{algorithm}` module because it is
-somebody else's code under somebody else's licence. The one-crate rule is about
-*this* repository's protocols; keeping a vendored dependency textually separate
-is what makes the boundary between what we prove and what we inherit legible.
+It is vendored **whole** rather than module by module because a partial copy is
+a fork: it has to be argued about, and every later addition widens the argument.
+A verbatim tree has one claim — *it is upstream at that commit* — and CI checks
+exactly that, with `diff -r` against a fresh checkout (the job "The vendored
+source is unmodified").
 
-## What was taken
+It is kept out of `src/` because it is somebody else's code under somebody
+else's licence. The one-crate rule is about *this* repository's protocols;
+keeping a vendored dependency textually separate is what makes the boundary
+between what we prove and what we inherit legible.
 
-`src/lib.rs` and the seven modules it declares. Upstream's suffixes are its
-own convention and are kept:
+## What is built and verified
 
-| | |
-|---|---|
-| `_t` | **trusted.** Read this to decide whether to believe the result: `pmemspec_t` (the persistent-memory model and its two corruption axioms), `infinitelog_t` (the abstract log), `main_t` (the public API and its specifications). |
-| `_v` | **verified.** `logimpl_v` (2 278 lines of implementation and proof), `math_v`. |
-| neither | `sccf` (the crash-consistency permission trait), `pmemmock_t` (a volatile stand-in for the device, used by tests). |
+Only `pmemlog` is a workspace member, and only `pmemlog` has a CI job
+(`pmemlog proof check`). The rest of the tree is present and unmodified but its
+crates are listed under `exclude` in the root `Cargo.toml`:
 
-## What was changed
+* `multilog` and `capybarakv` each have a `build.rs` that runs `bindgen`, which
+  needs libclang and PMDK headers, and a `pmem` feature that is on by default.
+  They have no CI job yet.
+* `pmsafe` and `pmcopy` are proc-macro crates only those two use.
+* `unverified/*` are mocks and tests, not proofs.
 
-Two omissions, no edits:
+Bringing one in is a change to the root `Cargo.toml`, a CI job like
+`pmemlog proof check`, and a line here. Nothing in `src/` depends on any of it
+yet.
 
-* **`src/main.rs` is not here.** It is a demo binary that re-declares every
-  module and then imports them again through the crate name. A vendored
-  dependency should be a library; the demo is not evidence about anything.
-* **`rust-toolchain.toml` is not here.** Upstream's pins `1.97.1`, which is
-  stale — the Verus release its own `Cargo.toml` targets
-  (`0.2026.09.20.aef82ed`, via `vstd = "=0.0.0-2026-09-20-0158"`) was built
-  against `1.98.1`. The workspace root's pin is the one that applies, and it is
-  the right one.
+## Toolchains
 
-No source file was edited. If one ever is, this section says so with a diff,
-because a vendored proof that has been quietly patched is worth less than no
-proof at all.
+Upstream pins a toolchain in each crate directory (`pmemlog/rust-toolchain.toml`
+says `1.97.1`; `multilog` and `capybaraKV` say a nightly). **They are stale or
+inapplicable here and are not what runs.** `rustup` reads the nearest
+`rust-toolchain.toml` to the *current directory*, so from the repository root
+the root's pin applies — the release the pinned Verus (`0.2026.09.20.aef82ed`,
+via `vstd = "=0.0.0-2026-09-20-0158"`) was built against, `1.98.1`. Running
+`cargo` from inside `vendor/verified-storage/pmemlog` would pick upstream's pin
+instead; do not.
+
+`pmemlog/src/main.rs` is upstream's demo binary. It re-declares every module and
+imports them again through the crate name, so it is a second compile of the
+same code rather than evidence about anything. It is part of the vendored tree
+because the tree is verbatim, and it is a target of the `pmemlog` package.
 
 ## The escape hatches, and why CI allows them here
 
@@ -76,6 +96,9 @@ Assumptions 2 and 3 are exactly what the repository rule calls *"an explicit
 documented part of the system model"*. Anything this repository proves on top of
 `pmemlog` is conditional on them, and the root `README.md` says so where it
 states what is proved.
+
+`multilog` and `capybarakv` have their own, and they are **not** enumerated
+here because nothing is built on them yet. Do that before depending on either.
 
 ## The crash model: 8-byte chunks, not byte atomicity
 
@@ -125,3 +148,7 @@ repository builds on top of `pmemlog` records a truncation as an *appended*
 record and rebuilds the index on recovery, rather than moving bytes. The
 physical log stays append-only, which is what the verified layer below can
 support, and the logical log truncates.
+
+`multilog` adds one thing `pmemlog` lacks: an append that lands atomically
+across several logs. That is what a journal and the record that fences it would
+want, and it is the reason the rest of the tree is here.

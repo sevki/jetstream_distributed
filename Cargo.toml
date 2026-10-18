@@ -1,17 +1,27 @@
-# `vendor/pmemlog` is Microsoft's verified persistent-memory log, vendored
-# rather than fetched, so that its proofs are checked by this repository's CI
-# against this repository's pinned Verus. See `vendor/pmemlog/README.md`.
+# `vendor/verified-storage` is Microsoft's verified-storage repository, vendored
+# whole and verbatim rather than fetched, so that its proofs are checked by this
+# repository's CI against this repository's pinned Verus. See `vendor/README.md`.
 #
-# It is a workspace member and not a module because it is somebody else's code
-# under somebody else's licence. The one-crate rule this repository follows is
-# about the protocols in `src/{algorithm}`; it is not a reason to paste a
-# dependency into them.
+# Its crates are workspace members and not modules because they are somebody
+# else's code under somebody else's licence. The one-crate rule this repository
+# follows is about the protocols in `src/{algorithm}`; it is not a reason to
+# paste a dependency into them.
+#
+# Only `pmemlog` is a member: it is the one CI verifies. The rest of the tree is
+# there, unmodified, but its crates (`multilog`, `capybarakv` and their proc
+# macros) are excluded until a job verifies them too, because `multilog` and
+# `capybarakv` have a `build.rs` that needs `bindgen` and PMDK headers.
 #
 # `fuzz/` stays excluded: it needs nightly, and `rust-toolchain.toml` pins the
 # stable release Verus was built against.
 [workspace]
-members = ["vendor/pmemlog"]
-exclude = ["fuzz"]
+members = ["vendor/verified-storage/pmemlog"]
+exclude = [
+  "fuzz",
+  "vendor/verified-storage/multilog",
+  "vendor/verified-storage/capybaraKV",
+  "vendor/verified-storage/unverified",
+]
 
 [package]
 name = "jetstream_distributed"

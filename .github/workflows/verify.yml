@@ -103,12 +103,12 @@ jobs:
       # matching leaves vstd's `axiom_*` lemma names alone, but it does mean
       # prose in `src/` must not use the bare word.
       #
-      # It covers `src/` and not `vendor/`, deliberately. `vendor/pmemlog` is
-      # somebody else's verified crate and it has six of these: two assumptions
+      # It covers `src/` and not `vendor/`, deliberately. `vendor/verified-storage/pmemlog`
+      # is somebody else's verified crate and it has six of these: two assumptions
       # about what a CRC detects, one CRC computation, and three I/O primitives
       # for the device. Every one is a boundary of the system model rather than
       # a proof obligation waved away, they are enumerated one by one in
-      # `vendor/pmemlog/README.md`, and the root `README.md` says what this
+      # `vendor/README.md`, and the root `README.md` says what this
       # repository proves *conditional on them*. Extending the grep over
       # `vendor/` would not make them go away; it would make the vendored crate
       # unusable and leave the assumptions undocumented instead of listed.
@@ -206,7 +206,7 @@ jobs:
   # The vendored storage layer.
   #
   # Its own job, because a failure here means something different from a failure
-  # above: `vendor/pmemlog` is Microsoft's code and this repository does not
+  # above: `vendor/verified-storage` is Microsoft's code and this repository does not
   # develop it. A red run here says the crate no longer verifies under the Verus
   # release this repository pins — which is a fact about the pin, not about any
   # proof written here, and the fix is to move the pin or the vendored commit
@@ -260,7 +260,7 @@ jobs:
           cargo verus verify -p pmemlog 2>&1 | tee /tmp/pmemlog-verus.txt
 
           if grep -q 'did not find any crates that opted into verification' /tmp/pmemlog-verus.txt; then
-            echo "::error::cargo verus verified nothing - is [package.metadata.verus] verify = true still in vendor/pmemlog/Cargo.toml?"
+            echo "::error::cargo verus verified nothing - is [package.metadata.verus] verify = true still in vendor/verified-storage/pmemlog/Cargo.toml?"
             exit 1
           fi
 
@@ -285,7 +285,7 @@ jobs:
       # Vendoring is only worth anything if the vendored source is *the*
       # vendored source. This is the check that nobody quietly patched a proof
       # to make it pass: the tree here must equal upstream at the pinned commit,
-      # module for module, with the two documented omissions.
+      # file for file, `.git` aside.
       - name: The vendored source is unmodified
         run: |
           set -euo pipefail
@@ -295,16 +295,11 @@ jobs:
           git -C /tmp/verified-storage fetch --quiet --depth 1 origin "$upstream"
           git -C /tmp/verified-storage checkout --quiet "$upstream"
 
-          if ! diff -r /tmp/verified-storage/pmemlog/src vendor/pmemlog/src \
-                 --exclude=main.rs; then
-            echo "::error::vendor/pmemlog/src differs from upstream $upstream - if that is intended, say so in vendor/pmemlog/README.md and update this check"
+          if ! diff -r --exclude=.git /tmp/verified-storage vendor/verified-storage; then
+            echo "::error::vendor/verified-storage differs from upstream $upstream - if that is intended, say so in vendor/README.md and update this check"
             exit 1
           fi
-          if ! diff /tmp/verified-storage/LICENSE.txt vendor/pmemlog/LICENSE.txt; then
-            echo "::error::vendor/pmemlog/LICENSE.txt is not upstream's"
-            exit 1
-          fi
-          echo "vendor/pmemlog matches upstream $upstream"
+          echo "vendor/verified-storage matches upstream $upstream"
 
   # The simulation. Separate from the two verification jobs on purpose: it is
   # evidence of a different kind and it fails for different reasons. A proof

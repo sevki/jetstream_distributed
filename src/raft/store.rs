@@ -3,7 +3,7 @@
 //! Raft's log shrinks. Figure 2's rule 3 says *if an existing entry conflicts
 //! with a new one, delete it and all that follow*, and
 //! [`crate::raft::model::appended_log`] is that rule. Every durable log worth
-//! trusting grows: `vendor/pmemlog`'s `AbstractInfiniteLogState` offers
+//! trusting grows: `vendor/verified-storage/pmemlog`'s `AbstractInfiniteLogState` offers
 //! `append` and `advance_head` — put bytes on the end, or forget bytes from the
 //! front — and nothing that takes the tail back. That is not an oversight in
 //! the vendored crate. It is what makes a crash-consistent log cheap: an append
@@ -53,7 +53,7 @@
 //! `Seq<Record>`; the encoding between them — and the theorem that any *byte*
 //! prefix parses back to a record prefix — is the next layer down and is not
 //! written yet. Until it is, nothing in this repository depends on
-//! `vendor/pmemlog`, and the two corruption assumptions listed in its README
+//! `vendor/verified-storage/pmemlog`, and the two corruption assumptions listed in its README
 //! are not yet assumptions of anything proved here.
 #![allow(unused_imports)]
 
@@ -165,7 +165,7 @@ pub struct Store {
     /// permits the empty prefix — a restart that discards every record the
     /// store ever acknowledged, including entries a leader committed on the
     /// strength of that acknowledgement. That would be a weaker promise than
-    /// the device beneath makes: `vendor/pmemlog`'s append permits a crash to
+    /// the device beneath makes: `vendor/verified-storage/pmemlog`'s append permits a crash to
     /// show the log before the append or the log after it, and nothing older.
     ///
     /// So `durable` is that line. [`store_sync`] moves it to the end of what
@@ -228,7 +228,7 @@ pub open spec fn store_write(pre: Store, post: Store, r: Record) -> bool {
 ///
 /// # How pmemlog earns this, since it is not a hardware promise
 ///
-/// Reading `vendor/pmemlog/src/pmemspec_t.rs` closely: its crash model is
+/// Reading `vendor/verified-storage/pmemlog/src/pmemspec_t.rs` closely: its crash model is
 /// **not** byte-atomic writes. `persistence_chunk_size` is 8, and
 /// `WriteRestrictedPersistentMemory::write` must be safe for *any subset of
 /// 8-byte chunks* having been flushed — a crash mid-write can leave an

@@ -405,7 +405,7 @@ impl RecordLogStore {
     /// hardware, since its own model permits any subset of 8-byte chunks to
     /// have been flushed. `crate::raft::store::store_write_batch` says this at
     /// length; the short version is that the guarantee is as strong as the two
-    /// corruption assumptions `vendor/pmemlog/README.md` enumerates, and no
+    /// corruption assumptions `vendor/README.md` enumerates, and no
     /// stronger.
     ///
     /// What this does *not* do is schedule itself: nothing calls it, and a

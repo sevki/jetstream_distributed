@@ -1,6 +1,6 @@
 //! **The record encoding**: `Seq<Record>` down to the `Seq<u8>` a device holds.
 //!
-//! [`crate::raft::store`] speaks records; `vendor/pmemlog` appends bytes. This
+//! [`crate::raft::store`] speaks records; `vendor/verified-storage/pmemlog` appends bytes. This
 //! is the layer between, and it exists to make one theorem statable:
 //! [`crate::raft::proofs::wire::theorem_a_torn_tail_is_a_record_prefix`] — **any
 //! byte prefix parses back to a record prefix**.
@@ -39,7 +39,7 @@
 //! straight to a device they would need a checksum of their own, and alignment
 //! would not substitute for one. **This format is sound inside pmemlog's log and
 //! not on bare storage** — a constraint, not an omission. See
-//! `vendor/pmemlog/README.md`.
+//! `vendor/README.md`.
 //!
 //! # The 64-bit boundary, stated
 //!
@@ -68,7 +68,7 @@ verus! {
 /// One tag byte and two little-endian `u64`s.
 ///
 /// A **`const`**, not a `spec fn`, so the executable encoder and the
-/// specification read the same number. `vendor/pmemlog` does the same with
+/// specification read the same number. `vendor/verified-storage/pmemlog` does the same with
 /// `crc_size`, and it is the same lesson `accepted_commit` taught earlier on
 /// this branch: two copies of one constant drift, and did.
 pub const RECORD_LEN: usize = 17;

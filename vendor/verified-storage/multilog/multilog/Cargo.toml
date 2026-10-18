@@ -1,0 +1,43 @@
+[package]
+name = "multilog"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+## The "pmem" feature enables actual persistent memory libraries, such as
+## PMDK on Linux.  Not enabling this feature is helpful when testing with
+## memory-mapped files that are not backed by PMDK.  This feature enables
+## the "pmem" feature, which links in PMDK.
+pmem = [ ]
+
+## The "pmem" feature is enabled by default, but can be disabled; e.g.,
+## to run tests without PMDK, run `cargo test --no-default-features`.
+default = [ "pmem" ]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+crc64fast = "1.0.0"
+# Avoid default features since @lopopolo reports that rand is unsound with both the log and thread_rng features
+rand = { version = "0.10.1", default-features = false, features = [ "thread_rng" ] }
+vstd = { version = "=0.0.0-2026-09-20-0158" }
+pmsafe = { path = "../pmsafe" }
+[target.'cfg(target_os = "windows")'.dependencies]
+winapi = { version = "0.3.9", features = ["errhandlingapi", "fileapi", "handleapi", "memoryapi", "winbase", "winerror", "winnt"] }
+
+[target.'cfg(target_os = "linux")'.build-dependencies]
+bindgen = "0.69.1"
+
+[target.'cfg(target_family = "unix")'.dependencies]
+memmap = "0.7.0"
+
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ["cfg(verus_keep_ghost)"] }
+unused_features = "allow"
+
+[package.metadata.verus]
+verify = true
+
+[package.metadata.verus.ide]
+extra_args = "--crate-type=lib --expand-errors"

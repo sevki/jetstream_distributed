@@ -39,8 +39,6 @@
 
 use vstd::prelude::*;
 
-mod system;
-
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
 use crate::ownership::spec::*;

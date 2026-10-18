@@ -47,6 +47,8 @@ skill is a `SKILL.md` to read and follow; they also install as ordinary agent sk
 (`vendor/kverus/skills/` is the directory to point an agent at). A review reads the
 diff and **does not change code**: use the review and eval skills, not `kverus-fix`,
 `kverus-migrate`, `kverus-spec`, `kverus-strip` or `kverus-run`, which edit.
+The same instructions are packaged as a custom agent in
+`.github/agents/verus-specialist.agent.md`, which also covers repairing proofs.
 
 ### Changes to code inside `verus!` (models, specs, proofs, `steps.rs`)
 

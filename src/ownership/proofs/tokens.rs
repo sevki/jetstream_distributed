@@ -16,7 +16,7 @@ verus! {
 
 /// **Token uniqueness (authority form).** At most one token confers authority
 /// for a given `(actor, epoch)`.
-pub proof fn theorem_valid_token_unique_per_actor_epoch(sys: System, t1: Token, t2: Token)
+pub proof fn theorem_valid_token_unique_per_actor_epoch(sys: OwnershipSystem, t1: Token, t2: Token)
     requires
         token_authorized(sys, t1),
         token_authorized(sys, t2),
@@ -31,7 +31,7 @@ pub proof fn theorem_valid_token_unique_per_actor_epoch(sys: System, t1: Token, 
 /// **Token uniqueness (physical form).** In a reachable state, at most one
 /// token was ever *issued* for a given `(actor, epoch)` - the protocol does not
 /// even mint duplicates, let alone honour them.
-pub proof fn theorem_issued_token_unique_per_actor_epoch(sys: System, t1: Token, t2: Token)
+pub proof fn theorem_issued_token_unique_per_actor_epoch(sys: OwnershipSystem, t1: Token, t2: Token)
     requires
         reachable(sys),
         token_held(sys, t1),
@@ -48,7 +48,7 @@ pub proof fn theorem_issued_token_unique_per_actor_epoch(sys: System, t1: Token,
 /// **Stale tokens carry no authority.** A token from a superseded epoch is
 /// still physically held - it survived the crash, the partition and the
 /// recovery - but it cannot authorise a mutation.
-pub proof fn theorem_stale_token_has_no_authority(sys: System, t: Token)
+pub proof fn theorem_stale_token_has_no_authority(sys: OwnershipSystem, t: Token)
     requires
         sys.actors.contains_key(t.actor),
         is_stale(sys.actors[t.actor], t.epoch),
@@ -61,7 +61,7 @@ pub proof fn theorem_stale_token_has_no_authority(sys: System, t: Token)
 
 /// Tokens cannot be minted for the future: in a reachable state no issued token
 /// has an epoch beyond the actor's current epoch.
-pub proof fn theorem_no_future_tokens(sys: System, t: Token)
+pub proof fn theorem_no_future_tokens(sys: OwnershipSystem, t: Token)
     requires
         reachable(sys),
         token_held(sys, t),
@@ -75,7 +75,7 @@ pub proof fn theorem_no_future_tokens(sys: System, t: Token)
 
 /// A token at the actor's current epoch can only be held by the actor's
 /// current owner: authority cannot be forged for a third party.
-pub proof fn theorem_current_epoch_token_is_owner(sys: System, t: Token)
+pub proof fn theorem_current_epoch_token_is_owner(sys: OwnershipSystem, t: Token)
     requires
         reachable(sys),
         token_held(sys, t),

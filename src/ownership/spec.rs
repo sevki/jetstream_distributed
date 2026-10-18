@@ -83,19 +83,19 @@ pub open spec fn is_unowned(s: OwnershipState) -> bool {
 }
 
 /// Convenience: `node` may mutate `actor` in system `sys` presenting `epoch`.
-pub open spec fn can_mutate(sys: System, actor: ActorId, node: NodeId, epoch: Epoch) -> bool {
+pub open spec fn can_mutate(sys: OwnershipSystem, actor: ActorId, node: NodeId, epoch: Epoch) -> bool {
     sys.actors.contains_key(actor) && may_mutate(sys.actors[actor], node, epoch)
 }
 
 /// A *physically held* token, which may be arbitrarily stale.
-pub open spec fn token_held(sys: System, t: Token) -> bool {
+pub open spec fn token_held(sys: OwnershipSystem, t: Token) -> bool {
     sys.issued.contains(t)
 }
 
 /// A token that actually confers authority right now.
 ///
 /// Holding a token is not enough: the actor's state has to still agree.
-pub open spec fn token_authorized(sys: System, t: Token) -> bool {
+pub open spec fn token_authorized(sys: OwnershipSystem, t: Token) -> bool {
     &&& sys.actors.contains_key(t.actor)
     &&& sys.issued.contains(t)
     &&& may_mutate(sys.actors[t.actor], t.holder, t.epoch)
@@ -112,19 +112,19 @@ pub open spec fn token_authorized(sys: System, t: Token) -> bool {
 ///   cannot be minted for the future);
 /// * a token at the actor's *current* epoch can only be held by the actor's
 ///   current owner (tokens cannot be minted for somebody else).
-pub open spec fn token_inv(sys: System, t: Token) -> bool {
+pub open spec fn token_inv(sys: OwnershipSystem, t: Token) -> bool {
     &&& sys.actors.contains_key(t.actor)
     &&& t.epoch <= current_epoch(sys.actors[t.actor])
     &&& (t.epoch == current_epoch(sys.actors[t.actor]) ==> is_owned_by(sys.actors[t.actor], t.holder))
 }
 
 /// Every issued token is well formed.
-pub open spec fn inv_tokens_bounded(sys: System) -> bool {
+pub open spec fn inv_tokens_bounded(sys: OwnershipSystem) -> bool {
     forall|t: Token| #[trigger] sys.issued.contains(t) ==> token_inv(sys, t)
 }
 
 /// At most one token was ever physically issued per `(actor, epoch)`.
-pub open spec fn inv_tokens_unique(sys: System) -> bool {
+pub open spec fn inv_tokens_unique(sys: OwnershipSystem) -> bool {
     forall|t1: Token, t2: Token|
         #![trigger sys.issued.contains(t1), sys.issued.contains(t2)]
         sys.issued.contains(t1) && sys.issued.contains(t2) && t1.actor == t2.actor && t1.epoch
@@ -132,7 +132,7 @@ pub open spec fn inv_tokens_unique(sys: System) -> bool {
 }
 
 /// The system invariant maintained by every transition.
-pub open spec fn inv(sys: System) -> bool {
+pub open spec fn inv(sys: OwnershipSystem) -> bool {
     &&& inv_tokens_bounded(sys)
     &&& inv_tokens_unique(sys)
 }

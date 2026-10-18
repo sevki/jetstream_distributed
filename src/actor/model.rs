@@ -23,7 +23,7 @@
 //!
 //! [`ActorSystem::sent`] is every message ever sent and is never consumed, so a
 //! message can be offered to the host any number of times, in any order, at any
-//! later point — the same convention as `System::network` and
+//! later point — the same convention as `OwnershipSystem::network` and
 //! `Raymond::requests`. Duplication, reordering and delay are therefore not
 //! failure modes added to the model; they are what an `Accept` step is *already*
 //! quantified over.

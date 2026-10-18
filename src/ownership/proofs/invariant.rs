@@ -20,7 +20,7 @@ verus! {
 
 /// Steps that change neither the ownership states nor the issued tokens cannot
 /// break an invariant that only talks about those two things.
-pub proof fn lemma_inv_frame(pre: System, post: System)
+pub proof fn lemma_inv_frame(pre: OwnershipSystem, post: OwnershipSystem)
     requires
         inv(pre),
         post.actors == pre.actors,
@@ -34,8 +34,8 @@ pub proof fn lemma_inv_frame(pre: System, post: System)
 /// epoch preserves the invariant: every previously issued token is now strictly
 /// stale for that actor, so the "current epoch" clause becomes vacuous.
 pub proof fn lemma_inv_epoch_bump(
-    pre: System,
-    post: System,
+    pre: OwnershipSystem,
+    post: OwnershipSystem,
     a: ActorId,
     s_new: OwnershipState,
 )
@@ -64,8 +64,8 @@ pub proof fn lemma_inv_epoch_bump(
 /// starting from a non-`Owned` state, preserves the invariant: no issued token
 /// could have been sitting at the current epoch in the first place.
 pub proof fn lemma_inv_same_epoch_unowned(
-    pre: System,
-    post: System,
+    pre: OwnershipSystem,
+    post: OwnershipSystem,
     a: ActorId,
     s_new: OwnershipState,
 )
@@ -101,7 +101,7 @@ pub proof fn lemma_inv_same_epoch_unowned(
 /// This is the fact that makes token issuance unique: `Acquire` is the only
 /// transition that mints a token, and it mints it exactly at the epoch of an
 /// `Unowned` actor.
-pub proof fn lemma_no_token_at_unowned_epoch(sys: System, a: ActorId, e: Epoch, n: NodeId)
+pub proof fn lemma_no_token_at_unowned_epoch(sys: OwnershipSystem, a: ActorId, e: Epoch, n: NodeId)
     requires
         inv(sys),
         sys.actors.contains_key(a),
@@ -122,8 +122,8 @@ pub proof fn lemma_no_token_at_unowned_epoch(sys: System, a: ActorId, e: Epoch, 
 /// `Acquire` is the only token-minting step; it preserves the invariant and
 /// cannot mint a second token for an `(actor, epoch)` pair.
 pub proof fn lemma_inv_acquire(
-    pre: System,
-    post: System,
+    pre: OwnershipSystem,
+    post: OwnershipSystem,
     a: ActorId,
     n: NodeId,
     e: Epoch,
@@ -179,7 +179,7 @@ pub proof fn lemma_inv_acquire(
 }
 
 /// Every transition preserves the system invariant.
-pub proof fn lemma_step_preserves_inv(pre: System, post: System, s: Step)
+pub proof fn lemma_step_preserves_inv(pre: OwnershipSystem, post: OwnershipSystem, s: Step)
     requires
         inv(pre),
         step(pre, post, s),
@@ -301,7 +301,7 @@ pub proof fn lemma_step_preserves_inv(pre: System, post: System, s: Step)
 }
 
 /// `next` preserves the invariant.
-pub proof fn lemma_next_preserves_inv(pre: System, post: System)
+pub proof fn lemma_next_preserves_inv(pre: OwnershipSystem, post: OwnershipSystem)
     requires
         inv(pre),
         next(pre, post),
@@ -313,7 +313,7 @@ pub proof fn lemma_next_preserves_inv(pre: System, post: System)
 }
 
 /// Initial states satisfy the invariant (vacuously: nothing has been issued).
-pub proof fn lemma_init_inv(sys: System)
+pub proof fn lemma_init_inv(sys: OwnershipSystem)
     requires
         init(sys),
     ensures
@@ -323,7 +323,7 @@ pub proof fn lemma_init_inv(sys: System)
 
 /// An initial state is reachable.
 /// A one-state labelled run, from an initial state.
-pub proof fn lemma_run_init(sys: System)
+pub proof fn lemma_run_init(sys: OwnershipSystem)
     requires
         init(sys),
     ensures
@@ -337,7 +337,7 @@ pub proof fn lemma_run_init(sys: System)
 }
 
 /// A labelled run extends by one **named** step.
-pub proof fn lemma_run_push(tr: Seq<System>, labels: Seq<Step>, post: System, s: Step)
+pub proof fn lemma_run_push(tr: Seq<OwnershipSystem>, labels: Seq<Step>, post: OwnershipSystem, s: Step)
     requires
         run(tr, labels),
         step(tr[tr.len() - 1], post, s),
@@ -376,7 +376,7 @@ pub proof fn lemma_run_push(tr: Seq<System>, labels: Seq<Step>, post: System, s:
 /// witnesses `next` quantifies over, so every safety theorem stated about
 /// `valid_execution` or `reachable` applies unchanged to a run exported with
 /// its labels: a scenario loses nothing by exporting the stronger object.
-pub proof fn lemma_labelled_execution_is_execution(tr: Seq<System>, labels: Seq<Step>)
+pub proof fn lemma_labelled_execution_is_execution(tr: Seq<OwnershipSystem>, labels: Seq<Step>)
     requires
         labelled_execution(tr, labels),
     ensures
@@ -394,7 +394,7 @@ pub proof fn lemma_labelled_execution_is_execution(tr: Seq<System>, labels: Seq<
 
 /// Every state of a labelled execution is reachable and satisfies the
 /// invariant.
-pub proof fn lemma_run_state_inv(tr: Seq<System>, labels: Seq<Step>, i: int)
+pub proof fn lemma_run_state_inv(tr: Seq<OwnershipSystem>, labels: Seq<Step>, i: int)
     requires
         labelled_execution(tr, labels),
         0 <= i < tr.len(),
@@ -405,13 +405,13 @@ pub proof fn lemma_run_state_inv(tr: Seq<System>, labels: Seq<Step>, i: int)
     lemma_execution_inv(tr, i);
 }
 
-pub proof fn lemma_reachable_init(sys: System)
+pub proof fn lemma_reachable_init(sys: OwnershipSystem)
     requires
         init(sys),
     ensures
         reachable(sys),
 {
-    let tr = Seq::<System>::empty().push(sys);
+    let tr = Seq::<OwnershipSystem>::empty().push(sys);
     assert(tr.len() == 1);
     assert(tr[0] == sys);
     assert(valid_execution(tr));
@@ -419,14 +419,14 @@ pub proof fn lemma_reachable_init(sys: System)
 }
 
 /// Reachability is closed under taking a step.
-pub proof fn lemma_reachable_step(pre: System, post: System, s: Step)
+pub proof fn lemma_reachable_step(pre: OwnershipSystem, post: OwnershipSystem, s: Step)
     requires
         reachable(pre),
         step(pre, post, s),
     ensures
         reachable(post),
 {
-    let tr = choose|tr: Seq<System>| valid_execution(tr) && tr[tr.len() - 1] == pre;
+    let tr = choose|tr: Seq<OwnershipSystem>| valid_execution(tr) && tr[tr.len() - 1] == pre;
     let tr2 = tr.push(post);
     assert(tr2.len() == tr.len() + 1);
     assert(tr2[0] == tr[0]);
@@ -452,7 +452,7 @@ pub proof fn lemma_reachable_step(pre: System, post: System, s: Step)
 }
 
 /// Every state of a valid execution satisfies the invariant.
-pub proof fn lemma_execution_inv(tr: Seq<System>, i: int)
+pub proof fn lemma_execution_inv(tr: Seq<OwnershipSystem>, i: int)
     requires
         valid_execution(tr),
         0 <= i < tr.len(),
@@ -475,13 +475,13 @@ pub proof fn lemma_execution_inv(tr: Seq<System>, i: int)
 }
 
 /// **Every reachable system state satisfies the invariant.**
-pub proof fn theorem_reachable_inv(sys: System)
+pub proof fn theorem_reachable_inv(sys: OwnershipSystem)
     requires
         reachable(sys),
     ensures
         inv(sys),
 {
-    let tr = choose|tr: Seq<System>| valid_execution(tr) && tr[tr.len() - 1] == sys;
+    let tr = choose|tr: Seq<OwnershipSystem>| valid_execution(tr) && tr[tr.len() - 1] == sys;
     lemma_execution_inv(tr, tr.len() - 1);
 }
 

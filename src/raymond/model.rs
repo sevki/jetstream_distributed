@@ -50,7 +50,7 @@ pub struct Raymond {
     pub using: Map<NodeId, bool>,
     /// Every request ever sent, as `(originator, destination)`.
     ///
-    /// Like `System::network` in the ownership layer this set never shrinks and
+    /// Like `OwnershipSystem::network` in the ownership layer this set never shrinks and
     /// delivery does not consume, so a request stays deliverable for ever, any
     /// number of times, in any order - **including long after the holder
     /// pointers it was routed against have changed**. Recording the destination

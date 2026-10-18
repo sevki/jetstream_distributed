@@ -46,7 +46,7 @@
 //!
 //! # The other assumption, and why it needed code rather than a caveat
 //!
-//! `System::actors` — the model's registry — is read and written in a single
+//! `OwnershipSystem::actors` — the model's registry — is read and written in a single
 //! step by every epoch-advancing transition. The README calls that the
 //! strongest assumption in the model, and it is really two assumptions wearing
 //! one name: the record is updated **atomically**, and it **survives**. A
@@ -407,7 +407,7 @@ struct Inner {
     /// this grant issued?", which a set answers in constant time and without
     /// storing the same answer twice — and a node agent polls in a loop, so a
     /// list grew by one entry per poll and `acquire` scanned all of them. The
-    /// model's counterpart is `System::network`, which is a `Set` for the same
+    /// model's counterpart is `OwnershipSystem::network`, which is a `Set` for the same
     /// reason: re-sending a grant is `tr_issue_grant` again, and that
     /// transition is explicitly idempotent.
     issued: HashSet<(u64, u64)>,

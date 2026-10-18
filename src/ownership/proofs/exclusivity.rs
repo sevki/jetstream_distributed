@@ -19,7 +19,7 @@ verus! {
 /// are both permitted to mutate the same actor are the same node, and they are
 /// permitted at the same (unique) epoch.
 pub proof fn theorem_exclusive_mutable_ownership(
-    sys: System,
+    sys: OwnershipSystem,
     a: ActorId,
     node_a: NodeId,
     epoch_a: Epoch,
@@ -62,7 +62,7 @@ pub proof fn theorem_exclusive_mutable_ownership_structural(
 /// The interesting form of exclusivity: two *capability tokens* that both
 /// currently confer authority over the same actor are the same token. A stale
 /// physical token held by a partitioned node cannot become a second authority.
-pub proof fn theorem_authorized_token_unique(sys: System, t1: Token, t2: Token)
+pub proof fn theorem_authorized_token_unique(sys: OwnershipSystem, t1: Token, t2: Token)
     requires
         reachable(sys),
         token_authorized(sys, t1),
@@ -77,7 +77,7 @@ pub proof fn theorem_authorized_token_unique(sys: System, t1: Token, t2: Token)
 
 /// A node that holds no authority over an actor cannot mutate it, regardless of
 /// what tokens it physically holds.
-pub proof fn theorem_holding_a_token_is_not_authority(sys: System, t: Token)
+pub proof fn theorem_holding_a_token_is_not_authority(sys: OwnershipSystem, t: Token)
     requires
         reachable(sys),
         token_held(sys, t),

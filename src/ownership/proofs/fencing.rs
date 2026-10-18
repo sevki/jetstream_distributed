@@ -38,7 +38,7 @@ pub proof fn theorem_unique_current_epoch(s: OwnershipState)
 /// current_epoch(actor) > supplied_epoch  ==>  !can_mutate(actor, node, supplied_epoch)
 /// ```
 pub proof fn theorem_stale_epoch_cannot_mutate(
-    sys: System,
+    sys: OwnershipSystem,
     a: ActorId,
     node: NodeId,
     supplied_epoch: Epoch,
@@ -66,7 +66,7 @@ pub proof fn theorem_epoch_advance_fences_previous(s_old: OwnershipState, s_new:
 }
 
 /// **Epoch monotonicity.** A transition never decreases an actor's epoch.
-pub proof fn theorem_epoch_monotone_step(pre: System, post: System, s: Step, a: ActorId)
+pub proof fn theorem_epoch_monotone_step(pre: OwnershipSystem, post: OwnershipSystem, s: Step, a: ActorId)
     requires
         step(pre, post, s),
         pre.actors.contains_key(a),
@@ -78,7 +78,7 @@ pub proof fn theorem_epoch_monotone_step(pre: System, post: System, s: Step, a: 
 }
 
 /// Epoch monotonicity, lifted to `next`.
-pub proof fn theorem_epoch_monotone_next(pre: System, post: System, a: ActorId)
+pub proof fn theorem_epoch_monotone_next(pre: OwnershipSystem, post: OwnershipSystem, a: ActorId)
     requires
         next(pre, post),
         pre.actors.contains_key(a),
@@ -91,7 +91,7 @@ pub proof fn theorem_epoch_monotone_next(pre: System, post: System, a: ActorId)
 }
 
 /// Epoch monotonicity along a whole execution.
-pub proof fn theorem_epoch_monotone_execution(tr: Seq<System>, i: int, j: int, a: ActorId)
+pub proof fn theorem_epoch_monotone_execution(tr: Seq<OwnershipSystem>, i: int, j: int, a: ActorId)
     requires
         valid_execution(tr),
         0 <= i <= j < tr.len(),
@@ -113,7 +113,7 @@ pub proof fn theorem_epoch_monotone_execution(tr: Seq<System>, i: int, j: int, a
 /// the actor's current epoch, so for issued tokens the fence check degenerates
 /// to epoch equality. (Without the invariant, `valid_fence` would also accept
 /// an impossibly-far-future epoch.)
-pub proof fn theorem_fence_is_exact_for_issued_tokens(sys: System, t: Token)
+pub proof fn theorem_fence_is_exact_for_issued_tokens(sys: OwnershipSystem, t: Token)
     requires
         reachable(sys),
         token_held(sys, t),

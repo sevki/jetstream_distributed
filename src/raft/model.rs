@@ -6,7 +6,7 @@
 //!
 //! # Why this is in the same repository as the ownership model
 //!
-//! The ownership model's strongest assumption, stated at `model::System::actors`
+//! The ownership model's strongest assumption, stated at `model::OwnershipSystem::actors`
 //! and first in the README's failure-model table, is that **ownership records
 //! are updated atomically**: every epoch-advancing transition reads
 //! `pre.actors[a]` and writes `post.actors.insert(a, ..)` in one step, which
@@ -42,11 +42,11 @@
 //!   `current_term`, a `log` and a `commit` count.
 //! * `votes`: every vote ever granted, as a `(voter, term, candidate)` triple.
 //!   This set never shrinks. A vote is a *physical* fact in the same sense as
-//!   `model::System::issued`: a crash does not un-cast it, so a server that
+//!   `model::OwnershipSystem::issued`: a crash does not un-cast it, so a server that
 //!   comes back must not vote again for a term it has already voted in.
 //! * `messages`: every message ever sent, never shrinking, delivery not
 //!   consuming — which gives duplication, reordering, delay and loss for free,
-//!   exactly as `model::System::network` does.
+//!   exactly as `model::OwnershipSystem::network` does.
 //! * The election: [`tr_timeout`], [`tr_grant_vote`] — with the
 //!   `lastLogIndex`/`lastLogTerm` up-to-date comparison, see
 //!   [`at_least_as_up_to_date`] — [`tr_become_leader`] and [`tr_step_down`].

@@ -175,7 +175,7 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (res: (
     let stale = Token { actor: x, epoch: 41, holder: a };
     let empty_q = Seq::<NodeId>::empty();
 
-    let own0 = System {
+    let own0 = OwnershipSystem {
         actors: Map::<ActorId, OwnershipState>::empty().insert(
             x,
             OwnershipState::Unowned { epoch: 41, intended_owner: a },
@@ -224,7 +224,7 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (res: (
     // 1. publish the grant for epoch 41
     let grant_41 = Message::Grant { actor: x, to: a, epoch: 41 };
     let c1 = Composed {
-        own: System {
+        own: OwnershipSystem {
             actors: own0.actors,
             nodes: own0.nodes,
             live: own0.live,
@@ -243,7 +243,7 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (res: (
 
     // 2. A takes ownership - permitted only because it holds the token
     let c2 = Composed {
-        own: System {
+        own: OwnershipSystem {
             actors: c1.own.actors.insert(x, OwnershipState::Owned { owner: a, epoch: 41 }),
             nodes: c1.own.nodes,
             live: c1.own.live,
@@ -267,7 +267,7 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (res: (
     // 3. the handover begins; A is fenced out immediately
     let revoke = Message::Revoke { actor: x, target: a, old_epoch: 41, new_epoch: 42 };
     let c3 = Composed {
-        own: System {
+        own: OwnershipSystem {
             actors: c2.own.actors.insert(
                 x,
                 OwnershipState::Transferring { from: a, to: b, old_epoch: 41, new_epoch: 42 },
@@ -291,7 +291,7 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (res: (
     // 4. A acknowledges
     let released = Message::Released { actor: x, from: a, new_epoch: 42 };
     let c4 = Composed {
-        own: System {
+        own: OwnershipSystem {
             actors: c3.own.actors,
             nodes: c3.own.nodes,
             live: c3.own.live,
@@ -314,7 +314,7 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (res: (
     // 5. the actor becomes unowned at 42 - only now may the token move
     let grant_42 = Message::Grant { actor: x, to: b, epoch: 42 };
     let c5 = Composed {
-        own: System {
+        own: OwnershipSystem {
             actors: c4.own.actors.insert(
                 x,
                 OwnershipState::Unowned { epoch: 42, intended_owner: b },
@@ -673,7 +673,7 @@ pub proof fn handover_phase_acquire(
     assert(composed_reachable(c));
 
     let c10 = Composed {
-        own: System {
+        own: OwnershipSystem {
             actors: c.own.actors.insert(x, OwnershipState::Owned { owner: b, epoch: 42 }),
             nodes: c.own.nodes,
             live: c.own.live,
@@ -870,7 +870,7 @@ pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId
     let nodes = Set::<NodeId>::empty().insert(a).insert(b);
     let empty_q = Seq::<NodeId>::empty();
 
-    let own0 = System {
+    let own0 = OwnershipSystem {
         actors: Map::<ActorId, OwnershipState>::empty().insert(
             x,
             OwnershipState::Unowned { epoch: 41, intended_owner: a },
@@ -1114,7 +1114,7 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
     let empty_q = Seq::<NodeId>::empty();
     let stale = Token { actor: x, epoch: 41, holder: a };
 
-    let own0 = System {
+    let own0 = OwnershipSystem {
         actors: Map::<ActorId, OwnershipState>::empty().insert(
             x,
             OwnershipState::Unowned { epoch: 41, intended_owner: a },
@@ -1163,7 +1163,7 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
     // 1. The coordinator offers X to A at epoch 41.
     let grant_41 = Message::Grant { actor: x, to: a, epoch: 41 };
     let c1 = Composed {
-        own: System {
+        own: OwnershipSystem {
             actors: c0.own.actors,
             nodes: c0.own.nodes,
             live: c0.own.live,
@@ -1181,7 +1181,7 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
 
     // 2. A takes ownership at 41, holding the token.
     let c2 = Composed {
-        own: System {
+        own: OwnershipSystem {
             actors: c1.own.actors.insert(x, OwnershipState::Owned { owner: a, epoch: 41 }),
             nodes: c1.own.nodes,
             live: c1.own.live,
@@ -1202,7 +1202,7 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
 
     // 3. A crashes. It keeps its epoch-41 token, and takes no further step.
     let c3 = Composed {
-        own: System {
+        own: OwnershipSystem {
             actors: c2.own.actors,
             nodes: c2.own.nodes,
             live: c2.own.live.remove(a),
@@ -1224,7 +1224,7 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
     // 4. The failure detector fires: the epoch is burned and X is offered to B.
     let grant_42 = Message::Grant { actor: x, to: b, epoch: 42 };
     let c4 = Composed {
-        own: System {
+        own: OwnershipSystem {
             actors: c3.own.actors.insert(
                 x,
                 OwnershipState::Unowned { epoch: 42, intended_owner: b },
@@ -1275,7 +1275,7 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
 
     // 6. B takes over at epoch 42, holding the token.
     let c6 = Composed {
-        own: System {
+        own: OwnershipSystem {
             actors: c5.own.actors.insert(x, OwnershipState::Owned { owner: b, epoch: 42 }),
             nodes: c5.own.nodes,
             live: c5.own.live,
@@ -1334,7 +1334,7 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
     // 8. Only now may A come back - and it comes back with no authority, its
     // epoch-41 token still issued and still worthless, and no token.
     let c8 = Composed {
-        own: System {
+        own: OwnershipSystem {
             actors: c7.own.actors,
             nodes: c7.own.nodes,
             live: c7.own.live.insert(a),

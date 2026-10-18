@@ -34,7 +34,7 @@ verus! {
 /// **Issued tokens never disappear.** A crash, a partition or a recovery cannot
 /// retract a capability that was handed out - which is exactly why stale tokens
 /// have to be fenced rather than revoked.
-pub proof fn theorem_issued_monotone(pre: System, post: System, s: Step)
+pub proof fn theorem_issued_monotone(pre: OwnershipSystem, post: OwnershipSystem, s: Step)
     requires
         step(pre, post, s),
     ensures
@@ -108,7 +108,7 @@ pub proof fn theorem_issued_monotone(pre: System, post: System, s: Step)
 /// **Sent messages never disappear.** This is what makes duplication,
 /// reordering and unbounded delay free in the model: nothing ever removes a
 /// message, so anything sent stays deliverable forever.
-pub proof fn theorem_network_monotone(pre: System, post: System, s: Step)
+pub proof fn theorem_network_monotone(pre: OwnershipSystem, post: OwnershipSystem, s: Step)
     requires
         step(pre, post, s),
     ensures
@@ -182,7 +182,7 @@ pub proof fn theorem_network_monotone(pre: System, post: System, s: Step)
 /// **The set of actors is constant.** No transition creates or destroys an
 /// actor, so every claim quantified over actors covers the same population at
 /// every point in an execution.
-pub proof fn theorem_actor_domain_constant(pre: System, post: System, s: Step)
+pub proof fn theorem_actor_domain_constant(pre: OwnershipSystem, post: OwnershipSystem, s: Step)
     requires
         step(pre, post, s),
     ensures
@@ -263,7 +263,7 @@ pub proof fn theorem_actor_domain_constant(pre: System, post: System, s: Step)
 /// **The node population is constant.** No transition creates or destroys a
 /// node; `Crash` and `Recover` move nodes in and out of `live`, never out of
 /// `nodes`.
-pub proof fn theorem_node_domain_constant(pre: System, post: System, s: Step)
+pub proof fn theorem_node_domain_constant(pre: OwnershipSystem, post: OwnershipSystem, s: Step)
     requires
         step(pre, post, s),
     ensures
@@ -286,8 +286,8 @@ pub proof fn theorem_node_domain_constant(pre: System, post: System, s: Step)
 }
 
 pub proof fn theorem_epoch_increases_by_at_most_one(
-    pre: System,
-    post: System,
+    pre: OwnershipSystem,
+    post: OwnershipSystem,
     s: Step,
     a: ActorId,
 )
@@ -381,8 +381,8 @@ pub proof fn theorem_epoch_increases_by_at_most_one(
 /// Leaving an `Owned` state always burns the epoch: if the actor is still at
 /// the same epoch after a step, it is still in exactly the same `Owned` state.
 pub proof fn lemma_owned_epoch_frozen(
-    pre: System,
-    post: System,
+    pre: OwnershipSystem,
+    post: OwnershipSystem,
     s: Step,
     a: ActorId,
     n: NodeId,
@@ -447,7 +447,7 @@ pub proof fn lemma_owned_epoch_frozen(
 /// still owned by `n` at `e`. Ownership of a generation never changes hands -
 /// a handover *must* burn the epoch.
 pub proof fn theorem_ownership_at_an_epoch_is_final(
-    tr: Seq<System>,
+    tr: Seq<OwnershipSystem>,
     i: int,
     j: int,
     a: ActorId,
@@ -482,7 +482,7 @@ pub proof fn theorem_ownership_at_an_epoch_is_final(
 /// **An epoch determines its owner.** Any two points of an execution at which
 /// the actor is owned at the same epoch have the same owner.
 pub proof fn theorem_epoch_determines_owner(
-    tr: Seq<System>,
+    tr: Seq<OwnershipSystem>,
     i: int,
     j: int,
     a: ActorId,
@@ -506,7 +506,7 @@ pub proof fn theorem_epoch_determines_owner(
 /// **A stale epoch stays stale.** Once an actor has advanced past `e`, no later
 /// point of the execution ever accepts `e` again - staleness is permanent, so a
 /// node that was fenced out can never be fenced back in by waiting.
-pub proof fn theorem_stale_stays_stale(tr: Seq<System>, i: int, j: int, a: ActorId, e: Epoch)
+pub proof fn theorem_stale_stays_stale(tr: Seq<OwnershipSystem>, i: int, j: int, a: ActorId, e: Epoch)
     requires
         valid_execution(tr),
         0 <= i <= j < tr.len(),
@@ -530,7 +530,7 @@ pub proof fn theorem_stale_stays_stale(tr: Seq<System>, i: int, j: int, a: Actor
 
 /// Every node that may mutate an actor holds an issued token for exactly that
 /// `(actor, epoch)`.
-pub open spec fn inv_authority_backed(sys: System) -> bool {
+pub open spec fn inv_authority_backed(sys: OwnershipSystem) -> bool {
     forall|a: ActorId, n: NodeId, e: Epoch|
         #[trigger] can_mutate(sys, a, n, e) ==> sys.issued.contains(
             Token { actor: a, epoch: e, holder: n },
@@ -538,7 +538,7 @@ pub open spec fn inv_authority_backed(sys: System) -> bool {
 }
 
 /// Initial states satisfy it vacuously - nothing is owned.
-pub proof fn lemma_authority_backed_init(sys: System)
+pub proof fn lemma_authority_backed_init(sys: OwnershipSystem)
     requires
         init(sys),
     ensures
@@ -554,7 +554,7 @@ pub proof fn lemma_authority_backed_init(sys: System)
 
 /// Every transition preserves it: the only step that creates authority is
 /// `Acquire`, and `Acquire` mints the matching token in the same step.
-pub proof fn lemma_authority_backed_step(pre: System, post: System, s: Step)
+pub proof fn lemma_authority_backed_step(pre: OwnershipSystem, post: OwnershipSystem, s: Step)
     requires
         inv_authority_backed(pre),
         step(pre, post, s),
@@ -580,7 +580,7 @@ pub proof fn lemma_authority_backed_step(pre: System, post: System, s: Step)
 }
 
 /// Lifted along an execution.
-pub proof fn lemma_authority_backed_execution(tr: Seq<System>, i: int)
+pub proof fn lemma_authority_backed_execution(tr: Seq<OwnershipSystem>, i: int)
     requires
         valid_execution(tr),
         0 <= i < tr.len(),
@@ -609,7 +609,7 @@ pub proof fn lemma_authority_backed_execution(tr: Seq<System>, i: int)
 /// may mutate an actor demonstrably holds an issued token for that exact
 /// `(actor, epoch)`. Authority cannot exist without the capability that
 /// conferred it.
-pub proof fn theorem_no_authority_without_token(sys: System, a: ActorId, n: NodeId, e: Epoch)
+pub proof fn theorem_no_authority_without_token(sys: OwnershipSystem, a: ActorId, n: NodeId, e: Epoch)
     requires
         reachable(sys),
         can_mutate(sys, a, n, e),
@@ -617,7 +617,7 @@ pub proof fn theorem_no_authority_without_token(sys: System, a: ActorId, n: Node
         sys.issued.contains(Token { actor: a, epoch: e, holder: n }),
         token_authorized(sys, Token { actor: a, epoch: e, holder: n }),
 {
-    let tr = choose|tr: Seq<System>| valid_execution(tr) && tr[tr.len() - 1] == sys;
+    let tr = choose|tr: Seq<OwnershipSystem>| valid_execution(tr) && tr[tr.len() - 1] == sys;
     lemma_authority_backed_execution(tr, tr.len() - 1);
 }
 

@@ -63,7 +63,7 @@ pub proof fn scenario_stale_owner_returns(x: ActorId, a: NodeId, b: NodeId)
         // they are the failure story - `Crash(A)` at index 5 between the
         // release and `B`'s acquisition, `Recover(A)` at 7, and the replay of
         // `A`'s epoch-41 grant at 8.
-        exists|tr: Seq<System>, labels: Seq<Step>|
+        exists|tr: Seq<OwnershipSystem>, labels: Seq<Step>|
             {
                 &&& #[trigger] labelled_execution(tr, labels)
                 &&& labels.len() == 9
@@ -114,7 +114,7 @@ pub proof fn scenario_stale_owner_returns(x: ActorId, a: NodeId, b: NodeId)
     let grant_41 = Message::Grant { actor: x, to: a, epoch: 41 };
 
     // --- initial state -----------------------------------------------------
-    let s0 = System {
+    let s0 = OwnershipSystem {
         actors: Map::<ActorId, OwnershipState>::empty().insert(
             x,
             OwnershipState::Unowned { epoch: 41, intended_owner: a },
@@ -132,7 +132,7 @@ pub proof fn scenario_stale_owner_returns(x: ActorId, a: NodeId, b: NodeId)
     lemma_reachable_init(s0);
 
     // --- the coordinator publishes the grant for epoch 41 ------------------
-    let s1 = System {
+    let s1 = OwnershipSystem {
         actors: s0.actors,
         nodes: s0.nodes,
         live: s0.live,
@@ -143,7 +143,7 @@ pub proof fn scenario_stale_owner_returns(x: ActorId, a: NodeId, b: NodeId)
     lemma_reachable_step(s0, s1, Step::IssueGrant { actor: x });
 
     // --- A takes ownership at epoch 41 -------------------------------------
-    let s2 = System {
+    let s2 = OwnershipSystem {
         actors: s1.actors.insert(x, OwnershipState::Owned { owner: a, epoch: 41 }),
         nodes: s1.nodes,
         live: s1.live,
@@ -157,7 +157,7 @@ pub proof fn scenario_stale_owner_returns(x: ActorId, a: NodeId, b: NodeId)
 
     // --- handover to B begins; A is fenced out immediately -----------------
     let revoke = Message::Revoke { actor: x, target: a, old_epoch: 41, new_epoch: 42 };
-    let s3 = System {
+    let s3 = OwnershipSystem {
         actors: s2.actors.insert(
             x,
             OwnershipState::Transferring { from: a, to: b, old_epoch: 41, new_epoch: 42 },
@@ -175,7 +175,7 @@ pub proof fn scenario_stale_owner_returns(x: ActorId, a: NodeId, b: NodeId)
 
     // --- A acknowledges the revocation -------------------------------------
     let released = Message::Released { actor: x, from: a, new_epoch: 42 };
-    let s4 = System {
+    let s4 = OwnershipSystem {
         actors: s3.actors,
         nodes: s3.nodes,
         live: s3.live,
@@ -197,7 +197,7 @@ pub proof fn scenario_stale_owner_returns(x: ActorId, a: NodeId, b: NodeId)
 
     // --- the actor becomes unowned at epoch 42, B is granted it ------------
     let grant_42 = Message::Grant { actor: x, to: b, epoch: 42 };
-    let s5 = System {
+    let s5 = OwnershipSystem {
         actors: s4.actors.insert(x, OwnershipState::Unowned { epoch: 42, intended_owner: b }),
         nodes: s4.nodes,
         live: s4.live,
@@ -215,7 +215,7 @@ pub proof fn scenario_stale_owner_returns(x: ActorId, a: NodeId, b: NodeId)
     lemma_reachable_step(s4, s5, Step::CompleteRelease { actor: x });
 
     // --- A crashes, still physically holding Token(X, 41, A) ---------------
-    let s6 = System {
+    let s6 = OwnershipSystem {
         actors: s5.actors,
         nodes: s5.nodes,
         live: s5.live.remove(a),
@@ -228,7 +228,7 @@ pub proof fn scenario_stale_owner_returns(x: ActorId, a: NodeId, b: NodeId)
     assert(s6.issued.contains(stale));
 
     // --- B takes ownership at epoch 42 -------------------------------------
-    let s7 = System {
+    let s7 = OwnershipSystem {
         actors: s6.actors.insert(x, OwnershipState::Owned { owner: b, epoch: 42 }),
         nodes: s6.nodes,
         live: s6.live,
@@ -242,7 +242,7 @@ pub proof fn scenario_stale_owner_returns(x: ActorId, a: NodeId, b: NodeId)
     lemma_reachable_step(s6, s7, Step::Acquire { actor: x, node: b });
 
     // --- A comes back, still believing it owns X at epoch 41 ---------------
-    let s8 = System {
+    let s8 = OwnershipSystem {
         actors: s7.actors,
         nodes: s7.nodes,
         live: s7.live.insert(a),
@@ -255,7 +255,7 @@ pub proof fn scenario_stale_owner_returns(x: ActorId, a: NodeId, b: NodeId)
     lemma_reachable_step(s7, s8, Step::Recover { node: a });
 
     // --- and its stale grant is redelivered for good measure ---------------
-    let s9 = System {
+    let s9 = OwnershipSystem {
         actors: s8.actors,
         nodes: s8.nodes,
         live: s8.live,
@@ -350,8 +350,8 @@ pub proof fn scenario_stale_owner_returns(x: ActorId, a: NodeId, b: NodeId)
 /// past `e`, no `Acquire` can hand out authority at `e`, no matter how many
 /// copies of the old grant are floating around.
 pub proof fn theorem_stale_grant_cannot_be_used(
-    pre: System,
-    post: System,
+    pre: OwnershipSystem,
+    post: OwnershipSystem,
     a: ActorId,
     n: NodeId,
     e: Epoch,
@@ -377,7 +377,7 @@ pub proof fn theorem_stale_grant_cannot_be_used(
 
 /// Message duplication, reordering and delay cannot change ownership on their
 /// own: every purely network-level step leaves `actors` and `issued` untouched.
-pub proof fn theorem_network_steps_cannot_change_ownership(pre: System, post: System, s: Step)
+pub proof fn theorem_network_steps_cannot_change_ownership(pre: OwnershipSystem, post: OwnershipSystem, s: Step)
     requires
         step(pre, post, s),
         s is Replay || s is HandleRevoke || s is IssueGrant || s is Stutter,
@@ -406,7 +406,7 @@ pub proof fn theorem_network_steps_cannot_change_ownership(pre: System, post: Sy
 /// Crash and recovery cannot change ownership either: a node that crashes keeps
 /// its tokens, and a node that comes back gets no new authority from the fact
 /// of coming back.
-pub proof fn theorem_crash_recovery_cannot_change_ownership(pre: System, post: System, s: Step)
+pub proof fn theorem_crash_recovery_cannot_change_ownership(pre: OwnershipSystem, post: OwnershipSystem, s: Step)
     requires
         step(pre, post, s),
         s is Crash || s is Recover,
@@ -446,7 +446,7 @@ pub proof fn scenario_interrupted_transfer(x: ActorId, a: NodeId, b: NodeId)
         // The run, with every step named: the abort at index 3 follows the
         // `BeginTransfer` at index 2 that opened the very transfer it
         // interrupts.
-        exists|tr: Seq<System>, labels: Seq<Step>|
+        exists|tr: Seq<OwnershipSystem>, labels: Seq<Step>|
             {
                 &&& #[trigger] labelled_execution(tr, labels)
                 &&& labels.len() == 4
@@ -473,7 +473,7 @@ pub proof fn scenario_interrupted_transfer(x: ActorId, a: NodeId, b: NodeId)
     let stale = Token { actor: x, epoch: 41, holder: a };
     let grant_41 = Message::Grant { actor: x, to: a, epoch: 41 };
 
-    let s0 = System {
+    let s0 = OwnershipSystem {
         actors: Map::<ActorId, OwnershipState>::empty().insert(
             x,
             OwnershipState::Unowned { epoch: 41, intended_owner: a },
@@ -488,7 +488,7 @@ pub proof fn scenario_interrupted_transfer(x: ActorId, a: NodeId, b: NodeId)
     lemma_reachable_init(s0);
 
     // 1. The coordinator offers X to A at epoch 41.
-    let s1 = System {
+    let s1 = OwnershipSystem {
         actors: s0.actors,
         nodes: s0.nodes,
         live: s0.live,
@@ -499,7 +499,7 @@ pub proof fn scenario_interrupted_transfer(x: ActorId, a: NodeId, b: NodeId)
     lemma_reachable_step(s0, s1, Step::IssueGrant { actor: x });
 
     // 2. A takes ownership at 41.
-    let s2 = System {
+    let s2 = OwnershipSystem {
         actors: s1.actors.insert(x, OwnershipState::Owned { owner: a, epoch: 41 }),
         nodes: s1.nodes,
         live: s1.live,
@@ -513,7 +513,7 @@ pub proof fn scenario_interrupted_transfer(x: ActorId, a: NodeId, b: NodeId)
 
     // 3. A begins handing X to B. The epoch is burned immediately.
     let revoke = Message::Revoke { actor: x, target: a, old_epoch: 41, new_epoch: 42 };
-    let s3 = System {
+    let s3 = OwnershipSystem {
         actors: s2.actors.insert(
             x,
             OwnershipState::Transferring { from: a, to: b, old_epoch: 41, new_epoch: 42 },
@@ -530,7 +530,7 @@ pub proof fn scenario_interrupted_transfer(x: ActorId, a: NodeId, b: NodeId)
 
     // 4. The handover is interrupted. Recovery burns *another* epoch, so the
     //    epoch-42 grant that may still be in flight is stale on arrival.
-    let s4 = System {
+    let s4 = OwnershipSystem {
         actors: s3.actors.insert(x, OwnershipState::Unowned { epoch: 43, intended_owner: a }),
         nodes: s3.nodes,
         live: s3.live,
@@ -601,8 +601,8 @@ pub proof fn scenario_interrupted_transfer(x: ActorId, a: NodeId, b: NodeId)
 /// property - `theorem_reachable_inv` gives `inv` for every reachable state, so
 /// it applies to all of them - but the name should say which it is.
 pub proof fn theorem_interrupted_transfer_burns_the_epoch(
-    pre: System,
-    post: System,
+    pre: OwnershipSystem,
+    post: OwnershipSystem,
     x: ActorId,
     a: NodeId,
     b: NodeId,
@@ -646,8 +646,8 @@ pub proof fn theorem_interrupted_transfer_burns_the_epoch(
 /// now, and the message that enabled it names exactly that handover's `from`
 /// and `new_epoch`. A `Released` naming anything else is inert.
 pub proof fn theorem_complete_release_needs_the_matching_released(
-    pre: System,
-    post: System,
+    pre: OwnershipSystem,
+    post: OwnershipSystem,
     a: ActorId,
 )
     requires
@@ -691,8 +691,8 @@ pub proof fn theorem_complete_release_needs_the_matching_released(
 /// `proofs::properties::theorem_stale_stays_stale` — this is the whole reason
 /// `tr_handle_revoke` can afford to be as permissive as it is.
 pub proof fn theorem_complete_release_outcome_is_fixed_by_state(
-    pre: System,
-    post: System,
+    pre: OwnershipSystem,
+    post: OwnershipSystem,
     a: ActorId,
     from: NodeId,
     to: NodeId,

@@ -692,7 +692,7 @@ pub proof fn theorem_term_monotone_step(pre: Cluster, post: Cluster, s: RaftStep
 }
 
 /// **A vote is never retracted.** Votes are physical facts, like
-/// `model::System::issued`: a crash does not un-cast one, which is exactly why
+/// `model::OwnershipSystem::issued`: a crash does not un-cast one, which is exactly why
 /// a returning server must not vote again in a term it has already voted in.
 pub proof fn theorem_votes_monotone_step(pre: Cluster, post: Cluster, s: RaftStep, v: Vote)
     requires

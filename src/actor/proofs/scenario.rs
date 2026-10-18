@@ -47,7 +47,7 @@ pub open spec fn sc_env1() -> Envelope {
 }
 
 /// The ownership layer at each point of the run.
-pub open spec fn sc_own(k: int) -> System {
+pub open spec fn sc_own(k: int) -> OwnershipSystem {
     let nodes = Set::<NodeId>::empty().insert(1).insert(2);
     let grant_a = Message::Grant { actor: 0, to: 1, epoch: 41 };
     let revoke = Message::Revoke { actor: 0, target: 1, old_epoch: 41, new_epoch: 42 };
@@ -76,7 +76,7 @@ pub open spec fn sc_own(k: int) -> System {
         OwnershipState::Owned { owner: 2, epoch: 42 },
     );
     if k == 0 {
-        System {
+        OwnershipSystem {
             actors: unowned_a,
             nodes: nodes,
             live: nodes,
@@ -84,7 +84,7 @@ pub open spec fn sc_own(k: int) -> System {
             network: Set::empty(),
         }
     } else if k == 1 {
-        System {
+        OwnershipSystem {
             actors: unowned_a,
             nodes: nodes,
             live: nodes,
@@ -92,7 +92,7 @@ pub open spec fn sc_own(k: int) -> System {
             network: Set::empty().insert(grant_a),
         }
     } else if k == 2 {
-        System {
+        OwnershipSystem {
             actors: owned_a,
             nodes: nodes,
             live: nodes,
@@ -100,7 +100,7 @@ pub open spec fn sc_own(k: int) -> System {
             network: Set::empty().insert(grant_a),
         }
     } else if k == 3 {
-        System {
+        OwnershipSystem {
             actors: moving,
             nodes: nodes,
             live: nodes,
@@ -108,7 +108,7 @@ pub open spec fn sc_own(k: int) -> System {
             network: Set::empty().insert(grant_a).insert(revoke),
         }
     } else if k == 4 {
-        System {
+        OwnershipSystem {
             actors: moving,
             nodes: nodes,
             live: nodes,
@@ -116,7 +116,7 @@ pub open spec fn sc_own(k: int) -> System {
             network: Set::empty().insert(grant_a).insert(revoke).insert(released),
         }
     } else if k == 5 {
-        System {
+        OwnershipSystem {
             actors: unowned_b,
             nodes: nodes,
             live: nodes,
@@ -124,7 +124,7 @@ pub open spec fn sc_own(k: int) -> System {
             network: Set::empty().insert(grant_a).insert(revoke).insert(released).insert(grant_b),
         }
     } else {
-        System {
+        OwnershipSystem {
             actors: owned_b,
             nodes: nodes,
             live: nodes,

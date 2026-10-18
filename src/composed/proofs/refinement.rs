@@ -303,7 +303,7 @@ pub proof fn theorem_a_routing_step_is_carried(c: Composed, post_ray: Raymond, s
 /// machine**, unless it is the one that would create authority over this actor
 /// (which has to go through `AcquireUnderToken`) or would bring back a node
 /// that owes a reconciliation.
-pub proof fn theorem_an_ownership_step_is_carried(c: Composed, post_own: System, s: Step)
+pub proof fn theorem_an_ownership_step_is_carried(c: Composed, post_own: OwnershipSystem, s: Step)
     requires
         !is_acquire_of(s, c.actor),
         !recovers_a_seized_node(c, s),

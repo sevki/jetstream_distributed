@@ -138,7 +138,7 @@ fn peer_of(ip: IpAddr) -> Peer {
 /// One thing the coordinator accepted or refused.
 ///
 /// The oracles are predicates over a `Vec<Event>`, which is deliberate: the
-/// proofs are predicates over `Seq<System>`, and keeping the same shape means a
+/// proofs are predicates over `Seq<OwnershipSystem>`, and keeping the same shape means a
 /// runtime check can be read against the theorem it comes from. The coordinator
 /// is the only writer, because it is the only place that knows the
 /// authoritative state — which is the same reason the model puts `actors` in

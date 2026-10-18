@@ -17,7 +17,7 @@ use crate::ownership::transfer::*;
 verus! {
 
 /// **Every permitted transition preserves the invariants.**
-pub proof fn theorem_transition_preserves_invariants(pre: System, post: System, s: Step, a: ActorId)
+pub proof fn theorem_transition_preserves_invariants(pre: OwnershipSystem, post: OwnershipSystem, s: Step, a: ActorId)
     requires
         inv(pre),
         step(pre, post, s),
@@ -92,8 +92,8 @@ pub proof fn theorem_interrupted_transfer_fences_both(a: NodeId, b: NodeId, e: E
 /// actor to have been `Unowned` at exactly that epoch with that node as the
 /// intended owner.
 pub proof fn theorem_ownership_only_via_acquire(
-    pre: System,
-    post: System,
+    pre: OwnershipSystem,
+    post: OwnershipSystem,
     s: Step,
     a: ActorId,
     n: NodeId,

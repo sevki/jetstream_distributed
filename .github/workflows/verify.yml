@@ -484,7 +484,11 @@ jobs:
       # and a seizure that leaves its victim fenced and owing a reconciliation.
       # The actor stories: a message accepted once and in order however it is
       # delivered, a handover that keeps the journal and fences the old host, and
-      # the whole of it across simulated hosts.
+      # the whole of it across simulated hosts. The actor's mailbox, which is
+      # transcribed from the model and not checked against it by Verus, so its
+      # tests are the only check there is: the library's own (no wakeup lost,
+      # each sender's order kept, one drain at a time, nothing dropped with a
+      # round) and one actor calling another through it.
       - name: The service stories
         run: |
           cargo +stable test --features service --locked \
@@ -502,4 +506,6 @@ jobs:
             --test composed_turmoil \
             --test actor_journal \
             --test actor_turmoil \
+            --test actor_mailbox \
+            --lib \
             -- --nocapture

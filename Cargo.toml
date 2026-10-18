@@ -188,3 +188,8 @@ required-features = ["service"]
 name = "actor_turmoil"
 path = "tests/actor_turmoil.rs"
 required-features = ["service"]
+
+[[test]]
+name = "actor_mailbox"
+path = "tests/actor_mailbox.rs"
+required-features = ["service"]

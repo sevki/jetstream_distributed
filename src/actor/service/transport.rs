@@ -63,7 +63,9 @@ impl Host {
         tokio::spawn(async move {
             host.serve(server_io, Context::new(Some(peer), None)).await;
         });
-        Connection::new(client_io).await
+        Connection::new(client_io)
+            .await
+            .expect("an in-memory pipe has its one lane and the host speaks this version")
     }
 }
 
@@ -80,23 +82,22 @@ pub struct Connection {
 impl Connection {
     /// A client over any byte stream: TCP, QUIC, turmoil, an iroh stream pair.
     /// Must be called inside a tokio runtime.
-    pub async fn new<T>(io: T) -> Connection
+    ///
+    /// Fails if the stream cannot give a lane or the peer will not agree on a
+    /// version — an ordinary thing for a network connection to do, so it is an
+    /// error for the caller to handle or retry, not a panic.
+    pub async fn new<T>(io: T) -> Result<Connection>
     where
         T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
     {
         let session = SingleLaneSession::<ActorChannel, _, _>::client_io(io);
-        let lane = Session::<ActorChannel>::open_lane(&session)
-            .await
-            .expect("a framed byte stream has its one lane");
+        let lane = Session::<ActorChannel>::open_lane(&session).await?;
         let channel = ActorChannel::new(LANE, Box::new(lane));
-        channel
-            .negotiate_version(u32::MAX)
-            .await
-            .expect("the host speaks this version");
-        Connection {
+        channel.negotiate_version(u32::MAX).await?;
+        Ok(Connection {
             channel,
             _session: Box::new(session),
-        }
+        })
     }
 }
 

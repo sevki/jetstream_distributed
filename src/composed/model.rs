@@ -48,7 +48,7 @@ verus! {
 
 /// One actor, governed jointly by the ownership protocol and Raymond routing.
 pub struct Composed {
-    pub own: System,
+    pub own: OwnershipSystem,
     pub ray: Raymond,
     pub actor: ActorId,
     /// Nodes whose privilege was taken by a seizure and whose belief has not yet

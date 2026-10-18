@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
-use distributed_ownership::raft::service::{
+use jetstream_distributed::raft::service::{
     Acceptance, Appended, Ballot, Consensus, LogEntry, LogStore, MemoryLog, MemoryLogStore, Peer, Standing,
 };
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;

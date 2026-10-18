@@ -54,6 +54,9 @@
 //! bits, is outside what this encoding can represent. The theorems say so in
 //! their preconditions instead of quietly truncating.
 #![allow(unused_imports)]
+// `n` in `le_to_u64_exec` and `decode_record_exec` exists for Verus: it is read
+// only inside `assert`, which an ordinary build erases.
+#![allow(unused_variables)]
 
 use vstd::prelude::*;
 
@@ -202,21 +205,22 @@ pub fn u64_to_le_exec(x: u64) -> (out: Vec<u8>)
     ensures
         out@ == u64_to_le(x),
 {
-    let mut out: Vec<u8> = Vec::with_capacity(8);
-    out.push((x & 0xff) as u8);
-    out.push(((x >> 8) & 0xff) as u8);
-    out.push(((x >> 16) & 0xff) as u8);
-    out.push(((x >> 24) & 0xff) as u8);
-    out.push(((x >> 32) & 0xff) as u8);
-    out.push(((x >> 40) & 0xff) as u8);
-    out.push(((x >> 48) & 0xff) as u8);
-    out.push(((x >> 56) & 0xff) as u8);
+    let out: Vec<u8> = vec![
+        (x & 0xff) as u8,
+        ((x >> 8) & 0xff) as u8,
+        ((x >> 16) & 0xff) as u8,
+        ((x >> 24) & 0xff) as u8,
+        ((x >> 32) & 0xff) as u8,
+        ((x >> 40) & 0xff) as u8,
+        ((x >> 48) & 0xff) as u8,
+        ((x >> 56) & 0xff) as u8,
+    ];
     assert(out@ =~= u64_to_le(x));
     out
 }
 
 /// And back, from eight bytes starting at `at`.
-pub fn le_to_u64_exec(b: &Vec<u8>, at: usize) -> (x: u64)
+pub fn le_to_u64_exec(b: &[u8], at: usize) -> (x: u64)
     requires
         at + 8 <= b@.len(),
     ensures
@@ -302,7 +306,7 @@ pub fn encode_record_exec(r: ExecRecord) -> (out: Vec<u8>)
 /// The padding a `Truncate` carries is not preserved, because the ghost
 /// [`Record`] has no field for it — and `encode_record` writes zero there, so a
 /// device this store wrote round-trips byte for byte anyway.
-pub fn decode_record_exec(bytes: &Vec<u8>, at: usize) -> (r: ExecRecord)
+pub fn decode_record_exec(bytes: &[u8], at: usize) -> (r: ExecRecord)
     requires
         at + 17 <= bytes@.len(),
     ensures
@@ -331,7 +335,7 @@ pub fn decode_record_exec(bytes: &Vec<u8>, at: usize) -> (r: ExecRecord)
 
 /// **Every record's bytes, in order** — the device a store with these records
 /// would hold.
-pub fn encode_exec(records: &Vec<ExecRecord>) -> (out: Vec<u8>)
+pub fn encode_exec(records: &[ExecRecord]) -> (out: Vec<u8>)
     ensures
         out@ == encode(record_seq(records@)),
 {
@@ -363,7 +367,7 @@ pub fn encode_exec(records: &Vec<ExecRecord>) -> (out: Vec<u8>)
             assert(out@ =~= before + encode_record(records@[i as int].view()));
             assert(out@ + encode(rs.skip(i + 1)) =~= before + encode(rs.skip(i as int)));
         }
-        i = i + 1;
+        i += 1;
     }
     proof {
         assert(rs.skip(i as int) =~= Seq::<Record>::empty());
@@ -379,7 +383,7 @@ pub fn encode_exec(records: &Vec<ExecRecord>) -> (out: Vec<u8>)
 /// device hands back. The trailing fewer-than-seventeen bytes are dropped
 /// without comment, which is C32: a torn write leaves a partial record, and a
 /// partial record is not a record.
-pub fn parse_exec(bytes: &Vec<u8>) -> (out: Vec<ExecRecord>)
+pub fn parse_exec(bytes: &[u8]) -> (out: Vec<ExecRecord>)
     ensures
         record_seq(out@) == parse(bytes@),
 {
@@ -418,7 +422,7 @@ pub fn parse_exec(bytes: &Vec<u8>) -> (out: Vec<ExecRecord>)
                 bytes@.skip(i as int),
             ));
         }
-        i = i + RECORD_LEN;
+        i += RECORD_LEN;
     }
     proof {
         assert(bytes@.skip(i as int).len() < record_len());

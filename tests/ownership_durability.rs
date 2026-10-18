@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
-use distributed_ownership::ownership::service::{
+use jetstream_distributed::ownership::service::{
     EpochFloor, Event, FileFloor, MemoryFloor, Offer, Ownership, Registry,
 };
 

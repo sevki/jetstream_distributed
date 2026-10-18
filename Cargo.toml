@@ -14,16 +14,21 @@ members = ["vendor/pmemlog"]
 exclude = ["fuzz"]
 
 [package]
-name = "distributed-ownership"
+name = "jetstream_distributed"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Machine-checked distributed protocols, and the Jetstream services that speak them"
 license = "MIT OR Apache-2.0"
 publish = false
 
 [lib]
-name = "distributed_ownership"
+name = "jetstream_distributed"
 path = "src/lib.rs"
+
+[[example]]
+name = "actor_basic"
+path = "src/actor/examples/basic.rs"
+required-features = ["service"]
 
 # The services live in `src/{algorithm}/service.rs`, in this crate, behind a
 # feature that is **off by default**.
@@ -40,7 +45,7 @@ path = "src/lib.rs"
 # proofs verify, not so a service is stuck on it. The services build with
 # `cargo +stable`, which is what Jetstream tracks.
 [features]
-default = []
+default = ["service"]
 service = ["dep:jetstream", "dep:tokio"]
 
 [dependencies]
@@ -91,7 +96,7 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 # simulation dependencies are pinned exactly and `Cargo.lock` is committed to
 # pin what they in turn pull in.
 turmoil = "=0.7.2"
-tokio = { version = "=1.47.1", features = ["io-util", "macros", "rt", "time"] }
+tokio = { version = "=1.47.1", features = ["io-util", "macros", "net", "rt", "time"] }
 # The `turmoil` support lives on `jetstream_rpc` and the `jetstream` facade does
 # not pass it through, so the service tests depend on the component directly —
 # which is exactly what jetstream's own dev-dependencies do for its turmoil

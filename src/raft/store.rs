@@ -539,7 +539,7 @@ pub fn truncate_to(out: &mut Vec<ExecEntry>, len: usize)
         let _ = out.pop();
         assert(out@ =~= original.take(n as int).drop_last());
         assert(original.take(n as int).drop_last() =~= original.take(n - 1));
-        n = n - 1;
+        n -= 1;
     }
 }
 
@@ -590,7 +590,7 @@ pub fn apply_record(out: &mut Vec<ExecEntry>, r: ExecRecord)
 /// The postcondition says the two agree, which is what makes
 /// `crate::raft::proofs::store`'s theorems statements about this code and not
 /// only about a model of it.
-pub fn replay_exec(records: &Vec<ExecRecord>) -> (out: Vec<ExecEntry>)
+pub fn replay_exec(records: &[ExecRecord]) -> (out: Vec<ExecEntry>)
     ensures
         entry_seq(out@) == replay(record_seq(records@)),
 {
@@ -611,7 +611,7 @@ pub fn replay_exec(records: &Vec<ExecRecord>) -> (out: Vec<ExecEntry>)
             assert(rs.push(r.view()).drop_last() =~= rs);
         }
         apply_record(&mut out, r);
-        i = i + 1;
+        i += 1;
     }
     assert(record_seq(records@).take(records@.len() as int) =~= record_seq(records@));
     out

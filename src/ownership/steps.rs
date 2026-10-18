@@ -138,10 +138,7 @@ impl ExecState {
         ensures
             r == is_transferring(self.view()),
     {
-        match *self {
-            ExecState::Transferring { from: _, to: _, old_epoch: _, new_epoch: _ } => true,
-            _ => false,
-        }
+        matches!(*self, ExecState::Transferring { from: _, to: _, old_epoch: _, new_epoch: _ })
     }
 
     /// The node an `Unowned` actor is being held for.
@@ -417,7 +414,7 @@ pub fn begin_transfer_step(st: ExecState, from: u64, to: u64, to_is_node: bool) 
                 Outcome::Moved(
                     ExecState::Transferring {
                         from: owner,
-                        to: to,
+                        to,
                         old_epoch: epoch,
                         new_epoch: epoch + 1,
                     },

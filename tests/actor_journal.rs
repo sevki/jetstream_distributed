@@ -19,11 +19,12 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
-use distributed_ownership::actor::service::{
+use jetstream_distributed::actor::service::{
     Actor, Connection, Event, Host, Receipt, Record, Snapshot,
 };
-use distributed_ownership::ownership::service::{MemoryFloor, Offer};
+use jetstream_distributed::ownership::service::{MemoryFloor, Offer};
 use jetstream::prelude::*;
+use jetstream_rpc::context::RemoteAddr;
 
 const ADDR_A: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
 const ADDR_B: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
@@ -70,11 +71,11 @@ impl Cluster {
 async fn actor() -> Cluster {
     let host = Host::new(roster(), A, Arc::new(MemoryFloor::new())).expect("A is on the roster");
     Cluster {
-        a: host.connect(ADDR_A).await,
-        b: host.connect(ADDR_B).await,
-        c: host.connect(ADDR_C).await,
-        d: host.connect(ADDR_D).await,
-        x: host.connect(STRANGER).await,
+        a: host.pipe(RemoteAddr::IpAddr(ADDR_A)).await,
+        b: host.pipe(RemoteAddr::IpAddr(ADDR_B)).await,
+        c: host.pipe(RemoteAddr::IpAddr(ADDR_C)).await,
+        d: host.pipe(RemoteAddr::IpAddr(ADDR_D)).await,
+        x: host.pipe(RemoteAddr::IpAddr(STRANGER)).await,
         host,
     }
 }

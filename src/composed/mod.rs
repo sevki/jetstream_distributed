@@ -8,9 +8,9 @@
 //! * [`model`]  — both layers as a single machine.
 //! * [`steps`]  — the coupling guards as executable functions.
 //! * [`proofs`] — the coupling as an invariant, an end-to-end handover across
-//!                both layers, and that [`steps`] agrees with [`model`].
+//!   both layers, and that [`steps`] agrees with [`model`].
 //! * `service`  — the two layers behind one coordinator, over Jetstream RPC,
-//!                behind the `service` feature.
+//!   behind the `service` feature.
 
 pub mod model;
 pub mod proofs;

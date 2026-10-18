@@ -1529,7 +1529,7 @@ distributed-ownership/
 │   │   ├── service/        the actor over Jetstream RPC   [feature = "service"]
 │   │   │   ├── mod.rs      the Actor trait and what goes on the wire
 │   │   │   ├── host.rs     the journal, the mailbox, and the registry that fences them
-│   │   │   ├── loopback.rs Host::connect: a Jetstream session to a host over an in-memory stream
+│   │   │   ├── transport.rs Host::serve and Connection::new over any byte stream; Host::pipe in memory
 │   │   │   └── refusal.rs  the refusals, in the line protocol's alphabet
 │   │   └── proofs/
 │   │       ├── journal.rs      counting and folding over push and take
@@ -1723,7 +1723,7 @@ same guarantee.
 **What is verified about it, precisely.** Every decision the service makes about
 the actor, and nothing else. `poll`, `acquire`, `write`, `begin_transfer`,
 `release` and `force` each look the actor's record up, hand it to a function in
-`distributed_ownership::ownership::steps`, and store what comes back; those
+`jetstream_distributed::ownership::steps`, and store what comes back; those
 functions are
 executable `u64` code with postconditions stated in terms of the model, and
 `ownership::proofs::refinement` is where the postconditions are tied to `tr_acquire`,

@@ -1,4 +1,4 @@
-//! The system model: state, transitions, executions.
+//! The OwnershipSystem model: state, transitions, executions.
 //!
 //! This module defines *only* the state space and the transition relation.
 //! It deliberately has no dependency on the specification functions in
@@ -9,7 +9,7 @@
 //!
 //! * A fixed set of actors, each with an [`OwnershipState`].
 //! * A fixed set of nodes, of which a subset is `live` - participating in the
-//!   protocol rather than merely powered on; see `System::live`.
+//!   protocol rather than merely powered on; see `OwnershipSystem::live`.
 //! * `issued`: every ownership [`Token`] that was ever physically handed out.
 //!   This set never shrinks: a crash does not erase the tokens a node was
 //!   holding, so stale physical tokens survive crashes and partitions.
@@ -20,7 +20,7 @@
 //!   - **reordering**  - deliveries may happen in any order;
 //!   - **delay**       - an arbitrary number of steps may pass before delivery;
 //!   - **staleness**   - a message from epoch `n` is still deliverable long
-//!                       after the protocol has advanced to epoch `n + k`;
+//!     after the protocol has advanced to epoch `n + k`;
 //!   - **loss**        - a message may simply never be delivered.
 //!
 //! See `README.md` ("Failure model") for the assumptions this encodes.
@@ -59,7 +59,7 @@ pub enum OwnershipState {
 /// A token is a *physical* artifact: it can be copied, it survives crashes and
 /// it can be presented by a node that has been partitioned away for a long
 /// time. Whether a token confers *authority* is a question about the current
-/// system state, see `crate::ownership::token_authorized`.
+/// OwnershipSystem state, see `crate::ownership::token_authorized`.
 pub struct Token {
     pub actor: ActorId,
     pub epoch: Epoch,
@@ -78,8 +78,8 @@ pub enum Message {
     Grant { actor: ActorId, to: NodeId, epoch: Epoch },
 }
 
-/// The whole system.
-pub struct System {
+/// The whole OwnershipSystem.
+pub struct OwnershipSystem {
     /// Ownership state of every actor. The domain never changes.
     ///
     /// **This is the ownership registry, not per-node state.** Every
@@ -136,7 +136,7 @@ pub struct System {
 /// `Unowned` at exactly the epoch named by the grant, and `node` must be the
 /// intended owner. A duplicated or stale `Grant` therefore cannot fire this
 /// transition a second time, because the state is no longer `Unowned`.
-pub open spec fn tr_acquire(pre: System, post: System, a: ActorId, n: NodeId) -> bool {
+pub open spec fn tr_acquire(pre: OwnershipSystem, post: OwnershipSystem, a: ActorId, n: NodeId) -> bool {
     &&& pre.actors.contains_key(a)
     &&& pre.live.contains(n)
     &&& match pre.actors[a] {
@@ -159,15 +159,15 @@ pub open spec fn tr_acquire(pre: System, post: System, a: ActorId, n: NodeId) ->
 ///
 /// **The owner must be participating.** "Agrees to hand over" is an action by
 /// `from`, so this is guarded like every other transition a node takes: see
-/// `System::live`. Without it, `Acquire(A) -> Crash(A) -> BeginTransfer(A, B)`
+/// `OwnershipSystem::live`. Without it, `Acquire(A) -> Crash(A) -> BeginTransfer(A, B)`
 /// was accepted, and a crashed node could volunteer - which would make the
 /// forcible path redundant in the model, since `RevokeOwner` and
 /// `crate::composed::model::cs_seize_token` exist precisely for the case where the
 /// owner *cannot* cooperate. A model in which the dead cooperate does not need
 /// them.
 pub open spec fn tr_begin_transfer(
-    pre: System,
-    post: System,
+    pre: OwnershipSystem,
+    post: OwnershipSystem,
     a: ActorId,
     from: NodeId,
     to: NodeId,
@@ -221,8 +221,8 @@ pub open spec fn tr_begin_transfer(
 ///   revisited, so a `new_epoch` cannot come back around and make an old
 ///   `Released` relevant again.
 pub open spec fn tr_handle_revoke(
-    pre: System,
-    post: System,
+    pre: OwnershipSystem,
+    post: OwnershipSystem,
     a: ActorId,
     target: NodeId,
     old_epoch: Epoch,
@@ -243,7 +243,7 @@ pub open spec fn tr_handle_revoke(
 
 /// The coordinator observed the release acknowledgement and publishes a grant
 /// for the new epoch.
-pub open spec fn tr_complete_release(pre: System, post: System, a: ActorId) -> bool {
+pub open spec fn tr_complete_release(pre: OwnershipSystem, post: OwnershipSystem, a: ActorId) -> bool {
     &&& pre.actors.contains_key(a)
     &&& match pre.actors[a] {
         OwnershipState::Transferring { from, to, old_epoch, new_epoch } =>
@@ -268,7 +268,7 @@ pub open spec fn tr_complete_release(pre: System, post: System, a: ActorId) -> b
 /// Recovery burns *another* epoch, so that any `Grant` for `new_epoch` that is
 /// still in flight is already stale when it is delivered, and offers the actor
 /// back to the original owner.
-pub open spec fn tr_abort_transfer(pre: System, post: System, a: ActorId) -> bool {
+pub open spec fn tr_abort_transfer(pre: OwnershipSystem, post: OwnershipSystem, a: ActorId) -> bool {
     &&& pre.actors.contains_key(a)
     &&& match pre.actors[a] {
         OwnershipState::Transferring { from, to, old_epoch, new_epoch } =>
@@ -293,7 +293,7 @@ pub open spec fn tr_abort_transfer(pre: System, post: System, a: ActorId) -> boo
 /// crashed. Failure detectors are unreliable, and modelling the wrong-suspicion
 /// case is the whole point: safety must come from the epoch bump, not from the
 /// detector being right.
-pub open spec fn tr_revoke_owner(pre: System, post: System, a: ActorId, next: NodeId) -> bool {
+pub open spec fn tr_revoke_owner(pre: OwnershipSystem, post: OwnershipSystem, a: ActorId, next: NodeId) -> bool {
     &&& pre.actors.contains_key(a)
     &&& pre.nodes.contains(next)
     &&& match pre.actors[a] {
@@ -314,7 +314,7 @@ pub open spec fn tr_revoke_owner(pre: System, post: System, a: ActorId, next: No
 
 /// The intended owner never picked the actor up (it crashed, or the grant was
 /// lost). Burn the epoch and offer the actor to somebody else.
-pub open spec fn tr_reassign_unowned(pre: System, post: System, a: ActorId, next: NodeId) -> bool {
+pub open spec fn tr_reassign_unowned(pre: OwnershipSystem, post: OwnershipSystem, a: ActorId, next: NodeId) -> bool {
     &&& pre.actors.contains_key(a)
     &&& pre.nodes.contains(next)
     &&& match pre.actors[a] {
@@ -336,7 +336,7 @@ pub open spec fn tr_reassign_unowned(pre: System, post: System, a: ActorId, next
 /// The coordinator (re)publishes the grant for an actor's current epoch to its
 /// intended owner. Retransmission is always safe: the grant only names state
 /// that is already public.
-pub open spec fn tr_issue_grant(pre: System, post: System, a: ActorId) -> bool {
+pub open spec fn tr_issue_grant(pre: OwnershipSystem, post: OwnershipSystem, a: ActorId) -> bool {
     &&& pre.actors.contains_key(a)
     &&& match pre.actors[a] {
         OwnershipState::Unowned { epoch, intended_owner } =>
@@ -353,7 +353,7 @@ pub open spec fn tr_issue_grant(pre: System, post: System, a: ActorId) -> bool {
 
 /// A node crashes. Its tokens stay in `issued`: crashing does not destroy the
 /// physical capability the node was holding.
-pub open spec fn tr_crash(pre: System, post: System, n: NodeId) -> bool {
+pub open spec fn tr_crash(pre: OwnershipSystem, post: OwnershipSystem, n: NodeId) -> bool {
     &&& pre.live.contains(n)
     &&& post.live == pre.live.remove(n)
     &&& post.actors == pre.actors
@@ -364,7 +364,7 @@ pub open spec fn tr_crash(pre: System, post: System, n: NodeId) -> bool {
 
 /// A crashed node comes back. It comes back still holding whatever tokens it
 /// had before the crash, and with no knowledge of what happened meanwhile.
-pub open spec fn tr_recover(pre: System, post: System, n: NodeId) -> bool {
+pub open spec fn tr_recover(pre: OwnershipSystem, post: OwnershipSystem, n: NodeId) -> bool {
     &&& pre.nodes.contains(n)
     &&& !pre.live.contains(n)
     &&& post.live == pre.live.insert(n)
@@ -376,7 +376,7 @@ pub open spec fn tr_recover(pre: System, post: System, n: NodeId) -> bool {
 
 /// The network redelivers a message that was sent at some earlier point.
 /// Explicit duplication/replay step.
-pub open spec fn tr_replay(pre: System, post: System, m: Message) -> bool {
+pub open spec fn tr_replay(pre: OwnershipSystem, post: OwnershipSystem, m: Message) -> bool {
     &&& pre.network.contains(m)
     &&& post.network == pre.network.insert(m)
     &&& post.actors == pre.actors
@@ -386,7 +386,7 @@ pub open spec fn tr_replay(pre: System, post: System, m: Message) -> bool {
 }
 
 /// Nothing happens (models an arbitrary delay).
-pub open spec fn tr_stutter(pre: System, post: System) -> bool {
+pub open spec fn tr_stutter(pre: OwnershipSystem, post: OwnershipSystem) -> bool {
     &&& post.actors == pre.actors
     &&& post.nodes == pre.nodes
     &&& post.live == pre.live
@@ -394,7 +394,7 @@ pub open spec fn tr_stutter(pre: System, post: System) -> bool {
     &&& post.network == pre.network
 }
 
-/// The labelled transitions of the system.
+/// The labelled transitions of the OwnershipSystem.
 pub enum Step {
     Acquire { actor: ActorId, node: NodeId },
     BeginTransfer { actor: ActorId, from: NodeId, to: NodeId },
@@ -411,7 +411,7 @@ pub enum Step {
 }
 
 /// The transition relation, indexed by the step that was taken.
-pub open spec fn step(pre: System, post: System, s: Step) -> bool {
+pub open spec fn step(pre: OwnershipSystem, post: OwnershipSystem, s: Step) -> bool {
     match s {
         Step::Acquire { actor, node } => tr_acquire(pre, post, actor, node),
         Step::BeginTransfer { actor, from, to } => tr_begin_transfer(pre, post, actor, from, to),
@@ -430,7 +430,7 @@ pub open spec fn step(pre: System, post: System, s: Step) -> bool {
 }
 
 /// The unlabelled transition relation.
-pub open spec fn next(pre: System, post: System) -> bool {
+pub open spec fn next(pre: OwnershipSystem, post: OwnershipSystem) -> bool {
     exists|s: Step| step(pre, post, s)
 }
 
@@ -445,15 +445,15 @@ pub open spec fn starts_unowned(s: OwnershipState) -> bool {
 
 /// Initial states: no actor is owned, nothing has been issued, nothing has
 /// been sent, and every live node is a real node.
-pub open spec fn init(sys: System) -> bool {
+pub open spec fn init(sys: OwnershipSystem) -> bool {
     &&& (forall|a: ActorId| #[trigger] sys.actors.contains_key(a) ==> starts_unowned(sys.actors[a]))
     &&& (forall|t: Token| !(#[trigger] sys.issued.contains(t)))
     &&& (forall|m: Message| !(#[trigger] sys.network.contains(m)))
     &&& sys.live.subset_of(sys.nodes)
 }
 
-/// `tr` is a finite execution of the system.
-pub open spec fn valid_execution(tr: Seq<System>) -> bool {
+/// `tr` is a finite execution of the OwnershipSystem.
+pub open spec fn valid_execution(tr: Seq<OwnershipSystem>) -> bool {
     &&& tr.len() > 0
     &&& init(tr[0])
     // A multi-trigger on *both* adjacent states. With `tr[i]` alone, the
@@ -472,12 +472,12 @@ pub open spec fn valid_execution(tr: Seq<System>) -> bool {
 ///
 /// `valid_execution` quantifies over `next`, which hides which step was taken
 /// at each index. That is the right notion for a safety theorem - "whatever the
-/// system did, this holds" - and the wrong one for a scenario, whose entire
+/// OwnershipSystem did, this holds" - and the wrong one for a scenario, whose entire
 /// content is *which* steps were taken. A scenario assembled from reachable
 /// endpoints and a step or two claims much less than it appears to: the
 /// existentials can be satisfied from different executions, so the conjunction
 /// need not describe any single run.
-pub open spec fn run(tr: Seq<System>, labels: Seq<Step>) -> bool {
+pub open spec fn run(tr: Seq<OwnershipSystem>, labels: Seq<Step>) -> bool {
     &&& tr.len() > 0
     &&& labels.len() == tr.len() - 1
     // Multi-trigger on both adjacent states and the label between them, for the
@@ -488,14 +488,14 @@ pub open spec fn run(tr: Seq<System>, labels: Seq<Step>) -> bool {
 }
 
 /// A labelled run that starts at initialisation.
-pub open spec fn labelled_execution(tr: Seq<System>, labels: Seq<Step>) -> bool {
+pub open spec fn labelled_execution(tr: Seq<OwnershipSystem>, labels: Seq<Step>) -> bool {
     &&& run(tr, labels)
     &&& init(tr[0])
 }
 
 /// `sys` is reachable if some finite execution ends in it.
-pub open spec fn reachable(sys: System) -> bool {
-    exists|tr: Seq<System>| valid_execution(tr) && tr[tr.len() - 1] == sys
+pub open spec fn reachable(sys: OwnershipSystem) -> bool {
+    exists|tr: Seq<OwnershipSystem>| valid_execution(tr) && tr[tr.len() - 1] == sys
 }
 
 } // verus!

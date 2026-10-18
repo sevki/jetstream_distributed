@@ -189,6 +189,11 @@ pub trait LogStore: Send + Sync + 'static {
     /// How many entries there are.
     fn len(&self) -> io::Result<u64>;
 
+    /// Whether there are none.
+    fn is_empty(&self) -> io::Result<bool> {
+        Ok(self.len()? == 0)
+    }
+
     /// The entry at `index`, or `None` past the end.
     fn entry_at(&self, index: u64) -> io::Result<Option<LogEntry>>;
 
@@ -729,7 +734,7 @@ impl Durable for FileLog {
     fn load(&self) -> io::Result<Persisted> {
         match fs::read_to_string(&self.path) {
             Ok(text) => {
-                let mut parts = text.trim().split_whitespace();
+                let mut parts = text.split_whitespace();
                 let bad = || {
                     io::Error::new(
                         io::ErrorKind::InvalidData,

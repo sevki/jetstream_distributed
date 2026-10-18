@@ -312,17 +312,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "distributed-ownership"
-version = "0.1.0"
-dependencies = [
- "jetstream",
- "jetstream_rpc",
- "tokio",
- "turmoil",
- "vstd",
-]
-
-[[package]]
 name = "either"
 version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -876,6 +865,17 @@ dependencies = [
  "syn 3.0.6",
  "toml",
  "typeshare-core",
+]
+
+[[package]]
+name = "jetstream_distributed"
+version = "0.1.0"
+dependencies = [
+ "jetstream",
+ "jetstream_rpc",
+ "tokio",
+ "turmoil",
+ "vstd",
 ]
 
 [[package]]

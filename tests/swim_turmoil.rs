@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, OnceLock};
 
-use distributed_ownership::swim::service::{
+use jetstream_distributed::swim::service::{
     membership_protocol::{MembershipChannel, MembershipService},
     Liveness, Membership, Node, Update,
 };

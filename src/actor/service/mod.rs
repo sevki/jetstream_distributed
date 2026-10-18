@@ -60,11 +60,15 @@
 //! not a credential.
 
 mod host;
-mod loopback;
+mod mailbox;
+mod session;
+mod transport;
 mod refusal;
 
 pub use host::{Event, Host};
-pub use loopback::Connection;
+pub use mailbox::{Mailbox, Round};
+pub use session::{serve, Delivery, Session};
+pub use transport::Connection;
 
 use crate::ownership::service::Offer;
 use jetstream::prelude::*;

@@ -78,7 +78,7 @@ impl FenceGuard {
         ensures
             r.view() == (OwnershipState::Owned { owner: owner as nat, epoch: epoch as nat }),
     {
-        FenceGuard { owner: owner, epoch: epoch }
+        FenceGuard { owner, epoch }
     }
 
     /// **The node-local staleness check.** Returns exactly the model's verdict

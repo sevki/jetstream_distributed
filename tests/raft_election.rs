@@ -19,7 +19,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use distributed_ownership::raft::service::{
+use jetstream_distributed::raft::service::{
     Ballot, Consensus, Durable, Event, MemoryLog, MemoryLogStore, Peer, Persisted, Standing,
 };
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;

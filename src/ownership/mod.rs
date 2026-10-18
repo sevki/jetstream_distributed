@@ -9,17 +9,17 @@
 //! proofs, the executable steps and the Jetstream service that runs them.
 //!
 //! * [`model`]    — state space and transition relation, and nothing else. It
-//!                  does not import the specification layer, so a specification
-//!                  cannot be quietly weakened to fit the model.
+//!   does not import the specification layer, so a specification
+//!   cannot be quietly weakened to fit the model.
 //! * [`fencing`]  — epochs: `current_epoch`, `valid_fence`, staleness.
 //! * [`spec`]     — `may_mutate`, tokens, the system invariant.
 //! * [`transfer`] — the multi-step handover and its lemmas.
 //! * [`steps`]    — the transitions as executable `u64` functions.
 //! * [`exec`]     — the `u64` fence check a *node* runs against its own belief,
-//!                  which is a different thing from the fence a registry runs.
+//!   which is a different thing from the fence a registry runs.
 //! * [`proofs`]   — the theorems.
 //! * `service`    — the protocol over Jetstream RPC, behind the `service`
-//!                  feature.
+//!   feature.
 
 pub mod exec;
 pub mod fencing;

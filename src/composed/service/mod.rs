@@ -2,7 +2,8 @@
 //!
 //! The composition is not an algorithm of its own — it is two, with the coupling
 //! between them made a **guard**. So this service is the two existing ones
-//! ([`Registry`] and [`Router`]) and the guards that tie them together, and
+//! ([`Registry`](crate::ownership::service::Registry) and
+//! [`Router`](crate::raymond::service::Router)) and the guards that tie them together, and
 //! almost all of it is delegation. What it adds is small and is the whole point:
 //!
 //! * **the privilege moves only once the actor has been released.**

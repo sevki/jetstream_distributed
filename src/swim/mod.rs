@@ -23,9 +23,9 @@
 //! Following it, in the order this repository built Raft in:
 //!
 //! * [`steps`]   — the merge and the refutation as executable `u64` functions,
-//!                 verified against the model.
+//!   verified against the model.
 //! * `service`   — the protocol over Jetstream RPC, behind the `service`
-//!                 feature: a `Membership` trait with `ping` and `sync`.
+//!   feature: a `Membership` trait with `ping` and `sync`.
 //!
 //! Not here yet: the probe timer, the indirect-ping fallback, and the piggyback
 //! *selection* that decides which records ride on which probe. Those are a real
@@ -35,7 +35,7 @@
 //! and calls `suspect` is the caller's.
 //!
 //! * [`model`]  — state space: a member's record, the merge rule, one
-//!                transition (`tr_gossip`) and the run it generates.
+//!   transition (`tr_gossip`) and the run it generates.
 //! * [`proofs`] — the merge algebra, and what it buys once lifted to a run.
 
 pub mod model;

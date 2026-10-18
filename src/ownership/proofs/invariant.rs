@@ -6,7 +6,7 @@
 //! * [`lemma_inv_frame`]           - steps that touch neither actors nor tokens;
 //! * [`lemma_inv_epoch_bump`]      - steps that strictly advance an epoch;
 //! * [`lemma_inv_same_epoch_unowned`] - steps that keep the epoch but stay out
-//!                                   of `Owned`;
+//!   of `Owned`;
 //! * [`lemma_inv_acquire`]         - the only step that issues a token.
 #![allow(unused_imports)]
 

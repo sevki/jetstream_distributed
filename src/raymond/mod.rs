@@ -10,10 +10,10 @@
 //! * [`model`]  — the routing state machine.
 //! * [`steps`]  — the routing decisions as executable `u64` functions.
 //! * [`proofs`] — exclusivity of the critical section, acyclicity of the
-//!                holder pointers, the routing run, and that [`steps`] agrees
-//!                with [`model`].
+//!   holder pointers, the routing run, and that [`steps`] agrees
+//!   with [`model`].
 //! * `service`  — the routing layer over Jetstream RPC, behind the `service`
-//!                feature.
+//!   feature.
 
 pub mod model;
 pub mod proofs;

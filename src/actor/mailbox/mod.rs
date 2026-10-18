@@ -9,10 +9,10 @@
 //! lost-wakeup problem.
 //!
 //! * [`model`]  — the mailbox and its protocol: three flags, six steps, and the
-//!                step boundaries the protocol's bug would live between.
+//!   step boundaries the protocol's bug would live between.
 //! * [`proofs`] — what the protocol keeps true ([`proofs::invariant`]), what that
-//!                means for delivery ([`proofs::safety`]), and that a message
-//!                enqueued is a message processed ([`proofs::liveness`]).
+//!   means for delivery ([`proofs::safety`]), and that a message
+//!   enqueued is a message processed ([`proofs::liveness`]).
 //!
 //! # Safety and liveness are different claims
 //!

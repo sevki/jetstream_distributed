@@ -49,7 +49,7 @@ use std::{
     time::Duration,
 };
 
-use distributed_ownership::ownership::exec::FenceGuard;
+use jetstream_distributed::ownership::exec::FenceGuard;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use turmoil::{
     net::{TcpListener, TcpStream},
@@ -225,6 +225,9 @@ pub enum Fence {
 /// The actor's ownership state. The three-case enum of `model::OwnershipState`,
 /// with the epochs as `u64`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// `Owned::Owned` mirrors the model's `OwnershipState::Owned`; renaming it would
+// make the oracle harder to read against the model it checks.
+#[allow(clippy::enum_variant_names)]
 enum Owned {
     Unowned { epoch: u64, intended: u64 },
     Transferring { from: u64, to: u64, old_epoch: u64, new_epoch: u64 },
@@ -328,10 +331,8 @@ impl Coord {
             | ("RELEASE", [node, _]) => Some(*node),
             _ => None,
         };
-        if let Some(node) = claimed {
-            if peer != Peer::Node(node) {
-                return "NO".to_string();
-            }
+        if claimed.is_some_and(|node| peer != Peer::Node(node)) {
+            return "NO".to_string();
         }
 
         match (verb, args.as_slice()) {
@@ -811,14 +812,14 @@ impl Action {
             }
             9 => Action::Force { next: node },
             10 => {
-                if param % 2 == 0 {
+                if param.is_multiple_of(2) {
                     Action::Isolate { node }
                 } else {
                     Action::Rejoin { node }
                 }
             }
             11 => {
-                if param % 2 == 0 {
+                if param.is_multiple_of(2) {
                     Action::Stall { node }
                 } else {
                     Action::Resume { node }
@@ -863,7 +864,9 @@ impl Scenario {
         let (head, tail) = data.split_at_checked(8)?;
         let seed = u64::from_le_bytes(head.try_into().ok()?);
         let actions: Vec<Action> = tail
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .take(MAX_ACTIONS)
             .map(|pair| Action::from_pair(pair[0] as u64, pair[1] as u64))
             .collect();
@@ -1269,14 +1272,12 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
             // audited log could abort a handover to a third party and no oracle
             // would object.
             Event::EpochBurned { to_epoch, next, .. } => {
-                if let Some((outgoing, _)) = pending {
-                    if *next != outgoing {
-                        return Err(format!(
-                            "claim 4 (transfer): the handover from node \
-                             {outgoing} was aborted at epoch {to_epoch}, which \
-                             was offered to node {next} rather than back to it"
-                        ));
-                    }
+                if let Some((outgoing, _)) = pending.filter(|(outgoing, _)| *next != *outgoing) {
+                    return Err(format!(
+                        "claim 4 (transfer): the handover from node \
+                         {outgoing} was aborted at epoch {to_epoch}, which \
+                         was offered to node {next} rather than back to it"
+                    ));
                 }
                 owned = false;
                 pending = None;
@@ -1343,13 +1344,11 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
     for ev in log {
         match ev {
             Event::Acquired { node, epoch } => acquired.push((*node, *epoch)),
-            Event::Wrote { node, epoch, seq } => {
-                if !acquired.contains(&(*node, *epoch)) {
-                    return Err(format!(
-                        "P8 (token): node {node} wrote at epoch {epoch} (seq {seq}) \
-                         without ever having acquired it"
-                    ));
-                }
+            Event::Wrote { node, epoch, seq } if !acquired.contains(&(*node, *epoch)) => {
+                return Err(format!(
+                    "P8 (token): node {node} wrote at epoch {epoch} (seq {seq}) \
+                     without ever having acquired it"
+                ));
             }
             _ => {}
         }
@@ -1882,10 +1881,8 @@ pub fn owed_for(line: &str, peer: Peer) -> Owed {
         // Only for a verb the protocol *has*: it has no opinion about who may
         // send a request it does not recognise, so an unknown verb is
         // malformed and nothing else.
-        if let Some(claimed) = field(0) {
-            if peer != Peer::Node(claimed) {
-                owed.not_permitted = true;
-            }
+        if field(0).is_some_and(|claimed| peer != Peer::Node(claimed)) {
+            owed.not_permitted = true;
         }
         // A handover's successor has to exist too, read from its own field.
         if verb == "BEGIN" && field(1).is_some_and(|to| to >= NODES) {
@@ -1940,7 +1937,7 @@ fn well_formed(choice: u64, fields: u64, offered: Offered) -> String {
     // is five consecutive steps at *one* node, and an independent draw put the
     // right node there one time in eight.
     let node = match offered.node {
-        Some(n) if fields % 4 != 0 => n,
+        Some(n) if !fields.is_multiple_of(4) => n,
         _ => NODE_VALUES[(fields % NODE_VALUES.len() as u64) as usize],
     };
     match verb {
@@ -1954,7 +1951,7 @@ fn well_formed(choice: u64, fields: u64, offered: Offered) -> String {
         // and a guard nothing sends at is a guard nothing checks.
         "BEGIN" => {
             let pick = (fields / 8) % NODE_VALUES.len() as u64;
-            let to = if (fields / 8) % 5 == 0 {
+            let to = if (fields / 8).is_multiple_of(5) {
                 NODE_VALUES[pick as usize]
             } else {
                 // `node % NODES` first. Without it this overflowed on the very
@@ -1974,7 +1971,7 @@ fn well_formed(choice: u64, fields: u64, offered: Offered) -> String {
             // the stale and impossible epochs come from — and those are half
             // the point, since the fence exists for exactly them.
             let epoch = match offered.epoch {
-                Some(e) if (fields / 8) % 3 != 0 => e,
+                Some(e) if !(fields / 8).is_multiple_of(3) => e,
                 _ => EPOCH_VALUES[((fields / 8) % EPOCH_VALUES.len() as u64) as usize],
             };
             format!("{verb} {node} {epoch}")
@@ -2068,7 +2065,9 @@ impl ProtocolRun {
     /// runs in milliseconds where the scenario walk takes half a minute.
     pub fn from_bytes(data: &[u8]) -> Option<Self> {
         let words: Vec<[u64; 3]> = data
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .take(MAX_STEPS)
             .map(|w| [w[0] as u64, w[1] as u64, w[2] as u64])
             .collect();
@@ -2349,7 +2348,7 @@ pub fn agrees_with_log(line: &str, reply: &str, appended: &[Event]) -> Result<()
         }
         // A write that landed carries the sequence number it landed at.
         ("WRITE", "OK", [Event::Wrote { node, epoch, seq }]) => {
-            Some(*node) == a && Some(*epoch) == b && arg == Some(*seq as u64)
+            Some(*node) == a && Some(*epoch) == b && arg == Some(*seq)
         }
         ("WRITE", "FENCED", [Event::Fenced { node, epoch }]) => {
             arg.is_none() && Some(*node) == a && Some(*epoch) == b

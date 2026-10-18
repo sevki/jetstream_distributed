@@ -182,7 +182,7 @@ jobs:
 
           # `|| true` so that a missing line reaches the diagnostic below rather
           # than aborting the step under `set -e` with no explanation.
-          start=$(grep -n 'Checking distributed-ownership' /tmp/cargo-verus.txt | tail -1 | cut -d: -f1 || true)
+          start=$(grep -n 'Checking jetstream_distributed' /tmp/cargo-verus.txt | tail -1 | cut -d: -f1 || true)
           if [ -z "$start" ]; then
             echo "::error::cargo verus never compiled this crate, so it cannot have verified it"
             exit 1

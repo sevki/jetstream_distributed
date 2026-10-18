@@ -39,6 +39,8 @@
 
 use vstd::prelude::*;
 
+mod system;
+
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
 use crate::ownership::spec::*;
@@ -112,7 +114,7 @@ pub open spec fn state_of(journal: Seq<Entry>) -> nat
 /// One actor, the ownership protocol that fences it, and the messages in flight.
 pub struct ActorSystem {
     /// The ownership layer: who owns the actor, at which epoch.
-    pub own: System,
+    pub own: OwnershipSystem,
     /// The actor this system is about.
     pub actor: ActorId,
     /// Every message ever sent. Never shrinks; see the module docs.

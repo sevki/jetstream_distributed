@@ -33,11 +33,11 @@
 //! 3. the journal is only ever extended, never rewritten.
 //!
 //! * [`model`]  — the state space and transition relation, and nothing else.
-//!                The one thing it borrows is the ownership layer's definition
-//!                of who may mutate, which is the point.
+//!   The one thing it borrows is the ownership layer's definition
+//!   of who may mutate, which is the point.
 //! * [`steps`]  — the host's decisions as executable `u64` functions.
 //! * [`proofs`] — the invariant, the guarantees above as theorems, and that
-//!                [`steps`] agrees with [`model`].
+//!   [`steps`] agrees with [`model`].
 //! * `service`  — the actor over Jetstream RPC, behind the `service` feature.
 //!
 //! # What is not claimed

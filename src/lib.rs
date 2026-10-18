@@ -20,17 +20,17 @@
 //! * [`ownership`] — exclusive mutable ownership with epoch fencing.
 //! * [`raymond`]   — Raymond's mutual-exclusion routing layer.
 //! * [`composed`]  — the two above as one machine, with the coupling between
-//!                   them proved rather than assumed.
+//!   them proved rather than assumed.
 //! * [`raft`]      — consensus, where exclusivity is bought by counting
-//!                   instead of by assuming an atomic registry.
+//!   instead of by assuming an atomic registry.
 //! * [`actor`]     — a distributed actor: a journal fenced by ownership, so one
-//!                   host at a time, each message once, in order, and state that
-//!                   survives a handover.
+//!   host at a time, each message once, in order, and state that
+//!   survives a handover.
 //! * [`swim`]      — gossip membership, which buys neither exclusivity nor
-//!                   agreement, and promises only that disagreements resolve.
+//!   agreement, and promises only that disagreements resolve.
 //! * [`temporal`]  — not an algorithm: the small temporal logic (leads-to, weak
-//!                   fairness, WF1) that [`actor::mailbox`]'s liveness theorem
-//!                   is stated in.
+//!   fairness, WF1) that [`actor::mailbox`]'s liveness theorem
+//!   is stated in.
 //!
 //! Within each, `model` defines only the state space and the transition
 //! relation and never imports the specification layer, so a specification
@@ -51,6 +51,12 @@
 //! proofs verify — not so a service is stuck on it. The services are built with
 //! `cargo +stable`, which is what Jetstream tracks.
 #![allow(unused_imports)]
+// The proofs and specs are written inside `verus!`, so in an ordinary build
+// (`cargo doc` included) `spec fn`s, `proof fn`s and the like do not exist, and
+// the docs that link to them — `[`as_accept`]`, `[`inv_fifo`]` — cannot resolve.
+// They resolve under Verus. Real items link by path, and the check stays on
+// everywhere the ghost code is kept.
+#![cfg_attr(not(verus_keep_ghost), allow(rustdoc::broken_intra_doc_links))]
 
 pub mod actor;
 pub mod composed;

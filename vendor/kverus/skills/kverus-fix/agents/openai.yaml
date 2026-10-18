@@ -1,0 +1,3 @@
+interface:
+  display_name: "KVerus Fix"
+  short_description: "Fix Verus errors with explicit inputs or automatic discovery"

@@ -1,0 +1,7 @@
+interface:
+  display_name: "KVerus Semantic Audit"
+  short_description: "Audit Rust-to-Verus semantics and unsafe/pub changes"
+  default_prompt: "Use $kverus-semantic-audit to compare a Rust source folder with a Verus folder, flag unsafe/pub token changes, and write semantic-difference reports."
+
+policy:
+  allow_implicit_invocation: true

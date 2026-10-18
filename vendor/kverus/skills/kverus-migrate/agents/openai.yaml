@@ -1,0 +1,3 @@
+interface:
+  display_name: "KVerus Migrate"
+  short_description: "Convert Rust targets into minimally modified Verus-compatible code"

@@ -1,0 +1,3 @@
+interface:
+  display_name: "KVerus Run"
+  short_description: "Run the full Rust-to-Verus verification pipeline"

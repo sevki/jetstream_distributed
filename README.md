@@ -1,7 +1,11 @@
-# distributed-ownership
+# jetstream_distributed
 
-A small, machine-checked model of **exclusive mutable ownership across
-machines**, written in [Verus](https://github.com/verus-lang/verus).
+Machine-checked distributed protocols, written in
+[Verus](https://github.com/verus-lang/verus), and the
+[Jetstream](https://github.com/sevki/jetstream) services that speak them: **exclusive
+mutable ownership across machines**, Raymond's routing layer, Raft, SWIM gossip, and
+a distributed actor with a mailbox in front of it. The rest of this section is about
+the first, which the others build on.
 
 ```text
 Rust:
@@ -1352,10 +1356,12 @@ proved, not assumed.
 | MB8 | **The liveness theorem is not vacuous.** A run of the machine that satisfies `mailbox_fair` and does work: one message is queued and processed, and a second that arrives *after* the drain took the queue is queued and processed, woken by the drain's last step seeing `has` — and the theorem applies to it | `actor::mailbox::proofs::scenario::scenario_a_fair_run_delivers_two_messages`, `scenario_the_theorem_applies_to_it` | none: the run is exhibited |
 | MB9 | **The fairness assumption is necessary.** A run of the machine in which a message is enqueued and never processed, and which is not fair: its sender's own `set_state` step stays possible forever and is never taken | `actor::mailbox::proofs::scenario::scenario_without_fairness_a_message_waits_forever` | none: the run is exhibited |
 
-**What this does not do.** The service does not run this protocol: `Host` keeps the
-sent set of the actor's model and the owning node calls `accept`. This is the
-specification and proof of the queue a host would sit behind; connecting a drain
-loop to the service is the step after it. The fairness assumption is *weak*
+**What this does not do.** The proof is about the model. The protocol *is* run now —
+`service::Mailbox` is its six steps on real threads, and
+[The mailbox as a transport](#the-mailbox-as-a-transport) says how it is used — but
+that is a transcription the tests exercise, not a refinement Verus checks, and `Host`
+does not sit behind it yet: `Host` keeps the sent set of the actor's model and the
+owning node calls `accept`. The fairness assumption is *weak*
 fairness of those steps and nothing stronger, and it is an assumption about the
 scheduler, not something the protocol can enforce — a drain that is never run
 delivers nothing, which MB9 exhibits. And the mailbox hands the actor an *ordered*
@@ -1476,10 +1482,11 @@ timing lives, and nothing in `swim::model` says anything about timing.
 ## Repository layout
 
 ```text
-distributed-ownership/
-├── Cargo.toml              one crate; the services are behind the `service` feature (on by default; the proofs build without it)
+jetstream_distributed/
+├── Cargo.toml              one crate (plus the vendored pmemlog); the services are behind the `service` feature (on by default; the proofs build without it)
 ├── rust-toolchain.toml
 ├── README.md
+├── fuzz/                   the coverage-guided front end to the protocol-line search (its own workspace, nightly)
 ├── src/
 │   ├── lib.rs
 │   ├── temporal.rs         leads-to, weak fairness and WF1: what a liveness proof is stated in
@@ -1528,9 +1535,13 @@ distributed-ownership/
 │   │   │       └── scenario.rs   a fair run that delivers; an unfair one that does not
 │   │   ├── service/        the actor over Jetstream RPC   [feature = "service"]
 │   │   │   ├── mod.rs      the Actor trait and what goes on the wire
-│   │   │   ├── host.rs     the journal, the mailbox, and the registry that fences them
+│   │   │   ├── host.rs     the journal, the sent set, and the registry that fences them
 │   │   │   ├── transport.rs Host::serve and Connection::new over any byte stream; Host::pipe in memory
+│   │   │   ├── mailbox.rs  the mailbox protocol on real threads: Mailbox, Permit, Capacity, Round
+│   │   │   ├── session.rs  Session (a ClientTransport over a mailbox) and serve (the drain)
 │   │   │   └── refusal.rs  the refusals, in the line protocol's alphabet
+│   │   ├── examples/
+│   │   │   └── basic.rs    two actors, each behind its own mailbox, one calling the other
 │   │   └── proofs/
 │   │       ├── journal.rs      counting and folding over push and take
 │   │       ├── invariant.rs    the six-clause invariant, and that every step preserves it
@@ -1581,6 +1592,7 @@ distributed-ownership/
 │   ├── raft_wire.rs            the service over a simulated network [feature = "service"]
 │   ├── actor_journal.rs        the guarantees over a Jetstream session, and every refusal [feature = "service"]
 │   ├── actor_turmoil.rs        an actor changes hands across hosts, nothing lost or repeated [feature = "service"]
+│   ├── actor_mailbox.rs        A calls B through a mailbox, backpressure, abort and close [feature = "service"]
 │   ├── raymond_routing.rs      the textbook request path, and every refusal [feature = "service"]
 │   ├── raymond_turmoil.rs      the same path across hosts, on a simulated network [feature = "service"]
 │   ├── composed_handover.rs    the coupling: no move while held, no acquire without it [feature = "service"]
@@ -1590,11 +1602,15 @@ distributed-ownership/
 │   └── seeds/scenarios.txt     seeds that once broke something
 ├── vendor/
 │   ├── README.md               provenance, what is built, and pmemlog's six assumptions
-│   └── verified-storage/       Microsoft's verified-storage, whole and verbatim (CI diffs it)
-│       ├── pmemlog/            the verified persistent-memory log [verified by CI]
-│       ├── multilog/           logs with atomic appends across them [not yet built]
-│       ├── capybaraKV/         a persistent-memory key-value store [not yet built]
-│       └── ...                 capybaraNS, soundness_proofs, unverified, LICENSE.txt
+│   ├── verified-storage/       Microsoft's verified-storage, whole and verbatim (CI diffs it)
+│   │   ├── pmemlog/            the verified persistent-memory log [verified by CI]
+│   │   ├── multilog/           logs with atomic appends across them [not yet built]
+│   │   ├── capybaraKV/         a persistent-memory key-value store [not yet built]
+│   │   └── ...                 capybaraNS, soundness_proofs, unverified, LICENSE.txt
+│   └── kverus/                 the KVerus agent skills, verbatim (CI diffs it)
+│       ├── README.md           provenance, and which skills edit code
+│       └── skills/             kverus-review, kverus-eval, ... : what AGENTS.md's reviews follow
+├── AGENTS.md                   build and verify commands, the rules, and how to review a change
 └── .github/workflows/verify.yml
 ```
 
@@ -1858,7 +1874,7 @@ previous host's memory.
 
 `tests/actor_journal.rs` runs the guarantees through Jetstream — every call goes over
 a generated client channel and session to the generated server in front of the
-`Host` (`Host::connect`, which supplies the peer address a byte stream cannot, as a
+`Host` (`Host::pipe`, an in-memory stream whose peer address the caller names, as a
 TLS adapter supplies its handshake's identity) — redelivery,
 messages ahead of their turn, the fence asked first, a handover that keeps the
 journal and fences the old host, a forced revocation, and all 24 orders of four
@@ -1867,6 +1883,77 @@ journal whose state is the fold of whatever it holds. `tests/actor_turmoil.rs` r
 the whole story across simulated hosts: a sender sends, the owner accepts, the
 actor is handed to another node, the old owner — still believing — is refused, and
 the new owner catches up from the journal.
+
+### Over any byte stream
+
+`Host::serve(io, peer)` serves one connection over any `AsyncRead + AsyncWrite`
+stream, and `Connection::new(io)` is the client end: TCP, turmoil, QUIC or an iroh
+stream pair all fit. The one thing a stream may not be able to say is who is on the
+other end, so `serve` takes it as the peer `Context` — an accept loop reads it off the
+socket, a TLS adapter supplies its handshake's identity — and the host believes it,
+so it must come from the transport and never from the peer. `Host::pipe` is the same
+wiring over an in-memory stream, for tests and examples, where the caller names the
+peer. The roster that maps a peer to a node is still keyed on `IpAddr`, so only
+`RemoteAddr::IpAddr` identities are accepted today.
+
+A `Connection` owns the session as well as the channel, and has to: dropping a
+`SingleLaneSession` cancels its lane.
+
+### The mailbox as a transport
+
+The mailbox of the previous section is what a call goes *through*, not something a
+caller sees. Given `#[service] trait ActorB`, a caller holding an `ActorB` — a
+generated `ActorBChannel`, or the implementation itself — writes `self.b.b(ctx).await`
+either way and cannot tell which:
+
+```text
+caller ── ActorBChannel ── Session ──▶ Mailbox ──▶ serve ── ActorBService ── impl
+                              ◀── reply ──────────────────────┘
+```
+
+* **`Mailbox<T>`** is the protocol's six steps on real threads, each method one model
+  step under one lock: a sender's `enqueue` (through a `Permit`), `set_state` and
+  `schedule`, and the drain's `claim`, `take` and `finish`.
+* **`Session<P>`** is a `ClientTransport`, which is all a generated channel asks of
+  what it sits on. `poll_ready` reserves a slot, `start_send` enqueues, and
+  `poll_flush` runs the rest of the sender's operation, which is where the drain is
+  woken.
+* **`serve(mailbox, &mut service)`** is the drain. It takes rounds from the mailbox
+  and hands each request to the service in the order queued, one at a time, so the
+  service sees one request at a time and each sender's requests in the order it sent
+  them. Identity is read off the delivery, not the lane: a mailbox has many senders
+  and one drain, and `Server::rpc` takes the `Context` per call. A request in flight
+  when the drain is aborted is answered with an error, and only that one.
+* **Backpressure.** A mailbox is built with a `Capacity`, which is always the
+  caller's to say: `Bounded(n)` makes `poll_ready` wait for a free slot (the drain
+  wakes it), `Unbounded` never does, and there is no default and no number that
+  means "no limit". The model's queue is unbounded and a full mailbox is a sender
+  that has not begun its operation, which the model reads as a stutter — so the
+  safety proofs carry over, and the liveness theorem owes progress only to
+  operations already begun. That is an argument about the mapping, not a proof.
+
+**What it does not claim.**
+
+* **It is a transcription, not a refinement.** Nothing checks `service::Mailbox`
+  against the model with Verus; the claim rests on each method being the step it is
+  named for and on the tests (`tests/actor_mailbox.rs` and the unit tests in
+  `mailbox.rs`: many senders into a small mailbox lose nothing and keep their order,
+  a full one holds its callers back and not its queue, and an aborted drain answers
+  only the request it dropped).
+* **`serve` does not check the ownership epoch.** It hands each request to the
+  service. The fence belongs around `Server::rpc`, and `Host` does not sit behind a
+  mailbox yet.
+* **A bound is a place to deadlock, and a cycle already is.** The drain runs one
+  message at a time, so a handler waiting on an actor whose handler is waiting on it
+  holds both drains whatever the capacity. A bounded mailbox adds a way in: a sender
+  inside a handler waiting for a slot. Do not wait on another actor inside a turn
+  that another actor can be waiting on.
+* **No subscriptions.** Streaming methods are served by `jetstream_rpc`'s `run` on a
+  lane; a mailbox delivers one request and takes one response. The reply path from
+  the drain to each session is not bounded.
+
+`cargo run --example actor_basic` runs two actors, each behind its own mailbox, with
+the first calling the second.
 
 ## Verifying locally
 
@@ -1904,6 +1991,17 @@ summary, because a summary is present — just not this crate's. The CI step
 therefore requires a summary emitted *after* Cargo starts compiling this
 crate. It runs with `--no-default-features`, since `service` is a default feature
 and the proof build should not pull Jetstream and tokio in.
+
+A third job, `pmemlog proof check`, verifies the vendored persistent-memory log
+(`vendor/verified-storage/pmemlog`) the same way, and checks that the vendored tree is
+byte-for-byte Microsoft's at the pinned commit. See [`vendor/README.md`](vendor/README.md).
+
+The services and the simulated-network tests are not verified, only run:
+
+```bash
+cargo test                          # the services, tests/, and the unit tests
+cargo run --example actor_basic     # two actors behind mailboxes
+```
 
 ## Network resiliency: the model, run for real
 
@@ -2413,12 +2511,16 @@ invariant preservation):
   journal dies with its process, so the guarantees hold for the lifetime of the
   process and not across its death. Durability is the next layer.
 
-* **The actor proves safety; the mailbox proves delivery, but the service does not
-  run the mailbox.** The actor's own model says nothing about a message ever being
+* **The actor proves safety; the mailbox proves delivery, but `Host` does not sit
+  behind the mailbox.** The actor's own model says nothing about a message ever being
   offered to its host, and an out-of-order arrival is refused, not buffered.
   `actor::mailbox` proves that a queue in front of it delivers every enqueued
-  message, in order, under a stated fairness assumption — and `Host` still keeps the
-  actor's sent set and relies on its caller to call `accept`. The actor's behaviour is a pure fold, so what a message *does* beyond
+  message, in order, under a stated fairness assumption. `service::Mailbox`,
+  `Session` and `serve` run that protocol and deliver to any generated service, but
+  they are a transcription rather than a refinement, `serve` does not yet check the
+  ownership epoch around each call, and `Host` still keeps the actor's sent set and
+  relies on its caller to call `accept`. Subscriptions are not served through the
+  mailbox, and the reply path is not bounded. The actor's behaviour is a pure fold, so what a message *does* beyond
   changing the state — an effect, a reply — is not modelled, and neither is what
   an effect does if its host is fenced halfway through.
 

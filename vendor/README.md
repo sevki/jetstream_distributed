@@ -1,5 +1,8 @@
 # `vendor/verified-storage`, vendored
 
+(The KVerus agent skills, also vendored, are described in
+[`kverus/README.md`](kverus/README.md).)
+
 Microsoft's [verified-storage](https://github.com/microsoft/verified-storage)
 repository, whole and verbatim, at commit
 `41cab95051229ebd457b4eed7fc111e3e7c9099c` (*"Fix nightly-verita, update to

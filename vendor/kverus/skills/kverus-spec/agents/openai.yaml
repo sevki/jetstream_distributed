@@ -1,0 +1,3 @@
+interface:
+  display_name: "KVerus Spec"
+  short_description: "Add Verus specification scaffolding while preserving executable behavior"

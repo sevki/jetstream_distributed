@@ -301,6 +301,36 @@ jobs:
           fi
           echo "vendor/verified-storage matches upstream $upstream"
 
+  # The vendored KVerus skills, which `AGENTS.md` tells reviewers to follow. A
+  # skill that has been quietly edited is an instruction nobody agreed to, so the
+  # same rule as the storage layer applies: the tree here must be upstream's at
+  # the pinned commit, file for file. It needs no toolchain, only `git` and `diff`.
+  kverus-skills:
+    name: KVerus skills are unmodified
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The vendored skills are unmodified
+        run: |
+          set -euo pipefail
+          upstream=55fb0185e42957ac5f1f6e16c8beb9e2093a3a2e
+          git clone --quiet --filter=blob:none --no-checkout \
+            https://github.com/asterinas/KVerus.git /tmp/kverus
+          git -C /tmp/kverus fetch --quiet --depth 1 origin "$upstream"
+          git -C /tmp/kverus checkout --quiet "$upstream"
+
+          if ! diff -r /tmp/kverus/skills vendor/kverus/skills; then
+            echo "::error::vendor/kverus/skills differs from upstream $upstream - if that is intended, say so in vendor/kverus/README.md and update this check"
+            exit 1
+          fi
+          if ! diff /tmp/kverus/LICENSE vendor/kverus/LICENSE; then
+            echo "::error::vendor/kverus/LICENSE is not upstream's"
+            exit 1
+          fi
+          echo "vendor/kverus matches upstream $upstream"
+
   # The simulation. Separate from the two verification jobs on purpose: it is
   # evidence of a different kind and it fails for different reasons. A proof
   # that stops verifying means the model is wrong; a scenario that fails means

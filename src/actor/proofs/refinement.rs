@@ -15,6 +15,7 @@
 //! | --- | --- |
 //! | `may_write == can_mutate(c.own, c.actor, host, epoch)` | the ownership layer's own verified `may_write_step`, asked about the registry's current record — `ownership::proofs::refinement::theorem_may_write_step_is_the_system_fence` |
 //! | `was_sent == c.sent.contains(env)` | the host's record of what has been sent |
+//! | `next == seq_of(c, from)` | the sender's counter, kept by the host beside `sent` |
 //! | `accepted == accepted_from(c.journal, env.sender)` | the count the host keeps beside the journal |
 //! | `c.own.live.contains(host)` | **the host is live**: the service has no `Crash` step, so it refines the crash-free executions, as `composed::service` does |
 //!
@@ -58,11 +59,47 @@ pub open spec fn accept_post(c: ActorSystem, host: NodeId, epoch: Epoch, env: En
 }
 
 /// When the sender's step fires, the model's `Send` fires, to exactly the state
-/// computed.
-pub proof fn theorem_send_step_refines(c: ActorSystem, from: NodeId, body: nat)
+/// computed — and the number the step hands out, and the counter it leaves, are
+/// the model's.
+///
+/// `send_step(next)` returns `Ok(next)` exactly when [`send_fires`] holds. Given
+/// the coupling `next == seq_of(c, from)`, the envelope it numbers is the one
+/// [`send_post`] adds to `sent`, the counter it stores is `next + 1`, and that
+/// still fits the `u64` it is kept in because `send_fires` says `next < u64::MAX`.
+pub proof fn theorem_send_step_refines(c: ActorSystem, from: NodeId, body: nat, next: u64)
     requires
         c.own.live.contains(from),
+        next as nat == seq_of(c, from),
+        send_fires(next as nat),
     ensures
+        as_send(c, send_post(c, from, body), from, body),
+        send_post(c, from, body).sent.contains(
+            Envelope { sender: from, seq: next as nat, body: body },
+        ),
+        send_post(c, from, body).next_seq[from] == next as nat + 1,
+        next as nat + 1 <= u64::MAX as nat,
+{
+}
+
+/// **Where the executable sender is narrower than the model, and only there.**
+/// `send_step` refuses only with the counter at `u64::MAX`, and at that point the
+/// model's `Send` is still enabled: the model's counter is a `nat`. The service
+/// refuses rather than wrapping, because a wrapped counter would repeat a number
+/// and the accept guard would take the repeat for a duplicate. So the refinement
+/// holds below the bound and at the bound the executable does less than the model
+/// allows, which is safe — the model's guarantees are about what *is* accepted.
+pub proof fn theorem_send_step_refuses_only_at_exhaustion(
+    c: ActorSystem,
+    from: NodeId,
+    body: nat,
+    next: u64,
+)
+    requires
+        c.own.live.contains(from),
+        next as nat == seq_of(c, from),
+        !send_fires(next as nat),
+    ensures
+        next == u64::MAX,
         as_send(c, send_post(c, from, body), from, body),
 {
 }

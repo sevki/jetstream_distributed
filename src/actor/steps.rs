@@ -88,13 +88,19 @@ pub fn accept_step(may_write: bool, was_sent: bool, seq: u64, accepted: u64) -> 
     }
 }
 
+/// The sender's step fires: the counter has room to go on. The model's `Send` has
+/// no such bound; this is where the executable step is narrower than the model.
+pub open spec fn send_fires(next: nat) -> bool {
+    next < u64::MAX
+}
+
 /// What sequence number does a sender's next message carry? Its counter, unless
 /// the counter cannot go on.
 pub fn send_step(next: u64) -> (r: Result<u64, ActorRefusal>)
     ensures
         match r {
-            Ok(seq) => seq == next && next < u64::MAX,
-            Err(why) => next == u64::MAX && (why is Exhausted),
+            Ok(seq) => send_fires(next as nat) && seq == next,
+            Err(why) => !send_fires(next as nat) && (why is Exhausted),
         },
 {
     if next == u64::MAX {

@@ -60,9 +60,11 @@
 //! not a credential.
 
 mod host;
+mod loopback;
 mod refusal;
 
 pub use host::{Event, Host};
+pub use loopback::Connection;
 
 use crate::ownership::service::Offer;
 use jetstream::prelude::*;

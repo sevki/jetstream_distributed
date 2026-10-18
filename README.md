@@ -1788,7 +1788,10 @@ previous host's memory.
   says what an effect does if its host is fenced halfway through. The guarantee is
   about the *journal*, which is where the fence is.
 
-`tests/actor_journal.rs` runs the guarantees through the service — redelivery,
+`tests/actor_journal.rs` runs the guarantees through Jetstream — every call goes over
+a generated client channel and session to the generated server in front of the
+`Host` (`Host::connect`, which supplies the peer address a byte stream cannot, as a
+TLS adapter supplies its handshake's identity) — redelivery,
 messages ahead of their turn, the fence asked first, a handover that keeps the
 journal and fences the old host, a forced revocation, and all 24 orders of four
 messages from two senders each attempted twice, checked to give a well-formed

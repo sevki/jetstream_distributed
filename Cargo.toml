@@ -57,7 +57,7 @@ vstd = "=0.0.0-2026-09-20-0158"
 # the exact commit the API was read from rather than to a branch, so a service
 # is checked against a tree that cannot move under it.
 jetstream = { git = "https://github.com/sevki/jetstream", rev = "9761e74f69c792c28885eaac934d0f070a66281c", optional = true }
-tokio = { version = "1", features = ["rt", "sync", "time"], optional = true }
+tokio = { version = "1", features = ["io-util", "rt", "sync", "time"], optional = true }
 
 # Opt this crate into verification.
 #

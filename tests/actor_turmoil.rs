@@ -1,8 +1,8 @@
 //! The actor service over Jetstream RPC, on a simulated network.
 //!
-//! `tests/actor_journal.rs` drives the `Host` directly, which tests the guarantees
-//! and leaves the generated `#[service]` client and server compiled and never run.
-//! This runs the actor's whole story across hosts: a sender sends, the owner
+//! `tests/actor_journal.rs` exercises the guarantees over an in-process Jetstream
+//! session (`Host::connect`). This runs the actor's whole story across hosts, on
+//! a simulated TCP network: a sender sends, the owner
 //! accepts, the actor is handed to another node, the old owner — still believing —
 //! is refused, and the new owner picks up from the journal.
 //!

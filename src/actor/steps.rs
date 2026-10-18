@@ -69,8 +69,8 @@ pub fn accept_step(may_write: bool, was_sent: bool, seq: u64, accepted: u64) -> 
         match r {
             Ok(_) => accept_fires(may_write, was_sent, seq as nat, accepted as nat) && accepted
                 < u64::MAX,
-            Err(why) => !accept_fires(may_write, was_sent, seq as nat, accepted as nat) || (why is
-            Exhausted),
+            Err(why) => !accept_fires(may_write, was_sent, seq as nat, accepted as nat) || ((why is
+            Exhausted) && accepted == u64::MAX),
         },
 {
     if !may_write {

@@ -133,10 +133,15 @@ impl<T> Mailbox<T> {
 
     /// `mb_claim`: once scheduled, mark the drain running and clear `has`, so a
     /// message that arrives from now on is noticed by [`finish`](Self::finish).
-    /// Returns `false`, changing nothing, if the drain has not been asked to run.
+    /// Returns `false`, changing nothing, if the drain has not been asked to run,
+    /// **or is already running**: the model's `mb_claim` fires only with the drain
+    /// at the top of its loop, and `processing` is that, negated. `scheduled`
+    /// stays true throughout a round that is to be followed by another, so
+    /// without this a second drain on a clone of the mailbox could claim it and
+    /// run concurrently with the first.
     pub fn claim(&self) -> bool {
         let mut s = self.state();
-        if !s.scheduled {
+        if !s.scheduled || s.processing {
             return false;
         }
         s.processing = true;
@@ -155,12 +160,37 @@ impl<T> Mailbox<T> {
         let mut s = self.state();
         s.scheduled = s.has;
         s.processing = false;
+        if s.scheduled {
+            // A drain that was refused its claim while this round ran is waiting
+            // for exactly this.
+            self.shared.wake.notify_one();
+        }
         s.scheduled
+    }
+
+    /// Put back, ahead of anything that arrived since, the messages a round was
+    /// dropped before handing out, and note that there are some.
+    ///
+    /// **Not a model step.** The model's drain takes the whole queue and the
+    /// messages are processed; a running drain can also panic, or be cancelled,
+    /// between taking them and handling them, and then they must not vanish with
+    /// the round — their senders are waiting on an answer. Setting `has` makes
+    /// the `finish` that follows stay scheduled, so the next round finds them.
+    fn requeue(&self, rest: VecDeque<T>) {
+        if rest.is_empty() {
+            return;
+        }
+        let mut s = self.state();
+        for item in rest.into_iter().rev() {
+            s.queue.push_front(item);
+        }
+        s.has = true;
     }
 
     /// Wait until the drain is asked to run, then claim it and take the queue:
     /// one round. The messages come out of the [`Round`] in the order they were
-    /// queued, and dropping it is `finish`.
+    /// queued, and dropping it is `finish` — after putting back any it had not
+    /// handed out.
     ///
     /// Messages arriving while a round runs are not lost: `finish` sees them
     /// through `has`, and the next round finds the drain still scheduled.
@@ -195,6 +225,8 @@ impl<T> Iterator for Round<T> {
 
 impl<T> Drop for Round<T> {
     fn drop(&mut self) {
+        // Whatever was not handed out goes back to the front of the queue.
+        self.mailbox.requeue(std::mem::take(&mut self.items));
         self.mailbox.finish();
     }
 }
@@ -266,6 +298,37 @@ mod tests {
         assert_eq!(mb.take(), [1, 2]);
         assert!(!mb.finish(), "nothing arrived meanwhile: back to sleep");
         assert!(!mb.claim());
+    }
+
+    /// Two drains on clones of one mailbox are never both running: a claim made
+    /// while a round is in progress is refused, even though `scheduled` is true.
+    #[test]
+    fn a_second_drain_cannot_claim_while_a_round_runs() {
+        let mb = Mailbox::new();
+        mb.send(1);
+        assert!(mb.claim());
+        assert!(!mb.claim(), "a round is running");
+        assert_eq!(mb.take(), [1]);
+        assert!(!mb.claim(), "still running until it finishes");
+        assert!(!mb.finish());
+        assert!(!mb.claim(), "and nothing is scheduled after it");
+    }
+
+    /// A round dropped before it handed everything out — a handler panicked, or
+    /// the task was cancelled — keeps the rest, ahead of what arrived meanwhile.
+    #[tokio::test]
+    async fn dropping_a_round_early_keeps_what_it_did_not_hand_out() {
+        let mb = Mailbox::new();
+        mb.send(1);
+        mb.send(2);
+        mb.send(3);
+        let mut round = mb.round().await;
+        assert_eq!(round.next(), Some(1));
+        mb.send(4); // arrives during the round
+        drop(round); // 2 and 3 were never handled
+
+        let again: Vec<_> = mb.round().await.collect();
+        assert_eq!(again, [2, 3, 4], "in their original order, none lost");
     }
 
     /// A message that arrives while the drain runs is not left asleep: `finish`

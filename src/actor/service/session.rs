@@ -125,33 +125,55 @@ impl<P: Protocol> Stream for Session<P> {
     }
 }
 
+/// An error as the response to one request.
+///
+/// Every generated protocol's response type has a frame that carries an
+/// [`Error`], decoded from [`RJETSTREAMERROR`], which is how a handler's `Err`
+/// reaches its caller. This builds one without naming the protocol, by encoding
+/// the error and decoding it as that frame.
+///
+/// It has to be a *response*, tagged for the request it answers. Putting an `Err`
+/// on the reply stream instead is not an answer to one call: the multiplexer
+/// reads a stream error as the lane having failed, fails every call outstanding
+/// on it, and stops reading, so calls made afterwards would never be answered.
+fn error_response<R: Framer>(error: Error) -> R {
+    let mut bytes = Vec::new();
+    error
+        .encode(&mut bytes)
+        .expect("an error encodes into memory");
+    R::decode(&mut bytes.as_slice(), RJETSTREAMERROR)
+        .expect("a protocol's response type has an error frame")
+}
+
 /// The reply to a request the actor is handling.
 ///
 /// Dropped without having been answered — the drain was aborted while the handler
-/// was pending, or the handler panicked — it sends the caller an error. Without
-/// that the request is gone from the queue and from the round, the caller's
-/// [`Session`] still holds the reply channel's other end, and the call would stay
-/// pending for good, even after a new drain started and served everything after
-/// it.
-struct Unanswered<R> {
-    reply: Option<mpsc::UnboundedSender<Result<R>>>,
+/// was pending, or the handler panicked — it answers that one request with an
+/// error. Without that the request is gone from the queue and from the round, the
+/// caller's [`Session`] still holds the reply channel's other end, and the call
+/// would stay pending for good, even after a new drain started and served
+/// everything after it.
+struct Unanswered<R: Framer> {
+    tag: u16,
+    reply: Option<mpsc::UnboundedSender<Result<Frame<R>>>>,
 }
 
-impl<R> Unanswered<R> {
+impl<R: Framer> Unanswered<R> {
     /// Answer the request. The sender may have gone; its answer has nowhere to go.
-    fn answer(mut self, answer: Result<R>) {
+    fn answer(mut self, answer: Frame<R>) {
         if let Some(reply) = self.reply.take() {
-            let _ = reply.send(answer);
+            let _ = reply.send(Ok(answer));
         }
     }
 }
 
-impl<R> Drop for Unanswered<R> {
+impl<R: Framer> Drop for Unanswered<R> {
     fn drop(&mut self) {
         if let Some(reply) = self.reply.take() {
-            let _ = reply.send(Err(super::refusal::refuse_no(
+            let msg = error_response(super::refusal::refuse_no(
                 "the actor stopped before it answered",
-            )));
+            ));
+            let _ = reply.send(Ok(Frame { tag: self.tag, msg }));
         }
     }
 }
@@ -178,11 +200,21 @@ where
             // From here to the answer the request is in neither the queue nor the
             // round: if this task is aborted, or the handler panics, `Unanswered`
             // is what tells the caller.
-            let pending = Unanswered { reply: Some(reply) };
-            let answer = service
-                .rpc(from, frame)
-                .await
-                .map_err(IntoError::into_error);
+            let tag = frame.tag;
+            let pending = Unanswered {
+                tag,
+                reply: Some(reply),
+            };
+            // A request the service could not handle at all is answered with an
+            // error frame for its tag, like one it declined: the stream stays
+            // up for every other call.
+            let answer = match service.rpc(from, frame).await {
+                Ok(answer) => answer,
+                Err(e) => Frame {
+                    tag,
+                    msg: error_response(e.into_error()),
+                },
+            };
             pending.answer(answer);
         }
     }

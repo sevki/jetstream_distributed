@@ -119,9 +119,15 @@ impl ActorB for StuckB {
 }
 
 /// A request in flight when the drain is aborted is answered with an error rather
-/// than left pending, and a drain started afterwards serves what was behind it.
+/// than left pending — and only that request. The ones behind it are served by the
+/// drain that replaces it, and the same channel goes on working afterwards.
+///
+/// The last half is the point of answering with a *tagged response*. An error put
+/// on the reply stream instead would read as the lane having failed: every call
+/// outstanding would fail with it, and calls made later would never be answered.
 #[tokio::test]
-async fn aborting_the_drain_mid_request_answers_the_caller() {
+async fn aborting_the_drain_mid_request_answers_only_that_request() {
+    const WAIT: std::time::Duration = std::time::Duration::from_secs(5);
     let mailbox: Mailbox<Delivery<ActorBChannel>> = Mailbox::new();
     let mut stuck = ActorBService { inner: StuckB };
     let drain = tokio::spawn({
@@ -130,22 +136,53 @@ async fn aborting_the_drain_mid_request_answers_the_caller() {
     });
 
     let session = Session::new(mailbox.clone(), Context::default());
-    let channel = ActorBChannel::new(64, Box::new(session));
+    let channel = Arc::new(ActorBChannel::new(64, Box::new(session)));
     channel
         .negotiate_version(u32::MAX)
         .await
         .expect("the actor speaks this version");
 
-    let call = tokio::spawn(async move { channel.b(Context::default(), 1, 0).await });
-    // Let the request reach the handler, which never returns.
+    // The first request reaches the handler, which never returns; the second is
+    // queued behind it, in the same round or the next.
+    let first = tokio::spawn({
+        let channel = channel.clone();
+        async move { channel.b(Context::default(), 1, 0).await }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let second = tokio::spawn({
+        let channel = channel.clone();
+        async move { channel.b(Context::default(), 1, 1).await }
+    });
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     drain.abort();
 
-    let answer = tokio::time::timeout(std::time::Duration::from_secs(5), call)
+    let answer = tokio::time::timeout(WAIT, first)
         .await
         .expect("the abandoned request was answered, not left pending")
         .unwrap();
     assert!(answer.is_err(), "and the answer says it was not served");
+
+    // A drain that works takes over the same mailbox.
+    let b = ActorBImpl::default();
+    // The handler checks callers arrive in the order sent from 0, so the one that
+    // was abandoned is the one that was never handled: tell it so.
+    b.seen.lock().unwrap().0.insert(1, 0);
+    let mut service = ActorBService { inner: b.clone() };
+    tokio::spawn({
+        let mailbox = mailbox.clone();
+        async move { serve(mailbox, &mut service).await }
+    });
+
+    tokio::time::timeout(WAIT, second)
+        .await
+        .expect("the request behind it was served by the new drain")
+        .unwrap()
+        .expect("and succeeded");
+    // And the channel the abandoned call went down is still a working channel.
+    tokio::time::timeout(WAIT, channel.b(Context::default(), 1, 2))
+        .await
+        .expect("a later call on the same channel is answered")
+        .expect("and succeeds");
 }
 
 /// The same `A`, over the implementation itself: no mailbox, no channel. The

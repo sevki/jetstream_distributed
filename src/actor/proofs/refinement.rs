@@ -125,8 +125,40 @@ pub proof fn theorem_accept_step_refines(
 {
 }
 
+/// **Where the executable host is narrower than the model, and only there.**
+/// `accept_step` refuses an append the model enables only with `Exhausted`, and
+/// only with the count at `u64::MAX`: its contract says a refusal is either a
+/// disabled `Accept` (the theorem below) or [`accept_has_room`] failing. The
+/// model's count is a `nat`, so there `Accept` is still enabled. The host
+/// refuses rather than wrapping, because a wrapped count would take a repeat
+/// for a message it had not seen. Like the sender's, this is the safe direction:
+/// the model's guarantees are about what *is* accepted.
+pub proof fn theorem_accept_step_refuses_an_enabled_append_only_at_exhaustion(
+    c: ActorSystem,
+    host: NodeId,
+    epoch: Epoch,
+    env: Envelope,
+    accepted: u64,
+)
+    requires
+        c.own.live.contains(host),
+        accepted as nat == accepted_from(c.journal, env.sender),
+        accept_fires(
+            can_mutate(c.own, c.actor, host, epoch),
+            c.sent.contains(env),
+            env.seq,
+            accepted as nat,
+        ),
+        !accept_has_room(accepted as nat),
+    ensures
+        accepted == u64::MAX,
+        as_accept(c, accept_post(c, host, epoch, env), host, epoch, env),
+{
+}
+
 /// A refused append is a transition the model could not have taken either,
-/// whatever state it was sent to.
+/// whatever state it was sent to — except at exhaustion, which the theorem above
+/// states.
 pub proof fn theorem_accept_step_refuses_exactly_when_disabled(
     c: ActorSystem,
     post: ActorSystem,

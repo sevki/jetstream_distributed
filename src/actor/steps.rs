@@ -56,6 +56,12 @@ pub open spec fn accept_fires(may_write: bool, was_sent: bool, seq: nat, accepte
     &&& seq == accepted
 }
 
+/// The host's count has room to go on. The model's `Accept` has no such bound;
+/// like [`send_fires`], this is where the executable step is narrower than it.
+pub open spec fn accept_has_room(accepted: nat) -> bool {
+    accepted < u64::MAX
+}
+
 /// May the host append this message?
 ///
 /// The refusals are ordered: the fence first, because a host that is not the
@@ -67,10 +73,10 @@ pub fn accept_step(may_write: bool, was_sent: bool, seq: u64, accepted: u64) -> 
 >)
     ensures
         match r {
-            Ok(_) => accept_fires(may_write, was_sent, seq as nat, accepted as nat) && accepted
-                < u64::MAX,
+            Ok(_) => accept_fires(may_write, was_sent, seq as nat, accepted as nat)
+                && accept_has_room(accepted as nat),
             Err(why) => !accept_fires(may_write, was_sent, seq as nat, accepted as nat) || ((why is
-            Exhausted) && accepted == u64::MAX),
+            Exhausted) && !accept_has_room(accepted as nat)),
         },
 {
     if !may_write {

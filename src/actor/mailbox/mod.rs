@@ -33,11 +33,18 @@
 //!
 //! # What is not claimed
 //!
-//! The service does not run this protocol: [`crate::actor::service::Host`] keeps
-//! the sent set of [`crate::actor::model`] and the node that owns the actor
-//! calls `accept`. This is the specification of the queue such a host would sit
-//! behind, with its guarantees proved; connecting a drain loop to the service is
-//! the step after it.
+//! The proofs are about the model. The protocol *is* run:
+//! [`crate::actor::service::Mailbox`] is its six steps on real threads,
+//! [`crate::actor::service::Session`] is a transport over it, and
+//! [`crate::actor::service::serve`] drains it into any generated service (the
+//! `actor_basic` example and `tests/actor_mailbox.rs` use them). But that is a
+//! transcription the tests exercise, **not a refinement Verus checks**: nothing
+//! proved here shows the code behaves as the model does.
+//!
+//! And [`crate::actor::service::Host`] is not connected to that drain. It keeps the
+//! sent set of [`crate::actor::model`] and the node that owns the actor calls
+//! `accept`, so `serve` does not enforce the ownership epoch: it hands requests to
+//! a service in order, and the fence belongs around it.
 
 pub mod model;
 pub mod proofs;

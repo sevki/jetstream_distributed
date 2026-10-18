@@ -53,8 +53,9 @@
 //! `Seq<Record>`; the encoding between them — and the theorem that any *byte*
 //! prefix parses back to a record prefix — is the next layer down and is not
 //! written yet. Until it is, nothing in this repository depends on
-//! `vendor/verified-storage/pmemlog`, and the two corruption assumptions listed in its README
-//! are not yet assumptions of anything proved here.
+//! `vendor/verified-storage/pmemlog`, and the two corruption assumptions listed in
+//! `vendor/README.md` ("The escape hatches, and why CI allows them here") are not
+//! yet assumptions of anything proved here.
 #![allow(unused_imports)]
 
 use vstd::prelude::*;

@@ -67,7 +67,7 @@ mod refusal;
 
 pub use host::{Event, Host};
 pub use mailbox::{Mailbox, Round};
-pub use session::{serve, Delivery, Session};
+pub use session::{serve, Closer, Delivery, Session};
 pub use transport::Connection;
 
 use crate::ownership::service::Offer;

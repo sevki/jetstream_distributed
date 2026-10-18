@@ -83,6 +83,40 @@ impl<P: Protocol> Session<P> {
             unannounced: AtomicU64::new(0),
         }
     }
+
+    /// A handle that closes this session when it is dropped.
+    ///
+    /// **Keep it as long as the channel built on the session, and drop it with
+    /// the channel.** A generated channel hands its transport to Jetstream's
+    /// multiplexer, which runs three tasks that hold one another up: the one
+    /// reading responses ends only when the transport's stream does, and nothing
+    /// else lets go of the channel's send queue first. Over a socket the peer
+    /// closing ends the stream. A session has no peer, and holds the sender its
+    /// own stream reads from, so its stream never ends on its own: a discarded
+    /// channel would leave its tasks, the session and a handle on the mailbox
+    /// behind for the life of the runtime.
+    ///
+    /// Dropping the closer ends the stream, which is what lets the rest go. Any
+    /// call still waiting fails, as a call on a closed lane does.
+    pub fn closer(&self) -> Closer<P> {
+        Closer {
+            reply: self.reply.clone(),
+        }
+    }
+}
+
+/// Closes a [`Session`] when dropped. See [`Session::closer`].
+pub struct Closer<P: Protocol> {
+    reply: mpsc::UnboundedSender<Result<Frame<P::Response>>>,
+}
+
+impl<P: Protocol> Drop for Closer<P> {
+    fn drop(&mut self) {
+        // An error on the stream is how a transport says its lane is over.
+        let _ = self
+            .reply
+            .send(Err(super::refusal::refuse_no("the session was closed")));
+    }
 }
 
 impl<P: Protocol> Sink<Frame<P::Request>> for Session<P> {

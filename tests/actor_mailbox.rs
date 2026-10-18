@@ -185,6 +185,50 @@ async fn aborting_the_drain_mid_request_answers_only_that_request() {
         .expect("and succeeds");
 }
 
+/// A discarded channel lets go of its tasks once its session is closed — and not
+/// before, which is why [`Session::closer`] exists.
+///
+/// The multiplexer under a generated channel runs tasks that keep one another
+/// alive, and a session has no peer to end the stream they wait on.
+#[tokio::test]
+async fn a_closed_session_lets_go_of_its_tasks() {
+    use std::time::Duration;
+    let metrics = tokio::runtime::Handle::current().metrics();
+    let settle = || tokio::time::sleep(Duration::from_millis(300));
+
+    let hosted = host_b();
+    settle().await;
+    let before = metrics.num_alive_tasks();
+
+    let session = Session::new(hosted.mailbox.clone(), Context::default());
+    let closer = session.closer();
+    let channel = ActorBChannel::new(64, Box::new(session));
+    channel
+        .negotiate_version(u32::MAX)
+        .await
+        .expect("the actor speaks this version");
+    assert!(
+        metrics.num_alive_tasks() > before,
+        "the channel runs tasks of its own"
+    );
+
+    drop(channel);
+    settle().await;
+    assert!(
+        metrics.num_alive_tasks() > before,
+        "dropping the channel alone does not end them"
+    );
+
+    drop(closer);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while metrics.num_alive_tasks() > before {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("closing the session ends the channel's tasks");
+}
+
 /// The same `A`, over the implementation itself: no mailbox, no channel. The
 /// caller's code is identical, which is the point.
 #[tokio::test]

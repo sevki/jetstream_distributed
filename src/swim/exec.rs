@@ -39,15 +39,16 @@ verus! {
 ///
 /// A member with no entry is exactly a member at its fresh record.
 pub struct SwimTable {
-    /// The members, each once.
-    pub ids: Vec<u64>,
+    /// The members, each once. Private: a table built or edited from outside
+    /// could have an id with no record, and every method here assumes it does not.
+    ids: Vec<u64>,
     /// `records[i]` is what is believed about `ids[i]`.
-    pub records: Vec<ExecRecord>,
+    records: Vec<ExecRecord>,
 }
 
 impl SwimTable {
     /// The table holds one record per member, each member once.
-    pub open spec fn well_formed(&self) -> bool {
+    pub closed spec fn well_formed(&self) -> bool {
         &&& self.ids@.len() == self.records@.len()
         &&& forall|i: int, j: int|
             0 <= i < self.ids@.len() && 0 <= j < self.ids@.len() && self.ids@[i] == self.ids@[j]
@@ -55,12 +56,12 @@ impl SwimTable {
     }
 
     /// Whether `n` has an entry.
-    pub open spec fn has_entry(&self, n: nat) -> bool {
+    pub closed spec fn has_entry(&self, n: nat) -> bool {
         exists|i: int| 0 <= i < self.ids@.len() && self.ids@[i] as nat == n
     }
 
     /// What the table believes about `n`: its entry, or the fresh record.
-    pub open spec fn record(&self, n: nat) -> MemberRecord {
+    pub closed spec fn record(&self, n: nat) -> MemberRecord {
         if self.has_entry(n) {
             self.records@[choose|i: int| 0 <= i < self.ids@.len() && self.ids@[i] as nat == n].view()
         } else {
@@ -69,7 +70,7 @@ impl SwimTable {
     }
 
     /// Where `id` is, if it is.
-    pub fn find(&self, id: u64) -> (found: Option<usize>)
+    fn find(&self, id: u64) -> (found: Option<usize>)
         requires
             self.well_formed(),
         ensures
@@ -224,6 +225,16 @@ impl SwimTable {
             forall|n: nat| n != id as nat ==> final(self).record(n) == old(self).record(n),
             changed == (final(self).record(id as nat) != old(self).record(id as nat)),
     {
+        /* The table is a pair of vectors rather than a `HashMap` (vstd's hash-map
+         * specs need `obeys_key_model`), so the read goes through `get`, the write
+         * through `put`, and "the same record" is the verified comparison both ways.
+         * Origin Rust: let held = g.table.get(&u.node).copied().unwrap_or_else(fresh);
+         *              let merged = merge_step(held, u.record());
+         *              if same(merged, held) {
+         *                  return Ok(());
+         *              }
+         *              g.table.insert(u.node, merged);
+         */
         let held = self.get(id);
         let merged = merge_step(held, incoming);
         let moved = !(key_geq_exec(held, merged) && key_geq_exec(merged, held));
@@ -272,6 +283,9 @@ impl SwimTable {
                 let changed = merged != old(self).record(id as nat);
                 match r {
                     Ok(h) => {
+                        // At the top of the incarnation space there is nothing to
+                        // refute with, and that is an `Err`, not an `Ok`.
+                        &&& !(id == me && changed && merged.incarnation >= u64::MAX as nat)
                         &&& (h.learned is Some) == changed
                         &&& (h.learned matches Some(m) ==> m.view() == merged)
                         &&& (h.refuted is Some) == (id == me && changed
@@ -289,6 +303,16 @@ impl SwimTable {
                 }
             }),
     {
+        /* The audit log stays in the service, so the table reports what it learned
+         * and what it answered with instead of pushing `Event`s; the refusal at the
+         * top of the incarnation space is returned after the first merge, as before.
+         * Origin Rust: if u.node == self.me {
+         *                  let refutation = refute_step(merged.incarnation).map_err(refuse)?;
+         *                  let after = merge_step(merged, refutation);
+         *                  g.table.insert(self.me, after);
+         *                  g.log.push(Event::Refuted { incarnation: after.incarnation });
+         *              }
+         */
         let changed = self.learn(id, incoming);
         if !changed {
             return Ok(Heard { learned: None, refuted: None });

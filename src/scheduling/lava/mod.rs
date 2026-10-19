@@ -10,7 +10,7 @@ use std::{
 };
 
 use crate::{
-    compute::{Job, JobId, Resources},
+    compute::{Cpu, Job, JobId, Memory, Resources},
     host::HostId,
 };
 
@@ -240,7 +240,7 @@ impl<F> Host<F> {
     pub fn used(&self) -> Resources {
         self.jobs
             .values()
-            .fold(Resources { cpu: 0, memory: 0 }, |r, job| Resources {
+            .fold(Resources::ZERO, |r, job| Resources {
                 cpu: r.cpu + job.resources.cpu,
                 memory: r.memory + job.resources.memory,
             })
@@ -396,7 +396,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
     /// Add an empty, schedulable host. [`Error::InvalidCapacity`] if it has no
     /// CPU or no memory, [`Error::DuplicateHost`] if the id is taken.
     pub fn add_host(&mut self, id: HostId, capacity: Resources) -> Result<(), Error> {
-        if capacity.cpu == 0 || capacity.memory == 0 {
+        if capacity.cpu == Cpu::ZERO || capacity.memory == Memory::ZERO {
             return Err(Error::InvalidCapacity);
         }
         if self.hosts.contains_key(&id) {
@@ -470,7 +470,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
         if self.locations.contains_key(&job.id) {
             return Err(Error::DuplicateJob);
         }
-        if job.resources.cpu == 0 && job.resources.memory == 0 {
+        if job.resources.cpu == Cpu::ZERO && job.resources.memory == Memory::ZERO {
             return Err(Error::InvalidRequest);
         }
         if job.started_at > now {
@@ -497,8 +497,8 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
         host.jobs.insert(job.id, job);
         let used = host.used();
         if host.state == HostState::Open
-            && (u128::from(used.cpu) * 10 > u128::from(host.capacity.cpu) * 9
-                || u128::from(used.memory) * 10 > u128::from(host.capacity.memory) * 9)
+            && (u128::from(used.cpu.as_millicores()) * 10 > u128::from(host.capacity.cpu.as_millicores()) * 9
+                || u128::from(used.memory.as_bytes()) * 10 > u128::from(host.capacity.memory.as_bytes()) * 9)
         {
             host.state = HostState::Recycling;
             host.residual = host.jobs.keys().copied().collect();
@@ -528,10 +528,10 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
         let temporal = temporal_cost(remaining.saturating_sub(host_remaining));
         let free = host.free();
         // Normalized CPU+memory slack in millionths, lower is tighter packing.
-        let waste = u128::from(free.cpu - job.resources.cpu) * 1_000_000
-            / u128::from(host.capacity.cpu)
-            + u128::from(free.memory - job.resources.memory) * 1_000_000
-                / u128::from(host.capacity.memory);
+        let waste = u128::from(free.cpu.as_millicores() - job.resources.cpu.as_millicores()) * 1_000_000
+            / u128::from(host.capacity.cpu.as_millicores())
+            + u128::from(free.memory.as_bytes() - job.resources.memory.as_bytes()) * 1_000_000
+                / u128::from(host.capacity.memory.as_bytes());
         (tier, distance, temporal, waste, host.id)
     }
     /// A job has exited: take it off its host and return it. Exits are events the
@@ -673,13 +673,16 @@ mod tests {
     ) -> Scheduler<EmpiricalLifetime, EmpiricalPredictor> {
         let mut scheduler = Scheduler::new(EmpiricalPredictor);
         let capacity = Resources {
-            cpu: 100,
-            memory: 100,
+            cpu: Cpu::millicores(100),
+            memory: Memory::bytes(100),
         };
         scheduler.add_host(1, capacity).unwrap();
         let job = Job {
             id: 7,
-            resources: Resources { cpu: 1, memory: 1 },
+            resources: Resources {
+                cpu: Cpu::millicores(1),
+                memory: Memory::bytes(1),
+            },
             started_at: Duration::ZERO,
             features: EmpiricalLifetime::new(vec![predicted], hours(1)).unwrap(),
         };
@@ -738,14 +741,17 @@ mod tests {
     fn a_job_on_an_empty_host_opens_it_with_its_class_and_a_deadline() {
         let mut scheduler = Scheduler::new(EmpiricalPredictor);
         let capacity = Resources {
-            cpu: 100,
-            memory: 100,
+            cpu: Cpu::millicores(100),
+            memory: Memory::bytes(100),
         };
         scheduler.add_host(1, capacity).unwrap();
 
         let job = Job {
             id: 7,
-            resources: Resources { cpu: 1, memory: 1 },
+            resources: Resources {
+                cpu: Cpu::millicores(1),
+                memory: Memory::bytes(1),
+            },
             started_at: Duration::ZERO,
             // Predicted to live two more hours: LC2.
             features: EmpiricalLifetime::new(vec![hours(2)], hours(1)).unwrap(),

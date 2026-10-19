@@ -197,7 +197,7 @@ impl Tally {
                     }
                 }
             }
-            assert(self.view_set() =~= old(self).view_set().insert(x as nat));
+            assert(self.view_set() == old(self).view_set().insert(x as nat));
             assert forall|i: int, j: int|
                 0 <= i < after.len() && 0 <= j < after.len() && after[i] == after[j] implies i
                 == j by {
@@ -327,6 +327,16 @@ impl ElectionCore {
                 },
             },
     {
+        /* The term and the self-vote are decided by `timeout_step` and written
+         * through `persist` before the record changes, as the service did; the
+         * tally restarts at the candidate alone.
+         * Origin Rust: let next = match timeout_step(g.server) {..};
+         *              self.persist(&mut g, term, Some(self.me))?;
+         *              g.server = next;
+         *              g.voted_for = Some(self.me);
+         *              g.tally = HashSet::new();
+         *              g.tally.insert(self.me);
+         */
         match timeout_step(self.server) {
             RaftOutcome::Moved(next) => {
                 let term = next.current_term;
@@ -373,6 +383,12 @@ impl ElectionCore {
                 },
             },
     {
+        /* The vote and the tally leave with the old term, both written down first.
+         * Origin Rust: self.persist(g, term, None)?;
+         *              g.server = next;
+         *              g.voted_for = None;
+         *              g.tally = HashSet::new();
+         */
         match step_down_step(self.server, term) {
             RaftOutcome::Moved(next) => {
                 if persist(term, None) {
@@ -416,6 +432,10 @@ impl ElectionCore {
                 &&& same_core(*old(self), *final(self))
             },
     {
+        /* New executable code: the service's append path moved the role itself; the
+         * role change `tr_append_entries` makes on a candidate is now this method.
+         * Origin Rust: <none; new executable code>
+         */
         match follow_step(self.server, term) {
             RaftOutcome::Moved(next) => {
                 self.server = next;
@@ -488,6 +508,16 @@ impl ElectionCore {
                 },
             },
     {
+        /* Same order as the service: a log that is behind is refused first, a
+         * repeat of the vote already given is answered again, and a fresh vote
+         * goes through `grant_vote_step` and `persist` before the record changes.
+         * Origin Rust: if !up_to_date { return Ok(Ballot::Refused(g.server.current_term)); }
+         *              if g.server.current_term == term && g.voted_for == Some(candidate) {
+         *                  return Ok(Ballot::Granted(term));
+         *              }
+         *              let already_voted = g.server.current_term == term && g.voted_for.is_some();
+         *              match grant_vote_step(g.server, term, already_voted) {..}
+         */
         if !up_to_date {
             return Ok(VoteOutcome::Refused);
         }
@@ -562,6 +592,13 @@ impl ElectionCore {
                 )
             },
     {
+        /* A ballot for a term the server has left is not counted; otherwise it is
+         * tallied and the term taken if the tally is a majority.
+         * Origin Rust: if g.server.current_term != term { return Ok(matches!(g.server.role, ExecRole::Leader)); }
+         *              g.tally.insert(from);
+         *              let votes = g.tally.len() as u64;
+         *              self.take_the_term(&mut g, term, votes, my_len)
+         */
         if self.server.current_term != term {
             return Counted { counted: false, won: false, leads: self.leads() };
         }

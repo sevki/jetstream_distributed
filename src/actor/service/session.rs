@@ -281,11 +281,8 @@ impl<F: Fn() -> bool + Send + Sync> Fence for F {
 ///
 /// **Tested, not proved.** The ownership fence is proved; that this loop asks it
 /// before every request is checked by `tests/actor_fence.rs`.
-pub async fn serve_fenced<C, S>(
-    mailbox: Mailbox<Delivery<C>>,
-    service: &mut S,
-    fence: &impl Fence,
-) where
+pub async fn serve_fenced<C, S>(mailbox: Mailbox<Delivery<C>>, service: &mut S, fence: &impl Fence)
+where
     C: Protocol,
     S: Server<Request = C::Request, Response = C::Response>,
 {
@@ -295,7 +292,10 @@ pub async fn serve_fenced<C, S>(
         for Delivery { from, frame, reply } in mailbox.round().await {
             if !fence.may_serve() {
                 let msg = error_response(super::refusal::refuse(ActorRefusal::Fenced));
-                let _ = reply.send(Ok(Frame { tag: frame.tag, msg }));
+                let _ = reply.send(Ok(Frame {
+                    tag: frame.tag,
+                    msg,
+                }));
                 continue;
             }
             // From here to the answer the request is in neither the queue nor the

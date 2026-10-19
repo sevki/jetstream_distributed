@@ -49,10 +49,7 @@ async fn a_request_the_fence_refuses_is_answered_fenced_and_never_handled() {
             serve_fenced(mailbox, &mut service, &move || owner.load(Ordering::SeqCst)).await
         }
     });
-    let channel = ActorBChannel::new(
-        64,
-        Box::new(Session::new(mailbox, Context::default())),
-    );
+    let channel = ActorBChannel::new(64, Box::new(Session::new(mailbox, Context::default())));
     channel.negotiate_version(u32::MAX).await.unwrap();
 
     assert_eq!(channel.b(Context::default()).await.unwrap(), 1);

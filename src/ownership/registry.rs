@@ -150,7 +150,15 @@ impl RegistryCore {
             grants_plus(*old(self), *final(self), node as nat, epoch as nat),
     {
         let ghost before = *self;
-        self.grants.push((node, epoch));
+        // A set, not a log: a node polling the same offer in a loop publishes the
+        // same grant every time, and the model's `network` is a set for the same
+        // reason (re-sending a grant is `tr_issue_grant` again, which changes
+        // nothing). Pushing the repeat would grow the vector with every poll and
+        // make the next `granted` scan all of them under the lock.
+        let present = self.granted(node, epoch);
+        if !present {
+            self.grants.push((node, epoch));
+        }
         proof {
             assert forall|n: nat, e: nat|
                 #[trigger] self.has_grant(n, e) == (before.has_grant(n, e) || (n == node as nat
@@ -167,7 +175,7 @@ impl RegistryCore {
                             && before.grants@[k].1 as nat == e;
                     assert(self.grants@[k] == before.grants@[k]);
                 }
-                if n == node as nat && e == epoch as nat {
+                if n == node as nat && e == epoch as nat && !present {
                     let last = (self.grants@.len() - 1) as int;
                     assert(self.grants@[last] == (node, epoch));
                 }
@@ -408,3 +416,21 @@ impl RegistryCore {
 }
 
 } // verus!
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A node that polls the same offer in a loop publishes one grant, not one
+    /// per poll: the vector is a set, as the model's network is.
+    #[test]
+    fn polling_the_same_offer_publishes_it_once() {
+        let mut core = RegistryCore::new(5, 3);
+        for _ in 0..100 {
+            assert!(matches!(core.poll(3), ExecOffer::Grant(5)));
+        }
+        assert_eq!(core.grants.len(), 1);
+        assert!(core.granted(3, 5));
+        assert!(!core.granted(3, 6));
+    }
+}

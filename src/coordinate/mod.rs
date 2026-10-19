@@ -57,6 +57,8 @@ pub enum CoordinateError {
     InvalidValues,
     /// The round trip time is not in a valid range
     InvalidRtt,
+    /// The configured dimensionality is zero
+    InvalidDimensionality,
 }
 
 impl std::fmt::Display for CoordinateError {
@@ -65,6 +67,7 @@ impl std::fmt::Display for CoordinateError {
             CoordinateError::DimensionalityConflict => "coordinate dimensionality does not match",
             CoordinateError::InvalidValues => "coordinate contains invalid values",
             CoordinateError::InvalidRtt => "round trip time not in valid range",
+            CoordinateError::InvalidDimensionality => "coordinate dimensionality is zero",
         })
     }
 }
@@ -124,13 +127,21 @@ impl Coordinate {
     /// vector is all zeros and its error is the configured maximum -- the
     /// least confident value there is, which lets the first observations
     /// move it furthest.
-    pub fn new(config: &Config) -> Self {
-        Coordinate {
+    ///
+    /// [`CoordinateError::InvalidDimensionality`] if the configured
+    /// dimensionality is zero: a coordinate with no components has no
+    /// direction to push along, so [`Coordinate::apply_force`] could not
+    /// separate two of them.
+    pub fn new(config: &Config) -> std::result::Result<Self, CoordinateError> {
+        if config.dimensionality == 0 {
+            return Err(CoordinateError::InvalidDimensionality);
+        }
+        Ok(Coordinate {
             vec: vec![0.0; config.dimensionality],
             error: config.vivaldi_error_max,
             adjustment: 0.0,
             height: config.height_min,
-        }
+        })
     }
 
     /// Checks if all components of the coordinate are valid
@@ -284,16 +295,31 @@ mod tests {
     #[test]
     fn test_new_coordinate() {
         let config = Config::default();
-        let coord = Coordinate::new(&config);
+        let coord = Coordinate::new(&config).unwrap();
         assert_eq!(coord.vec.len(), config.dimensionality);
         assert_eq!(coord.error, config.vivaldi_error_max);
         assert_eq!(coord.height, config.height_min);
     }
 
+    /// A zero-dimensional configuration is refused at construction. Accepted, its
+    /// coordinates reached `apply_force`'s last resort with an empty vector and
+    /// panicked indexing `unit[0]`.
+    #[test]
+    fn a_zero_dimensional_config_is_refused() {
+        let config = Config {
+            dimensionality: 0,
+            ..Config::default()
+        };
+        assert!(matches!(
+            Coordinate::new(&config),
+            Err(CoordinateError::InvalidDimensionality)
+        ));
+    }
+
     #[test]
     fn test_is_valid() {
         let config = Config::default();
-        let mut coord = Coordinate::new(&config);
+        let mut coord = Coordinate::new(&config).unwrap();
         assert!(coord.is_valid());
 
         coord.vec[0] = f64::NAN;
@@ -310,10 +336,10 @@ mod tests {
             ..Default::default()
         };
 
-        let coord1 = Coordinate::new(&config);
+        let coord1 = Coordinate::new(&config).unwrap();
 
         config.dimensionality = 2;
-        let coord2 = Coordinate::new(&config);
+        let coord2 = Coordinate::new(&config).unwrap();
 
         assert!(!coord1.is_compatible_with(&coord2));
         assert!(coord1.distance_to(&coord2).is_err());
@@ -321,8 +347,8 @@ mod tests {
     #[test]
     fn test_distance_calculation() {
         let config = Config::default();
-        let mut coord1 = Coordinate::new(&config);
-        let mut coord2 = Coordinate::new(&config);
+        let mut coord1 = Coordinate::new(&config).unwrap();
+        let mut coord2 = Coordinate::new(&config).unwrap();
 
         // Set first 3 dimensions and pad rest with zeros
         coord1.vec = vec![-0.5, 1.3, 2.4];
@@ -377,8 +403,8 @@ mod tests {
     #[test]
     fn test_height_contribution() {
         let config = Config::default();
-        let coord1 = Coordinate::new(&config);
-        let coord2 = Coordinate::new(&config);
+        let coord1 = Coordinate::new(&config).unwrap();
+        let coord2 = Coordinate::new(&config).unwrap();
 
         // With default config, both coords should have height_min
         let expected_height_contribution = config.height_min * 2.0;
@@ -396,8 +422,8 @@ mod tests {
     #[test]
     fn test_adjustment_contribution() {
         let config = Config::default();
-        let mut coord1 = Coordinate::new(&config);
-        let mut coord2 = Coordinate::new(&config);
+        let mut coord1 = Coordinate::new(&config).unwrap();
+        let mut coord2 = Coordinate::new(&config).unwrap();
 
         coord1.adjustment = 0.1;
         coord2.adjustment = 0.2;
@@ -421,7 +447,7 @@ mod tests {
     #[test]
     fn test_map_generation() {
         let config = Config::default();
-        let mut coordinates = vec![Coordinate::new(&config); 20];
+        let mut coordinates = vec![Coordinate::new(&config).unwrap(); 20];
         let mut actor_map: HashMap<String, Coordinate> = HashMap::new();
 
         // Seeded, so a failure here reproduces rather than appearing once

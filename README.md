@@ -243,6 +243,8 @@ verifying, the build fails.
 | R11 | **The holder pointers are acyclic** — part of `ray_inv`, preserved by every transition. A handover rewrites two pointers and needs a new rank (the old one shifted up by one, new root at zero); a seizure only makes the new holder point at itself, which *removes* a constraint, so the old rank still works | `raymond::proofs::routing_layer::lemma_frame_acyclic`, `lemma_repoint_acyclic` | Raymond invariant |
 | R12 | **Every node reaches the privilege holder by following holder pointers** — what makes "requests travel hop-by-hop towards the token" a checked claim. Two hypotheses, both load-bearing: R11 says the walk terminates rather than circling, and `ray_no_stale_holders` says it terminates at the real holder rather than at somebody who merely thinks so. The second was free when authority *was* belief; it is not free now, and it should not be — after a seizure a node whose belief-path leads to the seized holder genuinely cannot route to the privilege | `raymond::proofs::routing_layer::theorem_every_node_reaches_the_token` | Raymond invariant, `ray_no_stale_holders` |
 | R15 | **The executable routing steps agree with the model, in both directions.** For each of `MakeRequest`, `ReceiveRequest`, `AssignPrivilege`, `EnterCs` and `ExitCs`: when the step fires the model's transition fires, to exactly the state computed; when it refuses, the model's transition is not enabled in *any* post-state. `AssignPrivilege`'s guard reads **both** `privilege == me` and `holder == me` — a step that read only the belief would let a stale holder pass a privilege it does not have — while `EnterCs`'s deliberately reads only the belief, as the model's does | `raymond::proofs::refinement::theorem_make_request_step_refines`, `theorem_receive_request_step_refines`, `theorem_assign_step_refines`, `theorem_enter_cs_step_refines`, `theorem_exit_cs_step_refines` and their `..._refuses_exactly_when_disabled` counterparts, `theorem_request_cs_post_is_the_model_step` | the couplings in the module's table: the scalars a step reads are the router's own table, read under its lock |
+| R16 | **The routing record is the model.** `exec::RayTable` — every node's holder pointer, queue and flags, the requests sent, and where the privilege is — has a view that is a model `Raymond`, and each method's contract is the model's step: `request_cs`, `make_request`, `receive_request`, `assign_privilege`, `enter_cs` and `exit_cs` leave the view at the model's `*_post` with the model's transition enabled to it; `seize` and `reconcile` are the composed machine's two routing-side steps. The R15 theorems are applied to the live table inside each method, not assumed of it | `raymond::exec::RayTable::{request_cs, make_request, receive_request, assign_privilege, enter_cs, exit_cs, seize, reconcile}` (contracts), `lemma_update_entry`, `lemma_push_request`, `lemma_set_privilege` | the table is well formed (each node once; the privilege is at a node) |
+| R17 | **A refusal is a step the model could not take, at any state.** Each of those methods, when it refuses, leaves the view unchanged and carries `forall post. !ray_*(old, post, ..)`: not "the code said no" but "no state is a legal result" — including for a node that is not on the roster, since every model step begins with `nodes.contains`. `assign_privilege` says it for *every* head, because with an empty queue none is named | the same contracts | the table is well formed |
 | C1 | **Election Safety — at most one leader per term.** The headline. Three sentences: a leader won a majority; any two majorities share a member; a member votes once per term | `raft::proofs::election::theorem_election_safety`, `..._reachable` | the Raft invariant, discharged for reachable states by `theorem_reachable_raft_inv` |
 | C2 | **Any two majorities of a cluster share a member.** The one piece of real mathematics, and the reason Raft needs no coordinator: two disjoint subsets whose sizes sum past the whole would make a union larger than a set containing it | `raft::proofs::election::lemma_quorums_intersect` | none |
 | C3 | **A server votes at most once per term** — sentence three, and the clause `tr_grant_vote`'s guard exists to maintain | `raft::proofs::election::inv_votes_unique`, preserved by `lemma_raft_step_preserves_inv` | the Raft invariant |
@@ -1526,6 +1528,7 @@ jetstream_distributed/
 │   ├── raymond/            Raymond's mutual-exclusion routing layer
 │   │   ├── model.rs
 │   │   ├── steps.rs        the routing decisions as executable u64 functions
+│   │   ├── exec.rs         RayTable: the routing record as verified code, one method per step
 │   │   ├── service/        the protocol over Jetstream RPC   [feature = "service"]
 │   │   │   ├── mod.rs      the Routing trait and what a node can see of itself
 │   │   │   ├── router.rs   the whole routing record, behind one lock
@@ -1805,6 +1808,16 @@ the same footing the fuzz target was on when it was added, and it is stated here
 rather than discovered.
 
 ### Raymond and the composed machine
+
+**The record is verified code; the shell is not (R16–R17).** `Router` keeps an
+`exec::RayTable` behind its lock, and every routing method goes through it, so each
+is the model's step by contract and each refusal is a step the model could not take.
+What is not proved: building the table (`new`, `add_node`) is not a model step, and
+that the finished table is `ray_init` — every other node points somewhere, the
+pointers reach the root — is checked by `Router::new` at start-up; the roster (which
+connection is which node), the lock, the audit log, and who may call `seize` and
+`reconcile` (the composed coordinator, which checks the token) are plain Rust the
+tests exercise.
 
 **Raymond's `Router` hosts the whole routing record in one process**, the way the
 ownership `Registry` hosts `System::actors`. That is the model's own shape —
@@ -2453,7 +2466,9 @@ CI, with no `assume`/`admit`/`external_body`/`axiom`):
 * the Raymond routing steps and the composed machine's coupling guards agree
   with their models in both directions — each fires exactly when the model's
   transition is enabled — and a step a layer already proved is carried by the
-  composed machine without a second proof (R15, C8–C9);
+  composed machine without a second proof (R15, C8–C9); and the routing record the
+  service keeps is checked to take the model's steps and to refuse where it cannot
+  (R16–R17);
 * the distributed actor: at most one host appends, now and across handovers (one
   host per epoch; nothing written under a superseded epoch); each message once, in
   the order sent, none invented; the journal is append-only and the state is a fold

@@ -64,6 +64,10 @@ pub enum RayRefusal {
     HeadIsNotSelf,
     /// The head of the queue is not a node.
     HeadNotANode,
+    /// The node the step is about is not on the roster. Not a step's reason —
+    /// the steps never see the roster — but the table's, which does:
+    /// [`crate::raymond::exec::RayTable`] refuses a step about a stranger.
+    NotANode,
 }
 
 /// `ray_make_request`'s guard: this node is not the root, has something queued,

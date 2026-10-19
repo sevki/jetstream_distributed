@@ -26,5 +26,6 @@ pub(super) fn refuse(why: RayRefusal) -> Error {
         RayRefusal::HeadIsSelf => refuse_no("the head of the queue is this node"),
         RayRefusal::HeadIsNotSelf => refuse_no("the head of the queue is not this node"),
         RayRefusal::HeadNotANode => refuse_err("the head of the queue is not a node"),
+        RayRefusal::NotANode => refuse_err("not a node"),
     }
 }

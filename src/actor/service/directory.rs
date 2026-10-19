@@ -118,6 +118,15 @@ struct Slot {
     drain: tokio::task::JoinHandle<()>,
 }
 
+impl Slot {
+    /// Whether the drain is still running. It ends only if the service's handler
+    /// panicked (or the runtime is shutting down): `serve` loops for as long as the
+    /// mailbox is held, and the slot holds it.
+    fn running(&self) -> bool {
+        !self.drain.is_finished()
+    }
+}
+
 impl Drop for Slot {
     fn drop(&mut self) {
         self.drain.abort();
@@ -138,9 +147,10 @@ impl LocalDirectory {
 
 impl Directory for LocalDirectory {
     async fn placement(&self, id: ActorId) -> Result<Placement> {
-        match self.slots.lock().expect("directory lock").contains_key(&id) {
-            true => Ok(Placement::Local),
-            false => Err(Error::new(format!("no actor {id}"))),
+        match self.slots.lock().expect("directory lock").get(&id) {
+            Some(slot) if slot.running() => Ok(Placement::Local),
+            Some(_) => Err(Error::new(format!("actor {id} has stopped"))),
+            None => Err(Error::new(format!("no actor {id}"))),
         }
     }
 
@@ -150,7 +160,9 @@ impl Directory for LocalDirectory {
         S: Server<Request = C::Request, Response = C::Response> + 'static,
     {
         let mut slots = self.slots.lock().expect("directory lock");
-        if slots.contains_key(&id) {
+        // A slot whose drain has ended is not hosting anything: replacing it is how
+        // an actor whose handler panicked is restarted.
+        if slots.get(&id).is_some_and(Slot::running) {
             return Err(Error::new(format!("actor {id} is already hosted")));
         }
         let mailbox = Mailbox::<Delivery<C>>::new(capacity);
@@ -177,6 +189,10 @@ impl Directory for LocalDirectory {
         let slot = slots
             .get(&id)
             .ok_or_else(|| Error::new(format!("no actor {id}")))?;
+        if !slot.running() {
+            // Requests queued to it would wait for a drain that is gone.
+            return Err(Error::new(format!("actor {id} has stopped")));
+        }
         if slot.protocol != TypeId::of::<P>() {
             return Err(Error::new(format!(
                 "actor {id} does not speak that protocol"

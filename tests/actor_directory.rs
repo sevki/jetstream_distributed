@@ -142,3 +142,54 @@ async fn the_directory_refuses_what_it_cannot_do() {
         "B does not speak A's protocol, and is not mis-cast as if it did"
     );
 }
+
+/// A `B` whose handler panics.
+struct PanickingB;
+
+impl ActorB for PanickingB {
+    async fn b(&self, _ctx: Context) -> Result<u64> {
+        panic!("the handler panicked");
+    }
+}
+
+/// A handler that panics ends the actor's drain. The directory must not go on
+/// reporting the actor as hosted — a transport to it would queue requests for a
+/// drain that is gone — and the id can be hosted again.
+#[tokio::test]
+async fn an_actor_whose_handler_panicked_is_stopped_and_can_be_restarted() {
+    let directory = LocalDirectory::new();
+    directory
+        .spawn::<ActorBChannel, _>(B, ROOM, ActorBService { inner: PanickingB })
+        .await
+        .unwrap();
+
+    // The call is answered with an error as the drain unwinds.
+    let channel = channel_to_b(&directory, B).await.unwrap();
+    assert!(channel.b(Context::default()).await.is_err());
+
+    // The task ends a moment after the answer; wait for the directory to see it.
+    let stopped = async {
+        while directory.placement(B).await.is_ok() {
+            tokio::task::yield_now().await;
+        }
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(5), stopped)
+        .await
+        .expect("the directory noticed the drain had ended");
+
+    assert!(
+        directory
+            .transport::<ActorBChannel>(B, Context::default())
+            .await
+            .is_err(),
+        "no new requests are queued for a drain that is gone"
+    );
+
+    // Restarted, it serves.
+    host_b(&directory)
+        .await
+        .expect("the stopped id can be hosted again");
+    assert_eq!(directory.placement(B).await.unwrap(), Placement::Local);
+    let channel = channel_to_b(&directory, B).await.unwrap();
+    assert_eq!(channel.b(Context::default()).await.unwrap(), 1);
+}

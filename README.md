@@ -2008,9 +2008,14 @@ caller ── ActorBChannel ── Session ──▶ Mailbox ──▶ serve ─
   actor lives is the scheduler's existing `Discovery` trait asked about an
   `ActorRef`; a supervisor answers for its own node only. Discovery may be stale and
   nothing relies on it: a request to a host that no longer owns the actor is
-  answered `FENCED` and the caller asks again. **Tested, not proved**
-  (`tests/actor_supervisor.rs`). Not here: a lane to a remote host, a cooperative
-  drain, and tying the fence to a registry, host and epoch.
+  answered `FENCED`. What the caller then does is **not implemented here**: a caller
+  is expected to ask Discovery again and retry, and no caller in this slice does
+  (the fence test checks only that `FENCED` comes back). Restarting a `Stopped` actor
+  reuses its mailbox when the protocol is the same, so sessions obtained before the
+  stop, and the requests already queued, reach the new drain; until it is restarted
+  they wait, and a new `transport` is refused. **Tested, not proved**
+  (`tests/actor_supervisor.rs`). Not here: a lane to a remote host, the retrying
+  caller, a cooperative drain, and tying the fence to a registry, host and epoch.
 * **Backpressure.** A mailbox is built with a `Capacity`, which is always the
   caller's to say: `Bounded(n)` makes `poll_ready` wait for a free slot (the drain
   wakes it), `Unbounded` never does, and there is no default and no number that

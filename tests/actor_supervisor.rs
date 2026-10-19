@@ -188,9 +188,10 @@ async fn an_actor_whose_handler_panicked_is_stopped_and_can_be_restarted() {
         .await
         .unwrap();
 
-    // The call is answered with an error as the drain unwinds.
-    let channel = channel_to_b(&supervisor, B).await.unwrap();
-    assert!(channel.b(Context::default()).await.is_err());
+    // The call is answered with an error as the drain unwinds. This channel is kept:
+    // it is a session on the mailbox from before the stop.
+    let old = Arc::new(channel_to_b(&supervisor, B).await.unwrap());
+    assert!(old.b(Context::default()).await.is_err());
 
     // The task ends a moment after the answer; wait for the supervisor to see it.
     let stopped = async {
@@ -216,13 +217,28 @@ async fn an_actor_whose_handler_panicked_is_stopped_and_can_be_restarted() {
         "no new requests are queued for a drain that is gone"
     );
 
-    // Restarted, it serves.
+    // A call on the old session now queues on a mailbox with no drain.
+    let waiting = tokio::spawn({
+        let old = old.clone();
+        async move { old.b(Context::default()).await }
+    });
+    tokio::task::yield_now().await;
+
+    // Restarted, it serves: the new drain takes over the same mailbox, so the call
+    // the old session queued is answered by it and not stranded.
     host_b(&supervisor)
         .await
         .expect("the stopped id can be hosted again");
     assert_eq!(supervisor.status(B), Status::Running);
+    let stranded = tokio::time::timeout(std::time::Duration::from_secs(5), waiting)
+        .await
+        .expect("a call queued before the restart was served by the new drain")
+        .unwrap();
+    assert_eq!(stranded.unwrap(), 1);
+
+    // And a session made after the restart reaches the same drain.
     let channel = channel_to_b(&supervisor, B).await.unwrap();
-    assert_eq!(channel.b(Context::default()).await.unwrap(), 1);
+    assert_eq!(channel.b(Context::default()).await.unwrap(), 2);
 }
 
 /// The fence `spawn` is given is the one the drain asks: while it says no, a request

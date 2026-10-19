@@ -33,7 +33,9 @@
 //! through it ([`serve_fenced`]): a supervisor that could host an actor without one
 //! would be a way around the ownership protocol. Discovery may be stale, and nothing
 //! depends on its being right: a request that reaches a host that no longer owns the
-//! actor is answered `FENCED`, and the caller asks Discovery again.
+//! actor is answered `FENCED`. A caller is then expected to ask Discovery again and
+//! retry; nothing in this file does that, and it is the composition described under
+//! *Not decided*.
 //!
 //! # Not decided
 //!
@@ -95,9 +97,11 @@ impl Resource for ActorRef {}
 pub enum Status {
     /// Hosted here, and its drain is running.
     Running,
-    /// Was hosted here, and its drain has ended: its handler panicked. Requests
-    /// queued to it would wait for a drain that is gone, so none are accepted;
-    /// [`Supervisor::spawn`] hosts the id again.
+    /// Was hosted here, and its drain has ended: its handler panicked. A new
+    /// [`Supervisor::transport`] is refused. A session obtained earlier still holds
+    /// the mailbox and can queue requests, and the ones already queued stay there;
+    /// they wait for [`Supervisor::spawn`] to host the id again, which serves them
+    /// from the same mailbox.
     Stopped,
     /// Never hosted here.
     Absent,
@@ -116,7 +120,10 @@ pub trait Supervisor: Send + Sync {
     /// service speaks (`BService<Impl>`): the same requests and responses, as for
     /// [`serve`](super::serve). An error if `id` is already [`Status::Running`]; a
     /// [`Status::Stopped`] one is replaced, which is how an actor whose handler
-    /// panicked is restarted.
+    /// panicked is restarted: if it speaks the same protocol the new drain takes over
+    /// the **same mailbox** (and `capacity` is ignored), so sessions obtained before
+    /// the stop and the requests queued behind the panic are served, not stranded.
+    /// A different protocol gets a fresh mailbox, and the old one is not served.
     fn spawn<C, S, F>(
         &self,
         id: ActorId,
@@ -232,7 +239,14 @@ impl Supervisor for LocalSupervisor {
         if slots.get(&id).is_some_and(Slot::running) {
             return Err(Error::new(format!("actor {id} is already hosted")));
         }
-        let mailbox = Mailbox::<Delivery<C>>::new(capacity);
+        // Sessions made before a stop hold this mailbox, and `Round::drop` put the
+        // requests behind the panic back on it. A new mailbox would strand both.
+        let reused = slots
+            .get(&id)
+            .filter(|old| old.protocol == TypeId::of::<C>())
+            .and_then(|old| old.mailbox.downcast_ref::<Mailbox<Delivery<C>>>())
+            .cloned();
+        let mailbox = reused.unwrap_or_else(|| Mailbox::<Delivery<C>>::new(capacity));
         let drain = tokio::spawn({
             let mailbox = mailbox.clone();
             async move { serve_fenced(mailbox, &mut service, &fence).await }
@@ -257,7 +271,7 @@ impl Supervisor for LocalSupervisor {
             .get(&id)
             .ok_or_else(|| Error::new(format!("no actor {id}")))?;
         if !slot.running() {
-            // Requests queued to it would wait for a drain that is gone.
+            // A new session would queue behind a drain that is gone.
             return Err(Error::new(format!("actor {id} has stopped")));
         }
         if slot.protocol != TypeId::of::<P>() {

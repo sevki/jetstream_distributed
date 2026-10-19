@@ -1,6 +1,8 @@
+use std::time::Duration;
+
 use jetstream::prelude::*;
 
-use crate::coordinate::Coordinate;
+use crate::{compute::Resources, coordinate::Coordinate};
 
 /// What the room says when a subscription ends normally. This is the
 /// value a plain `Stream` has nowhere to put.
@@ -9,25 +11,29 @@ pub struct Closed {
     pub last_seq: u64,
 }
 
-#[service(uses(super::{Closed, Coordinate}))]
-pub trait Metrics {
+#[service(uses(super::{Closed, Event}))]
+pub trait Monitor {
     #[subscription]
-    fn coordinates(&self, ctx: Context, from: u64) -> Subscription<Coordinate, Closed>;
+    fn monitor(&self, ctx: Context) -> Subscription<Event, Closed>;
 }
 
-struct CoordinateService {}
+#[derive(Debug, Clone, JetStreamWireFormat)]
+pub enum Event {
+    Heartbeat,
+    Coordinate(Coordinate),
+    Resources(Resources),
+}
 
-impl Metrics for CoordinateService {
-    fn coordinates(&self, _ctx: Context, from: u64) -> Subscription<Coordinate, Closed> {
+#[derive(Debug)]
+struct NodeMonitor {
+    events: tokio::sync::broadcast::Receiver<Event>,
+}
+
+impl Monitor for NodeMonitor {
+    fn monitor(&self, ctx: Context) -> Subscription<Event, Closed> {
         Subscription::producing(64, async move |producer| {
             loop {
-                let coord = Coordinate {
-                    vec: vec![],
-                    error: 0.0,
-                    adjustment: 0.0,
-                    height: 0.0,
-                };
-                producer.send(coord).await.unwrap();
+                todo!()
             }
         })
     }

@@ -1,7 +1,7 @@
 //! LAVA placement (§4.3), NILAS scoring (§4.2), and LARS ordering (§4.4).
 //!
 //! Time is caller-supplied, monotonic integer seconds. Exits are explicit events;
-//! a predicted expiry never removes a VM. See README for paper ambiguities and
+//! a predicted expiry never removes a job. See README for paper ambiguities and
 //! concrete policy choices. No model, runtime, or network service is required.
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -9,7 +9,7 @@ use std::{
 };
 
 use crate::{
-    compute::{ComputerId, Job, Resources},
+    compute::{Job, JobId, Resources},
     host::HostId,
 };
 
@@ -25,7 +25,7 @@ const HOUR: u64 = 3600;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LifetimeClass(u8);
 impl LifetimeClass {
-    /// The class of a VM predicted to live `remaining` longer: the first class
+    /// The class of a job predicted to live `remaining` longer: the first class
     /// whose [`upper_bound`](Self::upper_bound) is above it. Index 16 is the last
     /// class and takes everything longer.
     pub fn of(remaining: Duration) -> Self {
@@ -55,7 +55,7 @@ impl LifetimeClass {
 /// Adapter point for a trained uptime-conditioned regression/survival model.
 /// Returned values are *remaining* lifetime, never total lifetime or exit time.
 pub trait LifetimePredictor<F> {
-    /// The expected remaining lifetime of a VM with `features` that has already
+    /// The expected remaining lifetime of a job with `features` that has already
     /// run for `uptime`: the paper's E(Tr | Tu) (§3). The scheduler asks again as
     /// uptime grows, which is the paper's *reprediction*, so the answer should
     /// depend on `uptime` and not only on `features`.
@@ -75,7 +75,7 @@ impl EmpiricalLifetime {
     /// A distribution from observed total lifetimes.
     ///
     /// `tail_remaining` is what to predict once `uptime` has passed every sample.
-    /// It is the caller's choice: the data says nothing about a VM that has
+    /// It is the caller's choice: the data says nothing about a job that has
     /// outlived all of it. [`Error::InvalidDistribution`] if there are no samples,
     /// if any sample is zero, or if `tail_remaining` is zero.
     pub fn new(samples: Vec<Duration>, tail_remaining: Duration) -> Result<Self, Error> {
@@ -115,27 +115,27 @@ impl LifetimePredictor<EmpiricalLifetime> for EmpiricalPredictor {
 /// Where a host is in LAVA's life cycle (§4.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostState {
-    /// No VMs, and no lifetime class. A new VM may start here as a last resort.
+    /// No jobs, and no lifetime class. A new job may start here as a last resort.
     Empty,
-    /// Filling up. It takes only VMs of its own lifetime class.
+    /// Filling up. It takes only jobs of its own lifetime class.
     Open,
-    /// Over 90% of its CPU or memory is used, so it only drains: it takes VMs at
+    /// Over 90% of its CPU or memory is used, so it only drains: it takes jobs at
     /// least one class lower than its own, which should be gone before it is.
     Recycling,
 }
 
-/// A host and the VMs on it, with the lifetime class LAVA has given it.
+/// A host and the Jobs on it, with the lifetime class LAVA has given it.
 ///
 /// It is a view: only the [`Scheduler`] changes one.
 #[derive(Debug, Clone)]
 pub struct Host<F> {
     id: HostId,
     capacity: Resources,
-    vms: BTreeMap<ComputerId, Job<F>>,
+    jobs: BTreeMap<JobId, Job<F>>,
     state: HostState,
     class: Option<LifetimeClass>,
     deadline: Option<Duration>,
-    residual: BTreeSet<ComputerId>,
+    residual: BTreeSet<JobId>,
     schedulable: bool,
 }
 
@@ -148,9 +148,9 @@ impl<F> Host<F> {
     pub fn capacity(&self) -> Resources {
         self.capacity
     }
-    /// The VMs on the host, in order of id.
-    pub fn vms(&self) -> impl Iterator<Item = &Job<F>> {
-        self.vms.values()
+    /// The jobs on the host, in order of id.
+    pub fn jobs(&self) -> impl Iterator<Item = &Job<F>> {
+        self.jobs.values()
     }
     /// Where the host is in its life cycle.
     pub fn state(&self) -> HostState {
@@ -166,24 +166,24 @@ impl<F> Host<F> {
     pub fn deadline(&self) -> Option<Duration> {
         self.deadline
     }
-    /// The VMs that were on the host at its last class change: when the host
+    /// The jobs that were on the host at its last class change: when the host
     /// became recycling, was demoted, or was promoted (§4.3). When the last of
     /// them exits, a recycling host drops a class.
-    pub fn residual(&self) -> &BTreeSet<ComputerId> {
+    pub fn residual(&self) -> &BTreeSet<JobId> {
         &self.residual
     }
-    /// Whether new VMs may be placed on the host. It is off while the host is
+    /// Whether new jobs may be placed on the host. It is off while the host is
     /// being drained (LARS, §4.4) or under maintenance.
     pub fn schedulable(&self) -> bool {
         self.schedulable
     }
-    /// The CPU and memory the VMs on the host use together.
+    /// The CPU and memory the jobs on the host use together.
     pub fn used(&self) -> Resources {
-        self.vms
+        self.jobs
             .values()
-            .fold(Resources { cpu: 0, memory: 0 }, |r, vm| Resources {
-                cpu: r.cpu + vm.resources.cpu,
-                memory: r.memory + vm.resources.memory,
+            .fold(Resources { cpu: 0, memory: 0 }, |r, job| Resources {
+                cpu: r.cpu + job.resources.cpu,
+                memory: r.memory + job.resources.memory,
             })
     }
     fn free(&self) -> Resources {
@@ -208,13 +208,13 @@ impl<F> Host<F> {
         self.deadline = Some(now.saturating_add(upper.saturating_add(upper / 10)));
     }
     fn refresh(&mut self, now: Duration) {
-        if self.vms.is_empty() {
+        if self.jobs.is_empty() {
             self.reset();
             return;
         }
         if self.state == HostState::Recycling && self.residual.is_empty() {
             self.assign_class(self.class.unwrap().lower(), now);
-            self.residual = self.vms.keys().copied().collect();
+            self.residual = self.jobs.keys().copied().collect();
         }
         // One promotion per refresh, rather than inventing transitions through
         // unobserved intermediate epochs when the caller advances a long time.
@@ -223,7 +223,7 @@ impl<F> Host<F> {
             .is_some_and(|d| d != Duration::MAX && now >= d)
         {
             self.assign_class(self.class.unwrap().higher(), now);
-            self.residual = self.vms.keys().copied().collect();
+            self.residual = self.jobs.keys().copied().collect();
         }
     }
 }
@@ -233,7 +233,7 @@ impl<F> Host<F> {
 pub enum Error {
     /// Invalid capacity: a host was added with no CPU or no memory.
     InvalidCapacity,
-    /// Invalid request: a VM asked for no CPU and no memory.
+    /// Invalid request: a job asked for no CPU and no memory.
     InvalidRequest,
     /// Invalid distribution: an [`EmpiricalLifetime`] had no samples, a zero sample, or a zero tail.
     InvalidDistribution,
@@ -249,10 +249,10 @@ pub enum Error {
     ClockWentBackwards,
     /// Future job: the job is said to have started after `now`.
     FutureJob,
-    /// No capacity: no schedulable, eligible host has room for the VM.
+    /// No capacity: no schedulable, eligible host has room for the job.
     NoCapacity,
     /// Migration not approved: [`Scheduler::begin_drain`] was refused because the approval gate did not
-    /// cover every VM on the host.
+    /// cover every job on the host.
     MigrationNotApproved,
 }
 
@@ -291,9 +291,9 @@ pub fn temporal_cost(extension: Duration) -> usize {
 /// A single-owner, in-memory scheduler. Callers serialize operations and apply
 /// additional hard constraints via `place_with`; no external effects occur here.
 ///
-/// A VM is placed on the first host that exists in this order (§4.3, Algorithm
-/// 3): a recycling host of a higher class than the VM's, the nearest class first;
-/// an open host of the VM's own class; any other host that has VMs; an empty host.
+/// A job is placed on the first host that exists in this order (§4.3, Algorithm
+/// 3): a recycling host of a higher class than the job's, the nearest class first;
+/// an open host of the job's own class; any other host that has jobs; an empty host.
 /// Among hosts of the same kind the choice is NILAS (§4.2): the lowest temporal
 /// cost, then the least wasted CPU and memory, then the lowest host id.
 ///
@@ -306,13 +306,13 @@ pub fn temporal_cost(extension: Duration) -> usize {
 pub struct Scheduler<F, P> {
     predictor: P,
     hosts: BTreeMap<HostId, Host<F>>,
-    locations: BTreeMap<ComputerId, HostId>,
+    locations: BTreeMap<JobId, HostId>,
     now: Duration,
 }
 
 impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
     /// A scheduler with no hosts, whose clock starts at zero, that asks
-    /// `predictor` how long each VM has left.
+    /// `predictor` how long each job has left.
     pub fn new(predictor: P) -> Self {
         Self {
             predictor,
@@ -329,9 +329,9 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
     pub fn host(&self, id: HostId) -> Option<&Host<F>> {
         self.hosts.get(&id)
     }
-    /// The host a VM is on, if it is placed.
-    pub fn location(&self, vm: ComputerId) -> Option<HostId> {
-        self.locations.get(&vm).copied()
+    /// The host a job is on, if it is placed.
+    pub fn location(&self, job: JobId) -> Option<HostId> {
+        self.locations.get(&job).copied()
     }
     /// Add an empty, schedulable host. [`Error::InvalidCapacity`] if it has no
     /// CPU or no memory, [`Error::DuplicateHost`] if the id is taken.
@@ -347,7 +347,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
             Host {
                 id,
                 capacity,
-                vms: BTreeMap::new(),
+                jobs: BTreeMap::new(),
                 state: HostState::Empty,
                 class: None,
                 deadline: None,
@@ -358,11 +358,11 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
         Ok(())
     }
     /// Advance the clock to `now` and update every host: an empty host loses its
-    /// class, a recycling host whose residual VMs have all gone drops a class, and
+    /// class, a recycling host whose residual jobs have all gone drops a class, and
     /// a host past its deadline is promoted one class (§4.3).
     ///
     /// Time only moves forward: [`Error::ClockWentBackwards`] if `now` is earlier
-    /// than a time already given. A predicted exit never removes a VM; only
+    /// than a time already given. A predicted exit never removes a job; only
     /// [`remove`](Self::remove) does.
     pub fn tick(&mut self, now: Duration) -> Result<(), Error> {
         if now < self.now {
@@ -374,7 +374,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
         }
         Ok(())
     }
-    /// Allow or forbid placing new VMs on a host, independently of its life cycle.
+    /// Allow or forbid placing new jobs on a host, independently of its life cycle.
     /// [`begin_drain`](Self::begin_drain) turns it off, and maintenance may too.
     /// [`Error::UnknownHost`] if there is no such host.
     pub fn set_schedulable(&mut self, id: HostId, value: bool) -> Result<(), Error> {
@@ -384,7 +384,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
             .schedulable = value;
         Ok(())
     }
-    /// Place a VM on the best host, at `now`, and return the host's id. Every
+    /// Place a job on the best host, at `now`, and return the host's id. Every
     /// schedulable host with room is a candidate; see
     /// [`place_with`](Self::place_with) to restrict them.
     pub fn place(&mut self, job: Job<F>, now: Duration) -> Result<HostId, Error> {
@@ -393,9 +393,9 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
     /// As [`place`](Self::place), but only on hosts `eligible` accepts: a hard
     /// constraint LAVA knows nothing about, such as a zone or an anti-affinity rule.
     ///
-    /// The VM's class comes from its predicted remaining lifetime at `now`. A VM
+    /// The job's class comes from its predicted remaining lifetime at `now`. A job
     /// placed on an empty host gives the host that class and makes it open; a host
-    /// that goes over 90% of its CPU or memory becomes recycling, and the VMs on it
+    /// that goes over 90% of its CPU or memory becomes recycling, and the jobs on it
     /// at that moment become its residual set.
     ///
     /// [`Error::DuplicateJob`], [`Error::InvalidRequest`], [`Error::FutureJob`],
@@ -434,14 +434,14 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
             host.assign_class(class, now);
         }
         self.locations.insert(job.id, target);
-        host.vms.insert(job.id, job);
+        host.jobs.insert(job.id, job);
         let used = host.used();
         if host.state == HostState::Open
             && (u128::from(used.cpu) * 10 > u128::from(host.capacity.cpu) * 9
                 || u128::from(used.memory) * 10 > u128::from(host.capacity.memory) * 9)
         {
             host.state = HostState::Recycling;
-            host.residual = host.vms.keys().copied().collect();
+            host.residual = host.jobs.keys().copied().collect();
         }
         Ok(target)
     }
@@ -460,7 +460,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
             _ => (2, 0), // Algorithm 3 explicitly permits non-matching fallback.
         };
         let host_remaining = host
-            .vms
+            .jobs
             .values()
             .map(|v| self.predictor.remaining(&v.features, now - v.started_at))
             .max()
@@ -474,13 +474,13 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
                 / u128::from(host.capacity.memory);
         (tier, distance, temporal, waste, host.id)
     }
-    /// A VM has exited: take it off its host and return it. Exits are events the
+    /// A job has exited: take it off its host and return it. Exits are events the
     /// caller reports, never inferred from a prediction.
     ///
-    /// The VM leaves the host's residual set before the host is refreshed, so an
+    /// The job leaves the host's residual set before the host is refreshed, so an
     /// exit at the moment of a deadline counts as an exit and not as a timeout.
     /// [`Error::UnknownJob`] if it is not placed.
-    pub fn remove(&mut self, id: ComputerId, now: Duration) -> Result<Job<F>, Error> {
+    pub fn remove(&mut self, id: JobId, now: Duration) -> Result<Job<F>, Error> {
         let host_id = self.location(id).ok_or(Error::UnknownJob)?;
         if now < self.now {
             return Err(Error::ClockWentBackwards);
@@ -488,22 +488,22 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
         // Remove before refresh so a natural exit at a deadline wins over a
         // timeout and the residual generation is not accidentally replaced.
         let host = self.hosts.get_mut(&host_id).unwrap();
-        let vm = host.vms.remove(&id).unwrap();
+        let job = host.jobs.remove(&id).unwrap();
         host.residual.remove(&id);
         host.refresh(now);
         self.locations.remove(&id);
         self.tick(now)?;
-        Ok(vm)
+        Ok(job)
     }
     /// LARS approval gate and longest-remaining-first snapshot. The caller
-    /// performs migrations one at a time and skips VMs that have since exited.
-    /// Approval must cover every resident VM before scheduling is disabled.
+    /// performs migrations one at a time and skips jobs that have since exited.
+    /// Approval must cover every resident job before scheduling is disabled.
     ///
-    /// The order is the paper's (§4.4): the VM with the longest predicted remaining
-    /// lifetime first, so shorter-lived VMs may exit while the long ones are
-    /// moving. Ties go to the lower id. Each VM is then placed again with
-    /// [`place`](Self::place), the same algorithm as for a new VM. The approval
-    /// gate is this port's, not the paper's: `approved` says whether a VM may be
+    /// The order is the paper's (§4.4): the job with the longest predicted remaining
+    /// lifetime first, so shorter-lived jobs may exit while the long ones are
+    /// moving. Ties go to the lower id. Each job is then placed again with
+    /// [`place`](Self::place), the same algorithm as for a new job. The approval
+    /// gate is this port's, not the paper's: `approved` says whether a job may be
     /// migrated at all, and a single refusal leaves the host untouched.
     ///
     /// [`Error::UnknownHost`] if there is no such host.
@@ -512,15 +512,15 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
         id: HostId,
         now: Duration,
         approved: impl Fn(&Job<F>) -> bool,
-    ) -> Result<Vec<ComputerId>, Error> {
+    ) -> Result<Vec<JobId>, Error> {
         let host = self.hosts.get(&id).ok_or(Error::UnknownHost)?;
-        if !host.vms.values().all(approved) {
+        if !host.jobs.values().all(approved) {
             return Err(Error::MigrationNotApproved);
         }
         self.tick(now)?;
         let host = self.hosts.get_mut(&id).unwrap();
         let mut order: Vec<_> = host
-            .vms
+            .jobs
             .values()
             .map(|v| {
                 (

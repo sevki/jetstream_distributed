@@ -386,7 +386,7 @@ pub enum Event {
 /// to the identical condition — and `ERR` is the one the codes' own definitions
 /// pick: the request names something that does not exist, which is not a
 /// statement about the actor's state at all.
-fn refuse(why: Refusal) -> Error {
+pub(crate) fn refuse(why: Refusal) -> Error {
     match why {
         Refusal::NoGrant => refuse_no("no grant was issued"),
         Refusal::NotOffered => refuse_no("not offered at that epoch"),
@@ -525,6 +525,16 @@ impl Registry {
     /// it out of a running service.
     pub fn log(&self) -> Vec<Event> {
         self.inner.lock().expect("registry lock").log.clone()
+    }
+
+    /// Run `f` on the verified record and the audit log, under the lock.
+    ///
+    /// For the composed coordinator, which takes this lock and the router's, in
+    /// that order, behind its own gate, and runs a step across both layers.
+    pub(crate) fn with_state<R>(&self, f: impl FnOnce(&mut RegistryCore, &mut Vec<Event>) -> R) -> R {
+        let mut g = self.inner.lock().expect("registry lock");
+        let Inner { core, log } = &mut *g;
+        f(core, log)
     }
 
     /// Is the actor `Unowned` — released, and offered to nobody yet in

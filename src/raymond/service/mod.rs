@@ -51,7 +51,7 @@
 //! [`Context::remote`] against a roster fixed at construction, and an address is
 //! not a credential.
 
-mod refusal;
+pub(crate) mod refusal;
 mod router;
 
 pub use router::{Event, Router};

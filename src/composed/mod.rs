@@ -12,6 +12,7 @@
 //! * `service`  — the two layers behind one coordinator, over Jetstream RPC,
 //!   behind the `service` feature.
 
+pub mod exec;
 pub mod model;
 pub mod proofs;
 pub mod steps;

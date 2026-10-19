@@ -212,42 +212,16 @@ impl Router {
         stale
     }
 
-    /// Is `node` a node of this cluster?
-    pub(crate) fn is_node(&self, node: u64) -> bool {
-        self.inner
-            .lock()
-            .expect("router lock")
-            .table
-            .find(node)
-            .is_some()
-    }
-
-    /// Does `node` believe it holds the privilege? (`believes_holds`.)
-    pub(crate) fn believes_holds(&self, node: u64) -> bool {
-        let g = self.inner.lock().expect("router lock");
-        g.table
-            .find(node)
-            .is_some_and(|i| g.table.entries[i].holder == node)
-    }
-
-    /// `ray_seize`: re-establish the privilege at `to`. **Only `to` acts** —
-    /// nothing belonging to the old holder is touched, because it is memory at a
-    /// node that may be unreachable. The guards are the composed coordinator's,
-    /// which is the only caller; the table refuses what the model would not
-    /// allow, and the event is logged only when it happened.
-    pub(crate) fn seize_to(&self, to: u64) {
+    /// Run `f` on the verified routing record and the audit log, under the lock.
+    ///
+    /// For the composed coordinator, which takes the registry's lock and then
+    /// this one, behind its own gate, and runs a step across both layers
+    /// (`crate::composed::exec`) — `ray_seize` and `ray_reconcile` among them,
+    /// which no node may ask for.
+    pub(crate) fn with_state<R>(&self, f: impl FnOnce(&mut RayTable, &mut Vec<Event>) -> R) -> R {
         let mut g = self.inner.lock().expect("router lock");
-        if g.table.seize(to).is_ok() {
-            g.log.push(Event::Seized { to });
-        }
-    }
-
-    /// `ray_reconcile`: a stale holder learns its privilege was taken.
-    pub(crate) fn reconcile_node(&self, node: u64) {
-        let mut g = self.inner.lock().expect("router lock");
-        if g.table.reconcile(node).is_ok() {
-            g.log.push(Event::Reconciled { node });
-        }
+        let Inner { table, log } = &mut *g;
+        f(table, log)
     }
 
     fn standing_locked(g: &Inner, node: u64) -> Option<Standing> {

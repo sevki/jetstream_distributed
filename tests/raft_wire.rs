@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, OnceLock};
 
-use distributed_ownership::raft::service::{
+use jetstream_distributed::raft::service::{
     consensus_protocol::{ConsensusChannel, ConsensusService},
     Acceptance, Appended, Ballot, Consensus, LogEntry, MemoryLog, MemoryLogStore, Peer, Standing,
 };

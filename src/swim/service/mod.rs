@@ -1,7 +1,8 @@
 //! SWIM's membership protocol, as a Jetstream service.
 //!
 //! The same split the other two services make: the *decisions* are the verified
-//! functions in [`crate::swim::steps`] — [`merge_step`] and [`refute_step`],
+//! functions in [`crate::swim::steps`] — [`merge_step`](crate::swim::steps::merge_step) and
+//! [`refute_step`](crate::swim::steps::refute_step),
 //! which `crate::swim::proofs::refinement` ties to the model's `tr_gossip` — and
 //! this file is the part around them: who is allowed to speak, what a message
 //! carries, and what a node does to itself.

@@ -9,21 +9,29 @@
 //! * [`model`]   — state space and transition relation, election and log.
 //! * [`steps`]   — the election decisions as executable `u64` functions.
 //! * [`store`]   — the durable log: how a log that truncates lives on a device
-//!                 that cannot.
+//!   that cannot.
 //! * [`wire`]    — the record encoding, and what a torn write leaves behind.
 //! * [`proofs`]  — Election Safety, a run in which an election happens, and
-//!                 what one replication step gives you.
+//!   what one replication step gives you.
+//! * [`exec`]    — a server's election record (role, term, vote, tally) as
+//!   verified code: each method is an election step by contract.
 //! * `service`   — the protocol over Jetstream RPC, behind the `service`
-//!                 feature.
+//!   feature.
 //!
 //! **Election Safety and Log Matching are proved; Leader Completeness and State
 //! Machine Safety are not.** [`model`]'s docs say exactly where that line falls
 //! and why it is where it is.
 
+#[path = "exec_v.rs"]
+pub mod exec;
+#[path = "model_t.rs"]
 pub mod model;
 pub mod proofs;
+#[path = "steps_v.rs"]
 pub mod steps;
+#[path = "store_v.rs"]
 pub mod store;
+#[path = "wire_v.rs"]
 pub mod wire;
 
 #[cfg(feature = "service")]

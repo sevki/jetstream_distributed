@@ -19,7 +19,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use distributed_ownership::raymond::service::{
+use jetstream_distributed::raymond::service::{
     routing_protocol::{RoutingChannel, RoutingService},
     Router, Routing,
 };

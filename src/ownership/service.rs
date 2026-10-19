@@ -46,7 +46,7 @@
 //!
 //! # The other assumption, and why it needed code rather than a caveat
 //!
-//! `System::actors` — the model's registry — is read and written in a single
+//! `OwnershipSystem::actors` — the model's registry — is read and written in a single
 //! step by every epoch-advancing transition. The README calls that the
 //! strongest assumption in the model, and it is really two assumptions wearing
 //! one name: the record is updated **atomically**, and it **survives**. A
@@ -75,7 +75,7 @@
 //! ownership record in a store with compare-and-swap rather than bolting a
 //! counter onto a local file.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write as _};
 use std::net::IpAddr;
@@ -83,10 +83,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::ownership::steps::{
-    acquire_step, begin_transfer_step, force_step, may_write_step, poll_step, release_step,
-    ExecOffer, ExecState, ForceOutcome, Outcome, Refusal,
-};
+use crate::ownership::registry::{BurnRefusal, RegistryCore, WriteOutcome};
+use crate::ownership::steps::{may_write_step, ExecOffer, ExecState, Refusal};
 use jetstream::prelude::*;
 // Not in the prelude's re-export list, and `jetstream_rpc` is not a direct
 // dependency of this crate — so it comes through the `pub extern crate` the
@@ -367,11 +365,13 @@ pub enum Event {
 // State
 // ---------------------------------------------------------------------------
 //
-// There is no state type here. The actor's record is
-// `crate::ownership::steps::ExecState`, and every decision made about it
-// is one of the step functions beside it — each with a postcondition stated in
-// terms of the model's `tr_*` transition and a theorem in
-// `proofs::refinement` discharging it.
+// There is no state type here beyond the audit log. The actor's record, the
+// grants published and the writes landed are
+// `crate::ownership::registry::RegistryCore`, and every decision made about
+// them is one of its methods — each built on a step function in
+// `crate::ownership::steps` with a postcondition stated in terms of the model's
+// `tr_*` transition, and each with a theorem in `proofs::registry` (and
+// `proofs::refinement`) discharging it, grants included.
 //
 // This used to be a local three-case enum with the transitions written out by
 // hand next to the model, which is how the service could be described as
@@ -386,7 +386,7 @@ pub enum Event {
 /// to the identical condition — and `ERR` is the one the codes' own definitions
 /// pick: the request names something that does not exist, which is not a
 /// statement about the actor's state at all.
-fn refuse(why: Refusal) -> Error {
+pub(crate) fn refuse(why: Refusal) -> Error {
     match why {
         Refusal::NoGrant => refuse_no("no grant was issued"),
         Refusal::NotOffered => refuse_no("not offered at that epoch"),
@@ -399,19 +399,11 @@ fn refuse(why: Refusal) -> Error {
 }
 
 struct Inner {
-    state: ExecState,
-    /// Grants actually issued. `tr_acquire`'s second conjunct: a grant has to
-    /// have been *issued*, not merely be due.
-    ///
-    /// A set rather than a list. The only question ever asked of it is "was
-    /// this grant issued?", which a set answers in constant time and without
-    /// storing the same answer twice — and a node agent polls in a loop, so a
-    /// list grew by one entry per poll and `acquire` scanned all of them. The
-    /// model's counterpart is `System::network`, which is a `Set` for the same
-    /// reason: re-sending a grant is `tr_issue_grant` again, and that
-    /// transition is explicitly idempotent.
-    issued: HashSet<(u64, u64)>,
-    writes: u64,
+    /// The actor's record, the grants issued and the writes landed. Verified
+    /// code: each method on it is a model step, and the grants it keeps are the
+    /// network's (`proofs::registry`). `tr_acquire`'s second conjunct — a grant
+    /// has to have been *issued*, not merely be due — is read from here.
+    core: RegistryCore,
     log: Vec<Event>,
 }
 
@@ -478,9 +470,7 @@ impl Registry {
         floor.record(epoch)?;
         Ok(Registry {
             inner: Arc::new(Mutex::new(Inner {
-                state: ExecState::Unowned { epoch, intended: first_owner },
-                issued: HashSet::new(),
-                writes: 0,
+                core: RegistryCore::new(epoch, first_owner),
                 log: Vec::new(),
             })),
             roster: Arc::new(roster),
@@ -501,6 +491,19 @@ impl Registry {
         self.floor
             .record(to_epoch)
             .map_err(|e| refuse_down(&format!("could not record epoch {to_epoch}: {e}")))
+    }
+
+    /// [`persist`](Self::persist), as the closure `RegistryCore` calls with the
+    /// epoch it is about to burn. What the floor complained of is left in `down`,
+    /// because the core only learns that it said no.
+    fn persist_to<'a>(&'a self, down: &'a mut Option<Error>) -> impl FnOnce(u64) -> bool + 'a {
+        move |epoch| match self.persist(epoch) {
+            Ok(()) => true,
+            Err(e) => {
+                *down = Some(e);
+                false
+            }
+        }
     }
 
     /// Is this one of the nodes the registry knows about?
@@ -524,6 +527,16 @@ impl Registry {
         self.inner.lock().expect("registry lock").log.clone()
     }
 
+    /// Run `f` on the verified record and the audit log, under the lock.
+    ///
+    /// For the composed coordinator, which takes this lock and the router's, in
+    /// that order, behind its own gate, and runs a step across both layers.
+    pub(crate) fn with_state<R>(&self, f: impl FnOnce(&mut RegistryCore, &mut Vec<Event>) -> R) -> R {
+        let mut g = self.inner.lock().expect("registry lock");
+        let Inner { core, log } = &mut *g;
+        f(core, log)
+    }
+
     /// Is the actor `Unowned` — released, and offered to nobody yet in
     /// possession?
     ///
@@ -533,7 +546,21 @@ impl Registry {
     /// going stale — the composed coordinator serialises every call that could
     /// change it.
     pub fn actor_is_unowned(&self) -> bool {
-        matches!(self.inner.lock().expect("registry lock").state, ExecState::Unowned { .. })
+        matches!(
+            self.inner.lock().expect("registry lock").core.state,
+            ExecState::Unowned { .. }
+        )
+    }
+
+    /// Would the fence admit `node` presenting `epoch`, right now?
+    ///
+    /// Read-only, and it is [`may_write_step`] asked about the registry's own
+    /// record, so it is the model's `can_mutate`. `crate::actor::service` asks it
+    /// before deciding anything else about a message, so a host that is not the
+    /// owner learns nothing about the journal; the effect itself still goes
+    /// through [`Ownership::write`], which makes the same check under the lock.
+    pub fn may_write(&self, node: u64, epoch: u64) -> bool {
+        may_write_step(self.inner.lock().expect("registry lock").core.state, node, epoch)
     }
 
     /// Which node is calling, from the connection rather than from the request.
@@ -581,62 +608,44 @@ impl Registry {
     /// produced by a validity check on an argument that is not used.
     pub fn force(&self, next: u64) -> Result<u64> {
         let mut g = self.inner.lock().expect("registry lock");
-        let from_epoch = g.state.current();
-        // Which of the three transitions this is, and where it sends the actor,
-        // is `force_step`'s to decide — see `proofs::refinement`, where it is
-        // `tr_revoke_owner` from `Owned`, `tr_reassign_unowned` from `Unowned`
-        // and `tr_abort_transfer` from `Transferring`.
-        let (moved, offered_to) = match force_step(g.state, next, self.is_node(next)) {
-            ForceOutcome::Moved(moved, offered_to) => (moved, offered_to),
-            ForceOutcome::Refused(why) => return Err(refuse(why)),
-        };
-        let to_epoch = moved.current();
-        self.persist(to_epoch)?;
-        g.state = moved;
+        let from_epoch = g.core.state.current();
+        // Which of the three transitions this is, where it sends the actor and
+        // which grant it publishes are `RegistryCore::force`'s — see
+        // `proofs::registry`, where it is `tr_revoke_owner` from `Owned`,
+        // `tr_reassign_unowned` from `Unowned` and `tr_abort_transfer` from
+        // `Transferring`, and the grant is the one the network gains.
+        let mut down = None;
+        let offered_to = g
+            .core
+            .force(next, self.is_node(next), self.persist_to(&mut down))
+            .map_err(|why| burn_error(why, down))?;
+        let to_epoch = g.core.state.current();
         g.log.push(Event::EpochBurned {
             from_epoch,
             to_epoch,
             next: offered_to,
             forced: true,
         });
-        // All three of the transitions this can be publish a `Grant` for the
-        // node they offer the actor to. See `publish_grant`.
-        publish_grant(&mut g, offered_to, to_epoch);
+        // Logged as well as published. The audit log is the only record an
+        // auditor has, and `Standing` and the P8 tracker both rebuild "which
+        // grants were issued" from `Granted` events — so a grant published but
+        // not logged would make a later, entirely legal `Acquired` look like an
+        // acquire of something never offered.
+        g.log.push(Event::Granted {
+            node: offered_to,
+            epoch: to_epoch,
+        });
         Ok(offered_to)
     }
 }
 
-/// Record a grant the registry has published, the way the model's transitions
-/// publish one.
-///
-/// **Four of the model's transitions put a `Grant` on the network**, not one:
-/// `tr_issue_grant` (a poll), and also `tr_complete_release`, `tr_revoke_owner`,
-/// `tr_reassign_unowned` and `tr_abort_transfer`, each of which offers the
-/// actor on as part of moving it. For a long time only the poll recorded
-/// anything here, and that was not a missing convenience — it broke the
-/// coupling the refinement rests on.
-///
-/// `acquire_step` takes `granted` as an *input*, standing for
-/// `sys.network.contains(Grant { .. })`. If the registry's set says `false`
-/// where the model's network says `true`, then
-/// `theorem_acquire_step_refuses_exactly_when_disabled` is being applied with a
-/// hypothesis that does not hold, and its conclusion — that the model could not
-/// have stepped either — is worth nothing. The visible symptom was smaller than
-/// the real one: a node that took the actor without polling first was refused,
-/// although the model had already published its grant.
-///
-/// The initial state is deliberately *not* published: `init` gives every actor
-/// an `Unowned` record and an **empty** network, which is exactly why
-/// `tr_issue_grant` exists. So a registry's first grant is still made by a poll,
-/// and every later one by the transition that moved the actor.
-fn publish_grant(g: &mut Inner, to: u64, epoch: u64) {
-    g.issued.insert((to, epoch));
-    // Logged as well as recorded. The audit log is the only record an auditor
-    // has, and `Standing` and the P8 tracker both rebuild "which grants were
-    // issued" from `Granted` events — so a grant recorded but not logged would
-    // make a later, entirely legal `Acquired` look like an acquire of something
-    // never offered.
-    g.log.push(Event::Granted { node: to, epoch });
+/// Why a transition that burns an epoch did not happen, in the line protocol's
+/// alphabet. `down` is the floor's own complaint, kept by [`Registry::persist_to`].
+fn burn_error(why: BurnRefusal, down: Option<Error>) -> Error {
+    match why {
+        BurnRefusal::Refused(why) => refuse(why),
+        BurnRefusal::Down => down.unwrap_or_else(|| refuse_down("could not record the epoch")),
+    }
 }
 
 impl Ownership for Registry {
@@ -645,11 +654,10 @@ impl Ownership for Registry {
             return Err(refuse_no("unknown caller"));
         };
         let mut g = self.inner.lock().expect("registry lock");
-        match poll_step(g.state, node) {
-            // `tr_issue_grant`. The offer is recorded as issued here, which is
-            // what `acquire` later requires to have happened.
+        match g.core.poll(node) {
+            // `tr_issue_grant`. The offer is recorded as issued by the core,
+            // which is what `acquire` later requires to have happened.
             ExecOffer::Grant(epoch) => {
-                g.issued.insert((node, epoch));
                 // Logged on every poll, including a repeat of an offer already
                 // standing. That is noise, and it is deliberate:
                 // `agrees_with_log` — the oracle that checks a reply and the
@@ -684,21 +692,15 @@ impl Ownership for Registry {
         // why it is an argument the step demands rather than a check the caller
         // may forget.
         //
-        // This is the coupling `theorem_acquire_step_refines_tr_acquire` and its
-        // refusal counterpart are stated against, so the set has to hold every
-        // grant the model's network would: see `publish_grant`. A node may
+        // This is the coupling `theorem_acquire_is_tr_acquire` and its refusal
+        // counterpart are stated against, and the core keeps it: its set holds
+        // every grant the model's network would (`proofs::registry`). A node may
         // therefore acquire without polling first, when a release or a forced
         // revoke has already offered it the actor — which is what the model
         // says, `tr_complete_release` having published the grant itself.
-        let granted = g.issued.contains(&(node, epoch));
-        match acquire_step(g.state, node, epoch, granted) {
-            Outcome::Moved(next) => {
-                g.state = next;
-                g.log.push(Event::Acquired { node, epoch });
-                Ok(())
-            }
-            Outcome::Refused(why) => Err(refuse(why)),
-        }
+        g.core.acquire(node, epoch).map_err(refuse)?;
+        g.log.push(Event::Acquired { node, epoch });
+        Ok(())
     }
 
     async fn write(&self, ctx: Context, epoch: u64) -> Result<u64> {
@@ -719,14 +721,17 @@ impl Ownership for Registry {
         // the node-local staleness test a `FenceGuard` performs for a node.
         // The distinction is the whole of `crate::ownership::exec`'s module
         // docs: a node cannot fence itself, but the registry can fence it.
-        if !may_write_step(g.state, node, epoch) {
-            g.log.push(Event::Fenced { node, epoch });
-            return Err(refuse_fenced("not the owner at that epoch"));
+        match g.core.write(node, epoch) {
+            WriteOutcome::Wrote(seq) => {
+                g.log.push(Event::Wrote { node, epoch, seq });
+                Ok(seq)
+            }
+            WriteOutcome::Fenced => {
+                g.log.push(Event::Fenced { node, epoch });
+                Err(refuse_fenced("not the owner at that epoch"))
+            }
+            WriteOutcome::Exhausted => Err(refuse_no("the write counter is exhausted")),
         }
-        g.writes += 1;
-        let seq = g.writes;
-        g.log.push(Event::Wrote { node, epoch, seq });
-        Ok(seq)
     }
 
     async fn begin_transfer(&self, ctx: Context, to: u64) -> Result<()> {
@@ -734,24 +739,23 @@ impl Ownership for Registry {
             return Err(refuse_no("unknown caller"));
         };
         let mut g = self.inner.lock().expect("registry lock");
-        let from_epoch = g.state.current();
-        // `pre.nodes.contains(to)` is the roster's answer, handed to the step.
+        let from_epoch = g.core.state.current();
+        // `pre.nodes.contains(to)` is the roster's answer, handed to the core.
         // The model requires the successor to exist, and a precondition
         // enforced only by well-behaved callers is not a precondition at all.
-        let moved = match begin_transfer_step(g.state, from, to, self.is_node(to)) {
-            Outcome::Moved(moved) => moved,
-            Outcome::Refused(why) => return Err(refuse(why)),
-        };
+        //
         // The epoch is burned immediately, which fences the outgoing owner from
-        // here on rather than at some later acknowledgement.
-        let new_epoch = moved.current();
-        // Durable before visible. A registry that dies here comes back at
+        // here on rather than at some later acknowledgement. And it is durable
+        // before visible: the core calls `persist` with the new epoch and moves
+        // only if it succeeded. A registry that dies there comes back at
         // `new_epoch + 1` with the handover never having happened, which loses a
-        // handover and no safety; a registry that burned the epoch without
-        // writing it down comes back at `from_epoch` with the outgoing owner
-        // unfenced.
-        self.persist(new_epoch)?;
-        g.state = moved;
+        // handover and no safety; one that burned the epoch without writing it
+        // down would come back at `from_epoch` with the outgoing owner unfenced.
+        let mut down = None;
+        g.core
+            .begin_transfer(from, to, self.is_node(to), self.persist_to(&mut down))
+            .map_err(|why| burn_error(why, down))?;
+        let new_epoch = g.core.state.current();
         g.log.push(Event::EpochBurned {
             from_epoch,
             to_epoch: new_epoch,
@@ -766,19 +770,15 @@ impl Ownership for Registry {
             return Err(refuse_no("unknown caller"));
         };
         let mut g = self.inner.lock().expect("registry lock");
-        match release_step(g.state, node, epoch) {
-            Outcome::Moved(next) => {
-                g.state = next;
-                g.log.push(Event::Released { node, new_epoch: epoch });
-                // `tr_complete_release` publishes `Grant { to, new_epoch }` as
-                // part of the same step. See `publish_grant`: without this the
-                // registry's idea of which grants exist stops matching the
-                // model's, and the incoming owner is refused an acquire the
-                // model permits.
-                publish_grant(&mut g, next.intended(), epoch);
-                Ok(())
-            }
-            Outcome::Refused(why) => Err(refuse(why)),
-        }
+        let to = g.core.release(node, epoch).map_err(refuse)?;
+        g.log.push(Event::Released { node, new_epoch: epoch });
+        // `tr_complete_release` publishes `Grant { to, new_epoch }` as part of
+        // the same step, and the core did (`proofs::registry`): without it the
+        // registry's idea of which grants exist stops matching the model's, and
+        // the incoming owner is refused an acquire the model permits. It is
+        // logged here as well, because the audit log is the only record an
+        // auditor has.
+        g.log.push(Event::Granted { node: to, epoch });
+        Ok(())
     }
 }

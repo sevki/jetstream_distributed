@@ -1,7 +1,7 @@
 //! What a registry has to remember across a restart, and what goes wrong when
 //! it does not.
 //!
-//! The model's registry — `System::actors` — is read and written in one step by
+//! The model's registry — `OwnershipSystem::actors` — is read and written in one step by
 //! every epoch-advancing transition, and the README calls that the strongest
 //! assumption it makes. It is really two assumptions under one name. The record
 //! is updated **atomically**, and it **survives**. An `Arc<Mutex<..>>` supplies
@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
-use distributed_ownership::ownership::service::{
+use jetstream_distributed::ownership::service::{
     EpochFloor, Event, FileFloor, MemoryFloor, Offer, Ownership, Registry,
 };
 

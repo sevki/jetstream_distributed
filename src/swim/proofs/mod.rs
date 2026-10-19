@@ -12,7 +12,15 @@
 //! * [`refinement`] — the executable steps in [`crate::swim::steps`] agree with
 //!   the model's `tr_gossip`, and a refutation is a gossip step rather than a
 //!   new kind of step.
+//! * [`table`] — the node's table ([`crate::swim::exec::SwimTable`]) learns by
+//!   `tr_gossip`, hearing an accusation about oneself is two such steps, and a
+//!   table always stands for a reachable cluster.
 
+#[path = "merge_v.rs"]
 pub mod merge;
+#[path = "monotone_v.rs"]
 pub mod monotone;
+#[path = "refinement_v.rs"]
 pub mod refinement;
+#[path = "table_v.rs"]
+pub mod table;

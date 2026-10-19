@@ -28,7 +28,7 @@ use jetstream::prelude::*;
 // inner: T }, pub struct OwnershipChannel }`. The trait has to be in scope
 // because the channel reaches the registry through `impl Ownership for
 // OwnershipChannel`, not through inherent methods.
-use distributed_ownership::ownership::service::{
+use jetstream_distributed::ownership::service::{
     ownership_protocol::{OwnershipChannel, OwnershipService},
     Event, MemoryFloor, Offer, Ownership, Registry,
 };

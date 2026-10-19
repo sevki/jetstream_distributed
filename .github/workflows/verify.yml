@@ -103,12 +103,12 @@ jobs:
       # matching leaves vstd's `axiom_*` lemma names alone, but it does mean
       # prose in `src/` must not use the bare word.
       #
-      # It covers `src/` and not `vendor/`, deliberately. `vendor/pmemlog` is
-      # somebody else's verified crate and it has six of these: two assumptions
+      # It covers `src/` and not `vendor/`, deliberately. `vendor/verified-storage/pmemlog`
+      # is somebody else's verified crate and it has six of these: two assumptions
       # about what a CRC detects, one CRC computation, and three I/O primitives
       # for the device. Every one is a boundary of the system model rather than
       # a proof obligation waved away, they are enumerated one by one in
-      # `vendor/pmemlog/README.md`, and the root `README.md` says what this
+      # `vendor/README.md`, and the root `README.md` says what this
       # repository proves *conditional on them*. Extending the grep over
       # `vendor/` would not make them go away; it would make the vendored crate
       # unusable and leave the assumptions undocumented instead of listed.
@@ -173,7 +173,10 @@ jobs:
       - name: Verify through cargo-verus
         run: |
           set -euo pipefail
-          cargo verus verify 2>&1 | tee /tmp/cargo-verus.txt
+          # `service` is a default feature, so it is turned off here: the proofs
+          # are checked against a crate whose dependency graph is `vstd` and
+          # nothing else, not against Jetstream and tokio they never mention.
+          cargo verus verify --no-default-features 2>&1 | tee /tmp/cargo-verus.txt
 
           if grep -q 'did not find any crates that opted into verification' /tmp/cargo-verus.txt; then
             echo "::error::cargo verus verified nothing in this crate - is [package.metadata.verus] verify = true still in Cargo.toml?"
@@ -182,7 +185,7 @@ jobs:
 
           # `|| true` so that a missing line reaches the diagnostic below rather
           # than aborting the step under `set -e` with no explanation.
-          start=$(grep -n 'Checking distributed-ownership' /tmp/cargo-verus.txt | tail -1 | cut -d: -f1 || true)
+          start=$(grep -n 'Checking jetstream_distributed' /tmp/cargo-verus.txt | tail -1 | cut -d: -f1 || true)
           if [ -z "$start" ]; then
             echo "::error::cargo verus never compiled this crate, so it cannot have verified it"
             exit 1
@@ -203,7 +206,7 @@ jobs:
   # The vendored storage layer.
   #
   # Its own job, because a failure here means something different from a failure
-  # above: `vendor/pmemlog` is Microsoft's code and this repository does not
+  # above: `vendor/verified-storage` is Microsoft's code and this repository does not
   # develop it. A red run here says the crate no longer verifies under the Verus
   # release this repository pins — which is a fact about the pin, not about any
   # proof written here, and the fix is to move the pin or the vendored commit
@@ -257,7 +260,7 @@ jobs:
           cargo verus verify -p pmemlog 2>&1 | tee /tmp/pmemlog-verus.txt
 
           if grep -q 'did not find any crates that opted into verification' /tmp/pmemlog-verus.txt; then
-            echo "::error::cargo verus verified nothing - is [package.metadata.verus] verify = true still in vendor/pmemlog/Cargo.toml?"
+            echo "::error::cargo verus verified nothing - is [package.metadata.verus] verify = true still in vendor/verified-storage/pmemlog/Cargo.toml?"
             exit 1
           fi
 
@@ -282,7 +285,7 @@ jobs:
       # Vendoring is only worth anything if the vendored source is *the*
       # vendored source. This is the check that nobody quietly patched a proof
       # to make it pass: the tree here must equal upstream at the pinned commit,
-      # module for module, with the two documented omissions.
+      # file for file, `.git` aside.
       - name: The vendored source is unmodified
         run: |
           set -euo pipefail
@@ -292,16 +295,41 @@ jobs:
           git -C /tmp/verified-storage fetch --quiet --depth 1 origin "$upstream"
           git -C /tmp/verified-storage checkout --quiet "$upstream"
 
-          if ! diff -r /tmp/verified-storage/pmemlog/src vendor/pmemlog/src \
-                 --exclude=main.rs; then
-            echo "::error::vendor/pmemlog/src differs from upstream $upstream - if that is intended, say so in vendor/pmemlog/README.md and update this check"
+          if ! diff -r --exclude=.git /tmp/verified-storage vendor/verified-storage; then
+            echo "::error::vendor/verified-storage differs from upstream $upstream - if that is intended, say so in vendor/README.md and update this check"
             exit 1
           fi
-          if ! diff /tmp/verified-storage/LICENSE.txt vendor/pmemlog/LICENSE.txt; then
-            echo "::error::vendor/pmemlog/LICENSE.txt is not upstream's"
+          echo "vendor/verified-storage matches upstream $upstream"
+
+  # The vendored KVerus skills, which `AGENTS.md` tells reviewers to follow. A
+  # skill that has been quietly edited is an instruction nobody agreed to, so the
+  # same rule as the storage layer applies: the tree here must be upstream's at
+  # the pinned commit, file for file. It needs no toolchain, only `git` and `diff`.
+  kverus-skills:
+    name: KVerus skills are unmodified
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The vendored skills are unmodified
+        run: |
+          set -euo pipefail
+          upstream=55fb0185e42957ac5f1f6e16c8beb9e2093a3a2e
+          git clone --quiet --filter=blob:none --no-checkout \
+            https://github.com/asterinas/KVerus.git /tmp/kverus
+          git -C /tmp/kverus fetch --quiet --depth 1 origin "$upstream"
+          git -C /tmp/kverus checkout --quiet "$upstream"
+
+          if ! diff -r /tmp/kverus/skills vendor/kverus/skills; then
+            echo "::error::vendor/kverus/skills differs from upstream $upstream - if that is intended, say so in vendor/kverus/README.md and update this check"
             exit 1
           fi
-          echo "vendor/pmemlog matches upstream $upstream"
+          if ! diff /tmp/kverus/LICENSE vendor/kverus/LICENSE; then
+            echo "::error::vendor/kverus/LICENSE is not upstream's"
+            exit 1
+          fi
+          echo "vendor/kverus matches upstream $upstream"
 
   # The simulation. Separate from the two verification jobs on purpose: it is
   # evidence of a different kind and it fails for different reasons. A proof
@@ -482,6 +510,13 @@ jobs:
       # refusal. The composed stories: the privilege that will not move while
       # the actor is held, the offer that is not enough without the privilege,
       # and a seizure that leaves its victim fenced and owing a reconciliation.
+      # The actor stories: a message accepted once and in order however it is
+      # delivered, a handover that keeps the journal and fences the old host, and
+      # the whole of it across simulated hosts. The actor's mailbox, which is
+      # transcribed from the model and not checked against it by Verus, so its
+      # tests are the only check there is: the library's own (no wakeup lost,
+      # each sender's order kept, one drain at a time, nothing dropped with a
+      # round) and one actor calling another through it.
       - name: The service stories
         run: |
           cargo +stable test --features service --locked \
@@ -497,4 +532,8 @@ jobs:
             --test raymond_turmoil \
             --test composed_handover \
             --test composed_turmoil \
+            --test actor_journal \
+            --test actor_turmoil \
+            --test actor_mailbox \
+            --lib \
             -- --nocapture

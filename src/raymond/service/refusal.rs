@@ -13,7 +13,7 @@ pub(super) fn refuse_err(what: &str) -> Error {
     Error::new(what).set_code("ERR")
 }
 
-pub(super) fn refuse(why: RayRefusal) -> Error {
+pub(crate) fn refuse(why: RayRefusal) -> Error {
     match why {
         RayRefusal::HoldsPrivilege => refuse_no("this node holds the privilege; nobody to ask"),
         RayRefusal::EmptyQueue => refuse_no("nothing is queued"),
@@ -26,5 +26,6 @@ pub(super) fn refuse(why: RayRefusal) -> Error {
         RayRefusal::HeadIsSelf => refuse_no("the head of the queue is this node"),
         RayRefusal::HeadIsNotSelf => refuse_no("the head of the queue is not this node"),
         RayRefusal::HeadNotANode => refuse_err("the head of the queue is not a node"),
+        RayRefusal::NotANode => refuse_err("not a node"),
     }
 }

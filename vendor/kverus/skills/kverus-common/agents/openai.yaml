@@ -1,0 +1,4 @@
+interface:
+  display_name: "KVerus Common"
+  short_description: "Shared Verus proof references"
+  default_prompt: "Use $kverus-common for Verus proofs, trust boundaries, and target repository conventions."

@@ -12,11 +12,11 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use distributed_ownership::composed::service::{
+use jetstream_distributed::composed::service::{
     composed_protocol::{ComposedChannel, ComposedService},
     Composed, Coordinator,
 };
-use distributed_ownership::ownership::service::{MemoryFloor, Offer};
+use jetstream_distributed::ownership::service::{MemoryFloor, Offer};
 use jetstream::prelude::*;
 use jetstream_rpc::session::{Session, SingleLaneSession};
 use turmoil::net::{TcpListener, TcpStream};

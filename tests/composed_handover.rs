@@ -16,8 +16,8 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
-use distributed_ownership::composed::service::{Composed, Coordinator, Event};
-use distributed_ownership::ownership::service::{MemoryFloor, Offer};
+use jetstream_distributed::composed::service::{Composed, Coordinator, Event};
+use jetstream_distributed::ownership::service::{MemoryFloor, Offer};
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
 

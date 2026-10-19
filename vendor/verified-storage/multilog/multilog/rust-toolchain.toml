@@ -1,0 +1,8 @@
+# This needs to be kept up to date with a nightly version
+# that matches the most recent Rust release supported by
+# Verus/the toolchain versions used in deps_hack and pmcopy. 
+# We currently use some unstable features that can only 
+# be used with a nightly toolchain.
+
+[toolchain]
+channel = "nightly-2026-07-12"

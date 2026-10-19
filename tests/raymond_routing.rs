@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 
-use distributed_ownership::raymond::service::{Event, Router, Routing, Standing};
+use jetstream_distributed::raymond::service::{Event, Router, Routing, Standing};
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
 

@@ -9,14 +9,21 @@
 //!
 //! * [`model`]  — the routing state machine.
 //! * [`steps`]  — the routing decisions as executable `u64` functions.
+//! * [`exec`]   — the routing record as verified code: [`exec::RayTable`] has a
+//!   view that is a model state, and each method is a model step by contract,
+//!   each refusal a step the model could not take.
 //! * [`proofs`] — exclusivity of the critical section, acyclicity of the
-//!                holder pointers, the routing run, and that [`steps`] agrees
-//!                with [`model`].
+//!   holder pointers, the routing run, and that [`steps`] agrees
+//!   with [`model`].
 //! * `service`  — the routing layer over Jetstream RPC, behind the `service`
-//!                feature.
+//!   feature.
 
+#[path = "exec_v.rs"]
+pub mod exec;
+#[path = "model_t.rs"]
 pub mod model;
 pub mod proofs;
+#[path = "steps_v.rs"]
 pub mod steps;
 
 #[cfg(feature = "service")]

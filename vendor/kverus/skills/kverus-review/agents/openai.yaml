@@ -1,0 +1,4 @@
+interface:
+  display_name: "KVerus Review"
+  short_description: "Review Verus code changes for exec semantics, =~= usage, and verification issues"
+  default_prompt: "Review the current uncommitted changes for exec-code modifications, unnecessary =~= usage, and verification issues."

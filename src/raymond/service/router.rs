@@ -7,9 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use super::refusal::{refuse, refuse_err, refuse_no};
 use super::{Routing, Standing};
-use crate::raymond::steps::{
-    assign_step, enter_cs_step, exit_cs_step, make_request_step, receive_request_step,
-};
+use crate::raymond::exec::RayTable;
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
 
@@ -49,16 +47,12 @@ pub enum Event {
 }
 
 struct Inner {
-    holder: HashMap<u64, u64>,
-    queue: HashMap<u64, VecDeque<u64>>,
-    asked: HashMap<u64, bool>,
-    using: HashMap<u64, bool>,
-    /// Every request ever sent, as `(originator, destination)`. Never shrinks,
-    /// and delivery does not consume — the model's `requests`, for the model's
-    /// reason.
-    requests: HashSet<(u64, u64)>,
-    /// Where the privilege **actually** is. Not derived from `holder`.
-    privilege: u64,
+    /// The routing record of the whole cluster: every node's holder pointer,
+    /// queue and flags, the requests sent (never shrinking, and delivery does not
+    /// consume — the model's `requests`, for the model's reason), and where the
+    /// privilege **actually** is, which is not derived from any holder pointer.
+    /// Verified code: each method on it is a model step.
+    table: RayTable,
     log: Vec<Event>,
 }
 
@@ -119,14 +113,15 @@ impl Router {
                 return bad(format!("node {n} does not reach the root"));
             }
         }
+        let mut table = RayTable::new(root);
+        for (&n, &h) in &holder {
+            if n != root {
+                table.add_node(n, h);
+            }
+        }
         Ok(Router {
             inner: Arc::new(Mutex::new(Inner {
-                queue: nodes.iter().map(|&n| (n, VecDeque::new())).collect(),
-                asked: nodes.iter().map(|&n| (n, false)).collect(),
-                using: nodes.iter().map(|&n| (n, false)).collect(),
-                holder,
-                requests: HashSet::new(),
-                privilege: root,
+                table,
                 log: Vec::new(),
             })),
             roster: Arc::new(roster),
@@ -145,7 +140,7 @@ impl Router {
 
     /// Where the privilege actually is.
     pub fn privilege(&self) -> u64 {
-        self.inner.lock().expect("router lock").privilege
+        self.inner.lock().expect("router lock").table.privilege
     }
 
     /// What has happened, oldest first.
@@ -156,7 +151,8 @@ impl Router {
     /// A node's queue, front first.
     pub fn queue_of(&self, node: u64) -> Option<Vec<u64>> {
         let g = self.inner.lock().expect("router lock");
-        g.queue.get(&node).map(|q| q.iter().copied().collect())
+        let i = g.table.find(node)?;
+        Some(g.table.entries[i].queue.iter().copied().collect())
     }
 
     /// A node's own entries, or `None` for a non-node.
@@ -182,18 +178,20 @@ impl Router {
     /// states malformed.
     pub fn well_formed(&self) -> bool {
         let g = self.inner.lock().expect("router lock");
-        let n = g.holder.len();
-        g.holder.get(&g.privilege) == Some(&g.privilege)
-            && g.using
+        let holder: HashMap<u64, u64> = g.table.entries.iter().map(|e| (e.id, e.holder)).collect();
+        let n = holder.len();
+        holder.get(&g.table.privilege) == Some(&g.table.privilege)
+            && g.table
+                .entries
                 .iter()
-                .all(|(node, &u)| !u || g.holder[node] == *node)
-            && g.holder.keys().all(|&start| {
+                .all(|e| !e.using || holder[&e.id] == e.id)
+            && holder.keys().all(|&start| {
                 let mut at = start;
                 for _ in 0..=n {
-                    if g.holder[&at] == at {
+                    if holder[&at] == at {
                         return true;
                     }
-                    at = g.holder[&at];
+                    at = holder[&at];
                 }
                 false
             })
@@ -204,57 +202,36 @@ impl Router {
     pub fn stale_holders(&self) -> Vec<u64> {
         let g = self.inner.lock().expect("router lock");
         let mut stale: Vec<u64> = g
-            .holder
+            .table
+            .entries
             .iter()
-            .filter(|&(&n, &h)| h == n && n != g.privilege)
-            .map(|(&n, _)| n)
+            .filter(|e| e.holder == e.id && e.id != g.table.privilege)
+            .map(|e| e.id)
             .collect();
         stale.sort_unstable();
         stale
     }
 
-    /// Is `node` a node of this cluster?
-    pub(crate) fn is_node(&self, node: u64) -> bool {
-        self.inner
-            .lock()
-            .expect("router lock")
-            .holder
-            .contains_key(&node)
-    }
-
-    /// Does `node` believe it holds the privilege? (`believes_holds`.)
-    pub(crate) fn believes_holds(&self, node: u64) -> bool {
-        self.inner.lock().expect("router lock").holder.get(&node) == Some(&node)
-    }
-
-    /// `ray_seize`: re-establish the privilege at `to`. **Only `to` acts** —
-    /// nothing belonging to the old holder is touched, because it is memory at a
-    /// node that may be unreachable. The guards are the composed coordinator's,
-    /// which is the only caller.
-    pub(crate) fn seize_to(&self, to: u64) {
+    /// Run `f` on the verified routing record and the audit log, under the lock.
+    ///
+    /// For the composed coordinator, which takes the registry's lock and then
+    /// this one, behind its own gate, and runs a step across both layers
+    /// (`crate::composed::exec`) — `ray_seize` and `ray_reconcile` among them,
+    /// which no node may ask for.
+    pub(crate) fn with_state<R>(&self, f: impl FnOnce(&mut RayTable, &mut Vec<Event>) -> R) -> R {
         let mut g = self.inner.lock().expect("router lock");
-        g.holder.insert(to, to);
-        g.privilege = to;
-        g.log.push(Event::Seized { to });
-    }
-
-    /// `ray_reconcile`: a stale holder learns its privilege was taken.
-    pub(crate) fn reconcile_node(&self, node: u64) {
-        let mut g = self.inner.lock().expect("router lock");
-        let privilege = g.privilege;
-        g.holder.insert(node, privilege);
-        g.using.insert(node, false);
-        g.asked.insert(node, false);
-        g.log.push(Event::Reconciled { node });
+        let Inner { table, log } = &mut *g;
+        f(table, log)
     }
 
     fn standing_locked(g: &Inner, node: u64) -> Option<Standing> {
+        let e = &g.table.entries[g.table.find(node)?];
         Some(Standing {
-            holder: *g.holder.get(&node)?,
-            asked: g.asked[&node],
-            using: g.using[&node],
-            queued: g.queue[&node].len() as u64,
-            privileged: g.privilege == node,
+            holder: e.holder,
+            asked: e.asked,
+            using: e.using,
+            queued: e.queue.len() as u64,
+            privileged: g.table.privilege == node,
         })
     }
 
@@ -269,10 +246,6 @@ impl Router {
         }
     }
 
-    fn head_of(g: &Inner, node: u64) -> (u64, u64) {
-        let q = &g.queue[&node];
-        (q.len() as u64, q.front().copied().unwrap_or(0))
-    }
 }
 
 impl Routing for Router {
@@ -285,7 +258,7 @@ impl Routing for Router {
     async fn request_cs(&self, ctx: Context) -> Result<()> {
         let me = self.caller(&ctx)?;
         let mut g = self.inner.lock().expect("router lock");
-        g.queue.get_mut(&me).expect("rostered").push_back(me);
+        g.table.request_cs(me).map_err(refuse)?;
         g.log.push(Event::Requested { node: me });
         Ok(())
     }
@@ -293,10 +266,7 @@ impl Routing for Router {
     async fn make_request(&self, ctx: Context) -> Result<u64> {
         let me = self.caller(&ctx)?;
         let mut g = self.inner.lock().expect("router lock");
-        let (queue_len, _) = Self::head_of(&g, me);
-        let dest = make_request_step(me, g.holder[&me], queue_len, g.asked[&me]).map_err(refuse)?;
-        g.asked.insert(me, true);
-        g.requests.insert((me, dest));
+        let dest = g.table.make_request(me).map_err(refuse)?;
         g.log.push(Event::Forwarded { from: me, to: dest });
         Ok(dest)
     }
@@ -304,11 +274,7 @@ impl Routing for Router {
     async fn receive_request(&self, ctx: Context, from: u64) -> Result<()> {
         let at = self.caller(&ctx)?;
         let mut g = self.inner.lock().expect("router lock");
-        if !g.holder.contains_key(&from) {
-            return Err(refuse_err("not a node"));
-        }
-        receive_request_step(g.requests.contains(&(from, at))).map_err(refuse)?;
-        g.queue.get_mut(&at).expect("rostered").push_back(from);
+        g.table.receive_request(at, from).map_err(refuse)?;
         g.log.push(Event::Received { at, from });
         Ok(())
     }
@@ -316,25 +282,9 @@ impl Routing for Router {
     async fn assign_privilege(&self, ctx: Context) -> Result<u64> {
         let me = self.caller(&ctx)?;
         let mut g = self.inner.lock().expect("router lock");
-        let (queue_len, head) = Self::head_of(&g, me);
-        let head_is_node = g.holder.contains_key(&head);
-        let head = assign_step(
-            me,
-            g.privilege,
-            g.holder[&me],
-            g.using[&me],
-            queue_len,
-            head,
-            head_is_node,
-        )
-        .map_err(refuse)?;
         // Both nodes act, as in the model: the holder rewrites its own pointer
         // and the recipient learns it holds the privilege, in one step.
-        g.holder.insert(me, head);
-        g.holder.insert(head, head);
-        g.privilege = head;
-        g.queue.get_mut(&me).expect("rostered").pop_front();
-        g.asked.insert(me, false);
+        let head = g.table.assign_privilege(me).map_err(refuse)?;
         g.log.push(Event::Passed { from: me, to: head });
         Ok(head)
     }
@@ -342,10 +292,7 @@ impl Routing for Router {
     async fn enter_cs(&self, ctx: Context) -> Result<()> {
         let me = self.caller(&ctx)?;
         let mut g = self.inner.lock().expect("router lock");
-        let (queue_len, head) = Self::head_of(&g, me);
-        enter_cs_step(me, g.holder[&me], g.using[&me], queue_len, head).map_err(refuse)?;
-        g.using.insert(me, true);
-        g.queue.get_mut(&me).expect("rostered").pop_front();
+        g.table.enter_cs(me).map_err(refuse)?;
         g.log.push(Event::Entered { node: me });
         Ok(())
     }
@@ -353,8 +300,7 @@ impl Routing for Router {
     async fn exit_cs(&self, ctx: Context) -> Result<()> {
         let me = self.caller(&ctx)?;
         let mut g = self.inner.lock().expect("router lock");
-        exit_cs_step(g.using[&me]).map_err(refuse)?;
-        g.using.insert(me, false);
+        g.table.exit_cs(me).map_err(refuse)?;
         g.log.push(Event::Exited { node: me });
         Ok(())
     }

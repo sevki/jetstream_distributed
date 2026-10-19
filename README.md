@@ -1,7 +1,11 @@
-# distributed-ownership
+# jetstream_distributed
 
-A small, machine-checked model of **exclusive mutable ownership across
-machines**, written in [Verus](https://github.com/verus-lang/verus).
+Machine-checked distributed protocols, written in
+[Verus](https://github.com/verus-lang/verus), and the
+[Jetstream](https://github.com/sevki/jetstream) services that speak them: **exclusive
+mutable ownership across machines**, Raymond's routing layer, Raft, SWIM gossip, and
+a distributed actor with a mailbox in front of it. The rest of this section is about
+the first, which the others build on.
 
 ```text
 Rust:
@@ -30,8 +34,11 @@ shape - the actor is `Owned`, the caller is the owner, and the caller's fencing
 epoch is exactly the actor's current epoch - and because the protocol's
 transitions provably keep it that way.
 
-This is a *model*. There is no networking, no persistence and no actor runtime
-here, and that is deliberate.
+The core of this repository is a *model*, and the proofs are about the model.
+Each algorithm also has a service over Jetstream RPC, which runs the verified step
+functions; what those services do and do not claim is stated in
+[The protocol as a Jetstream service](#the-protocol-as-a-jetstream-service) and
+in each module's docs.
 
 ## Relation to Chubby
 
@@ -91,7 +98,7 @@ recent sequencer that the server has observed" — belief is checked against
 authority. This model originally had no such split on the routing side and
 resolved a seizure by editing the absent node's state, which no implementation
 can do; see [The holder graph is a tree](#the-holder-graph-is-a-tree-and-now-says-so)
-and the `believes_holds` / `has_token` split in `src/raymond/model.rs`.
+and the `believes_holds` / `has_token` split in `src/raymond/model_t.rs`.
 
 **What Chubby has that this does not**: a deployed system, sessions and
 KeepAlives, failover, caching with invalidations, a filesystem namespace, ACLs,
@@ -219,6 +226,8 @@ verifying, the build fails.
 | E6 | **The registry's fence is the *system's* fence** — `may_write_step` on the registry's own record is `can_mutate`, not a node's belief about it. Same postcondition as E, different thing, bought entirely by where it is called | `ownership::steps::may_write_step`, `ownership::proofs::refinement::theorem_may_write_step_is_the_system_fence` | the record the step is handed is the actor's |
 | E7 | **The refinement theorems are not vacuous.** Each is an implication under hypotheses, and hypotheses that cannot all hold make a theorem true and empty — a refinement suite can be green and say nothing. So one concrete system is written out in full and a whole handover walked through it, each theorem applied to the state the previous one produced, with what came out asserted | `ownership::proofs::refinement::scenario_a_handover_through_the_verified_steps` | none: the system is exhibited |
 | E7a | The same for the *refusal* theorems, whose hypotheses are the negation of a guard and so are untouched by a run in which the guard holds. In a system where no grant was published, **no** post state satisfies `tr_acquire` — quantified over all of them, not over one the server had in mind | `ownership::proofs::refinement::scenario_the_refusals_are_refusals_of_something_real` | none |
+| E8 | **The registry's record is the model, grants included.** `registry::RegistryCore` — the actor's record, the grants published and the writes landed — takes the model's step at every method: `poll` is `tr_issue_grant` and publishes the grant it answers with; `acquire` is `tr_acquire` and reads the grant from the published set; `begin_transfer` is `tr_begin_transfer`; `release` is `tr_handle_revoke` then `tr_complete_release` and publishes the grant that completes the handover; `force` is `tr_revoke_owner`, `tr_reassign_unowned` or `tr_abort_transfer` by state, and publishes the grant it offers the actor on with. The relation (`stands_for`) is an equality between the published set and the network's `Grant`s for that actor — the coupling E1's refusal theorem is worth nothing without, and the one a registry once broke | `ownership::proofs::registry::theorem_poll_is_issue_grant`, `theorem_acquire_is_tr_acquire`, `theorem_begin_transfer_is_tr_begin_transfer`, `theorem_release_is_handle_revoke_then_complete_release`, `theorem_force_from_owned_is_tr_revoke_owner`, `theorem_force_from_unowned_is_tr_reassign_unowned`, `theorem_force_from_transferring_is_tr_abort_transfer`, `theorem_a_landed_write_is_can_mutate` | the sender-side hypotheses E1–E6 already name (`live`, `nodes`), and for `release` the `Revoke` on the network, which `begin_transfer` put there |
+| E9 | **A refused step is one the model could not take.** A refused `acquire` (for a request naming the actor's current epoch) and a refused `begin_transfer` are disabled in every post-state; a refusal changes nothing, publishes no grant and counts no write. A refusal that is the `u64` epoch running out is the one the model does not have, and says so | `ownership::proofs::registry::theorem_refused_acquire_is_disabled`, `theorem_refused_begin_transfer_is_disabled` and the `ensures` of each `RegistryCore` method | `stands_for` |
 | P1 | **Issued tokens never disappear** — no crash, partition or recovery retracts a capability, which is why stale tokens must be fenced rather than revoked | `ownership::proofs::properties::theorem_issued_monotone` | none |
 | P2 | **Sent messages never disappear** — the fact that makes duplication, reordering and unbounded delay free in the model | `ownership::proofs::properties::theorem_network_monotone` | none |
 | P3 | **The actor population is constant** — no transition creates or destroys an actor | `ownership::proofs::properties::theorem_actor_domain_constant` | none |
@@ -236,6 +245,8 @@ verifying, the build fails.
 | R11 | **The holder pointers are acyclic** — part of `ray_inv`, preserved by every transition. A handover rewrites two pointers and needs a new rank (the old one shifted up by one, new root at zero); a seizure only makes the new holder point at itself, which *removes* a constraint, so the old rank still works | `raymond::proofs::routing_layer::lemma_frame_acyclic`, `lemma_repoint_acyclic` | Raymond invariant |
 | R12 | **Every node reaches the privilege holder by following holder pointers** — what makes "requests travel hop-by-hop towards the token" a checked claim. Two hypotheses, both load-bearing: R11 says the walk terminates rather than circling, and `ray_no_stale_holders` says it terminates at the real holder rather than at somebody who merely thinks so. The second was free when authority *was* belief; it is not free now, and it should not be — after a seizure a node whose belief-path leads to the seized holder genuinely cannot route to the privilege | `raymond::proofs::routing_layer::theorem_every_node_reaches_the_token` | Raymond invariant, `ray_no_stale_holders` |
 | R15 | **The executable routing steps agree with the model, in both directions.** For each of `MakeRequest`, `ReceiveRequest`, `AssignPrivilege`, `EnterCs` and `ExitCs`: when the step fires the model's transition fires, to exactly the state computed; when it refuses, the model's transition is not enabled in *any* post-state. `AssignPrivilege`'s guard reads **both** `privilege == me` and `holder == me` — a step that read only the belief would let a stale holder pass a privilege it does not have — while `EnterCs`'s deliberately reads only the belief, as the model's does | `raymond::proofs::refinement::theorem_make_request_step_refines`, `theorem_receive_request_step_refines`, `theorem_assign_step_refines`, `theorem_enter_cs_step_refines`, `theorem_exit_cs_step_refines` and their `..._refuses_exactly_when_disabled` counterparts, `theorem_request_cs_post_is_the_model_step` | the couplings in the module's table: the scalars a step reads are the router's own table, read under its lock |
+| R16 | **The routing record is the model.** `exec::RayTable` — every node's holder pointer, queue and flags, the requests sent, and where the privilege is — has a view that is a model `Raymond`, and each method's contract is the model's step: `request_cs`, `make_request`, `receive_request`, `assign_privilege`, `enter_cs` and `exit_cs` leave the view at the model's `*_post` with the model's transition enabled to it; `seize` and `reconcile` are the composed machine's two routing-side steps. The R15 theorems are applied to the live table inside each method, not assumed of it | `raymond::exec::RayTable::{request_cs, make_request, receive_request, assign_privilege, enter_cs, exit_cs, seize, reconcile}` (contracts), `lemma_update_entry`, `lemma_push_request`, `lemma_set_privilege` | the table is well formed (each node once; the privilege is at a node) |
+| R17 | **A refusal is a step the model could not take, at any state.** Each of those methods, when it refuses, leaves the view unchanged and carries `forall post. !ray_*(old, post, ..)`: not "the code said no" but "no state is a legal result" — including for a node that is not on the roster, since every model step begins with `nodes.contains`. `assign_privilege` says it for *every* head, because with an empty queue none is named | the same contracts | the table is well formed |
 | C1 | **Election Safety — at most one leader per term.** The headline. Three sentences: a leader won a majority; any two majorities share a member; a member votes once per term | `raft::proofs::election::theorem_election_safety`, `..._reachable` | the Raft invariant, discharged for reachable states by `theorem_reachable_raft_inv` |
 | C2 | **Any two majorities of a cluster share a member.** The one piece of real mathematics, and the reason Raft needs no coordinator: two disjoint subsets whose sizes sum past the whole would make a union larger than a set containing it | `raft::proofs::election::lemma_quorums_intersect` | none |
 | C3 | **A server votes at most once per term** — sentence three, and the clause `tr_grant_vote`'s guard exists to maintain | `raft::proofs::election::inv_votes_unique`, preserved by `lemma_raft_step_preserves_inv` | the Raft invariant |
@@ -245,10 +256,14 @@ verifying, the build fails.
 | C7 | **Terms never decrease, and votes are never retracted.** The Raft counterparts of epoch monotonicity (claim 5) and token permanence (P1) — and a vote is physical in the same sense a token is, which is exactly why a returning server must not vote again in a term it has already voted in | `raft::proofs::election::theorem_term_monotone_step`, `theorem_votes_monotone_step` | none |
 | C8 | **The coupling guards agree with the composed model.** `PassToken` fires only once the actor is `Unowned` and the routing layer's own step fires; `SeizeToken` only from the holder, to a different node, with the actor `Unowned`; `AcquireUnderToken` only for the node holding the privilege; `Reconcile` only for a node that owes one and whose belief is stale. Each refuses exactly when the composed model's transition is not enabled | `composed::proofs::refinement::theorem_pass_token_step_refines`, `theorem_pass_token_refuses_while_the_actor_is_held`, `theorem_pass_token_refuses_when_the_routing_step_does`, `theorem_seize_step_refines`, `theorem_seize_step_refuses_exactly_when_disabled`, `theorem_acquire_under_token_step_refines`, `theorem_acquire_under_token_refuses_a_node_without_the_privilege`, `theorem_reconcile_step_refines`, `theorem_reconcile_step_refuses_exactly_when_disabled` | **every node is live** (`own.live.contains(..)`) — the service has no `Crash` step, so it refines the composed machine's crash-free executions; see below |
 | C9 | **A step a layer already proved is carried by the composed machine without a second proof.** `cs_ray` adds only that the step does not move the privilege and that its actor is live; `cs_own` adds only that the step does not create authority over this actor and does not bring back a node owing a reconciliation | `composed::proofs::refinement::theorem_a_routing_step_is_carried`, `theorem_an_ownership_step_is_carried` | the hypotheses of the carried step |
+| CX1 | **The composed steps over the layers' records are the composed model.** `composed::exec::pass_token`, `seize_token`, `acquire_under_token` and `reconcile` take the ownership record (`RegistryCore`), the routing record (`RayTable`) and the set of nodes that owe a reconciliation (`NodeSet`), check the coupling guard, take the layers' steps and keep the debts — and each contract is `cs_pass_token`, `cs_seize_token`, `cs_acquire_under_token` or `cs_reconcile`: the privilege moves only once the actor is `Unowned`, only `to` acts on a seizure and the old holder then owes a reconciliation, the recipient of a passed privilege is discharged of its debt, a node acquires only holding the privilege. The relation (`stands_for_composed`) is the ownership relation of E8 (grants included), the routing view *being* `c.ray`, and the debts *being* `c.seized` | `composed::proofs::exec::theorem_pass_token_is_cs_pass_token`, `theorem_seize_token_is_cs_seize_token`, `theorem_acquire_under_token_is_cs_acquire_under_token`, `theorem_reconcile_is_cs_reconcile` | the nodes involved are live (`own.live`). The service's identity lookup speaks only for the *caller*; the recipient of a passed privilege and the target of a seizure are not callers, so for them this is a hypothesis nothing in the service establishes |
+| CX2 | **A refused composed step is one the model could not take.** A refusal changes neither layer nor the debts and carries "the actor was not released, or the layer's own step was disabled in every post-state" (`pass_token`, `seize_token`), "the node does not hold the privilege" (`acquire_under_token`), or "the node owes nothing, or is not stale" (`reconcile`). **Not claimed**: that a refusal from the ownership layer inside `acquire_under_token` (no published grant, a wrong epoch) is a step the *composed* model could not take — it is the ownership layer's own refusal, covered by E8, and the composed theorem for `acquire_under_token` is about the privilege test only | `composed::proofs::exec::theorem_refused_pass_token_is_disabled`, `theorem_refused_seize_token_is_disabled`, `theorem_acquire_without_the_privilege_is_disabled`, `theorem_refused_reconcile_is_disabled` | `stands_for_composed` |
 | C8 | **A lone self-vote is not a majority** in a cluster of more than one. The check that the `>` in the quorum threshold is load-bearing rather than decorative: with `>=` a single server could elect itself | `raft::proofs::election::theorem_a_lone_vote_is_not_a_majority` | a cluster of at least two |
 | C9 | **An election actually happens.** A concrete three-server cluster walked from initialisation through a real election, exported with every step named, so C1 is not a safety property of a protocol that never elects anybody | `raft::proofs::scenario::scenario_a_leader_is_elected` | none: the cluster is exhibited |
 | C10 | **The election steps refine the model**, in both directions: each executable step fires exactly when the model's transition is enabled, and lands where the model lands | `raft::proofs::refinement::theorem_timeout_step_refines_tr_timeout`, `..._grant_vote_...`, `..._become_leader_...`, `..._step_down_...`, and the `..._refuses_exactly_when_disabled` for each | the couplings, tabulated in `raft::proofs::refinement`'s module docs |
 | C11 | **The `u64` tally answers the model's question about the set.** `is_majority` computes `votes + votes > members` with no multiplication to overflow and no subtraction that can go below zero; this is what makes that the same question as `is_quorum` | `raft::steps::is_majority`, `raft::proofs::refinement::theorem_majority_count_is_a_quorum`, `theorem_a_tally_fits_in_the_membership` | that the tally does not double-count a voter and the membership count is not stale — neither of which a step function can check, so both are named |
+| CE1 | **The election record is the model.** `exec::ElectionCore` — a server's role and term, whom it voted for in that term, and the votes it has counted — takes the model's step at every method: `stand` is `tr_timeout` (the next term, a self-vote, a tally of one); a fresh `grant` is `tr_grant_vote`; counting a vote that makes a majority of voters who each voted is `tr_become_leader`; `step_down` is `tr_step_down`, and the vote and tally leave with the old term; `yield_to` is the role change `tr_append_entries` makes on a candidate. The relation (`stands_for`) is the cluster's role and term, **the vote** (the core's `voted_for` is exactly `has_voted(c, n, term)` — the equality `grant_vote_step`'s `already_voted` stands for), **the tally** (a subset of the voters for this candidacy — `has_quorum ⇒ won_election`), and that no vote by this server is ahead of its term | `raft::proofs::election_core::theorem_stand_is_tr_timeout`, `theorem_grant_is_tr_grant_vote`, `theorem_a_won_count_is_tr_become_leader`, `theorem_step_down_is_tr_step_down`, `theorem_yield_is_the_append_role_change`, `lemma_already_voted_is_has_voted` | `stands_for`; a counted ballot was a vote that was cast (receiving a `Granted` for this term supplies it); the candidate's log is up to date, supplied by the caller's comparison |
+| CE2 | **A refused election step is one the model could not take.** A refused `stand`, `grant` or `step_down` is a step the model's transition is not enabled for, in any post-state (for a log that is behind, given that the caller's `up_to_date` is the model's `at_least_as_up_to_date`); a refusal changes neither the term, the vote nor the tally. A count that does not win is **not** claimed to be a step the model could not take: the tally is a subset of the voters and may undercount, so a not-yet-majority tally says nothing about `won_election`. The theorem covers the other direction — where the *model's* election is not won, `tr_become_leader` is disabled. The retransmission of a vote already given is the one answer that is outside the model's transition by design — a repeat of an earlier reply, the model's `votes` being a set. A refusal because the `u64` term ran out is the one the model does not have, and says so | `raft::proofs::election_core::theorem_refused_stand_is_disabled`, `theorem_refused_grant_is_disabled`, `theorem_refused_stale_log_is_disabled`, `theorem_a_lost_count_is_disabled`, `theorem_a_refused_step_down_is_disabled` | `stands_for` |
 | C12 | **Elections do not touch logs, and neither does committing.** Standing, voting, winning and standing down change who a server thinks it is; advancing the commit point is a claim about how much of the log is decided, not a change to it | `raft::proofs::log::theorem_elections_do_not_touch_logs`, `theorem_committing_does_not_touch_the_log` | none |
 | C13 | **Leader Append-Only.** A server that is a leader before and after a step has only gained entries — everything it had, it still has, in the same places. This is where Election Safety buys something concrete: the only transition that shortens a log makes its receiver a follower, so a server that is a leader on both sides was not the receiver | `raft::proofs::log::theorem_leader_append_only` | none |
 | C14 | **A client command is stamped with the term of the leader that accepted it**, and appended at the end. The term on an entry names the leader that made it, because Election Safety says there was only one leader of that term | `raft::proofs::log::theorem_client_request_stamps_the_leaders_term` | none |
@@ -267,7 +282,7 @@ verifying, the build fails.
 | C27 | **Recovery is exact.** The in-memory log equals `replay` of the device before and after every operation — append, truncate, *and* crash-recovery. The recovery case is trivial, and that is the design working: the device **is** the log, not a journal of intentions about it, so recovery reconciles nothing | `raft::proofs::store::theorem_recovery_is_exact`, `theorem_the_store_always_agrees`, `theorem_a_fresh_store_agrees` | none |
 | C28 | **A crash can only rewind.** `replay` is total on every sequence of records, so there is no prefix a crash can leave that recovery cannot read, and what comes back is a log the store had rather than one no sequence of writes could produce. Records that reached the device are unchanged and at the same indices | `raft::proofs::store::theorem_a_crash_can_only_rewind`, `theorem_a_crash_keeps_what_reached_the_device` | that a crash keeps a **prefix** — the property an append-only device gives you, and what pmemlog's write restriction enforces |
 | C29 | **Accepting a replicated entry costs at most two records**, and `appended_log` is what they replay to — so figure 2's rule 3, which deletes a suffix, is implementable on a device that deletes nothing. **Three costs, and which one you pay says what just happened**: *nothing* when the entry is already there, so a duplicate `AppendEntries` never reaches the device; *one record* when extending, since the marker would be `Truncate { len: log.len() }` and writing the identity would double the cost of the steady state; *two* on a genuine conflict, however long the tail it deletes. The zero-cost branch is C25's conditional again, as an operational fact | `raft::proofs::store::theorem_accepting_an_entry_is_at_most_two_records`, `theorem_extending_the_log_costs_one_record`, `theorem_a_follower_accepts_with_at_most_two_writes` | the store invariant (C27) |
-| C30 | **The device is append-only.** No operation moves its tail back: the records that were there are still there, in order, at the same indices. A `Record::Truncate` shortens the *log* and lengthens the device. This is the property that lets the whole store sit on `vendor/pmemlog`, whose abstract state has `append` and `advance_head` and nothing that shortens a tail | `raft::proofs::store::theorem_the_device_is_append_only` | none |
+| C30 | **The device is append-only.** No operation moves its tail back: the records that were there are still there, in order, at the same indices. A `Record::Truncate` shortens the *log* and lengthens the device. This is the property that lets the whole store sit on `vendor/verified-storage/pmemlog`, whose abstract state has `append` and `advance_head` and nothing that shortens a tail | `raft::proofs::store::theorem_the_device_is_append_only` | none |
 | C31 | **Compaction is sound**, costs one record per entry, and leaves no truncation behind — so a store can rewrite itself as pure appends. It is also **scheduled**: `worth_compacting` fires at `records > 2 * (entries + 1)`, which is amortised O(1) per operation, and the bound is asserted every round over sixty rounds of the worst shape. This row read *"soundness only: nothing schedules it"* for three PRs after the policy landed — the code and the claim drifted apart in the direction that understates the code, which is rarer and no better | `raft::proofs::store::theorem_compaction_replays_the_same`, `theorem_compaction_is_one_record_per_entry`, `theorem_compaction_leaves_no_truncations` | none |
 | C32 | **Cut the bytes anywhere and a record prefix comes back** — for *every* `k`, not for multiples of seventeen. The tear can land in the middle of a `u64` and the theorem still holds, because fixed width means no byte of a half-written record can be mistaken for the start of a whole one. This is what C28 needs and cannot state for itself: `store_recover` is written over a *record* prefix, and a device gives back a *byte* prefix | `raft::proofs::wire::theorem_a_torn_tail_is_a_record_prefix`, `theorem_recovery_from_a_torn_device` | every record fits in 64 bits (`records_fit`) |
 | C33 | **What was written is what is read**, and the encoding is exactly seventeen bytes per record — which is what makes `bytes.len() / 17` the record count and the parser's stopping condition an observation rather than an argument | `raft::proofs::wire::theorem_parse_of_encode`, `theorem_the_encoding_is_fixed_width`, `lemma_a_record_round_trips`, `lemma_a_record_is_seventeen_bytes` | `records_fit` |
@@ -542,7 +557,7 @@ passes its own fence, every time.
 That is not a contradiction: the postcondition promises
 `may_mutate(self.view(), ..)`, and `view()` is exactly that stale belief. But
 the safety property proved here is about the *system's* state
-(`can_mutate(sys, ..)`), and nothing in `src/ownership/exec.rs` connects a guard to it.
+(`can_mutate(sys, ..)`), and nothing in `src/ownership/exec_v.rs` connects a guard to it.
 What a guard buys is **node-local staleness rejection, not fencing**.
 
 Real fencing has to happen where the effect lands, against authoritative state:
@@ -555,7 +570,7 @@ nothing about whether an implementation performs it.
 
 ## The Raymond layer
 
-`src/raymond/model.rs` models Raymond's distributed mutual-exclusion algorithm as a
+`src/raymond/model_t.rs` models Raymond's distributed mutual-exclusion algorithm as a
 **routing** layer, kept strictly separate from ownership semantics. Per node it
 tracks a `holder` pointer (that node's **belief** about the next hop towards the
 privilege), a request `queue`, an `asked` flag (outstanding request) and `using`
@@ -600,7 +615,7 @@ all, so it cannot even change *who could* be the owner.
 
 On its own, though, `couples` is only a predicate: `ray_assign_privilege` never
 sees the ownership state, so nothing in the routing layer stops a token from
-moving out from under a node that still has authority. `src/composed/model.rs` closes
+moving out from under a node that still has authority. `src/composed/model_t.rs` closes
 that gap by defining a single state machine over both layers in which the
 synchronisation is a **guard**:
 
@@ -748,7 +763,7 @@ an absence.
 
 ### The ground that induction has to stand on (C39–C43)
 
-`src/raft/proofs/terms.rs` is not that induction. It is the part of it that can
+`src/raft/proofs/terms_v.rs` is not that induction. It is the part of it that can
 be proved without any new ghost state, and each piece is a theorem rather than a
 step of a larger argument that only makes sense once the argument exists.
 
@@ -794,7 +809,7 @@ written, and nothing here pretends otherwise.
 
 The first of those three missing pieces is now there. `Cluster` carries a third
 ghost field, `committed`, written at `tr_advance_commit` and never removed from,
-and `src/raft/proofs/commit.rs` is what it buys.
+and `src/raft/proofs/commit_v.rs` is what it buys.
 
 **Why the state could not say it.** `Server::commit` is a count on one server,
 and two things are wrong with it as the subject of a safety property. It says
@@ -1025,7 +1040,7 @@ it.
 
 Raft's log shrinks. Figure 2's rule 3 deletes a conflicting entry and everything
 after it, and `appended_log` is that rule. Every durable log worth trusting
-*grows*: `vendor/pmemlog`'s abstract state offers `append` and `advance_head` —
+*grows*: `vendor/verified-storage/pmemlog`'s abstract state offers `append` and `advance_head` —
 put bytes on the end, or forget bytes from the front — and nothing that takes
 the tail back.
 
@@ -1034,7 +1049,7 @@ cheap: an append that either happened or did not is one write, while a tail that
 moves backwards is a state the device has to be able to be caught in the middle
 of.
 
-`src/raft/store.rs` reconciles them in four lines of idea:
+`src/raft/store_v.rs` reconciles them in four lines of idea:
 
 1. the device holds a sequence of `Record`s, and only ever grows;
 2. a truncation is a *record*, `Record::Truncate { len }`, appended like any other;
@@ -1090,7 +1105,7 @@ not treat the case as unreachable — so it handles it, and says how.
 
 #### The byte layer, and the theorem it exists for
 
-C27–C31 are about *records*; pmemlog appends *bytes*. `src/raft/wire.rs` is the
+C27–C31 are about *records*; pmemlog appends *bytes*. `src/raft/wire_v.rs` is the
 layer between, and it exists to make one statement provable.
 
 C28 says a crash leaves a prefix of the **records**. A device leaves a prefix of
@@ -1191,7 +1206,7 @@ Two limitations, stated rather than assumed away:
   `records > 2 * (entries + 1)`: amortised O(1), with the bound asserted every
   round over sixty rounds of the worst shape. C31 says the rewrite is sound;
   `compact_if_worthwhile` is what makes it happen.
-* **Nothing in `src/` depends on `vendor/pmemlog` yet**, and the reason is no
+* **Nothing in `src/` depends on `vendor/verified-storage/pmemlog` yet**, and the reason is no
   longer "the executable layer does not exist" — `replay_exec`, `encode_exec`
   and `parse_exec` do. What is missing is a **device**, and the obstacle there is
   not an interface but a crash model: pmemlog's `persistence_chunk_size` is 8 and
@@ -1203,6 +1218,17 @@ Two limitations, stated rather than assumed away:
   anything proved here.
 
 ### The consensus service
+
+**The election record is verified code; the log, the commit point and the shell
+are not (CE1–CE2).** `Peer` keeps an `exec::ElectionCore` behind its lock — role,
+term, whom it voted for, and the votes it has counted — and `stand_for_election`,
+the vote handling in `request_vote`, `step_down_to`, `yield_at` and the tally in
+`count_ballot` all go through it, so each is the model's step by contract and each
+refusal a step the model could not take. What is not proved: the log and the
+up-to-date comparison (an argument to the core), the commit point and replication
+progress (`record_match` and the figure-8 rule are plain Rust), the roster, the
+lock, the audit log, and the durable store — the core calls `persist` with the term
+and vote before it moves, and that order is the code's, not a theorem.
 
 `src/raft/service.rs` serves it: `request_vote` with the up-to-date comparison,
 `append_entries` with the consistency check and the truncation, `heartbeat`,
@@ -1241,6 +1267,132 @@ reported `false` when the model's `has_voted` was true. `tests/raft_election.rs`
 runs that in both directions: a restarted voter that refuses the second request,
 and a forgetful one that grants it and elects two leaders.
 
+## Actor: a journal fenced by ownership
+
+An actor in a single process is single-threaded by construction, so it never has
+to say what it guarantees. Spread over machines it does, and the guarantees are
+exactly the ones a single process gets for free: **one thing at a time**, **each
+message once**, **in the order sent**, and **state that survives** moving.
+
+`src/actor/` proves those four, and it does so by one decision: **the actor's
+state is not held by its host.** It is a *journal* — the ordered sequence of
+messages the actor has accepted — and the state is a fold over it
+(`actor::model::state_of`). Appending to the journal is the one thing a host does
+that matters, and it is **fenced by the ownership protocol**: `as_accept` requires
+`ownership::spec::can_mutate` at the epoch the host presents, which is
+`Owned { host, epoch }` and nothing else. A host that is not the owner, or owns a
+generation that has been superseded, cannot append. Nothing about the actor needs
+a second fence; the journal write *is* the mutation the ownership protocol fences.
+
+Everything else follows from three facts: only the owner at the current epoch can
+append (the ownership layer's exclusivity and fencing, used as-is); an append is
+accepted only if the message's sequence number is **exactly** the number already
+accepted from its sender (so a duplicate and a message ahead of its turn are the
+same refusal); and the journal is only ever extended.
+
+The network may delay, duplicate and reorder — `ActorSystem::sent` never shrinks,
+so a message can be offered to the host any number of times, in any order. None of
+that is a separate failure mode: it is what `as_accept` is already quantified over.
+
+| # | claim | theorem | assumes |
+| --- | --- | --- | --- |
+| A1 | **At most one host can accept at any instant**, and at only one epoch — in *no* state at all do two different hosts both satisfy the authority guard | `actor::proofs::exclusive::theorem_at_most_one_host_can_accept` | none |
+| A2 | **A superseded host cannot accept.** Present any epoch behind the actor's current one and no post-state, whatever the message, satisfies `as_accept` — a returning stale owner's first append is refused | `actor::proofs::exclusive::theorem_a_superseded_host_cannot_accept` | none |
+| A3 | **Nobody accepts between owners.** While the actor is `Transferring` or `Unowned` there is no host to append — in particular not the outgoing owner, whose epoch was burned the moment the transfer began | `actor::proofs::exclusive::theorem_nobody_accepts_between_owners` | none |
+| A4 | **Only the owner accepts, and only at the current epoch** | `actor::proofs::exclusive::theorem_only_the_owner_accepts` | none |
+| A5 | **One host per epoch.** Across the whole life of the actor, two entries written at the same epoch were written by the same host. This is not A1 restated: A1 says two hosts cannot append *at once*; this says they cannot append *under one generation*, however far apart in time | `actor::proofs::exclusive::theorem_one_host_per_epoch` | reachability |
+| A6 | **Epochs never fall along the journal.** Nobody writes behind a newer host | `actor::proofs::exclusive::theorem_epochs_never_fall_along_the_journal` | reachability |
+| A7 | **Nothing is written under an epoch the actor has already left.** From any point of an execution on, every entry appended afterwards carries an epoch at least the actor's epoch at that point. Fencing as a fact about the *log* rather than about one request: A2 says a superseded host's attempt is refused, this says none of its writes can be found afterwards | `actor::proofs::exclusive::theorem_nothing_is_written_under_a_superseded_epoch` | an execution |
+| A8 | **Nothing is invented.** Every message in the journal was sent | `actor::proofs::delivery::theorem_only_sent_messages_are_accepted` | reachability |
+| A9 | **The nth message accepted from a sender is numbered n**, and **one sender's messages are accepted in the order sent** — the journal holds each sender's messages as 0, 1, 2, ...: none out of place, none repeated, none skipped | `actor::proofs::delivery::theorem_the_nth_message_from_a_sender_is_numbered_n`, `theorem_one_senders_messages_are_accepted_in_order` | reachability |
+| A10 | **A message is accepted at most once**, however many times the network delivers it | `actor::proofs::delivery::theorem_a_message_is_accepted_at_most_once` | reachability |
+| A11 | **A redelivered message is refused**, by the current host at the current epoch — the one pair otherwise allowed to append — and **a message ahead of its turn is refused** until the ones before it arrive. The first needs only the invariant, so a service holding a journal can use it to classify an arrival | `actor::proofs::delivery::theorem_a_redelivered_message_is_refused`, `theorem_a_message_ahead_of_its_turn_is_refused` | `actor_inv` |
+| A12 | **The journal is append-only.** Along any execution an earlier journal is a prefix of every later one: what the actor accepted, it keeps, in the order it accepted it — including across a handover | `actor::proofs::state::theorem_the_journal_is_append_only` | an execution |
+| A13 | **State survives.** An append is exactly one application of the behaviour; a handover changes neither the journal nor the state; and a run continues the state rather than restarting it — between two points of an execution, the later state is the earlier one with the intervening entries replayed on top. The new owner does not receive the state from the old one; it reads the same journal and recomputes it | `actor::proofs::state::theorem_accepting_applies_the_behaviour`, `theorem_a_handover_preserves_the_state`, `theorem_the_state_continues_across_a_run` | an execution |
+| A14 | **The executable steps agree with the model, in both directions**: when `accept_step` fires the model's `Accept` fires to exactly the state computed, and when it refuses the model's transition is not enabled in any post-state; when `send_step` fires it hands out exactly the model's number and leaves the model's counter, and it refuses only at `u64::MAX`, where the model's unbounded `Send` is still enabled; `accept_step` has the same narrowing, refusing an enabled `Accept` only with its count at `u64::MAX` — those two counters are the only places the executable does less than the model allows, and both refuse rather than wrap; the host's count stays right across an append; and the fence answer the step is handed *is* the model's `can_mutate` | `actor::proofs::refinement::theorem_accept_step_refines`, `theorem_accept_step_refuses_exactly_when_disabled`, `theorem_send_step_refines`, `theorem_send_step_refuses_only_at_exhaustion`, `theorem_accept_step_refuses_an_enabled_append_only_at_exhaustion`, `theorem_accepting_advances_the_count_by_one`, `theorem_the_fence_answer_is_the_models_authority` | the couplings in the module's table |
+| A15 | **The guarantees are not vacuous.** One concrete run, through the ownership protocol's real transitions: `A` takes the actor and accepts a message, it is handed to `B` through grant, acquire, begin-transfer, revoke, release and acquire, and `B` accepts the next. It ends with two hosts and two epochs in one journal, and the old host and a redelivery are both refused | `actor::proofs::scenario::scenario_the_run_is_an_execution`, `scenario_the_run_ends_with_both_hosts_in_the_journal`, `scenario_the_old_host_is_refused`, `scenario_a_redelivery_is_refused` | none: the run is exhibited |
+
+All of A5–A13 rest on one inductive invariant (`actor::proofs::invariant::actor_inv`)
+whose six clauses are the inductive forms of the guarantees: nothing invented,
+sequence numbers equal prior counts, epochs bounded by the actor's current one,
+epochs ordered along the journal, one host per epoch, and — the clause that makes
+the last one provable — an entry written at the actor's *current* epoch was
+written by its *current* owner. `lemma_step_preserves_inv` shows every step
+preserves it, and `theorem_reachable_inv` that it holds in every reachable state.
+
+**What this is not.** It is a set of *safety* properties. Nothing says a message is
+ever delivered, or that a sender retries. An out-of-order arrival is *refused*, not
+buffered, so the sender (or a mailbox in front of the host) must retry in order for
+anything to make progress — the same line the other protocols here draw between
+safety and liveness. And the journal is assumed **durable and linear**: the model
+has no crash that loses an accepted entry, which is the actor's counterpart of the
+atomic-registry assumption the ownership layer makes, and the service keeps the
+journal in memory (see [The actor](#the-actor)). Delivery to the host is the next
+section's subject.
+
+### The mailbox, and the first liveness theorem
+
+The paragraph above says the actor proves nothing about a message ever being
+*offered* to its host. `src/actor/mailbox/` is the queue that would offer it, and
+it is where the lost-wakeup problem lives: a drain that is scheduled rather than
+polling must be woken by the sender that finds it asleep, and every sender checks,
+then acts, with other senders and the drain acting in between.
+
+The machine is the protocol of Apple's swift-distributed-actors mailbox, which
+keeps it as a PlusCal/TLA+ model
+([`Models/mailbox.tla`](https://github.com/apple/swift-distributed-actors/blob/main/Models/mailbox.tla)),
+with the same three flags (`has`, `processing`, `scheduled`) and the same step
+boundaries. A sender takes three steps — enqueue; read-and-set `has`; schedule if
+`has` was clear and the drain is not running — and the drain takes three — claim
+(clear `has`, mark running); take the queue; finish (stay scheduled exactly when
+`has` was set meanwhile). The TLA+ model fixes two senders, five messages each, and
+a drain that stops after ten, so a model checker can exhaust it. Here a sender is
+an *operation* tracked in `Mailbox::ops` rather than a process, so any number of
+senders each sending any number of messages are covered at once; the bound is what
+the proof removes.
+
+Safety is a corollary of one invariant. **Liveness is a different kind of claim**,
+and the proof says so: it is a statement about the infinite run, it is false of
+the bare machine (a run in which the drain is never given a turn processes
+nothing), and so it is stated under a fairness assumption written down as a
+definition (`mailbox_fair`) rather than left implicit. The temporal logic it uses
+is `src/temporal_t.rs`, in the idiom of
+[verus-tla](https://github.com/anvil-verifier/verus-tla) (Anvil's embedding of TLA
+in Verus) — executions as functions from step number to state, `leads_to`, weak
+fairness, and the WF1 rule — rebuilt in-crate rather than depended on, because
+`verus --crate-type=lib src/lib.rs` links `vstd` and nothing else. Every rule is
+proved, not assumed.
+
+| # | claim | theorem | assumes |
+| --- | --- | --- | --- |
+| MB1 | **The mailbox invariant holds at every step of every run**: the `processing` flag says whether the drain runs; messages are numbered by the count before them; each sender's next number is its count; a sender mid-operation is on a message the mailbox holds; and the two clauses that *are* the protocol — a set `has` with no wakeup pending is accounted for by a sender that has set it and not yet scheduled, and a queued message with `has` clear is accounted for by a sender that has enqueued it and not yet set `has` | `actor::mailbox::proofs::invariant::mb_inv`, `lemma_step_preserves_inv`, `theorem_run_inv` | a run |
+| MB2 | **Nothing is lost or reordered.** What the mailbox had taken in at one step is the beginning of what it has taken in at any later one, and the same of what it has processed | `actor::mailbox::proofs::safety::theorem_nothing_is_lost_or_reordered` | a run |
+| MB3 | **Each message is taken in once** — no message appears twice among those queued or processed | `actor::mailbox::proofs::safety::theorem_a_message_is_taken_in_once` | `mb_inv` |
+| MB4 | **One sender's messages keep their order**, and **nothing is skipped**: a message's number is the count of its sender's messages before it | `actor::mailbox::proofs::safety::theorem_one_senders_messages_keep_their_order`, `theorem_a_senders_messages_are_numbered_without_gaps` | `mb_inv` |
+| MB5 | **The drain never presents a message ahead of its turn.** The `i`th message processed is numbered the count of its sender's messages among the `i` before it — word for word the guard of the actor's accept (`env.seq == accepted_from(journal, sender)`), so a host accepting in this order is never refused for being early. And the processed messages are the front of what the mailbox holds | `actor::mailbox::proofs::safety::theorem_the_drain_never_presents_a_message_ahead_of_its_turn`, `theorem_the_drain_takes_the_front_of_the_queue` | `mb_inv` |
+| MB6 | **A message enqueued is a message processed.** In every run in which the drain's three steps and each sender's two remaining ones are not starved, a message on the queue is later in `processed`. The proof is the lost-wakeup argument: where the drain is decides the next stage, and when it is asleep with nothing scheduled the invariant says some sender is on its way to waking it, and fairness says it gets there. Senders are *not* required to send — `enqueue` is not on the fairness list | `actor::mailbox::proofs::liveness::theorem_every_enqueued_message_is_processed` | `mailbox_fair` |
+| MB7 | **The fairness rules are theorems**: WF1 (a step enabled while `p` holds, and the only way out of `p`, gives `p ~> q` under weak fairness of that step), transitivity, and case-splitting | `temporal::lemma_wf1`, `lemma_leads_to_trans`, `lemma_leads_to_cases`, `lemma_leads_to_implies` | none |
+| MB8 | **The liveness theorem is not vacuous.** A run of the machine that satisfies `mailbox_fair` and does work: one message is queued and processed, and a second that arrives *after* the drain took the queue is queued and processed, woken by the drain's last step seeing `has` — and the theorem applies to it | `actor::mailbox::proofs::scenario::scenario_a_fair_run_delivers_two_messages`, `scenario_the_theorem_applies_to_it` | none: the run is exhibited |
+| MB9 | **The fairness assumption is necessary.** A run of the machine in which a message is enqueued and never processed, and which is not fair: its sender's own `set_state` step stays possible forever and is never taken | `actor::mailbox::proofs::scenario::scenario_without_fairness_a_message_waits_forever` | none: the run is exhibited |
+| MB10 | **The executable core is the model.** `exec::MailboxCore` — the queue and flags the runtime keeps behind its lock — has one method per step, and each method's contract is the model's step: a fresh core is `mb_init`; `enqueue`, `set_state`, `schedule`, `claim`, `take` and `finish` each take the model to a state the core still stands for (`refines`), `take` handing out exactly what the model adds to `processed`; `set_state` returns what the sender's operation records | `actor::mailbox::proofs::refinement::theorem_new_refines_init`, `theorem_enqueue_refines`, `theorem_set_state_refines`, `theorem_schedule_refines`, `theorem_claim_refines`, `theorem_take_refines`, `theorem_finish_refines` | the sender's protocol: the item stands for the envelope the model numbers next, `set_state` is called for a `Marked` operation, `schedule` for a `Scheduling` one with the `had` it recorded |
+| MB11 | **A refused step is one the model could not take.** `claim` refuses exactly when the model's guard is false (so no second drain can claim while one runs), and `take` and `finish` out of phase change nothing — the model's stutter — and the model has no enabled `mb_drain` or `mb_finish` there | `actor::mailbox::proofs::refinement::theorem_claim_refuses_exactly_when_disabled`, `theorem_take_refuses_exactly_when_disabled`, `theorem_finish_refuses_exactly_when_disabled`, `theorem_a_stutter_refines` | `refines` |
+
+**What this does not do.** The model's proofs are about the model, and MB10–MB11
+connect the *core* to it. The protocol *is* run now —
+`service::Mailbox` wraps that core in a lock, and
+[The mailbox as a transport](#the-mailbox-as-a-transport) says how it is used — but
+the lock, the capacity and permits, the wakers and the notification are plain Rust
+the tests exercise, and so is `requeue`, which puts back what a dropped round never
+handed out and is not a model step. Nothing checks that callers follow the sender's
+three steps; MB10 takes it as a hypothesis. And `Host`
+does not sit behind it yet: `Host` keeps the sent set of the actor's model and the
+owning node calls `accept`. The fairness assumption is *weak*
+fairness of those steps and nothing stronger, and it is an assumption about the
+scheduler, not something the protocol can enforce — a drain that is never run
+delivers nothing, which MB9 exhibits. And the mailbox hands the actor an *ordered*
+stream; the ownership fence that decides whether the actor may append it is the
+previous section's, unchanged.
+
 ## SWIM: gossip membership, bought by merge rather than majority
 
 Ownership and Raft both spend a majority round-trip to get one authoritative
@@ -1252,7 +1404,7 @@ is bought a different way — by an algebraic property of a merge rule, not by
 quorum intersection.
 
 **This is the first piece, not the whole protocol**, in the same sense
-`src/raft/model.rs` was the first piece of Raft: the state space and one
+`src/raft/model_t.rs` was the first piece of Raft: the state space and one
 transition, proved correct on their own terms, with the probe timer,
 indirect-ping fallback and dissemination piggyback still to come. The piece
 chosen first is the one everything else depends on being right: `state.go`'s
@@ -1282,6 +1434,15 @@ of *which* record arrived, not a different rule for applying it.
 | S8 | **A refutation out-ranks the accusation it answers, and everything its author could have held when it was made** — alive at one incarnation above beats suspect *and* dead at the accusation's, because a higher incarnation wins at any status | `swim::proofs::refinement::theorem_a_refutation_outranks_what_it_answers` | `held.incarnation <= accused` |
 | S9 | **A refutation is a gossip step, not a new kind of step, and `refute_step` computes it** — the model gains no transition for answering an accusation; the node applies `tr_gossip` to a record it made itself, and the executable step makes exactly that record or refuses at the top of the `u64` space | `swim::proofs::refinement::theorem_a_refutation_is_a_gossip_step`, `theorem_refute_step_is_the_refutation`, `swim::steps::refute_step` (its `ensures`) | none |
 
+| S10 | **The node's table is the model.** `exec::SwimTable` — what a node keeps — reads the model's `record_of` (no entry is the fresh record), and `learn` writes `merge` of what is held and what arrived and changes nothing else; a table standing for a cluster that learns a record stands for the cluster `tr_gossip` leads to, and a fresh table stands for `swim_init` | `swim::proofs::table::theorem_new_table_is_the_initial_cluster`, `theorem_learn_is_a_gossip_step` | the table is well formed (each member once) |
+| S11 | **Hearing an accusation about oneself is two gossip steps.** `SwimTable::hear` merges the record and, if it was the node's *own* that changed, merges the refutation on top of it; the model sees `tr_gossip` twice, and the table ends up believing the refutation. At the top of the incarnation space the second step is refused and the first has happened | `swim::proofs::table::theorem_hearing_oneself_accused_is_two_gossip_steps` | the table stands for the cluster |
+| S12 | **A table never believes less than it did, and always stands for a reachable cluster.** Whatever it learns, what it then holds for any member out-ranks or equals what it held; and a reachable cluster plus a learned record is a reachable cluster, so S5 is a statement about what the table holds | `swim::proofs::table::theorem_learning_never_lowers_a_belief`, `theorem_a_table_stands_for_a_reachable_cluster_after_learning` | the table stands for a reachable cluster |
+
+**What S10–S12 do not cover.** The table is a verified core, and `Node` is the
+shell around it: the roster (which numbers are members, who may speak), the lock,
+the audit log, the batch limit, and the order a batch is applied in are plain Rust
+that the tests exercise. The theorems are about one record at a time.
+
 **S4 is worth pausing on, because the asymmetry it dismisses is real.**
 `key_geq(a, b)` and `key_geq(b, a)` are different expressions, and reading
 `merge`'s definition — `if key_geq(incoming, local) { incoming } else {
@@ -1308,7 +1469,8 @@ network-timing piece that is still future work.
 `src/swim/service/` serves the protocol over
 [Jetstream](https://github.com/sevki/jetstream) RPC: `#[service] trait
 Membership` with `ping` and `sync`, implemented by a `Node` whose table is
-written in exactly one place, by `steps::merge_step`.
+written in exactly one place, by `exec::SwimTable::hear` — the verified table, whose
+merge is `steps::merge_step` (S10–S12).
 
 Both methods do the same thing to the receiver — merge every `Update` in the
 message — and differ in the reply. `ping` answers with the receiver's records
@@ -1355,75 +1517,114 @@ timing lives, and nothing in `swim::model` says anything about timing.
 ## Repository layout
 
 ```text
-distributed-ownership/
-├── Cargo.toml              one crate; the services are behind a non-default feature
+jetstream_distributed/
+├── Cargo.toml              one crate (plus the vendored pmemlog); the services are behind the `service` feature (on by default; the proofs build without it)
 ├── rust-toolchain.toml
 ├── README.md
+├── fuzz/                   the coverage-guided front end to the protocol-line search (its own workspace, nightly)
 ├── src/
 │   ├── lib.rs
+│   ├── temporal_t.rs       leads-to, weak fairness and WF1: what a liveness proof is stated in
 │   ├── ownership/          exclusive mutable ownership with epoch fencing
-│   │   ├── model.rs        state space + transition relation (no specification)
-│   │   ├── spec.rs         may_mutate, tokens, the system invariant
-│   │   ├── fencing.rs      current_epoch, valid_fence, staleness
-│   │   ├── transfer.rs     the multi-step handover and its lemmas
-│   │   ├── steps.rs        the transitions as executable u64 functions
-│   │   ├── exec.rs         the u64 fence check a node runs on its own belief
+│   │   ├── model_t.rs      state space + transition relation (no specification)
+│   │   ├── spec_t.rs       may_mutate, tokens, the system invariant
+│   │   ├── fencing_t.rs    current_epoch, valid_fence, staleness
+│   │   ├── transfer_v.rs   the multi-step handover and its lemmas
+│   │   ├── steps_v.rs      the transitions as executable u64 functions
+│   │   ├── exec_v.rs       the u64 fence check a node runs on its own belief
+│   │   ├── registry_v.rs   RegistryCore: the record, the grants published, the writes; one method per step
 │   │   ├── service.rs      the protocol over Jetstream RPC   [feature = "service"]
 │   │   └── proofs/
-│   │       ├── invariant.rs    init ==> inv, inv /\ next ==> inv, reachable ==> inv
-│   │       ├── properties.rs   structural, temporal and capability properties
-│   │       ├── exclusivity.rs  claim 1
-│   │       ├── fencing.rs      claims 2, 3, 5
-│   │       ├── transfer.rs     claim 4
-│   │       ├── tokens.rs       claim 6
-│   │       ├── adversarial.rs  concrete adversarial executions
-│   │       └── refinement.rs   steps.rs agrees with the model's tr_* transitions
+│   │       ├── invariant_v.rs    init ==> inv, inv /\ next ==> inv, reachable ==> inv
+│   │       ├── properties_v.rs   structural, temporal and capability properties
+│   │       ├── exclusivity_v.rs  claim 1
+│   │       ├── fencing_v.rs      claims 2, 3, 5
+│   │       ├── transfer_v.rs     claim 4
+│   │       ├── tokens_v.rs       claim 6
+│   │       ├── adversarial_v.rs  concrete adversarial executions
+│   │       ├── refinement_v.rs   steps_v.rs agrees with the model's tr_* transitions
+│   │       └── registry_v.rs     the registry's record, grants included, takes the model's steps
 │   ├── raymond/            Raymond's mutual-exclusion routing layer
-│   │   ├── model.rs
-│   │   ├── steps.rs        the routing decisions as executable u64 functions
+│   │   ├── model_t.rs
+│   │   ├── steps_v.rs      the routing decisions as executable u64 functions
+│   │   ├── exec_v.rs       RayTable: the routing record as verified code, one method per step
 │   │   ├── service/        the protocol over Jetstream RPC   [feature = "service"]
 │   │   │   ├── mod.rs      the Routing trait and what a node can see of itself
 │   │   │   ├── router.rs   the whole routing record, behind one lock
 │   │   │   └── refusal.rs  the refusals, in the line protocol's alphabet
-│   │   └── proofs/{routing_layer.rs, routing_run.rs, refinement.rs}
+│   │   └── proofs/{routing_layer_v.rs, routing_run_v.rs, refinement_v.rs}
 │   ├── composed/           ownership and Raymond as one machine
-│   │   ├── model.rs        the coupling enforced by guards, not assumed
-│   │   ├── steps.rs        the coupling guards as executable functions
+│   │   ├── model_t.rs      the coupling enforced by guards, not assumed
+│   │   ├── steps_v.rs      the coupling guards as executable functions
+│   │   ├── exec_v.rs       the four coupled steps over the layers' records, and the debts
 │   │   ├── service/        the two layers behind one coordinator [feature = "service"]
 │   │   │   ├── mod.rs      the Composed trait: ownership + routing + the coupling
 │   │   │   ├── coordinator.rs  both layers, and the gate that serialises them
 │   │   │   └── refusal.rs  the refusals, in the line protocol's alphabet
-│   │   └── proofs/{coupling.rs, scenario.rs, refinement.rs}
+│   │   └── proofs/{coupling_v.rs, scenario_v.rs, refinement_v.rs, exec_v.rs}
+│   ├── actor/              a distributed actor: a journal fenced by ownership
+│   │   ├── model_t.rs      envelopes, the journal, send / accept, the fold that is the state
+│   │   ├── steps_v.rs      accept, send and the behaviour as executable u64 functions
+│   │   ├── mailbox/        the queue in front of the actor, and its wakeup protocol
+│   │   │   ├── model_t.rs  the three flags, six steps, and the step boundaries between them
+│   │   │   ├── exec_v.rs   MailboxCore: the protocol as verified code, one method per step
+│   │   │   └── proofs/
+│   │   │       ├── invariant_v.rs  the six-clause invariant, and that every step preserves it
+│   │   │       ├── safety_v.rs     nothing lost or repeated; per-sender order; no gaps
+│   │   │       ├── liveness_v.rs   a message enqueued is a message processed, under fairness
+│   │   │       ├── refinement_v.rs the executable core takes the model's steps, and refuses where it cannot
+│   │   │       └── scenario_v.rs   a fair run that delivers; an unfair one that does not
+│   │   ├── service/        the actor over Jetstream RPC   [feature = "service"]
+│   │   │   ├── mod.rs      the Actor trait and what goes on the wire
+│   │   │   ├── host.rs     the journal, the sent set, and the registry that fences them
+│   │   │   ├── transport.rs Host::serve and Connection::new over any byte stream; Host::pipe in memory
+│   │   │   ├── mailbox.rs  the mailbox protocol on real threads: Mailbox, Permit, Capacity, Round
+│   │   │   ├── session.rs  Session (a ClientTransport over a mailbox) and serve (the drain)
+│   │   │   └── refusal.rs  the refusals, in the line protocol's alphabet
+│   │   ├── examples/
+│   │   │   └── basic.rs    two actors, each behind its own mailbox, one calling the other
+│   │   └── proofs/
+│   │       ├── journal_v.rs      counting and folding over push and take
+│   │       ├── invariant_v.rs    the six-clause invariant, and that every step preserves it
+│   │       ├── exclusive_v.rs    one host at a time; nothing written under a superseded epoch
+│   │       ├── delivery_v.rs     each message once, in order, none invented
+│   │       ├── state_v.rs        append-only; the state is a fold and survives a handover
+│   │       ├── refinement_v.rs   steps_v.rs agrees with the model's transitions
+│   │       └── scenario_v.rs     a run through a whole handover, and the refusals at its end
 │   ├── raft/               consensus: terms, votes, quorums, the log
-│   │   ├── model.rs        state space + transition relation
-│   │   ├── steps.rs        the election decisions as executable u64 functions
-│   │   ├── store.rs        a log that truncates, on a device that cannot
-│   │   ├── wire.rs         the record encoding, and what a torn write leaves
+│   │   ├── model_t.rs      state space + transition relation
+│   │   ├── steps_v.rs      the election decisions as executable u64 functions
+│   │   ├── exec_v.rs       ElectionCore: role, term, vote and tally as verified code, one method per step
+│   │   ├── store_v.rs      a log that truncates, on a device that cannot
+│   │   ├── wire_v.rs       the record encoding, and what a torn write leaves
 │   │   ├── service.rs      the protocol over Jetstream RPC   [feature = "service"]
 │   │   └── proofs/
-│   │       ├── election.rs     Election Safety, via quorum intersection
-│   │       ├── history.rs      the ghost record, and Log Matching out of it
-│   │       ├── log.rs          what one replication step gives you (and what it does not)
-│   │       ├── terms.rs        term structure, entry durability, the election restriction
-│   │       ├── commit.rs       what was committed, and State Machine Safety minus one hypothesis
-│   │       ├── votes.rs        what a vote was a judgement of
-│   │       ├── summary.rs      the summary a voter judged, tied back to the log it summarised
-│   │       ├── persistence.rs  why the entry was still there when the voter judged it
-│   │       ├── refinement.rs   steps.rs agrees with the model's tr_* transitions
-│   │       ├── scenario.rs     a run in which an election actually happens
-│   │       ├── store.rs        recovery is exact; a crash can only rewind
-│   │       └── wire.rs         cut the bytes anywhere; a record prefix comes back
+│   │       ├── election_v.rs     Election Safety, via quorum intersection
+│   │       ├── election_core_v.rs the election record takes the model's steps, vote and tally included
+│   │       ├── history_v.rs      the ghost record, and Log Matching out of it
+│   │       ├── log_v.rs          what one replication step gives you (and what it does not)
+│   │       ├── terms_v.rs        term structure, entry durability, the election restriction
+│   │       ├── commit_v.rs       what was committed, and State Machine Safety minus one hypothesis
+│   │       ├── votes_v.rs        what a vote was a judgement of
+│   │       ├── summary_v.rs      the summary a voter judged, tied back to the log it summarised
+│   │       ├── persistence_v.rs  why the entry was still there when the voter judged it
+│   │       ├── refinement_v.rs   steps_v.rs agrees with the model's tr_* transitions
+│   │       ├── scenario_v.rs     a run in which an election actually happens
+│   │       ├── store_v.rs        recovery is exact; a crash can only rewind
+│   │       └── wire_v.rs         cut the bytes anywhere; a record prefix comes back
 │   └── swim/               gossip membership: merge, not majority
-│       ├── model.rs        the record, the merge rule, one transition
-│       ├── steps.rs        the merge and the refutation as executable u64 functions
+│       ├── model_t.rs      the record, the merge rule, one transition
+│       ├── steps_v.rs      the merge and the refutation as executable u64 functions
+│       ├── exec_v.rs       SwimTable: the node's table as verified code, learn and hear
 │       ├── service/        the protocol over Jetstream RPC   [feature = "service"]
 │       │   ├── mod.rs          the Membership trait and what goes on the wire
 │       │   ├── node.rs         the table, and the merge into it
 │       │   └── refusal.rs      the refusals, in the line protocol's alphabet
 │       └── proofs/
-│           ├── merge.rs        idempotent, absorbs a repeat, never regresses, commutative, associative
-│           ├── monotone.rs     lifted through a step and then through a run
-│           └── refinement.rs   steps.rs agrees with the model's tr_gossip
+│           ├── merge_v.rs      idempotent, absorbs a repeat, never regresses, commutative, associative
+│           ├── monotone_v.rs   lifted through a step and then through a run
+│           ├── refinement_v.rs steps_v.rs agrees with the model's tr_gossip
+│           └── table_v.rs      the table learns by tr_gossip; a refutation is a second one
 ├── tests/
 │   ├── scenario_body/mod.rs    the executable protocol + the runtime oracles
 │   ├── turmoil_ownership.rs    named stories, each with an expected ending
@@ -1434,6 +1635,9 @@ distributed-ownership/
 │   ├── raft_election.rs        a split vote elects one leader  [feature = "service"]
 │   ├── raft_log.rs             the consistency check and figure 8 [feature = "service"]
 │   ├── raft_wire.rs            the service over a simulated network [feature = "service"]
+│   ├── actor_journal.rs        the guarantees over a Jetstream session, and every refusal [feature = "service"]
+│   ├── actor_turmoil.rs        an actor changes hands across hosts, nothing lost or repeated [feature = "service"]
+│   ├── actor_mailbox.rs        A calls B through a mailbox, backpressure, abort and close [feature = "service"]
 │   ├── raymond_routing.rs      the textbook request path, and every refusal [feature = "service"]
 │   ├── raymond_turmoil.rs      the same path across hosts, on a simulated network [feature = "service"]
 │   ├── composed_handover.rs    the coupling: no move while held, no acquire without it [feature = "service"]
@@ -1442,10 +1646,16 @@ distributed-ownership/
 │   ├── swim_turmoil.rs         a suspicion crosses a healed partition and is refuted [feature = "service"]
 │   └── seeds/scenarios.txt     seeds that once broke something
 ├── vendor/
-│   └── pmemlog/                Microsoft's verified persistent-memory log
-│       ├── README.md           provenance, omissions, and its six assumptions
-│       ├── LICENSE.txt         upstream's MIT licence, unaltered
-│       └── src/                unmodified upstream source
+│   ├── README.md               provenance, what is built, and pmemlog's six assumptions
+│   ├── verified-storage/       Microsoft's verified-storage, whole and verbatim (CI diffs it)
+│   │   ├── pmemlog/            the verified persistent-memory log [verified by CI]
+│   │   ├── multilog/           logs with atomic appends across them [not yet built]
+│   │   ├── capybaraKV/         a persistent-memory key-value store [not yet built]
+│   │   └── ...                 capybaraNS, soundness_proofs, unverified, LICENSE.txt
+│   └── kverus/                 the KVerus agent skills, verbatim (CI diffs it)
+│       ├── README.md           provenance, and which skills edit code
+│       └── skills/             kverus-review, kverus-eval, ... : what AGENTS.md's reviews follow
+├── AGENTS.md                   build and verify commands, the rules, and how to review a change
 └── .github/workflows/verify.yml
 ```
 
@@ -1455,13 +1665,14 @@ proof lived in one crate and whose implementation lived in another is a protocol
 where the two can drift without anything noticing; here they are compiled
 together and the service calls the functions the proofs are about.
 
-**The services are behind a feature that is off by default**, and that is what
-makes one crate workable. `verus --crate-type=lib src/lib.rs` and `cargo verus
-verify` both run with default features, so the verified build's dependency graph
-is `vstd` and nothing else — no Jetstream, no async runtime for Verus to be
-asked about, and no need for a single `#[verifier::external]` to keep service
-code out of the proofs. Turn the feature on and the same modules compile against
-the same verified step functions, under `cargo +stable`: `rust-toolchain.toml`
+**The services are behind a `service` feature**, which is on by default so that
+depending on the crate gives you them, and that feature is what makes one crate
+workable. `verus --crate-type=lib src/lib.rs` does not read features, and `cargo
+verus verify --no-default-features` turns it off, so the verified build's
+dependency graph is `vstd` and nothing else — no Jetstream, no async runtime for
+Verus to be asked about, and no need for a single `#[verifier::external]` to keep
+service code out of the proofs. With the feature on, the same modules compile
+against the same verified step functions, under `cargo +stable`: `rust-toolchain.toml`
 pins the Rust release the Verus build was made against so the **proofs** verify,
 not so a service is stuck on it.
 
@@ -1471,10 +1682,20 @@ Keeping them under `src/{algorithm}/proofs/` is the ordinary Rust way to express
 that; a top-level `proofs/` would need `#[path = "../proofs/..."]` attributes
 for no benefit.
 
-**Verified executable code** is in the `steps.rs` and `exec.rs` of each
-algorithm: small `u64`-valued functions, each with a postcondition stated in
-terms of that algorithm's model and a theorem in its `proofs/refinement.rs`
-discharging it. **Unverified executable code** is in each algorithm's
+**File names follow the verified-storage convention** the vendored code uses: a
+`_t.rs` file is **trusted** — the model, the specification, the definitions a
+claim is stated in, which a reader has to audit because no proof checks them
+against anything — and a `_v.rs` file is **verified**: executable code and proofs,
+which Verus checks. `service/` is plain Rust that Verus never sees and carries no
+suffix. The suffix is on the *file*; the module keeps its plain name
+(`#[path = "model_t.rs"] pub mod model;`), so `crate::raft::model::tr_timeout` is
+still where it was.
+
+**Verified executable code** is in the `steps_v.rs`, `exec_v.rs` and, where an
+algorithm keeps state, `registry_v.rs`-style files of each algorithm: small
+`u64`-valued functions and the records they act on, each with a postcondition
+stated in terms of that algorithm's model and a theorem in its
+`proofs/refinement_v.rs` (or the proof file named for the record) discharging it. **Unverified executable code** is in each algorithm's
 `service.rs` and under `tests/`, and it is unverified in the plain sense that
 Verus never compiles it — the feature is off when the proofs are checked — not
 in the sense that an escape hatch waves it through. `exec` offers **queries
@@ -1485,10 +1706,10 @@ drift from `Owned(A, e)` to `Owned(B, e + 1)`, exactly the atomic ownership
 assignment this model refuses to admit. Observing a new generation means
 constructing a new guard. Making a
 guard follow the protocol needs a refinement of the *node* side; the registry
-side is `src/ownership/steps.rs`.
+side is `src/ownership/steps_v.rs`.
 Everything else in the crate is specification or proof.
 
-Specification and proof code are kept apart from the model: `src/ownership/model.rs`
+Specification and proof code are kept apart from the model: `src/ownership/model_t.rs`
 defines only the state space and the transition relation and does not import the
 specification layer, so a specification cannot be quietly weakened to fit the
 model.
@@ -1506,6 +1727,7 @@ behind one lock and calls the algorithm's verified step functions:
 | SWIM | `Membership` | `Node` | `swim::steps` | suspecting, declaring dead, refuting |
 | Raymond | `Routing` | `Router` | `raymond::steps` | — (every method acts on the caller's own entries) |
 | composed | `Composed` | `Coordinator` | `composed::steps` | seizing the privilege |
+| actor | `Actor` | `Host` | `actor::steps` | `force` — the coordinator's own transition |
 
 The shape is the same each time, and so is what it buys: **no method takes the
 acting node's number**, because who is calling is the `Context` and a caller
@@ -1573,10 +1795,11 @@ This is the same class of caveat as the address-identity one, and it breaks the
 same guarantee.
 
 **What is verified about it, precisely.** Every decision the service makes about
-the actor, and nothing else. `poll`, `acquire`, `write`, `begin_transfer`,
-`release` and `force` each look the actor's record up, hand it to a function in
-`distributed_ownership::ownership::steps`, and store what comes back; those
-functions are
+the actor and every grant it publishes, and nothing else. `poll`, `acquire`,
+`write`, `begin_transfer`, `release` and `force` each go through a method of
+`ownership::registry::RegistryCore`, which hands the actor's record to a function in
+`jetstream_distributed::ownership::steps`, stores what comes back, and publishes the
+grant the model's transition publishes (E8–E9). The step functions are
 executable `u64` code with postconditions stated in terms of the model, and
 `ownership::proofs::refinement` is where the postconditions are tied to `tr_acquire`,
 `tr_begin_transfer`, `tr_handle_revoke`, `tr_complete_release`,
@@ -1618,6 +1841,16 @@ the same footing the fuzz target was on when it was added, and it is stated here
 rather than discovered.
 
 ### Raymond and the composed machine
+
+**The record is verified code; the shell is not (R16–R17).** `Router` keeps an
+`exec::RayTable` behind its lock, and every routing method goes through it, so each
+is the model's step by contract and each refusal is a step the model could not take.
+What is not proved: building the table (`new`, `add_node`) is not a model step, and
+that the finished table is `ray_init` — every other node points somewhere, the
+pointers reach the root — is checked by `Router::new` at start-up; the roster (which
+connection is which node), the lock, the audit log, and who may call `seize` and
+`reconcile` (the composed coordinator, which checks the token) are plain Rust the
+tests exercise.
 
 **Raymond's `Router` hosts the whole routing record in one process**, the way the
 ownership `Registry` hosts `System::actors`. That is the model's own shape —
@@ -1667,6 +1900,128 @@ take it, a seized holder is fenced and must reconcile. `tests/raymond_turmoil.rs
 and `tests/composed_turmoil.rs` run the same stories across simulated hosts, one
 host per node, so the coordinator learns who is acting from the connection.
 
+### The actor
+
+`actor::service::Host` holds an actor's journal and a mailbox of what has been sent,
+and **fences every append with the ownership `Registry` it is built around** — the
+same registry, with the same epoch floor, that the `Ownership` service serves. The
+actor adds nothing to the ownership protocol; it *uses* it. Four of `Actor`'s
+methods are the ownership calls, delegated (`poll`, `acquire`, `begin_transfer`,
+`release`); the others are `send`, `accept`, and two reads (`state`, `journal`).
+`accept` takes the `sender` whose message is being processed, and that is not the
+same thing as naming the acting node: it is checked against the mailbox, so a
+message that was never sent is refused rather than believed.
+
+An append reads the registry (is this host the owner at this epoch?) and writes the
+journal, so the registry is **built inside `Host::new`** from the one roster and
+every method takes a **gate** first — the same construction, for the same reason, as
+`composed::service`. The fence is asked first and about the registry's own record
+(`Registry::may_write`, which is `may_write_step`, which is `can_mutate`), so a host
+that is not the owner learns nothing about the journal. The behaviour is applied by
+the service, not the host: `accept` returns the state it produced, and a host that
+has just taken the actor catches up by reading the **journal**, not a copy of the
+previous host's memory.
+
+**What the actor service does not claim.**
+
+* **Its journal is in memory.** The model assumes the journal is durable and linear
+  — it has no crash that loses an accepted entry — and the service does not meet
+  that: a restarted `Host` has an empty journal and an epoch floor that remembers
+  only epochs. Durability is the next layer, and `raft::store`'s record store is the
+  shape it would take. Until then the guarantees hold for the lifetime of the
+  process, and not across its death.
+* **Crash-free executions only**, as in `composed::service`: no `Crash` or
+  `Recover`, because liveness is ground truth a process cannot evaluate.
+* **The behaviour is a pure fold.** The model's `apply` is a function from state and
+  message to state, taken modulo a machine word so the executable version is not
+  narrower. A real actor performs effects when it handles a message; nothing here
+  says what an effect does if its host is fenced halfway through. The guarantee is
+  about the *journal*, which is where the fence is.
+
+`tests/actor_journal.rs` runs the guarantees through Jetstream — every call goes over
+a generated client channel and session to the generated server in front of the
+`Host` (`Host::pipe`, an in-memory stream whose peer address the caller names, as a
+TLS adapter supplies its handshake's identity) — redelivery,
+messages ahead of their turn, the fence asked first, a handover that keeps the
+journal and fences the old host, a forced revocation, and all 24 orders of four
+messages from two senders each attempted twice, checked to give a well-formed
+journal whose state is the fold of whatever it holds. `tests/actor_turmoil.rs` runs
+the whole story across simulated hosts: a sender sends, the owner accepts, the
+actor is handed to another node, the old owner — still believing — is refused, and
+the new owner catches up from the journal.
+
+### Over any byte stream
+
+`Host::serve(io, peer)` serves one connection over any `AsyncRead + AsyncWrite`
+stream, and `Connection::new(io)` is the client end: TCP, turmoil, QUIC or an iroh
+stream pair all fit. The one thing a stream may not be able to say is who is on the
+other end, so `serve` takes it as the peer `Context` — an accept loop reads it off the
+socket, a TLS adapter supplies its handshake's identity — and the host believes it,
+so it must come from the transport and never from the peer. `Host::pipe` is the same
+wiring over an in-memory stream, for tests and examples, where the caller names the
+peer. The roster that maps a peer to a node is still keyed on `IpAddr`, so only
+`RemoteAddr::IpAddr` identities are accepted today.
+
+A `Connection` owns the session as well as the channel, and has to: dropping a
+`SingleLaneSession` cancels its lane.
+
+### The mailbox as a transport
+
+The mailbox of the previous section is what a call goes *through*, not something a
+caller sees. Given `#[service] trait ActorB`, a caller holding an `ActorB` — a
+generated `ActorBChannel`, or the implementation itself — writes `self.b.b(ctx).await`
+either way and cannot tell which:
+
+```text
+caller ── ActorBChannel ── Session ──▶ Mailbox ──▶ serve ── ActorBService ── impl
+                              ◀── reply ──────────────────────┘
+```
+
+* **`Mailbox<T>`** is the protocol's six steps on real threads, each method one model
+  step under one lock: a sender's `enqueue` (through a `Permit`), `set_state` and
+  `schedule`, and the drain's `claim`, `take` and `finish`.
+* **`Session<P>`** is a `ClientTransport`, which is all a generated channel asks of
+  what it sits on. `poll_ready` reserves a slot, `start_send` enqueues, and
+  `poll_flush` runs the rest of the sender's operation, which is where the drain is
+  woken.
+* **`serve(mailbox, &mut service)`** is the drain. It takes rounds from the mailbox
+  and hands each request to the service in the order queued, one at a time, so the
+  service sees one request at a time and each sender's requests in the order it sent
+  them. Identity is read off the delivery, not the lane: a mailbox has many senders
+  and one drain, and `Server::rpc` takes the `Context` per call. A request in flight
+  when the drain is aborted is answered with an error, and only that one.
+* **Backpressure.** A mailbox is built with a `Capacity`, which is always the
+  caller's to say: `Bounded(n)` makes `poll_ready` wait for a free slot (the drain
+  wakes it), `Unbounded` never does, and there is no default and no number that
+  means "no limit". The model's queue is unbounded and a full mailbox is a sender
+  that has not begun its operation, which the model reads as a stutter — so the
+  safety proofs carry over, and the liveness theorem owes progress only to
+  operations already begun. That is an argument about the mapping, not a proof.
+
+**What it does not claim.**
+
+* **Only the core is a refinement.** Verus checks `exec::MailboxCore` against the
+  model (MB10–MB11); it does not check the lock, capacity, permits, wakers or
+  notification around it, `requeue`, or that callers follow the sender's three
+  steps. Those rest on the tests (`tests/actor_mailbox.rs` and the unit tests in
+  `mailbox.rs`: many senders into a small mailbox lose nothing and keep their order,
+  a full one holds its callers back and not its queue, and an aborted drain answers
+  only the request it dropped).
+* **`serve` does not check the ownership epoch.** It hands each request to the
+  service. The fence belongs around `Server::rpc`, and `Host` does not sit behind a
+  mailbox yet.
+* **A bound is a place to deadlock, and a cycle already is.** The drain runs one
+  message at a time, so a handler waiting on an actor whose handler is waiting on it
+  holds both drains whatever the capacity. A bounded mailbox adds a way in: a sender
+  inside a handler waiting for a slot. Do not wait on another actor inside a turn
+  that another actor can be waiting on.
+* **No subscriptions.** Streaming methods are served by `jetstream_rpc`'s `run` on a
+  lane; a mailbox delivers one request and takes one response. The reply path from
+  the drain to each session is not bounded.
+
+`cargo run --example actor_basic` runs two actors, each behind its own mailbox, with
+the first calling the second.
+
 ## Verifying locally
 
 ```bash
@@ -1701,7 +2056,19 @@ ordinary rustc, verifies only `vstd`, prints *vstd's* `verification results`
 line and exits 0. It is a false green that survives a naive grep for the
 summary, because a summary is present — just not this crate's. The CI step
 therefore requires a summary emitted *after* Cargo starts compiling this
-crate.
+crate. It runs with `--no-default-features`, since `service` is a default feature
+and the proof build should not pull Jetstream and tokio in.
+
+A third job, `pmemlog proof check`, verifies the vendored persistent-memory log
+(`vendor/verified-storage/pmemlog`) the same way, and checks that the vendored tree is
+byte-for-byte Microsoft's at the pinned commit. See [`vendor/README.md`](vendor/README.md).
+
+The services and the simulated-network tests are not verified, only run:
+
+```bash
+cargo test                          # the services, tests/, and the unit tests
+cargo run --example actor_basic     # two actors behind mailboxes
+```
 
 ## Network resiliency: the model, run for real
 
@@ -1948,7 +2315,7 @@ rests on something the network does not give you. Both are findings. What it is
 *not* is a check on the proofs — those are static, and no simulation can
 contradict them. It is also not a substitute for a refinement: the coordinator
 *in `tests/`* is hand-written to match the model and nothing machine-checks that
-it does — which is exactly the gap `src/ownership/steps.rs` closes for the Jetstream
+it does — which is exactly the gap `src/ownership/steps_v.rs` closes for the Jetstream
 service in `src/ownership/service.rs`, and the reason the two coordinators are worth
 keeping side by side.
 
@@ -1957,7 +2324,7 @@ from one that passes, so `oracles_catch_an_unfenced_coordinator` runs one story
 twice with a single bit changed — the coordinator stops checking writes against
 the registry — and requires the oracles to *reject* the second run. Same
 actions, same seed, same network, same oracles; what separates them is exactly
-the check `src/ownership/exec.rs` says has to happen where the effect lands.
+the check `src/ownership/exec_v.rs` says has to happen where the effect lands.
 `oracles_catch_a_write_at_a_burned_epoch` does the same for the fencing oracle,
 on the case the others cannot see: a stale write with nothing written after it.
 `oracles_catch_an_overfencing_coordinator` is the mirror of the first: the same
@@ -1994,7 +2361,7 @@ the high-water mark has to follow.
 that attribute and would fail the build by design. The one piece of `src/` the
 simulation uses is `FenceGuard`, because it is the node-local check a real node
 performs — and watching a stale guard say yes while the coordinator says no is
-precisely the asymmetry `src/ownership/exec.rs` documents.
+precisely the asymmetry `src/ownership/exec_v.rs` documents.
 
 Where the model makes a node act, the simulation makes that node send the
 request. `tr_begin_transfer` carries `pre.live.contains(from)` — agreeing to
@@ -2089,6 +2456,9 @@ CI, with no `assume`/`admit`/`external_body`/`axiom`):
   `(ActorId, Epoch)`" and the stronger "at most one token is ever issued per
   `(ActorId, Epoch)`";
 * stale tokens surviving crash, partition and recovery confer no authority;
+* the ownership registry's record, grants included: each of its methods takes the
+  model's step and publishes the grant the model's transition publishes, and a
+  refusal is a step the model could not take (E8–E9);
 * Raymond: at most one token, routing cannot manufacture ownership, duplicate,
   reordered and arbitrarily delayed requests are safe, and token transfer
   preserves the coupling to the ownership layer;
@@ -2127,11 +2497,26 @@ CI, with no `assume`/`admit`/`external_body`/`axiom`):
   — and, lifted through every step of a run, no node's record about any peer
   ever moves backward (S1–S6); the executable merge is that rule, and a
   refutation out-ranks the accusation it answers and is itself a gossip step
-  (S7–S9);
+  (S7–S9); and the node's table is checked to learn by the model's `tr_gossip`, a
+  refutation being a second one (S10–S12);
 * the Raymond routing steps and the composed machine's coupling guards agree
   with their models in both directions — each fires exactly when the model's
   transition is enabled — and a step a layer already proved is carried by the
-  composed machine without a second proof (R15, C8–C9).
+  composed machine without a second proof (R15, C8–C9); and the routing record the
+  service keeps is checked to take the model's steps and to refuse where it cannot
+  (R16–R17), and the composed coupling's four steps over both layers' records and
+  the reconciliation debts are the composed model's (CX1–CX2);
+* the distributed actor: at most one host appends, now and across handovers (one
+  host per epoch; nothing written under a superseded epoch); each message once, in
+  the order sent, none invented; the journal is append-only and the state is a fold
+  that a handover preserves; and the executable steps agree with the model (A1–A15);
+* the actor's mailbox: nothing lost, repeated or reordered; each sender's messages
+  numbered without gaps, in the very form the actor's accept guard counts; and —
+  the first liveness theorem here — **every enqueued message is eventually
+  processed under weak fairness of the drain's and each sender's steps**, with the
+  fairness rules proved in `temporal` and both the fair run that satisfies the
+  assumption and the unfair one that shows it is needed exhibited (MB1–MB9); and the
+  executable mailbox core, whose every step is checked to be the model's (MB10–MB11).
 
 **Modelled but not proven** (present in the state machine, no theorem beyond
 invariant preservation):
@@ -2196,6 +2581,28 @@ invariant preservation):
   [SWIM](#swim-gossip-membership-bought-by-merge-rather-than-majority) for
   which half of the convergence argument that is.
 
+* **The actor's journal is assumed durable and linear, and the service's is in
+  memory.** The model has no crash that loses an accepted entry; the service's
+  journal dies with its process, so the guarantees hold for the lifetime of the
+  process and not across its death. Durability is the next layer.
+
+* **The actor proves safety; the mailbox proves delivery, but `Host` does not sit
+  behind the mailbox.** The actor's own model says nothing about a message ever being
+  offered to its host, and an out-of-order arrival is refused, not buffered.
+  `actor::mailbox` proves that a queue in front of it delivers every enqueued
+  message, in order, under a stated fairness assumption. `service::Mailbox`,
+  `Session` and `serve` run that protocol and deliver to any generated service, but
+  only the queue-and-flags core under their lock is a verified refinement (the lock,
+  capacity and wakeups are not), `serve` does not yet check the
+  ownership epoch around each call, and `Host` still keeps the actor's sent set and
+  relies on its caller to call `accept`. Subscriptions are not served through the
+  mailbox, and the reply path is not bounded. The actor's behaviour is a pure fold, so what a message *does* beyond
+  changing the state — an effect, a reply — is not modelled, and neither is what
+  an effect does if its host is fenced halfway through.
+
+* **The actor service refines the crash-free executions only**, for the reason the
+  composed service does.
+
 * **The Raymond and composed services host the global record in one process.**
   `raymond::service::Router` holds every node's entries under one lock because
   the model's `Raymond` is one struct, and the composed `Coordinator` serialises
@@ -2225,8 +2632,8 @@ invariant preservation):
   make.
 * **done, for the registry's transitions**: the refinement from the `nat`-valued
   model to an executable `u64` implementation, with the epoch-exhaustion case
-  handled, is `src/ownership/steps.rs` and `src/ownership/proofs/refinement.rs` — see rows E1 to E6.
-  What remains unrefined is the *node* side: `src/ownership/exec.rs` still offers no way
+  handled, is `src/ownership/steps_v.rs` and `src/ownership/proofs/refinement_v.rs` — see rows E1 to E6.
+  What remains unrefined is the *node* side: `src/ownership/exec_v.rs` still offers no way
   to advance a node's fence guard, only to consult it, so that no executable API
   can perform a handover the model does not;
 * the actual actor runtime: networking, persistence, and the code that obeys the
@@ -2291,7 +2698,7 @@ set of non-root nodes from pointing at each other in a cycle, off to one side of
 the real root. `ray_init` permitted it too — it forbids only a non-root pointing
 at *itself*, so `A → B`, `B → A` beside a root `C → C` satisfied it.
 
-The consequence was visible in `src/raymond/model.rs`'s own opening comment: "requests
+The consequence was visible in `src/raymond/model_t.rs`'s own opening comment: "requests
 travel hop-by-hop towards the token" is false for a node inside such a cycle,
 whose request would circle for ever. Nothing in the safety proofs depended on the
 claim, which is exactly why it went unchecked for eight review rounds.
@@ -2383,7 +2790,7 @@ and a reader who greps for `assume` should also know what `by(...)` does.
 
 ### The one exception, and it is not in `src/`
 
-`vendor/pmemlog` is [Microsoft's verified persistent-memory
+`vendor/verified-storage/pmemlog` is [Microsoft's verified persistent-memory
 log](https://github.com/microsoft/verified-storage), vendored unmodified, and it
 has six. Three are I/O primitives and a CRC computation — the code that actually
 touches the device, with nothing beneath it to verify against. **Two are
@@ -2402,11 +2809,11 @@ on top of that log is conditional on them:
 These are stated here rather than buried because the repository's rule is that
 an assumption may be *an explicit documented part of the system model* and may
 not be a way of making verification pass. These are the former; they are
-enumerated one by one in `vendor/pmemlog/README.md`; and the CI grep covers
+enumerated one by one in `vendor/README.md`; and the CI grep covers
 `src/` and not `vendor/` for exactly this reason, with the reason written into
 the workflow.
 
-Nothing in `src/` depends on `vendor/pmemlog` yet. When something does, this
+Nothing in `src/` depends on `vendor/verified-storage/pmemlog` yet. When something does, this
 section is where the conditional lives.
 
 There are also no raised solver budgets: no `#[verifier::rlimit]` anywhere. The

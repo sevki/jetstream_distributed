@@ -1,14 +1,14 @@
 //! The coordinator: the two layers, and the coupling between them.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 
 use super::refusal::{refuse, refuse_no};
 use super::Composed;
-use crate::composed::steps::{
-    acquire_under_token_step, pass_token_step, reconcile_step, seize_step,
+use crate::composed::exec::{
+    acquire_under_token, pass_token, reconcile, seize_token, ComposedError, NodeSet,
 };
 use crate::ownership::service::{EpochFloor, Event as OwnershipEvent, Offer, Ownership, Registry};
 use crate::raymond::service::{Event as RoutingEvent, Router, Routing, Standing};
@@ -28,8 +28,18 @@ struct Debts {
     /// Nodes whose privilege was seized and whose belief has not been repaired:
     /// the nodes that **owe a reconciliation**. `composed_inv` ties this set to
     /// the routing layer — every stale holder is in it.
-    seized: HashSet<u64>,
+    seized: NodeSet,
     log: Vec<Event>,
+}
+
+/// A composed step's refusal in the line protocol's alphabet: the coupling's,
+/// or one of the layers' own.
+fn refuse_composed(why: ComposedError) -> Error {
+    match why {
+        ComposedError::Coupled(why) => refuse(why),
+        ComposedError::Ray(why) => crate::raymond::service::refusal::refuse(why),
+        ComposedError::Own(why) => crate::ownership::service::refuse(why),
+    }
 }
 
 /// The two layers and the coupling between them.
@@ -80,7 +90,7 @@ impl Coordinator {
             router,
             gate: Arc::new(tokio::sync::Mutex::new(())),
             debts: Arc::new(Mutex::new(Debts {
-                seized: HashSet::new(),
+                seized: NodeSet::new(),
                 log: Vec::new(),
             })),
             roster: Arc::new(roster),
@@ -142,15 +152,9 @@ impl Coordinator {
 
     /// The nodes that owe a reconciliation, in order.
     pub fn seized(&self) -> Vec<u64> {
-        let mut v: Vec<u64> = self
-            .debts
-            .lock()
-            .expect("debts lock")
-            .seized
-            .iter()
-            .copied()
-            .collect();
+        let mut v: Vec<u64> = self.debts.lock().expect("debts lock").seized.items.clone();
         v.sort_unstable();
+        v.dedup();
         v
     }
 
@@ -169,21 +173,17 @@ impl Coordinator {
     /// reconciliation.
     pub async fn seize_token(&self, to: u64) -> Result<u64> {
         let _gate = self.gate.lock().await;
-        let from = self.router.privilege();
-        seize_step(
-            self.registry.actor_is_unowned(),
-            from,
-            self.router.privilege(),
-            to,
-            self.router.is_node(to),
-        )
-        .map_err(refuse)?;
-        self.router.seize_to(to);
-        let mut d = self.debts.lock().expect("debts lock");
-        d.seized.insert(from);
-        d.seized.remove(&to);
-        d.log.push(Event::Seized { from, to });
-        Ok(from)
+        // The step, across both layers and the debts, is
+        // `crate::composed::exec::seize_token`: `cs_seize_token`, checked.
+        self.registry.with_state(|own, _| {
+            self.router.with_state(|ray, ray_log| {
+                let mut d = self.debts.lock().expect("debts lock");
+                let from = seize_token(own, ray, &mut d.seized, to).map_err(refuse_composed)?;
+                ray_log.push(RoutingEvent::Seized { to });
+                d.log.push(Event::Seized { from, to });
+                Ok(from)
+            })
+        })
     }
 
     /// The coordinator forcing progress on the ownership layer: revoke, reassign
@@ -214,8 +214,15 @@ impl Composed for Coordinator {
     async fn acquire(&self, ctx: Context, epoch: u64) -> Result<()> {
         let _gate = self.gate.lock().await;
         let node = self.caller(&ctx)?;
-        acquire_under_token_step(self.router.privilege(), node).map_err(refuse)?;
-        self.registry.acquire(ctx, epoch).await
+        // `cs_acquire_under_token`: the ownership layer's acquire, for the node
+        // holding the privilege.
+        self.registry.with_state(|own, own_log| {
+            self.router.with_state(|ray, _| {
+                acquire_under_token(own, ray, node, epoch).map_err(refuse_composed)?;
+                own_log.push(OwnershipEvent::Acquired { node, epoch });
+                Ok(())
+            })
+        })
     }
 
     async fn write(&self, ctx: Context, epoch: u64) -> Result<u64> {
@@ -265,35 +272,31 @@ impl Composed for Coordinator {
 
     async fn assign_privilege(&self, ctx: Context) -> Result<u64> {
         let _gate = self.gate.lock().await;
-        // The coupling first, so that a refusal names it rather than whichever
-        // routing guard happens to fail too.
-        pass_token_step(self.registry.actor_is_unowned()).map_err(refuse)?;
-        let head = self.router.assign_privilege(ctx).await?;
-        // Receiving the privilege *is* the node learning the truth, so any
-        // reconciliation it owed is settled by the handover itself.
-        self.debts.lock().expect("debts lock").seized.remove(&head);
-        Ok(head)
+        let me = self.caller(&ctx)?;
+        // `cs_pass_token`: the coupling first, so that a refusal names it rather
+        // than whichever routing guard happens to fail too; and receiving the
+        // privilege *is* the node learning the truth, so any reconciliation it
+        // owed is settled by the handover itself.
+        self.registry.with_state(|own, _| {
+            self.router.with_state(|ray, ray_log| {
+                let mut d = self.debts.lock().expect("debts lock");
+                let head = pass_token(own, ray, &mut d.seized, me).map_err(refuse_composed)?;
+                ray_log.push(RoutingEvent::Passed { from: me, to: head });
+                Ok(head)
+            })
+        })
     }
 
     async fn reconcile(&self, ctx: Context) -> Result<()> {
         let _gate = self.gate.lock().await;
         let node = self.caller(&ctx)?;
-        let owes = self
-            .debts
-            .lock()
-            .expect("debts lock")
-            .seized
-            .contains(&node);
-        reconcile_step(
-            owes,
-            self.router.believes_holds(node),
-            self.router.privilege() == node,
-        )
-        .map_err(refuse)?;
-        self.router.reconcile_node(node);
-        let mut d = self.debts.lock().expect("debts lock");
-        d.seized.remove(&node);
-        d.log.push(Event::Reconciled { node });
-        Ok(())
+        // `cs_reconcile`: a node that owes one and really is stale.
+        self.router.with_state(|ray, ray_log| {
+            let mut d = self.debts.lock().expect("debts lock");
+            reconcile(ray, &mut d.seized, node).map_err(refuse_composed)?;
+            ray_log.push(RoutingEvent::Reconciled { node });
+            d.log.push(Event::Reconciled { node });
+            Ok(())
+        })
     }
 }

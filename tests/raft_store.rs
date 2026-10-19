@@ -20,10 +20,10 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
-use distributed_ownership::raft::service::{
+use jetstream_distributed::raft::service::{
     Acceptance, Appended, Ballot, Consensus, LogEntry, LogStore, MemoryLog, Peer, RecordLogStore,
 };
-use distributed_ownership::raft::store::ExecRecord;
+use jetstream_distributed::raft::store::ExecRecord;
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
 
@@ -230,7 +230,7 @@ fn nothing_is_lost_between_operations() {
     let log = RecordLogStore::new();
     let mut ops = 0;
 
-    let mut check = |l: &RecordLogStore, ops: &mut i32| {
+    let check = |l: &RecordLogStore, ops: &mut i32| {
         *ops += 1;
         assert_eq!(
             l.durable_len(),
@@ -557,7 +557,7 @@ async fn a_crash_inside_a_conflicting_append_loses_only_the_new_entry() {
     // stood when the operation began, so this is a recovery the model permits.
     let torn = log.after_crash(settled + 1);
     assert_eq!(torn.entries(), vec![e(1, 10)], "the truncation landed, the entry did not");
-    assert!(torn.entries().len() >= 1, "and nothing from before the operation was lost");
+    assert!(!torn.entries().is_empty(), "and nothing from before the operation was lost");
 
     // The leader retries and it lands.
     let restarted = peer_with(1, &torn);

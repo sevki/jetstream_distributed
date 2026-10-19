@@ -1,0 +1,3 @@
+interface:
+  display_name: "KVerus Eval"
+  short_description: "Evaluate spec modifications for semantic quality and intent preservation"

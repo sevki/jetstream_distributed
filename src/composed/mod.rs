@@ -7,13 +7,20 @@
 //!
 //! * [`model`]  — both layers as a single machine.
 //! * [`steps`]  — the coupling guards as executable functions.
+//! * [`exec`]   — the four coupled steps over the two layers' verified records
+//!   and the set of nodes that owe a reconciliation, each a `cs_*` step by
+//!   contract.
 //! * [`proofs`] — the coupling as an invariant, an end-to-end handover across
-//!                both layers, and that [`steps`] agrees with [`model`].
+//!   both layers, and that [`steps`] agrees with [`model`].
 //! * `service`  — the two layers behind one coordinator, over Jetstream RPC,
-//!                behind the `service` feature.
+//!   behind the `service` feature.
 
+#[path = "exec_v.rs"]
+pub mod exec;
+#[path = "model_t.rs"]
 pub mod model;
 pub mod proofs;
+#[path = "steps_v.rs"]
 pub mod steps;
 
 #[cfg(feature = "service")]

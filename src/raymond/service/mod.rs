@@ -12,7 +12,7 @@
 //! queue, `asked` and `using` flags, the set of requests ever sent, and where the
 //! privilege is — under one lock. That is the model's own shape (`Raymond` is
 //! one struct) and the same shape as the ownership `Registry`, which holds
-//! `System::actors` in one process: **this checks Raymond's rules, it does not
+//! `OwnershipSystem::actors` in one process: **this checks Raymond's rules, it does not
 //! distribute them.** A deployment where each node keeps only its own entries
 //! and messages carry the rest is a different system with a different failure
 //! model, and nothing in `crate::raymond::model` says it is refined by this one.
@@ -51,7 +51,7 @@
 //! [`Context::remote`] against a roster fixed at construction, and an address is
 //! not a credential.
 
-mod refusal;
+pub(crate) mod refusal;
 mod router;
 
 pub use router::{Event, Router};

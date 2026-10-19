@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 
-use distributed_ownership::swim::service::{
+use jetstream_distributed::swim::service::{
     Event, Liveness, Membership, Node, Update, MAX_UPDATES,
 };
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;

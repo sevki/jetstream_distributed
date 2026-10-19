@@ -1,0 +1,4 @@
+interface:
+  display_name: "KVerus Common Sync"
+  short_description: "Check kverus-common references against the local Verus guide"
+  default_prompt: "Use $kverus-common-sync to check whether the installed kverus-common skill is synchronized with the local Verus guide sources."

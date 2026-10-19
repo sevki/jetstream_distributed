@@ -1,0 +1,4 @@
+interface:
+  display_name: "KVerus Postprocess"
+  short_description: "Run post-proof KVerus checks and assert cleanup."
+  default_prompt: "Run KVerus postprocess checks for the current changes."

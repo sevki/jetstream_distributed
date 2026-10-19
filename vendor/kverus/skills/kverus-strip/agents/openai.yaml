@@ -1,0 +1,4 @@
+interface:
+  display_name: "KVerus Strip"
+  short_description: "Remove redundant Verus proof asserts and proof code"
+  default_prompt: "Use $kverus-strip to simplify redundant proof asserts and proof code while keeping verification passing."

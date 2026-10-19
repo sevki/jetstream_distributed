@@ -10,7 +10,7 @@ use std::{
 };
 
 use crate::{
-    compute::{Job, JobId, Resources},
+    compute::{Cpu, Instant, Job, JobId, Memory, Resources},
     host::HostId,
 };
 
@@ -192,7 +192,7 @@ pub struct Host<F> {
     jobs: BTreeMap<JobId, Job<F>>,
     state: HostState,
     class: Option<LifetimeClass>,
-    deadline: Option<Duration>,
+    deadline: Option<Instant>,
     residual: BTreeSet<JobId>,
     schedulable: bool,
 }
@@ -222,7 +222,7 @@ impl<F> Host<F> {
     /// `None` while it is empty. [`Duration::MAX`] means never, which is what a
     /// host in [`LcForever`](LifetimeClass::LcForever) has. The paper does not give
     /// the timeout; see [`Scheduler`] for the one used here.
-    pub fn deadline(&self) -> Option<Duration> {
+    pub fn deadline(&self) -> Option<Instant> {
         self.deadline
     }
     /// The jobs that were on the host at its last class change: when the host
@@ -240,7 +240,7 @@ impl<F> Host<F> {
     pub fn used(&self) -> Resources {
         self.jobs
             .values()
-            .fold(Resources { cpu: 0, memory: 0 }, |r, job| Resources {
+            .fold(Resources::ZERO, |r, job| Resources {
                 cpu: r.cpu + job.resources.cpu,
                 memory: r.memory + job.resources.memory,
             })
@@ -259,14 +259,14 @@ impl<F> Host<F> {
         self.residual.clear();
         // Scheduling availability is independently controlled by maintenance.
     }
-    fn assign_class(&mut self, class: LifetimeClass, now: Duration) {
+    fn assign_class(&mut self, class: LifetimeClass, now: Instant) {
         self.class = Some(class);
         // The paper leaves the precise timeout unspecified. Use 1.1x the
         // class upper bound, anchored at each assignment, with saturation.
         let upper = class.upper_bound();
         self.deadline = Some(now.saturating_add(upper.saturating_add(upper / 10)));
     }
-    fn refresh(&mut self, now: Duration) {
+    fn refresh(&mut self, now: Instant) {
         if self.jobs.is_empty() {
             self.reset();
             return;
@@ -279,7 +279,7 @@ impl<F> Host<F> {
         // unobserved intermediate epochs when the caller advances a long time.
         if self
             .deadline
-            .is_some_and(|d| d != Duration::MAX && now >= d)
+            .is_some_and(|d| d != Instant::MAX && now >= d)
         {
             self.assign_class(self.class.unwrap().higher(), now);
             self.residual = self.jobs.keys().copied().collect();
@@ -371,7 +371,7 @@ pub struct Scheduler<F, P> {
     predictor: P,
     hosts: BTreeMap<HostId, Host<F>>,
     locations: BTreeMap<JobId, HostId>,
-    now: Duration,
+    now: Instant,
 }
 
 impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
@@ -382,7 +382,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
             predictor,
             hosts: BTreeMap::new(),
             locations: BTreeMap::new(),
-            now: Duration::ZERO,
+            now: Instant::EPOCH,
         }
     }
     /// Every host, in order of id.
@@ -400,7 +400,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
     /// Add an empty, schedulable host. [`Error::InvalidCapacity`] if it has no
     /// CPU or no memory, [`Error::DuplicateHost`] if the id is taken.
     pub fn add_host(&mut self, id: HostId, capacity: Resources) -> Result<(), Error> {
-        if capacity.cpu == 0 || capacity.memory == 0 {
+        if capacity.cpu == Cpu::ZERO || capacity.memory == Memory::ZERO {
             return Err(Error::InvalidCapacity);
         }
         if self.hosts.contains_key(&id) {
@@ -428,7 +428,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
     /// Time only moves forward: [`Error::ClockWentBackwards`] if `now` is earlier
     /// than a time already given. A predicted exit never removes a job; only
     /// [`remove`](Self::remove) does.
-    pub fn tick(&mut self, now: Duration) -> Result<(), Error> {
+    pub fn tick(&mut self, now: Instant) -> Result<(), Error> {
         if now < self.now {
             return Err(Error::ClockWentBackwards);
         }
@@ -451,7 +451,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
     /// Place a job on the best host, at `now`, and return the host's id. Every
     /// schedulable host with room is a candidate; see
     /// [`place_with`](Self::place_with) to restrict them.
-    pub fn place(&mut self, job: Job<F>, now: Duration) -> Result<HostId, Error> {
+    pub fn place(&mut self, job: Job<F>, now: Instant) -> Result<HostId, Error> {
         self.place_with(job, now, |_, _| true)
     }
     /// As [`place`](Self::place), but only on hosts `eligible` accepts: a hard
@@ -468,13 +468,13 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
     pub fn place_with(
         &mut self,
         job: Job<F>,
-        now: Duration,
+        now: Instant,
         eligible: impl Fn(&Host<F>, &Job<F>) -> bool,
     ) -> Result<HostId, Error> {
         if self.locations.contains_key(&job.id) {
             return Err(Error::DuplicateJob);
         }
-        if job.resources.cpu == 0 && job.resources.memory == 0 {
+        if job.resources.cpu == Cpu::ZERO && job.resources.memory == Memory::ZERO {
             return Err(Error::InvalidRequest);
         }
         if job.started_at > now {
@@ -512,8 +512,8 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
         host.jobs.insert(job.id, job);
         let used = host.used();
         if host.state == HostState::Open
-            && (u128::from(used.cpu) * 10 > u128::from(host.capacity.cpu) * 9
-                || u128::from(used.memory) * 10 > u128::from(host.capacity.memory) * 9)
+            && (u128::from(used.cpu.as_millicores()) * 10 > u128::from(host.capacity.cpu.as_millicores()) * 9
+                || u128::from(used.memory.as_bytes()) * 10 > u128::from(host.capacity.memory.as_bytes()) * 9)
         {
             host.state = HostState::Recycling;
             host.residual = host.jobs.keys().copied().collect();
@@ -570,7 +570,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
         job: &Job<F>,
         class: LifetimeClass,
         remaining: Duration,
-        now: Duration,
+        now: Instant,
     ) -> (u8, u8, usize, u128, HostId) {
         let (tier, distance) = match (host.state, host.class) {
             (HostState::Recycling, Some(c)) if c > class => (0, c.index() - class.index()),
@@ -587,10 +587,10 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
         let temporal = temporal_cost(remaining.saturating_sub(host_remaining));
         let free = host.free();
         // Normalized CPU+memory slack in millionths, lower is tighter packing.
-        let waste = u128::from(free.cpu - job.resources.cpu) * 1_000_000
-            / u128::from(host.capacity.cpu)
-            + u128::from(free.memory - job.resources.memory) * 1_000_000
-                / u128::from(host.capacity.memory);
+        let waste = u128::from(free.cpu.as_millicores() - job.resources.cpu.as_millicores()) * 1_000_000
+            / u128::from(host.capacity.cpu.as_millicores())
+            + u128::from(free.memory.as_bytes() - job.resources.memory.as_bytes()) * 1_000_000
+                / u128::from(host.capacity.memory.as_bytes());
         (tier, distance, temporal, waste, host.id)
     }
     /// A job has exited: take it off its host and return it. Exits are events the
@@ -599,7 +599,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
     /// The job leaves the host's residual set before the host is refreshed, so an
     /// exit at the moment of a deadline counts as an exit and not as a timeout.
     /// [`Error::UnknownJob`] if it is not placed.
-    pub fn remove(&mut self, id: JobId, now: Duration) -> Result<Job<F>, Error> {
+    pub fn remove(&mut self, id: JobId, now: Instant) -> Result<Job<F>, Error> {
         let host_id = self.location(id).ok_or(Error::UnknownJob)?;
         if now < self.now {
             return Err(Error::ClockWentBackwards);
@@ -631,7 +631,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
     pub fn begin_drain(
         &mut self,
         id: HostId,
-        now: Duration,
+        now: Instant,
         approved: impl Fn(&Job<F>) -> bool,
     ) -> Result<Vec<JobId>, Error> {
         let host = self.hosts.get(&id).ok_or(Error::UnknownHost)?;
@@ -734,17 +734,20 @@ mod tests {
     ) -> Scheduler<EmpiricalLifetime, EmpiricalPredictor> {
         let mut scheduler = Scheduler::new(EmpiricalPredictor);
         let capacity = Resources {
-            cpu: 100,
-            memory: 100,
+            cpu: Cpu::millicores(100),
+            memory: Memory::bytes(100),
         };
         scheduler.add_host(1, capacity).unwrap();
         let job = Job {
             id: 7,
-            resources: Resources { cpu: 1, memory: 1 },
-            started_at: Duration::ZERO,
+            resources: Resources {
+                cpu: Cpu::millicores(1),
+                memory: Memory::bytes(1),
+            },
+            started_at: Instant::EPOCH,
             features: EmpiricalLifetime::new(vec![predicted], hours(1)).unwrap(),
         };
-        scheduler.place(job, Duration::ZERO).unwrap();
+        scheduler.place(job, Instant::EPOCH).unwrap();
         scheduler
     }
 
@@ -755,9 +758,9 @@ mod tests {
         let mut scheduler = scheduler_with_one_job(hours(5000));
         let host = scheduler.host(1).unwrap();
         assert_eq!(host.class(), Some(LcForever));
-        assert_eq!(host.deadline(), Some(Duration::MAX));
+        assert_eq!(host.deadline(), Some(Instant::MAX));
 
-        scheduler.tick(hours(1_000_000)).unwrap();
+        scheduler.tick(Instant::from_epoch(hours(1_000_000))).unwrap();
         let host = scheduler.host(1).unwrap();
         assert_eq!(host.class(), Some(LcForever));
         assert!(
@@ -773,17 +776,17 @@ mod tests {
         let mut scheduler = scheduler_with_one_job(hours(500));
         let host = scheduler.host(1).unwrap();
         assert_eq!(host.class(), Some(Lc4));
-        assert_eq!(host.deadline(), Some(hours(1100)));
+        assert_eq!(host.deadline(), Some(Instant::from_epoch(hours(1100))));
 
-        scheduler.tick(hours(1099)).unwrap();
+        scheduler.tick(Instant::from_epoch(hours(1099))).unwrap();
         assert_eq!(scheduler.host(1).unwrap().class(), Some(Lc4));
         assert!(scheduler.host(1).unwrap().residual().is_empty());
 
-        scheduler.tick(hours(1100)).unwrap();
+        scheduler.tick(Instant::from_epoch(hours(1100))).unwrap();
         let host = scheduler.host(1).unwrap();
         assert_eq!(host.class(), Some(LcForever));
         assert_eq!(host.residual().iter().copied().collect::<Vec<_>>(), [7]);
-        assert_eq!(host.deadline(), Some(Duration::MAX));
+        assert_eq!(host.deadline(), Some(Instant::MAX));
     }
 
     /// A job with `id`, predicted to live `predicted` more, started at zero.
@@ -899,24 +902,27 @@ mod tests {
     fn a_job_on_an_empty_host_opens_it_with_its_class_and_a_deadline() {
         let mut scheduler = Scheduler::new(EmpiricalPredictor);
         let capacity = Resources {
-            cpu: 100,
-            memory: 100,
+            cpu: Cpu::millicores(100),
+            memory: Memory::bytes(100),
         };
         scheduler.add_host(1, capacity).unwrap();
 
         let job = Job {
             id: 7,
-            resources: Resources { cpu: 1, memory: 1 },
-            started_at: Duration::ZERO,
+            resources: Resources {
+                cpu: Cpu::millicores(1),
+                memory: Memory::bytes(1),
+            },
+            started_at: Instant::EPOCH,
             // Predicted to live two more hours: LC2.
             features: EmpiricalLifetime::new(vec![hours(2)], hours(1)).unwrap(),
         };
-        assert_eq!(scheduler.place(job, Duration::ZERO), Ok(1));
+        assert_eq!(scheduler.place(job, Instant::EPOCH), Ok(1));
 
         let host = scheduler.host(1).unwrap();
         assert_eq!(host.state(), HostState::Open);
         assert_eq!(host.class(), Some(Lc2));
-        assert_eq!(host.deadline(), Some(hours(11)));
+        assert_eq!(host.deadline(), Some(Instant::from_epoch(hours(11))));
         assert_eq!(scheduler.location(7), Some(1));
     }
 }

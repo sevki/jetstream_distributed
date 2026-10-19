@@ -1,0 +1,16 @@
+[req]
+prompt = no
+distinguished_name = ca_distinguished_name
+x509_extensions = v3_ca
+
+[ca_distinguished_name]
+C = US
+ST = Test
+L = Test
+O = JetStream Test CA
+CN = JetStream Test CA
+
+[v3_ca]
+basicConstraints = critical, CA:TRUE
+keyUsage = critical, keyCertSign, cRLSign
+subjectKeyIdentifier = hash

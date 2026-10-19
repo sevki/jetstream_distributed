@@ -1,0 +1,30 @@
+[req]
+distinguished_name = server_distinguished_name
+prompt = no
+x509_extensions = v3_req
+req_extensions = req_ext
+
+[server_distinguished_name]
+C = US
+ST = Test
+L = Test
+O = JetStream
+CN = localhost
+
+[v3_req]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = @alt_names
+authorityKeyIdentifier = keyid,issuer
+
+[req_ext]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = localhost
+IP.1 = 127.0.0.1
+IP.2 = ::1

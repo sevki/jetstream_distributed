@@ -1,0 +1,15 @@
+/target
+/.cache
+/bazel-*
+/book
+/docs/crates
+book/
+docs/doc/
+.tracey/*
+.direnv/*
+.tracey/
+**/node_modules/
+dist/
+.build/
+*.pending-snap
+*.snap.new

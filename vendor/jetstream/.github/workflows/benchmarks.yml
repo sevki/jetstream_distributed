@@ -1,0 +1,32 @@
+on: [pull_request]
+name: benchmark pull requests
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  runBenchmark:
+    name: run benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Run sccache-cache only on non-release runs
+        if: github.event_name != 'release' && github.event_name != 'workflow_dispatch'
+        uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Set Rust caching env vars only on non-release runs
+        if: github.event_name != 'release' && github.event_name != 'workflow_dispatch'
+        run: |
+          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+      - name: Configure git to auto-stash on checkout
+        run: git config --global rebase.autoStash true
+      - uses: sevki/criterion-compare-action@v4
+        with:
+          defaultFeatures: true
+          features: "iroh,quic"
+          branchName: ${{ github.base_ref }}
+          # Optional. Default is `${{ github.token }}`.
+          token: ${{ secrets.GITHUB_TOKEN }}

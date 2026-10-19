@@ -1,0 +1,28 @@
+[package]
+name = "jetstream_wasm"
+version = "16.3.1"
+publish = ["crates-io"]
+edition.workspace = true
+description.workspace = true
+documentation.workspace = true
+# Spelled out, as in jetstream_rpc: rules_rust's Cargo.toml env-var
+# extractor can inherit most package fields but not `readme`, and panics.
+# This is the file the inherited value resolved to.
+readme = "../../README.md"
+repository.workspace = true
+license.workspace = true
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+bytes = "1.12.1"
+futures = "0.3"
+jetstream_macros = { version = "16.3.1", path = "../jetstream_macros" }
+jetstream_rpc = { version = "16.3.1", path = "../jetstream_rpc" }
+jetstream_wireformat = { version = "16.3.1", path = "../jetstream_wireformat" }
+js-sys = "0.3.104"
+wasm-bindgen = "0.2.127"
+
+[dev-dependencies]
+jetstream = { path = "../.." }
+wasm-bindgen-test = "0.3.78"

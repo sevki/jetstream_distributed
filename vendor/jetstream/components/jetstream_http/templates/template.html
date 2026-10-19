@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>JetStream</title>
+        <style>
+            :root { color-scheme: light dark; }
+        </style>
+    </head>
+    <body>
+        <div style="margin: auto; width: 80ch; margin-top: 2rem">
+                <div style="display: flex; gap: 1rem; align-items: center">
+                        <a href="https://jetstream.rs">
+                        <picture class="db">
+                            <source
+                                media="(prefers-color-scheme: dark)"
+                                srcset="data:image/png;base64,{% include "jetstream-dark.png.b64" %}"
+                            />
+                            <img
+                                width="64"
+                                alt="JetStream"
+                                src="data:image/png;base64,{% include "jetstream-light.png.b64" %}"
+                            />
+                        </picture>
+                        </a>
+                    <div>
+                        <a href="https://jetstream.rs" style="text-decoration: none; color: inherit">
+                            <h1 style="margin-bottom: 0">JetStream</h1>
+                        </a>
+                        <code>v{{ version }}</code>
+                    </div>
+                </div>
+            <div>
+                <p>{{ body|safe }}</p>
+            </div>
+            <small
+                style="
+                    display: flex;
+                    justify-content: space-between;
+                    flex-direction: column;
+                    align-items: center;
+                "
+            >
+                <div style="text-align: center">
+                    <p>© {{ year }} Devtools Ltd. All rights reserved.</p>
+                    Devtools Ltd is a limited company registered in England (<a
+                        href="https://find-and-update.company-information.service.gov.uk/company/16372953"
+                        >№ 16372953</a
+                    >).
+                </div>
+            </small>
+        </div>
+    </body>
+</html>

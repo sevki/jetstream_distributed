@@ -100,10 +100,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::raft::store::{apply_record, replay_exec, ExecEntry, ExecRecord};
-use crate::raft::steps::{
-    become_leader_step, follow_step, grant_vote_step, is_majority, step_down_step, timeout_step,
-    ExecRole, ExecServer, RaftOutcome, RaftRefusal,
-};
+use crate::raft::exec::{Counted, ElectRefusal, ElectionCore, VoteOutcome};
+use crate::raft::steps::{is_majority, RaftRefusal};
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
 
@@ -808,9 +806,13 @@ pub enum Event {
 // ---------------------------------------------------------------------------
 
 struct Inner {
-    server: ExecServer,
-    /// Who this server voted for in `server.current_term`.
-    voted_for: Option<u64>,
+    /// The election record: role and term, whom this server voted for in that
+    /// term, and — as a candidate — the votes it has counted, **a set**, because
+    /// `is_majority`'s precondition is that the tally does not exceed the
+    /// membership, and a list would let one enthusiastic peer vote twice.
+    /// Verified code: each method on it is a model step
+    /// (`proofs::election_core`).
+    core: ElectionCore,
     /// How many entries are committed. A count, not an index — the same choice
     /// the model makes, and for the same reason.
     commit: u64,
@@ -818,11 +820,6 @@ struct Inner {
     /// each is known to hold. This is what a majority is counted over when the
     /// commit point advances.
     match_len: HashMap<u64, u64>,
-    /// Votes collected for this server's own candidacy at
-    /// `server.current_term`. A **set**, because `is_majority`'s precondition
-    /// is that the tally does not exceed the membership, and a list would let
-    /// one enthusiastic peer vote twice.
-    tally: HashSet<u64>,
     log: Vec<Event>,
 }
 
@@ -866,12 +863,7 @@ impl Peer {
                 // A recovered server is always a follower. Raft has no durable
                 // role, and inventing one would let a restarted leader go on
                 // leading a term the cluster has moved past.
-                server: ExecServer {
-                    role: ExecRole::Follower,
-                    current_term: recovered.current_term,
-                },
-                voted_for: recovered.voted_for,
-                tally: HashSet::new(),
+                core: ElectionCore::recovered(recovered.current_term, recovered.voted_for),
                 // Volatile, per figure 2: a recovered server recomputes what is
                 // committed from the leader rather than trusting a number it
                 // wrote down. Starting at 0 costs a round trip and cannot be
@@ -938,12 +930,33 @@ impl Peer {
     /// go backwards is a thing no later reader can reason about. Asking the
     /// store settles it immediately: whatever is really there is adopted if it
     /// is ahead, and the caller still gets its error.
-    fn persist(&self, g: &mut Inner, term: u64, voted_for: Option<u64>) -> Result<()> {
-        let Err(e) = self.store.save(Persisted { current_term: term, voted_for }) else {
-            return Ok(());
-        };
+    ///
+    /// The core calls this closure with the term and vote about to be adopted and
+    /// moves only if it returns `true`; what the store complained of is left in
+    /// `failed`, for [`Peer::down`] to turn into the refusal.
+    fn saver<'a>(
+        &'a self,
+        failed: &'a mut Option<io::Error>,
+    ) -> impl FnOnce(u64, Option<u64>) -> bool + 'a {
+        move |current_term, voted_for| {
+            match self.store.save(Persisted { current_term, voted_for }) {
+                Ok(()) => true,
+                Err(e) => {
+                    *failed = Some(e);
+                    false
+                }
+            }
+        }
+    }
+
+    /// The refusal for a decision the store would not take: re-read it, as above,
+    /// and say so.
+    fn down(&self, g: &mut Inner, term: u64, failed: Option<io::Error>) -> Error {
         self.resync(g);
-        Err(refuse_down(&format!("could not persist term {term}: {e}")))
+        match failed {
+            Some(e) => refuse_down(&format!("could not persist term {term}: {e}")),
+            None => refuse_down(&format!("could not persist term {term}")),
+        }
     }
 
     /// Adopt whatever the store holds, if it is ahead of this server.
@@ -956,16 +969,14 @@ impl Peer {
         let Ok(found) = self.store.load() else {
             return;
         };
-        if found.current_term <= g.server.current_term {
+        if found.current_term <= g.core.server.current_term {
             return;
         }
-        let from_term = g.server.current_term;
+        let from_term = g.core.server.current_term;
         // A follower, for the same reason recovery produces one: there is no
         // durable role, and a term this server did not reach under its own
         // power is not a term it can be leading.
-        g.server = ExecServer { role: ExecRole::Follower, current_term: found.current_term };
-        g.voted_for = found.voted_for;
-        g.tally = HashSet::new();
+        g.core = ElectionCore::recovered(found.current_term, found.voted_for);
         g.log.push(Event::SteppedDown { from_term, to_term: found.current_term });
     }
 
@@ -978,8 +989,8 @@ impl Peer {
     pub fn standing_now(&self) -> Standing {
         let g = self.inner.lock().expect("peer lock");
         Standing {
-            term: g.server.current_term,
-            leading: matches!(g.server.role, ExecRole::Leader),
+            term: g.core.server.current_term,
+            leading: g.core.leads(),
         }
     }
 
@@ -990,19 +1001,19 @@ impl Peer {
     /// permanent election.
     pub fn stand_for_election(&self) -> Result<u64> {
         let mut g = self.inner.lock().expect("peer lock");
-        let next = match timeout_step(g.server) {
-            RaftOutcome::Moved(next) => next,
-            RaftOutcome::Refused(why) => return Err(refuse(why)),
-        };
-        let term = next.current_term;
         // Durable before anything else, and the self-vote goes down with the
         // term: they are one decision, and a server that recorded the term
-        // without the vote could vote again in it after a restart.
-        self.persist(&mut g, term, Some(self.me))?;
-        g.server = next;
-        g.voted_for = Some(self.me);
-        g.tally = HashSet::new();
-        g.tally.insert(self.me);
+        // without the vote could vote again in it after a restart. The core
+        // hands both to the store and moves only if it took them.
+        let mut failed = None;
+        let term = match g.core.stand(self.me, self.saver(&mut failed)) {
+            Ok(term) => term,
+            Err(ElectRefusal::Refused(why)) => return Err(refuse(why)),
+            Err(ElectRefusal::Down) => {
+                let attempted = g.core.server.current_term.saturating_add(1);
+                return Err(self.down(&mut g, attempted, failed));
+            }
+        };
         g.log.push(Event::Stood { term });
 
         // **A cluster of one is already a majority of itself.** No ballot can
@@ -1014,8 +1025,10 @@ impl Peer {
             .entries
             .len()
             .map_err(|e| refuse_down(&format!("could not read the log: {e}")))?;
-        let votes = g.tally.len() as u64;
-        self.take_the_term(&mut g, term, votes, my_len)?;
+        // Counting the self-vote again is idempotent, and is what asks the core
+        // whether one vote is already a majority.
+        let counted = g.core.count(self.me, term, self.members());
+        self.after_count(&mut g, counted, term, my_len);
         Ok(term)
     }
 
@@ -1047,7 +1060,7 @@ impl Peer {
                 // Nothing to count, and possibly a term to learn. `step_down_to`
                 // refuses a term that is not ahead, which is the common case.
                 self.step_down_to(&mut g, t)?;
-                return Ok(matches!(g.server.role, ExecRole::Leader));
+                return Ok(g.core.leads());
             },
         };
         if granted != term {
@@ -1059,21 +1072,21 @@ impl Peer {
             .entries
             .len()
             .map_err(|e| refuse_down(&format!("could not read the log: {e}")))?;
-        if g.server.current_term != term {
-            // A vote for a term this server has left. Not an error on anyone's
-            // part — it is what a reply delayed past a new election looks like
-            // — but it must not be counted, or a stale ballot would elect
-            // somebody in a term it was never cast for.
-            return Ok(matches!(g.server.role, ExecRole::Leader));
-        }
-        g.tally.insert(from);
-        g.log.push(Event::Counted { term, from });
-
+        // A vote for a term this server has left is not counted. Not an error on
+        // anyone's part — it is what a reply delayed past a new election looks
+        // like — but a stale ballot must not elect somebody in a term it was
+        // never cast for. The core decides, and says whether it counted.
+        //
         // Every tallied voter is a member and the set holds each at most once,
         // so the count cannot exceed the membership — which is exactly
-        // `is_majority`'s precondition.
-        let votes = g.tally.len() as u64;
-        self.take_the_term(&mut g, term, votes, my_len)
+        // `is_majority`'s precondition, and the core checks it rather than
+        // assuming it.
+        let counted = g.core.count(from, term, self.members());
+        if !counted.counted {
+            return Ok(counted.leads);
+        }
+        g.log.push(Event::Counted { term, from });
+        Ok(self.after_count(&mut g, counted, term, my_len))
     }
 
     /// Become leader of `term` if `votes` is a majority, and report whether
@@ -1093,22 +1106,18 @@ impl Peer {
     /// refuses because the role is no longer `Candidate`, and reporting that as
     /// "does not lead" would tell a caller draining its vote replies that it
     /// had lost an election it won.
-    fn take_the_term(&self, g: &mut Inner, term: u64, votes: u64, my_len: u64) -> Result<bool> {
-        let has_quorum = is_majority(votes, self.members());
-        match become_leader_step(g.server, term, has_quorum) {
-            RaftOutcome::Moved(next) => {
-                g.server = next;
-                g.match_len = HashMap::new();
-                // A leader holds its own whole log, which is where the
-                // replication tally starts from.
-                g.match_len.insert(self.me, my_len);
-                g.log.push(Event::Led { term, votes });
-                Ok(true)
-            },
-            // Not a majority yet, or not standing any more — and the second of
-            // those includes already having won.
-            RaftOutcome::Refused(_) => Ok(matches!(g.server.role, ExecRole::Leader)),
+    fn after_count(&self, g: &mut Inner, counted: Counted, term: u64, my_len: u64) -> bool {
+        if counted.won {
+            g.match_len = HashMap::new();
+            // A leader holds its own whole log, which is where the
+            // replication tally starts from.
+            g.match_len.insert(self.me, my_len);
+            let votes = g.core.tally.len() as u64;
+            g.log.push(Event::Led { term, votes });
         }
+        // Not a majority yet, or not standing any more — and the second of
+        // those includes already having won.
+        counted.leads
     }
 
     /// **A client command**, appended by a leader at its own term.
@@ -1122,10 +1131,10 @@ impl Peer {
         // must not be separable, or two concurrent appends both read the same
         // length and one of them is wrong about where its entry went.
         let mut g = self.inner.lock().expect("peer lock");
-        if !matches!(g.server.role, ExecRole::Leader) {
+        if !g.core.leads() {
             return Err(refuse_no("not the leader"));
         }
-        let term = g.server.current_term;
+        let term = g.core.server.current_term;
         let len = self
             .entries
             .append(LogEntry { term, value })
@@ -1149,10 +1158,10 @@ impl Peer {
             return Err(refuse_err("no such server"));
         }
         let mut g = self.inner.lock().expect("peer lock");
-        if !matches!(g.server.role, ExecRole::Leader) {
+        if !g.core.leads() {
             return Err(refuse_no("not the leader"));
         }
-        let term = g.server.current_term;
+        let term = g.core.server.current_term;
         let best = g.match_len.get(&from).copied().unwrap_or(0);
         if len > best {
             g.match_len.insert(from, len);
@@ -1188,7 +1197,7 @@ impl Peer {
     pub fn observe_standing(&self, seen: Standing) -> Result<bool> {
         let mut g = self.inner.lock().expect("peer lock");
         self.step_down_to(&mut g, seen.term)?;
-        Ok(matches!(g.server.role, ExecRole::Leader))
+        Ok(g.core.leads())
     }
 
     /// **Read a follower's reply to `append_entries`.**
@@ -1233,8 +1242,8 @@ impl Peer {
                     // was accepted at, and this server is entitled to count it
                     // only against the term it is in now — the log of any term in
                     // between may have been rewritten.
-                    if g.server.current_term != ack.term
-                        || !matches!(g.server.role, ExecRole::Leader)
+                    if g.core.server.current_term != ack.term
+                        || !g.core.leads()
                     {
                         // An acknowledgement of a log this server no longer has,
                         // or one it is no longer entitled to count.
@@ -1257,19 +1266,19 @@ impl Peer {
     /// any RPC: *"if RPC request or response contains term T > currentTerm, set
     /// currentTerm = T, convert to follower"*.
     fn step_down_to(&self, g: &mut Inner, term: u64) -> Result<()> {
-        let next = match step_down_step(g.server, term) {
-            RaftOutcome::Moved(next) => next,
-            // Not actually higher; nothing to do.
-            RaftOutcome::Refused(_) => return Ok(()),
-        };
-        let from_term = g.server.current_term;
-        // The vote is cleared as the term advances, and both go down together.
-        self.persist(g, term, None)?;
-        g.server = next;
-        g.voted_for = None;
-        g.tally = HashSet::new();
-        g.log.push(Event::SteppedDown { from_term, to_term: term });
-        Ok(())
+        let from_term = g.core.server.current_term;
+        // The vote is cleared as the term advances, and both go down together:
+        // the core hands them to the store and moves only if it took them. A
+        // term that is not actually higher is nothing to do.
+        let mut failed = None;
+        match g.core.step_down(term, self.saver(&mut failed)) {
+            Ok(true) => {
+                g.log.push(Event::SteppedDown { from_term, to_term: term });
+                Ok(())
+            }
+            Ok(false) => Ok(()),
+            Err(_) => Err(self.down(g, term, failed)),
+        }
     }
 
     /// **Stop standing, because somebody else won the term you are standing
@@ -1289,10 +1298,8 @@ impl Peer {
     ///
     /// A leader is left alone; [`crate::raft::steps::follow_fires`] says why.
     fn yield_at(&self, g: &mut Inner, term: u64) {
-        if let RaftOutcome::Moved(next) = follow_step(g.server, term) {
-            let from_term = g.server.current_term;
-            g.server = next;
-            g.tally = HashSet::new();
+        let from_term = g.core.server.current_term;
+        if g.core.yield_to(term) {
             g.log.push(Event::SteppedDown { from_term, to_term: term });
         }
     }
@@ -1326,10 +1333,7 @@ impl Consensus for Peer {
         // restricts elections rather than the other way round.
         let up_to_date =
             last_term > my_last_term || (last_term == my_last_term && last_index >= my_len);
-        if !up_to_date {
-            g.log.push(Event::RefusedVote { term, to: candidate });
-            return Ok(Ballot::Refused(g.server.current_term));
-        }
+        // A log that is not up to date is refused by the core, with the rest.
 
         // Re-granting the *same* vote to the *same* candidate is a
         // retransmission, not a second vote.
@@ -1342,25 +1346,24 @@ impl Consensus for Peer {
         // `tr_issue_grant` is a repeat of an earlier grant in the ownership
         // model, and refusing it instead would lose a vote to any dropped
         // packet.
-        if g.server.current_term == term && g.voted_for == Some(candidate) {
-            return Ok(Ballot::Granted(term));
-        }
+        let repeat = g.core.server.current_term == term && g.core.voted_for == Some(candidate);
 
-        let already_voted = g.server.current_term == term && g.voted_for.is_some();
-        match grant_vote_step(g.server, term, already_voted) {
-            RaftOutcome::Moved(next) => {
-                // Decide, persist, *then* reply. A server that replies first and
-                // dies has voted twice in one term as far as the cluster is
-                // concerned, and two candidates can then each hold a majority.
-                self.persist(&mut g, term, Some(candidate))?;
-                g.server = next;
-                g.voted_for = Some(candidate);
-                g.log.push(Event::Granted { term, to: candidate });
+        // Decide, persist, *then* reply. A server that replies first and dies has
+        // voted twice in one term as far as the cluster is concerned, and two
+        // candidates can then each hold a majority. The core persists before it
+        // moves, and answers a repeat without touching the store.
+        let mut failed = None;
+        match g.core.grant(candidate, term, up_to_date, self.saver(&mut failed)) {
+            Ok(VoteOutcome::Granted) => {
+                if !repeat {
+                    g.log.push(Event::Granted { term, to: candidate });
+                }
                 Ok(Ballot::Granted(term))
             }
-            RaftOutcome::Refused(_) => {
+            Err(_) => Err(self.down(&mut g, term, failed)),
+            Ok(VoteOutcome::Refused) => {
                 g.log.push(Event::RefusedVote { term, to: candidate });
-                Ok(Ballot::Refused(g.server.current_term))
+                Ok(Ballot::Refused(g.core.server.current_term))
             }
         }
     }
@@ -1397,9 +1400,9 @@ impl Consensus for Peer {
         self.step_down_to(&mut g, term)?;
 
         // A stale leader is refused and told the current term.
-        if term < g.server.current_term {
+        if term < g.core.server.current_term {
             g.log.push(Event::RefusedAppend { term, prefix });
-            return Ok(Appended::Rejected(g.server.current_term));
+            return Ok(Appended::Rejected(g.core.server.current_term));
         }
 
         // The term is this server's own, so the sender won it: a candidate
@@ -1419,7 +1422,7 @@ impl Consensus for Peer {
         };
         if !agrees {
             g.log.push(Event::RefusedAppend { term, prefix });
-            return Ok(Appended::Rejected(g.server.current_term));
+            return Ok(Appended::Rejected(g.core.server.current_term));
         }
 
         // **Delete the suffix only if the entry there conflicts.** Figure 2's
@@ -1473,10 +1476,10 @@ impl Consensus for Peer {
         g.log.push(Event::Accepted { term, prefix, len: new_len });
         // The term this follower accepted at, which is `term`: `follow_step`
         // refuses anything behind and steps up to anything ahead, so by here
-        // `g.server.current_term == term`. Stating it from the server's own
+        // `g.core.server.current_term == term`. Stating it from the server's own
         // record rather than from the argument, so the reply cannot claim a term
         // the follower is not actually in.
-        Ok(Appended::Accepted(Acceptance { term: g.server.current_term, len: new_len }))
+        Ok(Appended::Accepted(Acceptance { term: g.core.server.current_term, len: new_len }))
     }
 
     async fn heartbeat(&self, ctx: Context, term: u64, leader_commit: u64) -> Result<Standing> {
@@ -1496,15 +1499,15 @@ impl Consensus for Peer {
         // And it carries the commit point for the same reason an append does.
         // A stale leader's is ignored: its term lost, and so did what it
         // believed was decided.
-        if term == g.server.current_term {
+        if term == g.core.server.current_term {
             let learned = if leader_commit < my_len { leader_commit } else { my_len };
             if learned > g.commit {
                 g.commit = learned;
             }
         }
         Ok(Standing {
-            term: g.server.current_term,
-            leading: matches!(g.server.role, ExecRole::Leader),
+            term: g.core.server.current_term,
+            leading: g.core.leads(),
         })
     }
 
@@ -1514,8 +1517,8 @@ impl Consensus for Peer {
         }
         let g = self.inner.lock().expect("peer lock");
         Ok(Standing {
-            term: g.server.current_term,
-            leading: matches!(g.server.role, ExecRole::Leader),
+            term: g.core.server.current_term,
+            leading: g.core.leads(),
         })
     }
 }

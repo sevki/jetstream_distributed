@@ -13,6 +13,8 @@
 //! * [`wire`]    — the record encoding, and what a torn write leaves behind.
 //! * [`proofs`]  — Election Safety, a run in which an election happens, and
 //!   what one replication step gives you.
+//! * [`exec`]    — a server's election record (role, term, vote, tally) as
+//!   verified code: each method is an election step by contract.
 //! * `service`   — the protocol over Jetstream RPC, behind the `service`
 //!   feature.
 //!
@@ -20,6 +22,7 @@
 //! Machine Safety are not.** [`model`]'s docs say exactly where that line falls
 //! and why it is where it is.
 
+pub mod exec;
 pub mod model;
 pub mod proofs;
 pub mod steps;

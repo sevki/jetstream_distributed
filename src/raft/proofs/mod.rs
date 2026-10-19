@@ -2,6 +2,7 @@
 
 pub mod commit;
 pub mod election;
+pub mod election_core;
 pub mod history;
 pub mod log;
 pub mod persistence;

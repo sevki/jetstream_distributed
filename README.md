@@ -262,6 +262,8 @@ verifying, the build fails.
 | C9 | **An election actually happens.** A concrete three-server cluster walked from initialisation through a real election, exported with every step named, so C1 is not a safety property of a protocol that never elects anybody | `raft::proofs::scenario::scenario_a_leader_is_elected` | none: the cluster is exhibited |
 | C10 | **The election steps refine the model**, in both directions: each executable step fires exactly when the model's transition is enabled, and lands where the model lands | `raft::proofs::refinement::theorem_timeout_step_refines_tr_timeout`, `..._grant_vote_...`, `..._become_leader_...`, `..._step_down_...`, and the `..._refuses_exactly_when_disabled` for each | the couplings, tabulated in `raft::proofs::refinement`'s module docs |
 | C11 | **The `u64` tally answers the model's question about the set.** `is_majority` computes `votes + votes > members` with no multiplication to overflow and no subtraction that can go below zero; this is what makes that the same question as `is_quorum` | `raft::steps::is_majority`, `raft::proofs::refinement::theorem_majority_count_is_a_quorum`, `theorem_a_tally_fits_in_the_membership` | that the tally does not double-count a voter and the membership count is not stale — neither of which a step function can check, so both are named |
+| CE1 | **The election record is the model.** `exec::ElectionCore` — a server's role and term, whom it voted for in that term, and the votes it has counted — takes the model's step at every method: `stand` is `tr_timeout` (the next term, a self-vote, a tally of one); a fresh `grant` is `tr_grant_vote`; counting a vote that makes a majority of voters who each voted is `tr_become_leader`; `step_down` is `tr_step_down`, and the vote and tally leave with the old term; `yield_to` is the role change `tr_append_entries` makes on a candidate. The relation (`stands_for`) is the cluster's role and term, **the vote** (the core's `voted_for` is exactly `has_voted(c, n, term)` — the equality `grant_vote_step`'s `already_voted` stands for), **the tally** (a subset of the voters for this candidacy — `has_quorum ⇒ won_election`), and that no vote by this server is ahead of its term | `raft::proofs::election_core::theorem_stand_is_tr_timeout`, `theorem_grant_is_tr_grant_vote`, `theorem_a_won_count_is_tr_become_leader`, `theorem_step_down_is_tr_step_down`, `theorem_yield_is_the_append_role_change`, `lemma_already_voted_is_has_voted` | `stands_for`; a counted ballot was a vote that was cast (receiving a `Granted` for this term supplies it); the candidate's log is up to date, supplied by the caller's comparison |
+| CE2 | **A refused election step is one the model could not take.** A refused `stand`, `grant` or `step_down`, and a count that does not win, are steps the model's transition is not enabled for, in any post-state; a refusal changes neither the term, the vote nor the tally. The retransmission of a vote already given is the one answer that is outside the model's transition by design — a repeat of an earlier reply, the model's `votes` being a set. A refusal because the `u64` term ran out is the one the model does not have, and says so | `raft::proofs::election_core::theorem_refused_stand_is_disabled`, `theorem_refused_grant_is_disabled`, `theorem_a_lost_count_is_disabled`, `theorem_a_refused_step_down_is_disabled` | `stands_for` |
 | C12 | **Elections do not touch logs, and neither does committing.** Standing, voting, winning and standing down change who a server thinks it is; advancing the commit point is a claim about how much of the log is decided, not a change to it | `raft::proofs::log::theorem_elections_do_not_touch_logs`, `theorem_committing_does_not_touch_the_log` | none |
 | C13 | **Leader Append-Only.** A server that is a leader before and after a step has only gained entries — everything it had, it still has, in the same places. This is where Election Safety buys something concrete: the only transition that shortens a log makes its receiver a follower, so a server that is a leader on both sides was not the receiver | `raft::proofs::log::theorem_leader_append_only` | none |
 | C14 | **A client command is stamped with the term of the leader that accepted it**, and appended at the end. The term on an entry names the leader that made it, because Election Safety says there was only one leader of that term | `raft::proofs::log::theorem_client_request_stamps_the_leaders_term` | none |
@@ -1217,6 +1219,17 @@ Two limitations, stated rather than assumed away:
 
 ### The consensus service
 
+**The election record is verified code; the log, the commit point and the shell
+are not (CE1–CE2).** `Peer` keeps an `exec::ElectionCore` behind its lock — role,
+term, whom it voted for, and the votes it has counted — and `stand_for_election`,
+the vote handling in `request_vote`, `step_down_to`, `yield_at` and the tally in
+`count_ballot` all go through it, so each is the model's step by contract and each
+refusal a step the model could not take. What is not proved: the log and the
+up-to-date comparison (an argument to the core), the commit point and replication
+progress (`record_match` and the figure-8 rule are plain Rust), the roster, the
+lock, the audit log, and the durable store — the core calls `persist` with the term
+and vote before it moves, and that order is the code's, not a theorem.
+
 `src/raft/service.rs` serves it: `request_vote` with the up-to-date comparison,
 `append_entries` with the consistency check and the truncation, `heartbeat`,
 `standing`. As in the ownership service, **no method takes a server number** —
@@ -1581,11 +1594,13 @@ jetstream_distributed/
 │   ├── raft/               consensus: terms, votes, quorums, the log
 │   │   ├── model.rs        state space + transition relation
 │   │   ├── steps.rs        the election decisions as executable u64 functions
+│   │   ├── exec.rs         ElectionCore: role, term, vote and tally as verified code, one method per step
 │   │   ├── store.rs        a log that truncates, on a device that cannot
 │   │   ├── wire.rs         the record encoding, and what a torn write leaves
 │   │   ├── service.rs      the protocol over Jetstream RPC   [feature = "service"]
 │   │   └── proofs/
 │   │       ├── election.rs     Election Safety, via quorum intersection
+│   │       ├── election_core.rs the election record takes the model's steps, vote and tally included
 │   │       ├── history.rs      the ghost record, and Log Matching out of it
 │   │       ├── log.rs          what one replication step gives you (and what it does not)
 │   │       ├── terms.rs        term structure, entry durability, the election restriction

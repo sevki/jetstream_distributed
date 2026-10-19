@@ -8,12 +8,12 @@ use std::sync::{Arc, Mutex};
 use super::refusal::{refuse, refuse_no};
 use super::Composed;
 use crate::composed::exec::{
-    acquire_under_token, pass_token, reconcile, seize_token, ComposedError, NodeSet,
+    acquire_under_token, pass_token, reconcile, seize_token, ComposedError,
 };
 use crate::ownership::service::{EpochFloor, Event as OwnershipEvent, Offer, Ownership, Registry};
 use crate::raymond::service::{Event as RoutingEvent, Router, Routing, Standing};
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
-use crate::host::HostId;
+use crate::host::{HostId, HostSet};
 use jetstream::prelude::*;
 
 /// What the coordinator did on its own account. The layers keep their own logs.
@@ -29,7 +29,7 @@ struct Debts {
     /// Nodes whose privilege was seized and whose belief has not been repaired:
     /// the nodes that **owe a reconciliation**. `composed_inv` ties this set to
     /// the routing layer — every stale holder is in it.
-    seized: NodeSet,
+    seized: HostSet,
     log: Vec<Event>,
 }
 
@@ -91,7 +91,7 @@ impl Coordinator {
             router,
             gate: Arc::new(tokio::sync::Mutex::new(())),
             debts: Arc::new(Mutex::new(Debts {
-                seized: NodeSet::new(),
+                seized: HostSet::new(),
                 log: Vec::new(),
             })),
             roster: Arc::new(roster),
@@ -153,9 +153,9 @@ impl Coordinator {
 
     /// The nodes that owe a reconciliation, in order.
     pub fn seized(&self) -> Vec<HostId> {
-        let mut v: Vec<HostId> = self.debts.lock().expect("debts lock").seized.items.clone();
+        let mut v: Vec<HostId> =
+            self.debts.lock().expect("debts lock").seized.as_std().iter().copied().collect();
         v.sort_unstable();
-        v.dedup();
         v
     }
 

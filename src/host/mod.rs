@@ -8,3 +8,8 @@ trait Lookup {
     type Item;
     fn lookup(&self, host_id: HostId) -> Option<&Self::Item>;
 }
+
+#[path = "set_v.rs"]
+pub mod set;
+
+pub use set::HostSet;

@@ -25,7 +25,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::host::{HostId, HostSet};
 
 use crate::composed::exec::*;
 use crate::composed::model::*;
@@ -47,7 +47,7 @@ verus! {
 pub open spec fn stands_for_composed(
     own: RegistryCore,
     ray: RayTable,
-    seized: NodeSet,
+    seized: HostSet,
     c: Composed,
 ) -> bool {
     &&& stands_for(own, c.own, c.actor)
@@ -60,8 +60,8 @@ pub proof fn theorem_pass_token_is_cs_pass_token(
     own: RegistryCore,
     ray: RayTable,
     ray2: RayTable,
-    seized: NodeSet,
-    seized2: NodeSet,
+    seized: HostSet,
+    seized2: HostSet,
     c: Composed,
     me: HostId,
     head: HostId,
@@ -87,7 +87,7 @@ pub proof fn theorem_pass_token_is_cs_pass_token(
 pub proof fn theorem_refused_pass_token_is_disabled(
     own: RegistryCore,
     ray: RayTable,
-    seized: NodeSet,
+    seized: HostSet,
     c: Composed,
     post: Composed,
     me: HostId,
@@ -108,8 +108,8 @@ pub proof fn theorem_seize_token_is_cs_seize_token(
     own: RegistryCore,
     ray: RayTable,
     ray2: RayTable,
-    seized: NodeSet,
-    seized2: NodeSet,
+    seized: HostSet,
+    seized2: HostSet,
     c: Composed,
     from: HostId,
     to: HostId,
@@ -134,7 +134,7 @@ pub proof fn theorem_seize_token_is_cs_seize_token(
 pub proof fn theorem_refused_seize_token_is_disabled(
     own: RegistryCore,
     ray: RayTable,
-    seized: NodeSet,
+    seized: HostSet,
     c: Composed,
     post: Composed,
     to: HostId,
@@ -154,7 +154,7 @@ pub proof fn theorem_acquire_under_token_is_cs_acquire_under_token(
     own: RegistryCore,
     own2: RegistryCore,
     ray: RayTable,
-    seized: NodeSet,
+    seized: HostSet,
     c: Composed,
     node: HostId,
     epoch: u64,
@@ -186,7 +186,7 @@ pub proof fn theorem_acquire_under_token_is_cs_acquire_under_token(
 pub proof fn theorem_acquire_without_the_privilege_is_disabled(
     own: RegistryCore,
     ray: RayTable,
-    seized: NodeSet,
+    seized: HostSet,
     c: Composed,
     post: Composed,
     node: HostId,
@@ -204,8 +204,8 @@ pub proof fn theorem_reconcile_is_cs_reconcile(
     own: RegistryCore,
     ray: RayTable,
     ray2: RayTable,
-    seized: NodeSet,
-    seized2: NodeSet,
+    seized: HostSet,
+    seized2: HostSet,
     c: Composed,
     node: HostId,
 )
@@ -227,7 +227,7 @@ pub proof fn theorem_reconcile_is_cs_reconcile(
 pub proof fn theorem_refused_reconcile_is_disabled(
     own: RegistryCore,
     ray: RayTable,
-    seized: NodeSet,
+    seized: HostSet,
     c: Composed,
     post: Composed,
     node: HostId,

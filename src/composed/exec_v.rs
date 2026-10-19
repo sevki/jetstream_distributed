@@ -12,7 +12,7 @@
 //!
 //! The two layers live behind their own locks in the service, and the coordinator
 //! takes both, in one fixed order, behind its own gate. A function over
-//! `&mut RayTable`, `&mut NodeSet` and `&RegistryCore` is what it can call with
+//! `&mut RayTable`, `&mut HostSet` and `&RegistryCore` is what it can call with
 //! the guards it holds, and what the proofs can say about without a struct that
 //! owns both.
 //!
@@ -39,7 +39,7 @@ use crate::composed::model::*;
 use crate::composed::proofs::refinement::*;
 use crate::composed::steps::*;
 use crate::ownership::fencing::*;
-use crate::host::HostId;
+use crate::host::{HostId, HostSet};
 use crate::ownership::registry::*;
 use crate::ownership::spec::*;
 use crate::ownership::steps::*;
@@ -49,202 +49,6 @@ use crate::raymond::proofs::refinement::*;
 use crate::raymond::steps::*;
 
 verus! {
-
-/// A set of nodes. The composed machine's `seized`: the nodes that owe a
-/// reconciliation.
-pub struct NodeSet {
-    /// The members, possibly more than once.
-    pub items: Vec<HostId>,
-}
-
-impl View for NodeSet {
-    type V = Set<HostId>;
-
-    open spec fn view(&self) -> Set<HostId> {
-        self.items@.to_set()
-    }
-}
-
-/// A node is in the set exactly when it is among the items.
-pub proof fn lemma_in_items(items: Seq<HostId>, n: HostId)
-    ensures
-        items.to_set().contains(n) <==> exists|i: int|
-            0 <= i < items.len() && items[i] == n,
-{
-    let m = items;
-    m.to_set_ensures();
-    if exists|i: int| 0 <= i < items.len() && items[i] == n {
-        let i = choose|i: int| 0 <= i < items.len() && items[i] == n;
-        assert(m[i] == n);
-        assert(m.contains(n));
-    }
-    if m.contains(n) {
-        let i = choose|i: int| 0 <= i < m.len() && m[i] == n;
-        assert(items[i] == n);
-    }
-}
-
-impl NodeSet {
-    /// The empty set.
-    pub fn new() -> (s: NodeSet)
-        ensures
-            forall|n: HostId| !s@.contains(n),
-    {
-        let s = NodeSet { items: Vec::new() };
-        proof {
-            assert forall|n: HostId| !s@.contains(n) by {
-                lemma_in_items(s.items@, n);
-            }
-        }
-        s
-    }
-
-    /// Whether `x` is in the set.
-    pub fn contains(&self, x: HostId) -> (r: bool)
-        ensures
-            r == self@.contains(x),
-    {
-        let mut i: usize = 0;
-        while i < self.items.len()
-            invariant
-                i <= self.items@.len(),
-                forall|k: int| 0 <= k < i ==> self.items@[k] != x,
-            decreases self.items@.len() - i,
-        {
-            if self.items[i] == x {
-                proof {
-                    lemma_in_items(self.items@, x);
-                    assert(self.items@[i as int] == x);
-                }
-                return true;
-            }
-            i += 1;
-        }
-        proof {
-            lemma_in_items(self.items@, x);
-            if self@.contains(x) {
-                let k = choose|k: int| 0 <= k < self.items@.len() && self.items@[k] == x;
-                assert(self.items@[k] == x);
-            }
-        }
-        false
-    }
-
-    /// Add `x`.
-    pub fn insert(&mut self, x: HostId)
-        ensures
-            final(self)@ == old(self)@.insert(x),
-    {
-        let ghost before = self.items@;
-        if !self.contains(x) {
-            self.items.push(x);
-        }
-        proof {
-            let after = self.items@;
-            assert forall|n: HostId| self@.contains(n) == old(self)@.insert(x).contains(n) by {
-                lemma_in_items(before, n);
-                lemma_in_items(after, n);
-                if n == x {
-                    lemma_in_items(before, x);
-                    if !old(self)@.contains(x) {
-                        assert(after[after.len() - 1] == x);
-                    }
-                } else {
-                    if self@.contains(n) {
-                        let k = choose|k: int| 0 <= k < after.len() && after[k] == n;
-                        assert(k < before.len());
-                    }
-                    if old(self)@.contains(n) {
-                        let k = choose|k: int| 0 <= k < before.len() && before[k] == n;
-                        assert(after[k] == before[k]);
-                    }
-                }
-            }
-            assert(self@ == old(self)@.insert(x));
-        }
-    }
-
-    /// Remove `x`.
-    pub fn remove(&mut self, x: HostId)
-        ensures
-            final(self)@ == old(self)@.remove(x),
-    {
-        let ghost before = self.items@;
-        let mut out: Vec<HostId> = Vec::new();
-        let mut i: usize = 0;
-        while i < self.items.len()
-            invariant
-                i <= self.items@.len(),
-                self.items@ == before,
-                forall|k: int| 0 <= k < out@.len() ==> out@[k] != x,
-                forall|k: int|
-                    #![trigger out@[k]]
-                    0 <= k < out@.len() ==> exists|j: int|
-                        #![trigger before[j]]
-                        0 <= j < i && before[j] == out@[k],
-                forall|j: int|
-                    #![trigger before[j]]
-                    0 <= j < i && before[j] != x ==> exists|k: int|
-                        #![trigger out@[k]]
-                        0 <= k < out@.len() && out@[k] == before[j],
-            decreases self.items@.len() - i,
-        {
-            let v = self.items[i];
-            let ghost old_out = out@;
-            if v != x {
-                out.push(v);
-            }
-            proof {
-                assert(before[i as int] == v);
-                assert forall|j: int| 0 <= j < i + 1 && before[j] != x implies exists|k: int|
-                    #![trigger out@[k]]
-                    0 <= k < out@.len() && out@[k] == before[j] by {
-                    if j == i as int {
-                        let last = (out@.len() - 1) as int;
-                        assert(out@[last] == v);
-                    } else {
-                        let k = choose|k: int| 0 <= k < old_out.len() && old_out[k] == before[j];
-                        assert(out@[k] == old_out[k]);
-                    }
-                }
-                assert forall|k: int|
-                    #![trigger out@[k]]
-                    0 <= k < out@.len() implies exists|j: int|
-                    #![trigger before[j]]
-                    0 <= j < i + 1 && before[j] == out@[k] by {
-                    if k == old_out.len() as int && v != x {
-                        assert(before[i as int] == out@[k]);
-                    } else {
-                        let j = choose|j: int| 0 <= j < i && before[j] == old_out[k];
-                        assert(out@[k] == old_out[k]);
-                    }
-                }
-            }
-            i += 1;
-        }
-        self.items = out;
-        proof {
-            let after = self.items@;
-            assert forall|n: HostId| self@.contains(n) == old(self)@.remove(x).contains(n) by {
-                lemma_in_items(before, n);
-                lemma_in_items(after, n);
-                if self@.contains(n) {
-                    let k = choose|k: int| 0 <= k < after.len() && after[k] == n;
-                    let j = choose|j: int| 0 <= j < before.len() && before[j] == after[k];
-                    assert(before[j] == n);
-                    assert(n != x);
-                }
-                if old(self)@.remove(x).contains(n) {
-                    let j = choose|j: int| 0 <= j < before.len() && before[j] == n;
-                    assert(before[j] != x);
-                    let k = choose|k: int| 0 <= k < after.len() && after[k] == before[j];
-                    assert(after[k] == n);
-                }
-            }
-            assert(self@ == old(self)@.remove(x));
-        }
-    }
-}
 
 /// Why a composed step did not happen: the coupling's reason, or one of the
 /// layers'.
@@ -272,7 +76,7 @@ pub fn actor_unowned(own: &RegistryCore) -> (r: bool)
 /// `cs_pass_token`: the node holding the privilege passes it to the head of its
 /// queue — but only once the actor has been released. The recipient's debt, if it
 /// had one, is discharged: receiving the privilege is learning the truth.
-pub fn pass_token(own: &RegistryCore, ray: &mut RayTable, seized: &mut NodeSet, me: HostId) -> (r:
+pub fn pass_token(own: &RegistryCore, ray: &mut RayTable, seized: &mut HostSet, me: HostId) -> (r:
     Result<HostId, ComposedError>)
     requires
         old(ray).well_formed(),
@@ -315,7 +119,7 @@ pub fn pass_token(own: &RegistryCore, ray: &mut RayTable, seized: &mut NodeSet, 
 /// `cs_seize_token`: re-establish the privilege at `to`, once the actor has been
 /// released. **Only `to` acts**; the old holder now owes a reconciliation and
 /// `to` no longer does. Returns the old holder.
-pub fn seize_token(own: &RegistryCore, ray: &mut RayTable, seized: &mut NodeSet, to: HostId) -> (r:
+pub fn seize_token(own: &RegistryCore, ray: &mut RayTable, seized: &mut HostSet, to: HostId) -> (r:
     Result<HostId, ComposedError>)
     requires
         old(ray).well_formed(),
@@ -425,7 +229,7 @@ pub fn acquire_under_token(own: &mut RegistryCore, ray: &RayTable, node: HostId,
 
 /// `cs_reconcile`: a node that owes a reconciliation, and whose belief really is
 /// stale, learns the privilege was taken.
-pub fn reconcile(ray: &mut RayTable, seized: &mut NodeSet, node: HostId) -> (r: Result<
+pub fn reconcile(ray: &mut RayTable, seized: &mut HostSet, node: HostId) -> (r: Result<
     (),
     ComposedError,
 >)

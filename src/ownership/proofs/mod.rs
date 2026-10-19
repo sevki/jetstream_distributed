@@ -7,5 +7,6 @@ pub mod fencing;
 pub mod invariant;
 pub mod properties;
 pub mod refinement;
+pub mod registry;
 pub mod tokens;
 pub mod transfer;

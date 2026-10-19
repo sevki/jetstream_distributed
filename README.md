@@ -226,6 +226,8 @@ verifying, the build fails.
 | E6 | **The registry's fence is the *system's* fence** — `may_write_step` on the registry's own record is `can_mutate`, not a node's belief about it. Same postcondition as E, different thing, bought entirely by where it is called | `ownership::steps::may_write_step`, `ownership::proofs::refinement::theorem_may_write_step_is_the_system_fence` | the record the step is handed is the actor's |
 | E7 | **The refinement theorems are not vacuous.** Each is an implication under hypotheses, and hypotheses that cannot all hold make a theorem true and empty — a refinement suite can be green and say nothing. So one concrete system is written out in full and a whole handover walked through it, each theorem applied to the state the previous one produced, with what came out asserted | `ownership::proofs::refinement::scenario_a_handover_through_the_verified_steps` | none: the system is exhibited |
 | E7a | The same for the *refusal* theorems, whose hypotheses are the negation of a guard and so are untouched by a run in which the guard holds. In a system where no grant was published, **no** post state satisfies `tr_acquire` — quantified over all of them, not over one the server had in mind | `ownership::proofs::refinement::scenario_the_refusals_are_refusals_of_something_real` | none |
+| E8 | **The registry's record is the model, grants included.** `registry::RegistryCore` — the actor's record, the grants published and the writes landed — takes the model's step at every method: `poll` is `tr_issue_grant` and publishes the grant it answers with; `acquire` is `tr_acquire` and reads the grant from the published set; `begin_transfer` is `tr_begin_transfer`; `release` is `tr_handle_revoke` then `tr_complete_release` and publishes the grant that completes the handover; `force` is `tr_revoke_owner`, `tr_reassign_unowned` or `tr_abort_transfer` by state, and publishes the grant it offers the actor on with. The relation (`stands_for`) is an equality between the published set and the network's `Grant`s for that actor — the coupling E1's refusal theorem is worth nothing without, and the one a registry once broke | `ownership::proofs::registry::theorem_poll_is_issue_grant`, `theorem_acquire_is_tr_acquire`, `theorem_begin_transfer_is_tr_begin_transfer`, `theorem_release_is_handle_revoke_then_complete_release`, `theorem_force_from_owned_is_tr_revoke_owner`, `theorem_force_from_unowned_is_tr_reassign_unowned`, `theorem_force_from_transferring_is_tr_abort_transfer`, `theorem_a_landed_write_is_can_mutate` | the sender-side hypotheses E1–E6 already name (`live`, `nodes`), and for `release` the `Revoke` on the network, which `begin_transfer` put there |
+| E9 | **A refused step is one the model could not take.** A refused `acquire` (for a request naming the actor's current epoch) and a refused `begin_transfer` are disabled in every post-state; a refusal changes nothing, publishes no grant and counts no write. A refusal that is the `u64` epoch running out is the one the model does not have, and says so | `ownership::proofs::registry::theorem_refused_acquire_is_disabled`, `theorem_refused_begin_transfer_is_disabled` and the `ensures` of each `RegistryCore` method | `stands_for` |
 | P1 | **Issued tokens never disappear** — no crash, partition or recovery retracts a capability, which is why stale tokens must be fenced rather than revoked | `ownership::proofs::properties::theorem_issued_monotone` | none |
 | P2 | **Sent messages never disappear** — the fact that makes duplication, reordering and unbounded delay free in the model | `ownership::proofs::properties::theorem_network_monotone` | none |
 | P3 | **The actor population is constant** — no transition creates or destroys an actor | `ownership::proofs::properties::theorem_actor_domain_constant` | none |
@@ -1515,6 +1517,7 @@ jetstream_distributed/
 │   │   ├── transfer.rs     the multi-step handover and its lemmas
 │   │   ├── steps.rs        the transitions as executable u64 functions
 │   │   ├── exec.rs         the u64 fence check a node runs on its own belief
+│   │   ├── registry.rs     RegistryCore: the record, the grants published, the writes; one method per step
 │   │   ├── service.rs      the protocol over Jetstream RPC   [feature = "service"]
 │   │   └── proofs/
 │   │       ├── invariant.rs    init ==> inv, inv /\ next ==> inv, reachable ==> inv
@@ -1524,7 +1527,8 @@ jetstream_distributed/
 │   │       ├── transfer.rs     claim 4
 │   │       ├── tokens.rs       claim 6
 │   │       ├── adversarial.rs  concrete adversarial executions
-│   │       └── refinement.rs   steps.rs agrees with the model's tr_* transitions
+│   │       ├── refinement.rs   steps.rs agrees with the model's tr_* transitions
+│   │       └── registry.rs     the registry's record, grants included, takes the model's steps
 │   ├── raymond/            Raymond's mutual-exclusion routing layer
 │   │   ├── model.rs
 │   │   ├── steps.rs        the routing decisions as executable u64 functions
@@ -1763,10 +1767,11 @@ This is the same class of caveat as the address-identity one, and it breaks the
 same guarantee.
 
 **What is verified about it, precisely.** Every decision the service makes about
-the actor, and nothing else. `poll`, `acquire`, `write`, `begin_transfer`,
-`release` and `force` each look the actor's record up, hand it to a function in
-`jetstream_distributed::ownership::steps`, and store what comes back; those
-functions are
+the actor and every grant it publishes, and nothing else. `poll`, `acquire`,
+`write`, `begin_transfer`, `release` and `force` each go through a method of
+`ownership::registry::RegistryCore`, which hands the actor's record to a function in
+`jetstream_distributed::ownership::steps`, stores what comes back, and publishes the
+grant the model's transition publishes (E8–E9). The step functions are
 executable `u64` code with postconditions stated in terms of the model, and
 `ownership::proofs::refinement` is where the postconditions are tied to `tr_acquire`,
 `tr_begin_transfer`, `tr_handle_revoke`, `tr_complete_release`,
@@ -2423,6 +2428,9 @@ CI, with no `assume`/`admit`/`external_body`/`axiom`):
   `(ActorId, Epoch)`" and the stronger "at most one token is ever issued per
   `(ActorId, Epoch)`";
 * stale tokens surviving crash, partition and recovery confer no authority;
+* the ownership registry's record, grants included: each of its methods takes the
+  model's step and publishes the grant the model's transition publishes, and a
+  refusal is a step the model could not take (E8–E9);
 * Raymond: at most one token, routing cannot manufacture ownership, duplicate,
   reordered and arbitrarily delayed requests are safe, and token transfer
   preserves the coupling to the ownership layer;

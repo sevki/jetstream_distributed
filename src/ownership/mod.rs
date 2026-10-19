@@ -17,6 +17,9 @@
 //! * [`steps`]    — the transitions as executable `u64` functions.
 //! * [`exec`]     — the `u64` fence check a *node* runs against its own belief,
 //!   which is a different thing from the fence a registry runs.
+//! * [`registry`] — the registry's record as verified code: the actor's state,
+//!   the grants published and the writes landed, with one method per step and a
+//!   contract that is the model's transition, grants included.
 //! * [`proofs`]   — the theorems.
 //! * `service`    — the protocol over Jetstream RPC, behind the `service`
 //!   feature.
@@ -25,6 +28,7 @@ pub mod exec;
 pub mod fencing;
 pub mod model;
 pub mod proofs;
+pub mod registry;
 pub mod spec;
 pub mod steps;
 pub mod transfer;

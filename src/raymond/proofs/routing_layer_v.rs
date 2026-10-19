@@ -10,6 +10,8 @@
 
 use vstd::prelude::*;
 
+use crate::host::HostId;
+
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
 use crate::ownership::spec::*;
@@ -18,7 +20,7 @@ use crate::raymond::model::*;
 verus! {
 
 /// The initial routing state satisfies the Raymond invariant.
-pub proof fn theorem_ray_init_inv(r: Raymond, root: NodeId)
+pub proof fn theorem_ray_init_inv(r: Raymond, root: HostId)
     requires
         ray_init(r, root),
     ensures
@@ -29,10 +31,10 @@ pub proof fn theorem_ray_init_inv(r: Raymond, root: NodeId)
 {
     assert(has_token(r, root));
     assert(believes_holds(r, root));
-    assert forall|n: NodeId| #[trigger] has_token(r, n) implies believes_holds(r, n) by {
+    assert forall|n: HostId| #[trigger] has_token(r, n) implies believes_holds(r, n) by {
         assert(n == root);
     }
-    assert forall|n: NodeId| #[trigger] r.nodes.contains(n) && r.using[n] implies believes_holds(
+    assert forall|n: HostId| #[trigger] r.nodes.contains(n) && r.using[n] implies believes_holds(
         r,
         n,
     ) by {
@@ -40,7 +42,7 @@ pub proof fn theorem_ray_init_inv(r: Raymond, root: NodeId)
     }
     // Nobody is stale at the start: a non-root node does not point at itself,
     // and the root is the holder.
-    assert forall|n: NodeId| #[trigger] believes_holds(r, n) implies has_token(r, n) by {
+    assert forall|n: HostId| #[trigger] believes_holds(r, n) implies has_token(r, n) by {
         if n != root {
             assert(r.holder[n] != n);
             assert(false);
@@ -58,8 +60,8 @@ pub proof fn lemma_routing_preserves_holder(pre: Raymond, post: Raymond, s: RayS
         post.holder == pre.holder,
         post.privilege == pre.privilege,
         post.nodes == pre.nodes,
-        forall|n: NodeId| #[trigger] has_token(post, n) <==> has_token(pre, n),
-        forall|n: NodeId| #[trigger] believes_holds(post, n) <==> believes_holds(pre, n),
+        forall|n: HostId| #[trigger] has_token(post, n) <==> has_token(pre, n),
+        forall|n: HostId| #[trigger] believes_holds(post, n) <==> believes_holds(pre, n),
 {
     match s {
         RayStep::RequestCs { node } => {},
@@ -81,8 +83,8 @@ pub proof fn lemma_token_preserving_steps_keep_holder(pre: Raymond, post: Raymon
         post.holder == pre.holder,
         post.privilege == pre.privilege,
         post.nodes == pre.nodes,
-        forall|n: NodeId| #[trigger] has_token(post, n) <==> has_token(pre, n),
-        forall|n: NodeId| #[trigger] believes_holds(post, n) <==> believes_holds(pre, n),
+        forall|n: HostId| #[trigger] has_token(post, n) <==> has_token(pre, n),
+        forall|n: HostId| #[trigger] believes_holds(post, n) <==> believes_holds(pre, n),
 {
     match s {
         RayStep::RequestCs { node } => {},
@@ -114,7 +116,7 @@ pub proof fn theorem_routing_cannot_manufacture_ownership(
         couples(pre, own),
     ensures
         couples(post, own),
-        forall|n: NodeId| #[trigger] has_token(post, n) <==> has_token(pre, n),
+        forall|n: HostId| #[trigger] has_token(post, n) <==> has_token(pre, n),
 {
     lemma_routing_preserves_holder(pre, post, s);
 }
@@ -129,8 +131,8 @@ pub proof fn theorem_duplicate_requests_are_safe(
     pre: Raymond,
     mid: Raymond,
     post: Raymond,
-    at: NodeId,
-    from: NodeId,
+    at: HostId,
+    from: HostId,
 )
     requires
         ray_inv(pre),
@@ -138,7 +140,7 @@ pub proof fn theorem_duplicate_requests_are_safe(
         ray_receive_request(mid, post, at, from),
     ensures
         ray_inv(post),
-        forall|n: NodeId| #[trigger] has_token(post, n) <==> has_token(pre, n),
+        forall|n: HostId| #[trigger] has_token(post, n) <==> has_token(pre, n),
 {
     lemma_ray_step_preserves_inv(pre, mid, RayStep::ReceiveRequest { at: at, from: from });
     lemma_ray_step_preserves_inv(mid, post, RayStep::ReceiveRequest { at: at, from: from });
@@ -152,8 +154,8 @@ pub proof fn lemma_same_holder_same_token(pre: Raymond, post: Raymond)
         post.holder == pre.holder,
         post.privilege == pre.privilege,
     ensures
-        forall|m: NodeId| #[trigger] has_token(post, m) <==> has_token(pre, m),
-        forall|m: NodeId| #[trigger] believes_holds(post, m) <==> believes_holds(pre, m),
+        forall|m: HostId| #[trigger] has_token(post, m) <==> has_token(pre, m),
+        forall|m: HostId| #[trigger] believes_holds(post, m) <==> believes_holds(pre, m),
 {
 }
 
@@ -167,10 +169,10 @@ pub proof fn lemma_ray_frame_inv(pre: Raymond, post: Raymond)
         post.nodes == pre.nodes,
         post.holder == pre.holder,
         post.privilege == pre.privilege,
-        forall|m: NodeId|
+        forall|m: HostId|
             #[trigger] pre.nodes.contains(m) ==> post.queue.contains_key(m)
                 && post.asked.contains_key(m) && post.using.contains_key(m),
-        forall|m: NodeId|
+        forall|m: HostId|
             #[trigger] pre.nodes.contains(m) && post.using[m] ==> believes_holds(pre, m),
     ensures
         ray_inv(post),
@@ -182,20 +184,20 @@ pub proof fn lemma_ray_frame_inv(pre: Raymond, post: Raymond)
     // here, so proving both halves in one block would reintroduce the matching
     // loop locally: the conclusion `post.nodes.contains(post.holder[m])` would
     // match this block's own `post.nodes.contains(m)` trigger at `post.holder[m]`.
-    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) implies post.holder.contains_key(m)
+    assert forall|m: HostId| #[trigger] post.nodes.contains(m) implies post.holder.contains_key(m)
         && post.queue.contains_key(m) && post.asked.contains_key(m)
         && post.using.contains_key(m) by {
         assert(pre.nodes.contains(m));
     }
-    assert forall|m: NodeId| post.nodes.contains(m) implies post.nodes.contains(
+    assert forall|m: HostId| post.nodes.contains(m) implies post.nodes.contains(
         #[trigger] post.holder[m],
     ) by {
         assert(pre.nodes.contains(m));
     }
-    assert forall|m: NodeId| #[trigger] has_token(post, m) implies believes_holds(post, m) by {
+    assert forall|m: HostId| #[trigger] has_token(post, m) implies believes_holds(post, m) by {
         assert(has_token(pre, m));
     }
-    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) && post.using[m]
+    assert forall|m: HostId| #[trigger] post.nodes.contains(m) && post.using[m]
         implies believes_holds(post, m) by {
         assert(pre.nodes.contains(m));
         assert(believes_holds(pre, m));
@@ -212,11 +214,11 @@ pub proof fn lemma_frame_acyclic(pre: Raymond, post: Raymond)
     ensures
         ray_acyclic(post),
 {
-    let rank = choose|rank: Map<NodeId, nat>| ray_ranked_by(pre, rank);
-    assert forall|n: NodeId| #[trigger] post.nodes.contains(n) implies rank.contains_key(n) by {
+    let rank = choose|rank: Map<HostId, nat>| ray_ranked_by(pre, rank);
+    assert forall|n: HostId| #[trigger] post.nodes.contains(n) implies rank.contains_key(n) by {
         assert(pre.nodes.contains(n));
     }
-    assert forall|n: NodeId|
+    assert forall|n: HostId|
         post.nodes.contains(n) && #[trigger] post.holder[n] != n implies rank[post.holder[n]]
             < rank[n] by {
         assert(pre.nodes.contains(n));
@@ -242,7 +244,7 @@ pub proof fn lemma_frame_acyclic(pre: Raymond, post: Raymond)
 ///   pointed at `to`;
 /// * every other edge is unchanged and both its ends moved up together, so its
 ///   strict decrease comes straight from the old rank.
-pub proof fn lemma_repoint_acyclic(pre: Raymond, post: Raymond, from: NodeId, to: NodeId)
+pub proof fn lemma_repoint_acyclic(pre: Raymond, post: Raymond, from: HostId, to: HostId)
     requires
         ray_wf(pre),
         ray_acyclic(pre),
@@ -257,21 +259,21 @@ pub proof fn lemma_repoint_acyclic(pre: Raymond, post: Raymond, from: NodeId, to
     ensures
         ray_acyclic(post),
 {
-    let rank = choose|rank: Map<NodeId, nat>| ray_ranked_by(pre, rank);
+    let rank = choose|rank: Map<HostId, nat>| ray_ranked_by(pre, rank);
     // Defined exactly on the nodes, which is where `ray_ranked_by` asks for it.
     // `ray_wf`'s holder-closedness is what makes every parent's rank land inside
     // that domain.
     let rank2 = Map::new(
         post.nodes,
-        |k: NodeId| if k == to { 0nat } else { (rank[k] + 1) as nat },
+        |k: HostId| if k == to { 0nat } else { (rank[k] + 1) as nat },
     );
     assert(post.holder[to] == to);
     assert(post.holder[from] == to);
     assert(rank2[to] == 0nat);
     assert(rank2.dom() == post.nodes);
-    assert forall|n: NodeId| #[trigger] post.nodes.contains(n) implies rank2.contains_key(n) by {
+    assert forall|n: HostId| #[trigger] post.nodes.contains(n) implies rank2.contains_key(n) by {
     }
-    assert forall|n: NodeId|
+    assert forall|n: HostId|
         post.nodes.contains(n) && #[trigger] post.holder[n] != n implies rank2[post.holder[n]]
             < rank2[n] by {
         assert(n != to);
@@ -296,7 +298,7 @@ pub proof fn lemma_repoint_acyclic(pre: Raymond, post: Raymond, from: NodeId, to
 }
 
 /// One more hop from `n` is the same as one fewer hop from `n`'s parent.
-pub proof fn lemma_holder_iter_shift(r: Raymond, n: NodeId, k: nat)
+pub proof fn lemma_holder_iter_shift(r: Raymond, n: HostId, k: nat)
     ensures
         holder_iter(r, n, (k + 1) as nat) == holder_iter(r, r.holder[n], k),
     decreases k,
@@ -322,7 +324,7 @@ pub proof fn lemma_holder_iter_shift(r: Raymond, n: NodeId, k: nat)
 
 /// Following belief from any node reaches a node that believes it holds the
 /// privilege, by induction on the rank.
-proof fn lemma_reaches_token_from(r: Raymond, rank: Map<NodeId, nat>, n: NodeId) -> (k: nat)
+proof fn lemma_reaches_token_from(r: Raymond, rank: Map<HostId, nat>, n: HostId) -> (k: nat)
     requires
         ray_wf(r),
         ray_ranked_by(r, rank),
@@ -367,7 +369,7 @@ proof fn lemma_reaches_token_from(r: Raymond, rank: Map<NodeId, nat>, n: NodeId)
 ///
 /// It is still a *safety* property, not liveness: the route exists in the
 /// current state, not that any request traverses it.
-pub proof fn theorem_every_node_reaches_the_token(r: Raymond, n: NodeId) -> (k: nat)
+pub proof fn theorem_every_node_reaches_the_token(r: Raymond, n: HostId) -> (k: nat)
     requires
         ray_inv(r),
         ray_no_stale_holders(r),
@@ -375,7 +377,7 @@ pub proof fn theorem_every_node_reaches_the_token(r: Raymond, n: NodeId) -> (k: 
     ensures
         has_token(r, holder_iter(r, n, k)),
 {
-    let rank = choose|rank: Map<NodeId, nat>| ray_ranked_by(r, rank);
+    let rank = choose|rank: Map<HostId, nat>| ray_ranked_by(r, rank);
     let k = lemma_reaches_token_from(r, rank, n);
     assert(believes_holds(r, holder_iter(r, n, k)));
     assert(has_token(r, holder_iter(r, n, k)));
@@ -383,7 +385,7 @@ pub proof fn theorem_every_node_reaches_the_token(r: Raymond, n: NodeId) -> (k: 
 }
 
 /// Exactly which holder pointers `AssignPrivilege` rewrites.
-pub proof fn lemma_assign_holder_pointers(pre: Raymond, post: Raymond, n: NodeId, head: NodeId)
+pub proof fn lemma_assign_holder_pointers(pre: Raymond, post: Raymond, n: HostId, head: HostId)
     requires
         ray_assign_privilege(pre, post, n, head),
     ensures
@@ -391,15 +393,15 @@ pub proof fn lemma_assign_holder_pointers(pre: Raymond, post: Raymond, n: NodeId
         post.holder[n] == head,
         post.holder.contains_key(head),
         post.holder.contains_key(n),
-        forall|m: NodeId| m != n && m != head ==> #[trigger] post.holder[m] == pre.holder[m],
-        forall|m: NodeId|
+        forall|m: HostId| m != n && m != head ==> #[trigger] post.holder[m] == pre.holder[m],
+        forall|m: HostId|
             m != n && m != head ==> (#[trigger] post.holder.contains_key(m)
                 <==> pre.holder.contains_key(m)),
 {
 }
 
 /// The privilege moves from `n` to `head`, and belief moves with it.
-pub proof fn lemma_assign_token_moves(pre: Raymond, post: Raymond, n: NodeId, head: NodeId)
+pub proof fn lemma_assign_token_moves(pre: Raymond, post: Raymond, n: HostId, head: HostId)
     requires
         ray_inv(pre),
         ray_assign_privilege(pre, post, n, head),
@@ -408,7 +410,7 @@ pub proof fn lemma_assign_token_moves(pre: Raymond, post: Raymond, n: NodeId, he
         believes_holds(post, head),
         !has_token(post, n),
         !believes_holds(post, n),
-        forall|m: NodeId| #[trigger] has_token(post, m) ==> m == head,
+        forall|m: HostId| #[trigger] has_token(post, m) ==> m == head,
 {
     lemma_assign_holder_pointers(pre, post, n, head);
     assert(post.privilege == head);
@@ -418,7 +420,7 @@ pub proof fn lemma_assign_token_moves(pre: Raymond, post: Raymond, n: NodeId, he
 }
 
 /// `AssignPrivilege` keeps every node's maps well formed.
-pub proof fn lemma_assign_wf(pre: Raymond, post: Raymond, n: NodeId, head: NodeId)
+pub proof fn lemma_assign_wf(pre: Raymond, post: Raymond, n: HostId, head: HostId)
     requires
         ray_wf(pre),
         ray_assign_privilege(pre, post, n, head),
@@ -427,12 +429,12 @@ pub proof fn lemma_assign_wf(pre: Raymond, post: Raymond, n: NodeId, head: NodeI
 {
     lemma_assign_holder_pointers(pre, post, n, head);
     assert(post.nodes.contains(post.privilege));
-    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) implies post.holder.contains_key(m)
+    assert forall|m: HostId| #[trigger] post.nodes.contains(m) implies post.holder.contains_key(m)
         && post.queue.contains_key(m) && post.asked.contains_key(m)
         && post.using.contains_key(m) by {
         assert(pre.nodes.contains(m));
     }
-    assert forall|m: NodeId| post.nodes.contains(m) implies post.nodes.contains(
+    assert forall|m: HostId| post.nodes.contains(m) implies post.nodes.contains(
         #[trigger] post.holder[m],
     ) by {
         assert(pre.nodes.contains(m));
@@ -451,7 +453,7 @@ pub proof fn lemma_assign_wf(pre: Raymond, post: Raymond, n: NodeId, head: NodeI
 /// This is where a voluntary handover differs from a seizure. `n` is guarded on
 /// `!pre.using[n]`, and `ray_inv` says only believers are in a critical
 /// section, so the only node whose belief this step revokes was not using it.
-pub proof fn lemma_assign_using(pre: Raymond, post: Raymond, n: NodeId, head: NodeId)
+pub proof fn lemma_assign_using(pre: Raymond, post: Raymond, n: HostId, head: HostId)
     requires
         ray_inv(pre),
         ray_assign_privilege(pre, post, n, head),
@@ -459,7 +461,7 @@ pub proof fn lemma_assign_using(pre: Raymond, post: Raymond, n: NodeId, head: No
         ray_using_implies_belief(post),
 {
     lemma_assign_holder_pointers(pre, post, n, head);
-    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) && post.using[m]
+    assert forall|m: HostId| #[trigger] post.nodes.contains(m) && post.using[m]
         implies believes_holds(post, m) by {
         assert(pre.nodes.contains(m));
         assert(pre.using[m]);
@@ -484,10 +486,10 @@ pub proof fn lemma_assign_using(pre: Raymond, post: Raymond, n: NodeId, head: No
 pub proof fn theorem_delayed_request_survives_token_move(
     pre: Raymond,
     mid: Raymond,
-    n: NodeId,
-    head: NodeId,
-    at: NodeId,
-    from: NodeId,
+    n: HostId,
+    head: HostId,
+    at: HostId,
+    from: HostId,
 )
     requires
         ray_assign_privilege(pre, mid, n, head),
@@ -508,15 +510,15 @@ pub proof fn theorem_delayed_request_survives_token_move(
 pub proof fn theorem_delayed_request_delivery_is_safe(
     pre: Raymond,
     post: Raymond,
-    at: NodeId,
-    from: NodeId,
+    at: HostId,
+    from: HostId,
 )
     requires
         ray_inv(pre),
         ray_receive_request(pre, post, at, from),
     ensures
         ray_inv(post),
-        forall|m: NodeId| #[trigger] has_token(post, m) <==> has_token(pre, m),
+        forall|m: HostId| #[trigger] has_token(post, m) <==> has_token(pre, m),
 {
     lemma_ray_step_preserves_inv(pre, post, RayStep::ReceiveRequest { at: at, from: from });
     lemma_routing_preserves_holder(pre, post, RayStep::ReceiveRequest { at: at, from: from });
@@ -527,8 +529,8 @@ pub proof fn theorem_delayed_request_delivery_is_safe(
 pub proof fn lemma_assign_privilege_preserves_unique_token(
     pre: Raymond,
     post: Raymond,
-    n: NodeId,
-    head: NodeId,
+    n: HostId,
+    head: HostId,
 )
     requires
         ray_inv(pre),
@@ -537,14 +539,14 @@ pub proof fn lemma_assign_privilege_preserves_unique_token(
         ray_inv(post),
         has_token(post, head),
         !has_token(post, n),
-        forall|m: NodeId| #[trigger] has_token(post, m) ==> m == head,
+        forall|m: HostId| #[trigger] has_token(post, m) ==> m == head,
 {
     lemma_assign_token_moves(pre, post, n, head);
     lemma_assign_wf(pre, post, n, head);
     lemma_assign_using(pre, post, n, head);
     lemma_repoint_acyclic(pre, post, n, head);
     lemma_assign_holder_pointers(pre, post, n, head);
-    assert forall|m: NodeId| #[trigger] has_token(post, m) implies believes_holds(post, m) by {
+    assert forall|m: HostId| #[trigger] has_token(post, m) implies believes_holds(post, m) by {
         assert(m == head);
     }
 }
@@ -572,7 +574,7 @@ pub proof fn lemma_assign_privilege_preserves_unique_token(
 /// `ray_authority_believes` constrains the holder's belief, not everyone's, and
 /// `ray_using_implies_belief` is untroubled by a node that both believes and is
 /// using.
-pub proof fn lemma_seize_preserves_inv(pre: Raymond, post: Raymond, from: NodeId, to: NodeId)
+pub proof fn lemma_seize_preserves_inv(pre: Raymond, post: Raymond, from: HostId, to: HostId)
     requires
         ray_inv(pre),
         ray_seize(pre, post, from, to),
@@ -581,7 +583,7 @@ pub proof fn lemma_seize_preserves_inv(pre: Raymond, post: Raymond, from: NodeId
         has_token(post, to),
         believes_holds(post, to),
         !has_token(post, from),
-        forall|m: NodeId| #[trigger] has_token(post, m) ==> m == to,
+        forall|m: HostId| #[trigger] has_token(post, m) ==> m == to,
         // The state the old model could not write down.
         is_stale_holder(post, from),
 {
@@ -592,12 +594,12 @@ pub proof fn lemma_seize_preserves_inv(pre: Raymond, post: Raymond, from: NodeId
     assert(is_stale_holder(post, from));
     // Well-formedness.
     assert(post.nodes.contains(post.privilege));
-    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) implies post.holder.contains_key(m)
+    assert forall|m: HostId| #[trigger] post.nodes.contains(m) implies post.holder.contains_key(m)
         && post.queue.contains_key(m) && post.asked.contains_key(m)
         && post.using.contains_key(m) by {
         assert(pre.nodes.contains(m));
     }
-    assert forall|m: NodeId| post.nodes.contains(m) implies post.nodes.contains(
+    assert forall|m: HostId| post.nodes.contains(m) implies post.nodes.contains(
         #[trigger] post.holder[m],
     ) by {
         assert(pre.nodes.contains(m));
@@ -607,10 +609,10 @@ pub proof fn lemma_seize_preserves_inv(pre: Raymond, post: Raymond, from: NodeId
             assert(post.holder[m] == pre.holder[m]);
         }
     }
-    assert forall|m: NodeId| #[trigger] has_token(post, m) implies believes_holds(post, m) by {
+    assert forall|m: HostId| #[trigger] has_token(post, m) implies believes_holds(post, m) by {
         assert(m == to);
     }
-    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) && post.using[m]
+    assert forall|m: HostId| #[trigger] post.nodes.contains(m) && post.using[m]
         implies believes_holds(post, m) by {
         assert(pre.nodes.contains(m));
         assert(pre.using[m]);
@@ -621,11 +623,11 @@ pub proof fn lemma_seize_preserves_inv(pre: Raymond, post: Raymond, from: NodeId
     }
     // Acyclicity: the step only makes `to` point at itself, which *removes* a
     // constraint from the ranking, so the old rank still witnesses it.
-    let rank = choose|rank: Map<NodeId, nat>| ray_ranked_by(pre, rank);
-    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) implies rank.contains_key(m) by {
+    let rank = choose|rank: Map<HostId, nat>| ray_ranked_by(pre, rank);
+    assert forall|m: HostId| #[trigger] post.nodes.contains(m) implies rank.contains_key(m) by {
         assert(pre.nodes.contains(m));
     }
-    assert forall|m: NodeId|
+    assert forall|m: HostId|
         post.nodes.contains(m) && #[trigger] post.holder[m] != m implies rank[post.holder[m]]
             < rank[m] by {
         assert(m != to);
@@ -648,7 +650,7 @@ pub proof fn lemma_seize_preserves_inv(pre: Raymond, post: Raymond, from: NodeId
 pub proof fn theorem_stale_holder_confers_no_authority(
     r: Raymond,
     own: OwnershipState,
-    n: NodeId,
+    n: HostId,
     e: Epoch,
 )
     requires
@@ -672,7 +674,7 @@ pub proof fn theorem_stale_holder_confers_no_authority(
 /// the privilege holder is the same rewrite as a seizure that moves the
 /// privilege to a node already believing it holds it, and the holder does
 /// already believe - that is `ray_authority_believes`.
-pub proof fn lemma_reconcile_preserves_inv(pre: Raymond, post: Raymond, n: NodeId)
+pub proof fn lemma_reconcile_preserves_inv(pre: Raymond, post: Raymond, n: HostId)
     requires
         ray_inv(pre),
         ray_reconcile(pre, post, n),
@@ -691,12 +693,12 @@ pub proof fn lemma_reconcile_preserves_inv(pre: Raymond, post: Raymond, n: NodeI
     assert(!believes_holds(post, n));
     assert(post.nodes.contains(post.privilege));
 
-    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) implies post.holder.contains_key(m)
+    assert forall|m: HostId| #[trigger] post.nodes.contains(m) implies post.holder.contains_key(m)
         && post.queue.contains_key(m) && post.asked.contains_key(m)
         && post.using.contains_key(m) by {
         assert(pre.nodes.contains(m));
     }
-    assert forall|m: NodeId| post.nodes.contains(m) implies post.nodes.contains(
+    assert forall|m: HostId| post.nodes.contains(m) implies post.nodes.contains(
         #[trigger] post.holder[m],
     ) by {
         assert(pre.nodes.contains(m));
@@ -706,11 +708,11 @@ pub proof fn lemma_reconcile_preserves_inv(pre: Raymond, post: Raymond, n: NodeI
             assert(post.holder[m] == pre.holder[m]);
         }
     }
-    assert forall|m: NodeId| #[trigger] has_token(post, m) implies believes_holds(post, m) by {
+    assert forall|m: HostId| #[trigger] has_token(post, m) implies believes_holds(post, m) by {
         assert(m == priv_node);
         assert(post.holder[priv_node] == pre.holder[priv_node]);
     }
-    assert forall|m: NodeId| #[trigger] post.nodes.contains(m) && post.using[m]
+    assert forall|m: HostId| #[trigger] post.nodes.contains(m) && post.using[m]
         implies believes_holds(post, m) by {
         assert(m != n);
         assert(post.using[m] == pre.using[m]);
@@ -826,7 +828,7 @@ pub proof fn lemma_ray_step_preserves_inv(pre: Raymond, post: Raymond, s: RaySte
             lemma_assign_privilege_preserves_unique_token(pre, post, node, head);
         },
         RayStep::EnterCs { node } => {
-            assert forall|m: NodeId| #[trigger] pre.nodes.contains(m) && post.using[m]
+            assert forall|m: HostId| #[trigger] pre.nodes.contains(m) && post.using[m]
                 implies believes_holds(pre, m) by {
                 if m == node {
                     assert(believes_holds(pre, node));
@@ -837,7 +839,7 @@ pub proof fn lemma_ray_step_preserves_inv(pre: Raymond, post: Raymond, s: RaySte
             lemma_ray_frame_inv(pre, post);
         },
         RayStep::ExitCs { node } => {
-            assert forall|m: NodeId| #[trigger] pre.nodes.contains(m) && post.using[m]
+            assert forall|m: HostId| #[trigger] pre.nodes.contains(m) && post.using[m]
                 implies believes_holds(pre, m) by {
                 assert(m != node);
                 assert(post.using[m] == pre.using[m]);
@@ -860,7 +862,7 @@ pub proof fn lemma_ray_step_preserves_inv(pre: Raymond, post: Raymond, s: RaySte
 /// single node id, so this needs no invariant at all. It used to be an
 /// inductive invariant, and it used to be the reason a returning stale holder
 /// was unrepresentable.
-pub proof fn theorem_ray_at_most_one_token(r: Raymond, n: NodeId, m: NodeId)
+pub proof fn theorem_ray_at_most_one_token(r: Raymond, n: HostId, m: HostId)
     requires
         has_token(r, n),
         has_token(r, m),
@@ -870,7 +872,7 @@ pub proof fn theorem_ray_at_most_one_token(r: Raymond, n: NodeId, m: NodeId)
 }
 
 /// The initial routing state has the privilege.
-pub proof fn lemma_ray_token_exists_init(r: Raymond, root: NodeId)
+pub proof fn lemma_ray_token_exists_init(r: Raymond, root: HostId)
     requires
         ray_init(r, root),
     ensures
@@ -907,11 +909,11 @@ pub proof fn theorem_ray_exactly_one_token(r: Raymond)
     requires
         ray_inv(r),
     ensures
-        exists|n: NodeId| #[trigger] has_token(r, n),
-        forall|n: NodeId, m: NodeId| has_token(r, n) && has_token(r, m) ==> n == m,
+        exists|n: HostId| #[trigger] has_token(r, n),
+        forall|n: HostId, m: HostId| has_token(r, n) && has_token(r, m) ==> n == m,
 {
     assert(has_token(r, r.privilege));
-    assert forall|n: NodeId, m: NodeId| has_token(r, n) && has_token(r, m) implies n == m by {
+    assert forall|n: HostId, m: HostId| has_token(r, n) && has_token(r, m) implies n == m by {
         theorem_ray_at_most_one_token(r, n, m);
     }
 }
@@ -931,7 +933,7 @@ pub proof fn theorem_ray_exactly_one_token(r: Raymond)
 /// editing the absent node's state. What does *not* break in that window is
 /// ownership safety - see
 /// [`theorem_stale_holder_confers_no_authority`].
-pub proof fn theorem_ray_critical_section_is_exclusive(r: Raymond, n: NodeId, m: NodeId)
+pub proof fn theorem_ray_critical_section_is_exclusive(r: Raymond, n: HostId, m: HostId)
     requires
         ray_inv(r),
         ray_no_stale_holders(r),
@@ -957,8 +959,8 @@ pub proof fn theorem_ray_critical_section_is_exclusive(r: Raymond, n: NodeId, m:
 /// separately from the part that does not.
 pub proof fn theorem_authorised_critical_section_is_exclusive(
     r: Raymond,
-    n: NodeId,
-    m: NodeId,
+    n: HostId,
+    m: HostId,
 )
     requires
         ray_inv(r),
@@ -979,8 +981,8 @@ pub proof fn theorem_authorised_critical_section_is_exclusive(
 pub proof fn theorem_token_transfer_preserves_ownership_safety(
     pre: Raymond,
     post: Raymond,
-    n: NodeId,
-    head: NodeId,
+    n: HostId,
+    head: HostId,
     own: OwnershipState,
 )
     requires
@@ -992,10 +994,10 @@ pub proof fn theorem_token_transfer_preserves_ownership_safety(
         ray_inv(post),
         couples(post, own),
         has_token(post, head),
-        forall|m: NodeId| has_token(post, m) ==> m == head,
+        forall|m: HostId| has_token(post, m) ==> m == head,
 {
     lemma_assign_privilege_preserves_unique_token(pre, post, n, head);
-    assert forall|m: NodeId, e: Epoch| may_mutate(own, m, e) implies has_token(post, m) by {
+    assert forall|m: HostId, e: Epoch| may_mutate(own, m, e) implies has_token(post, m) by {
         assert(!is_owned(own));
         assert(false);
     }
@@ -1003,13 +1005,13 @@ pub proof fn theorem_token_transfer_preserves_ownership_safety(
 
 /// Taking ownership while holding the privilege establishes the coupling: the
 /// only node that can mutate is exactly the privilege holder.
-pub proof fn theorem_acquire_under_token_establishes_coupling(r: Raymond, n: NodeId, e: Epoch)
+pub proof fn theorem_acquire_under_token_establishes_coupling(r: Raymond, n: HostId, e: Epoch)
     requires
         has_token(r, n),
     ensures
         couples(r, OwnershipState::Owned { owner: n, epoch: e }),
 {
-    assert forall|m: NodeId, x: Epoch|
+    assert forall|m: HostId, x: Epoch|
         may_mutate(OwnershipState::Owned { owner: n, epoch: e }, m, x) implies has_token(r, m) by {
         assert(m == n);
     }
@@ -1021,9 +1023,9 @@ pub proof fn theorem_acquire_under_token_establishes_coupling(r: Raymond, n: Nod
 pub proof fn theorem_coupled_exclusivity(
     r: Raymond,
     own: OwnershipState,
-    n1: NodeId,
+    n1: HostId,
     e1: Epoch,
-    n2: NodeId,
+    n2: HostId,
     e2: Epoch,
 )
     requires

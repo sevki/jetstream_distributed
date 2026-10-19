@@ -15,6 +15,8 @@
 
 use vstd::prelude::*;
 
+use crate::host::HostId;
+
 use crate::composed::model::*;
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
@@ -385,7 +387,7 @@ pub proof fn lemma_owned_epoch_frozen(
     post: OwnershipSystem,
     s: Step,
     a: ActorId,
-    n: NodeId,
+    n: HostId,
     e: Epoch,
 )
     requires
@@ -451,7 +453,7 @@ pub proof fn theorem_ownership_at_an_epoch_is_final(
     i: int,
     j: int,
     a: ActorId,
-    n: NodeId,
+    n: HostId,
     e: Epoch,
 )
     requires
@@ -486,8 +488,8 @@ pub proof fn theorem_epoch_determines_owner(
     i: int,
     j: int,
     a: ActorId,
-    n1: NodeId,
-    n2: NodeId,
+    n1: HostId,
+    n2: HostId,
     e: Epoch,
 )
     requires
@@ -516,10 +518,10 @@ pub proof fn theorem_stale_stays_stale(tr: Seq<OwnershipSystem>, i: int, j: int,
         tr[j].actors.contains_key(a),
         is_stale(tr[j].actors[a], e),
         !valid_fence(tr[j].actors[a], e),
-        forall|n: NodeId| !may_mutate(tr[j].actors[a], n, e),
+        forall|n: HostId| !may_mutate(tr[j].actors[a], n, e),
 {
     theorem_epoch_monotone_execution(tr, i, j, a);
-    assert forall|n: NodeId| !may_mutate(tr[j].actors[a], n, e) by {
+    assert forall|n: HostId| !may_mutate(tr[j].actors[a], n, e) by {
         lemma_stale_epoch_cannot_mutate(tr[j].actors[a], n, e);
     }
 }
@@ -531,7 +533,7 @@ pub proof fn theorem_stale_stays_stale(tr: Seq<OwnershipSystem>, i: int, j: int,
 /// Every node that may mutate an actor holds an issued token for exactly that
 /// `(actor, epoch)`.
 pub open spec fn inv_authority_backed(sys: OwnershipSystem) -> bool {
-    forall|a: ActorId, n: NodeId, e: Epoch|
+    forall|a: ActorId, n: HostId, e: Epoch|
         #[trigger] can_mutate(sys, a, n, e) ==> sys.issued.contains(
             Token { actor: a, epoch: e, holder: n },
         )
@@ -544,7 +546,7 @@ pub proof fn lemma_authority_backed_init(sys: OwnershipSystem)
     ensures
         inv_authority_backed(sys),
 {
-    assert forall|a: ActorId, n: NodeId, e: Epoch| can_mutate(sys, a, n, e) implies sys.issued.contains(
+    assert forall|a: ActorId, n: HostId, e: Epoch| can_mutate(sys, a, n, e) implies sys.issued.contains(
         Token { actor: a, epoch: e, holder: n },
     ) by {
         assert(starts_unowned(sys.actors[a]));
@@ -563,7 +565,7 @@ pub proof fn lemma_authority_backed_step(pre: OwnershipSystem, post: OwnershipSy
 {
     theorem_issued_monotone(pre, post, s);
     theorem_actor_domain_constant(pre, post, s);
-    assert forall|a: ActorId, n: NodeId, e: Epoch| can_mutate(post, a, n, e) implies post.issued.contains(
+    assert forall|a: ActorId, n: HostId, e: Epoch| can_mutate(post, a, n, e) implies post.issued.contains(
         Token { actor: a, epoch: e, holder: n },
     ) by {
         assert(pre.actors.contains_key(a));
@@ -609,7 +611,7 @@ pub proof fn lemma_authority_backed_execution(tr: Seq<OwnershipSystem>, i: int)
 /// may mutate an actor demonstrably holds an issued token for that exact
 /// `(actor, epoch)`. Authority cannot exist without the capability that
 /// conferred it.
-pub proof fn theorem_no_authority_without_token(sys: OwnershipSystem, a: ActorId, n: NodeId, e: Epoch)
+pub proof fn theorem_no_authority_without_token(sys: OwnershipSystem, a: ActorId, n: HostId, e: Epoch)
     requires
         reachable(sys),
         can_mutate(sys, a, n, e),

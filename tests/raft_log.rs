@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
+use jetstream_distributed::host::HostId;
 use jetstream_distributed::raft::service::{
     Acceptance, Appended, Ballot, Consensus, LogEntry, LogStore, MemoryLog, MemoryLogStore, Peer, Standing,
 };
@@ -27,15 +28,15 @@ const A: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
 const B: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
 const C: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3));
 
-fn roster() -> HashMap<IpAddr, u64> {
-    HashMap::from([(A, 0u64), (B, 1u64), (C, 2u64)])
+fn roster() -> HashMap<IpAddr, HostId> {
+    HashMap::from([(A, 0), (B, 1), (C, 2)])
 }
 
 fn from(addr: IpAddr) -> Context {
     Context::new(Some(RemoteAddr::IpAddr(addr)), None)
 }
 
-fn peer_with(me: u64, log: &MemoryLogStore) -> Peer {
+fn peer_with(me: HostId, log: &MemoryLogStore) -> Peer {
     Peer::new(roster(), me, Arc::new(MemoryLog::new()), Arc::new(log.clone()))
         .expect("the server is on the roster")
 }
@@ -418,7 +419,7 @@ async fn a_heartbeat_tells_a_follower_what_is_committed() {
 #[tokio::test]
 async fn a_cluster_of_one_elects_itself() {
     let alone = Peer::new(
-        HashMap::from([(A, 0u64)]),
+        HashMap::from([(A, 0)]),
         0,
         Arc::new(MemoryLog::new()),
         Arc::new(MemoryLogStore::new()),

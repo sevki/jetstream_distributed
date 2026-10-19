@@ -28,13 +28,12 @@
 
 use vstd::prelude::*;
 
+use crate::host::HostId;
+
 verus! {
 
 /// Identity of an actor. Ownership is tracked per actor.
 pub type ActorId = nat;
-
-/// Identity of a node (a machine in the cluster).
-pub type NodeId = nat;
 
 /// A fencing epoch. Monotonically increasing per actor.
 pub type Epoch = nat;
@@ -45,13 +44,13 @@ pub type Epoch = nat;
 /// node to another always passes through `Transferring` and `Unowned`.
 pub enum OwnershipState {
     /// `owner` holds exclusive mutable authority at `epoch`.
-    Owned { owner: NodeId, epoch: Epoch },
+    Owned { owner: HostId, epoch: Epoch },
     /// Authority has been withdrawn from `from` and a new epoch has been
     /// allocated for `to`, but nobody holds authority right now.
-    Transferring { from: NodeId, to: NodeId, old_epoch: Epoch, new_epoch: Epoch },
+    Transferring { from: HostId, to: HostId, old_epoch: Epoch, new_epoch: Epoch },
     /// Nobody holds authority. `intended_owner` is the node that a grant for
     /// `epoch` has been (or will be) addressed to.
-    Unowned { epoch: Epoch, intended_owner: NodeId },
+    Unowned { epoch: Epoch, intended_owner: HostId },
 }
 
 /// A physical ownership capability.
@@ -63,7 +62,7 @@ pub enum OwnershipState {
 pub struct Token {
     pub actor: ActorId,
     pub epoch: Epoch,
-    pub holder: NodeId,
+    pub holder: HostId,
 }
 
 /// Protocol messages. Messages are hints: every state change is additionally
@@ -71,11 +70,11 @@ pub struct Token {
 /// message can never by itself move the protocol forward.
 pub enum Message {
     /// Coordinator -> current owner: stop mutating, `new_epoch` was allocated.
-    Revoke { actor: ActorId, target: NodeId, old_epoch: Epoch, new_epoch: Epoch },
+    Revoke { actor: ActorId, target: HostId, old_epoch: Epoch, new_epoch: Epoch },
     /// Owner -> coordinator: acknowledgement of a `Revoke`.
-    Released { actor: ActorId, from: NodeId, new_epoch: Epoch },
+    Released { actor: ActorId, from: HostId, new_epoch: Epoch },
     /// Coordinator -> new owner: you may take ownership at `epoch`.
-    Grant { actor: ActorId, to: NodeId, epoch: Epoch },
+    Grant { actor: ActorId, to: HostId, epoch: Epoch },
 }
 
 /// The whole OwnershipSystem.
@@ -98,7 +97,7 @@ pub struct OwnershipSystem {
     /// failure-model table in `README.md`.
     pub actors: Map<ActorId, OwnershipState>,
     /// All nodes that exist.
-    pub nodes: Set<NodeId>,
+    pub nodes: Set<HostId>,
     /// The nodes **participating in the protocol**.
     ///
     /// Not quite the same as "powered on", and the difference matters in one
@@ -119,7 +118,7 @@ pub struct OwnershipSystem {
     ///
     /// Nothing else is permitted outside this set, so "not participating" never
     /// licenses a crashed node to act.
-    pub live: Set<NodeId>,
+    pub live: Set<HostId>,
     /// Every token ever issued. Monotonically grows (see module docs).
     pub issued: Set<Token>,
     /// Every message ever sent. Monotonically grows (see module docs).
@@ -136,7 +135,7 @@ pub struct OwnershipSystem {
 /// `Unowned` at exactly the epoch named by the grant, and `node` must be the
 /// intended owner. A duplicated or stale `Grant` therefore cannot fire this
 /// transition a second time, because the state is no longer `Unowned`.
-pub open spec fn tr_acquire(pre: OwnershipSystem, post: OwnershipSystem, a: ActorId, n: NodeId) -> bool {
+pub open spec fn tr_acquire(pre: OwnershipSystem, post: OwnershipSystem, a: ActorId, n: HostId) -> bool {
     &&& pre.actors.contains_key(a)
     &&& pre.live.contains(n)
     &&& match pre.actors[a] {
@@ -169,8 +168,8 @@ pub open spec fn tr_begin_transfer(
     pre: OwnershipSystem,
     post: OwnershipSystem,
     a: ActorId,
-    from: NodeId,
-    to: NodeId,
+    from: HostId,
+    to: HostId,
 ) -> bool {
     &&& pre.actors.contains_key(a)
     &&& pre.nodes.contains(to)
@@ -224,7 +223,7 @@ pub open spec fn tr_handle_revoke(
     pre: OwnershipSystem,
     post: OwnershipSystem,
     a: ActorId,
-    target: NodeId,
+    target: HostId,
     old_epoch: Epoch,
     new_epoch: Epoch,
 ) -> bool {
@@ -293,7 +292,7 @@ pub open spec fn tr_abort_transfer(pre: OwnershipSystem, post: OwnershipSystem, 
 /// crashed. Failure detectors are unreliable, and modelling the wrong-suspicion
 /// case is the whole point: safety must come from the epoch bump, not from the
 /// detector being right.
-pub open spec fn tr_revoke_owner(pre: OwnershipSystem, post: OwnershipSystem, a: ActorId, next: NodeId) -> bool {
+pub open spec fn tr_revoke_owner(pre: OwnershipSystem, post: OwnershipSystem, a: ActorId, next: HostId) -> bool {
     &&& pre.actors.contains_key(a)
     &&& pre.nodes.contains(next)
     &&& match pre.actors[a] {
@@ -314,7 +313,7 @@ pub open spec fn tr_revoke_owner(pre: OwnershipSystem, post: OwnershipSystem, a:
 
 /// The intended owner never picked the actor up (it crashed, or the grant was
 /// lost). Burn the epoch and offer the actor to somebody else.
-pub open spec fn tr_reassign_unowned(pre: OwnershipSystem, post: OwnershipSystem, a: ActorId, next: NodeId) -> bool {
+pub open spec fn tr_reassign_unowned(pre: OwnershipSystem, post: OwnershipSystem, a: ActorId, next: HostId) -> bool {
     &&& pre.actors.contains_key(a)
     &&& pre.nodes.contains(next)
     &&& match pre.actors[a] {
@@ -353,7 +352,7 @@ pub open spec fn tr_issue_grant(pre: OwnershipSystem, post: OwnershipSystem, a: 
 
 /// A node crashes. Its tokens stay in `issued`: crashing does not destroy the
 /// physical capability the node was holding.
-pub open spec fn tr_crash(pre: OwnershipSystem, post: OwnershipSystem, n: NodeId) -> bool {
+pub open spec fn tr_crash(pre: OwnershipSystem, post: OwnershipSystem, n: HostId) -> bool {
     &&& pre.live.contains(n)
     &&& post.live == pre.live.remove(n)
     &&& post.actors == pre.actors
@@ -364,7 +363,7 @@ pub open spec fn tr_crash(pre: OwnershipSystem, post: OwnershipSystem, n: NodeId
 
 /// A crashed node comes back. It comes back still holding whatever tokens it
 /// had before the crash, and with no knowledge of what happened meanwhile.
-pub open spec fn tr_recover(pre: OwnershipSystem, post: OwnershipSystem, n: NodeId) -> bool {
+pub open spec fn tr_recover(pre: OwnershipSystem, post: OwnershipSystem, n: HostId) -> bool {
     &&& pre.nodes.contains(n)
     &&& !pre.live.contains(n)
     &&& post.live == pre.live.insert(n)
@@ -396,16 +395,16 @@ pub open spec fn tr_stutter(pre: OwnershipSystem, post: OwnershipSystem) -> bool
 
 /// The labelled transitions of the OwnershipSystem.
 pub enum Step {
-    Acquire { actor: ActorId, node: NodeId },
-    BeginTransfer { actor: ActorId, from: NodeId, to: NodeId },
-    HandleRevoke { actor: ActorId, target: NodeId, old_epoch: Epoch, new_epoch: Epoch },
+    Acquire { actor: ActorId, node: HostId },
+    BeginTransfer { actor: ActorId, from: HostId, to: HostId },
+    HandleRevoke { actor: ActorId, target: HostId, old_epoch: Epoch, new_epoch: Epoch },
     CompleteRelease { actor: ActorId },
     AbortTransfer { actor: ActorId },
-    RevokeOwner { actor: ActorId, next: NodeId },
-    ReassignUnowned { actor: ActorId, next: NodeId },
+    RevokeOwner { actor: ActorId, next: HostId },
+    ReassignUnowned { actor: ActorId, next: HostId },
     IssueGrant { actor: ActorId },
-    Crash { node: NodeId },
-    Recover { node: NodeId },
+    Crash { node: HostId },
+    Recover { node: HostId },
     Replay { msg: Message },
     Stutter,
 }

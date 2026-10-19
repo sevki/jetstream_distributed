@@ -31,6 +31,8 @@
 #![allow(unused_imports)]
 
 use vstd::prelude::*;
+
+use crate::host::HostId;
 use vstd::set_lib::*;
 
 use crate::raft::exec::*;
@@ -41,17 +43,17 @@ use crate::raft::steps::*;
 verus! {
 
 /// Every vote by `n` is in a term no later than `n`'s own.
-pub open spec fn no_vote_ahead(c: Cluster, n: ServerId) -> bool {
+pub open spec fn no_vote_ahead(c: Cluster, n: HostId) -> bool {
     forall|v: Vote| #[trigger] c.votes.contains(v) && v.voter == n ==> v.term <= c.servers[n].current_term
 }
 
 /// The core stands for server `n` of the cluster.
-pub open spec fn stands_for(core: ElectionCore, c: Cluster, n: ServerId) -> bool {
+pub open spec fn stands_for(core: ElectionCore, c: Cluster, n: HostId) -> bool {
     &&& c.servers.contains_key(n)
     &&& c.servers[n].role == core.server.role.view()
     &&& c.servers[n].current_term == core.server.current_term as nat
     &&& (core.voted_for matches Some(x) ==> c.votes.contains(
-        Vote { voter: n, term: core.server.current_term as nat, candidate: x as nat },
+        Vote { voter: n, term: core.server.current_term as nat, candidate: x },
     ))
     &&& (core.voted_for is None ==> !has_voted(c, n, core.server.current_term as nat))
     &&& core.tally.view_set().subset_of(voters_for(c, n, core.server.current_term as nat))
@@ -61,7 +63,7 @@ pub open spec fn stands_for(core: ElectionCore, c: Cluster, n: ServerId) -> bool
 /// **A vote not yet given in a term is not given by the cluster either**, in any
 /// term at or ahead of the server's own — which is why the core's
 /// `already_voted` is the model's `has_voted`.
-pub proof fn lemma_already_voted_is_has_voted(core: ElectionCore, c: Cluster, n: ServerId, term: nat)
+pub proof fn lemma_already_voted_is_has_voted(core: ElectionCore, c: Cluster, n: HostId, term: nat)
     requires
         stands_for(core, c, n),
         term >= core.server.current_term as nat,
@@ -72,11 +74,11 @@ pub proof fn lemma_already_voted_is_has_voted(core: ElectionCore, c: Cluster, n:
     if cur == term {
         if core.voted_for is Some {
             let x = core.voted_for.unwrap();
-            assert(c.votes.contains(Vote { voter: n, term: term, candidate: x as nat }));
+            assert(c.votes.contains(Vote { voter: n, term: term, candidate: x }));
         }
     } else {
         if has_voted(c, n, term) {
-            let cand = choose|cand: ServerId|
+            let cand = choose|cand: HostId|
                 c.votes.contains(Vote { voter: n, term: term, candidate: cand });
             let v = Vote { voter: n, term: term, candidate: cand };
             assert(c.votes.contains(v) && v.voter == n);
@@ -91,7 +93,7 @@ pub proof fn theorem_stand_is_tr_timeout(
     core: ElectionCore,
     core2: ElectionCore,
     c: Cluster,
-    n: ServerId,
+    n: HostId,
 )
     requires
         stands_for(core, c, n),
@@ -99,9 +101,8 @@ pub proof fn theorem_stand_is_tr_timeout(
         timeout_fires(core.server.role.view()),
         core2.server.role.view() == Role::Candidate,
         core2.server.current_term as nat == core.server.current_term as nat + 1,
-        core2.voted_for == Some(n as u64),
-        n == (n as u64) as nat,
-        core2.tally.view_set() == Set::<nat>::empty().insert(n),
+        core2.voted_for == Some(n),
+        core2.tally.view_set() == Set::<HostId>::empty().insert(n),
     ensures
         tr_timeout(c, timeout_post(c, n), n),
         stands_for(core2, timeout_post(c, n), n),
@@ -128,7 +129,7 @@ pub proof fn theorem_refused_stand_is_disabled(
     core: ElectionCore,
     c: Cluster,
     post: Cluster,
-    n: ServerId,
+    n: HostId,
 )
     requires
         stands_for(core, c, n),
@@ -145,8 +146,8 @@ pub proof fn theorem_grant_is_tr_grant_vote(
     core: ElectionCore,
     core2: ElectionCore,
     c: Cluster,
-    voter: ServerId,
-    cand: ServerId,
+    voter: HostId,
+    cand: HostId,
     term: nat,
     cand_last_term: Term,
     cand_last_index: nat,
@@ -171,10 +172,9 @@ pub proof fn theorem_grant_is_tr_grant_vote(
         ),
         core2.server.role.view() == Role::Follower,
         core2.server.current_term as nat == term,
-        core2.voted_for == Some(cand as u64),
-        cand == (cand as u64) as nat,
+        core2.voted_for == Some(cand),
         core.server.current_term as nat == term ==> core2.tally.view_set() == core.tally.view_set(),
-        core.server.current_term as nat != term ==> forall|m: nat| !core2.tally.view_set().contains(m),
+        core.server.current_term as nat != term ==> forall|m: HostId| !core2.tally.view_set().contains(m),
     ensures
         tr_grant_vote(
             c,
@@ -199,7 +199,7 @@ pub proof fn theorem_grant_is_tr_grant_vote(
     let post = grant_vote_post(c, voter, cand, term, cand_last_term, cand_last_index);
     let v = Vote { voter: voter, term: term, candidate: cand };
     assert(post.votes.contains(v));
-    assert forall|m: nat| core2.tally.view_set().contains(m) implies voters_for(
+    assert forall|m: HostId| core2.tally.view_set().contains(m) implies voters_for(
         post,
         voter,
         term,
@@ -226,8 +226,8 @@ pub proof fn theorem_refused_grant_is_disabled(
     core: ElectionCore,
     c: Cluster,
     post: Cluster,
-    voter: ServerId,
-    cand: ServerId,
+    voter: HostId,
+    cand: HostId,
     term: nat,
     cand_last_term: Term,
     cand_last_index: nat,
@@ -264,8 +264,8 @@ pub proof fn theorem_refused_stale_log_is_disabled(
     core: ElectionCore,
     c: Cluster,
     post: Cluster,
-    voter: ServerId,
-    cand: ServerId,
+    voter: HostId,
+    cand: HostId,
     term: nat,
     cand_last_term: Term,
     cand_last_index: nat,
@@ -286,7 +286,7 @@ pub proof fn theorem_a_won_count_is_tr_become_leader(
     core: ElectionCore,
     core2: ElectionCore,
     c: Cluster,
-    n: ServerId,
+    n: HostId,
     term: nat,
     members: u64,
 )
@@ -326,7 +326,7 @@ pub proof fn theorem_a_lost_count_is_disabled(
     core: ElectionCore,
     c: Cluster,
     post: Cluster,
-    n: ServerId,
+    n: HostId,
     term: nat,
 )
     requires
@@ -348,7 +348,7 @@ pub proof fn theorem_step_down_is_tr_step_down(
     core: ElectionCore,
     core2: ElectionCore,
     c: Cluster,
-    n: ServerId,
+    n: HostId,
     term: nat,
 )
     requires
@@ -358,7 +358,7 @@ pub proof fn theorem_step_down_is_tr_step_down(
         core2.server.role.view() == Role::Follower,
         core2.server.current_term as nat == term,
         core2.voted_for is None,
-        forall|m: nat| !core2.tally.view_set().contains(m),
+        forall|m: HostId| !core2.tally.view_set().contains(m),
     ensures
         tr_step_down(c, step_down_post(c, n, term), n, term),
         stands_for(core2, step_down_post(c, n, term), n),
@@ -368,7 +368,7 @@ pub proof fn theorem_step_down_is_tr_step_down(
     assert(post.votes == c.votes);
     assert(!has_voted(post, n, term)) by {
         if has_voted(post, n, term) {
-            let cand = choose|cand: ServerId|
+            let cand = choose|cand: HostId|
                 post.votes.contains(Vote { voter: n, term: term, candidate: cand });
             let v = Vote { voter: n, term: term, candidate: cand };
             assert(c.votes.contains(v) && v.voter == n);
@@ -380,7 +380,7 @@ pub proof fn theorem_step_down_is_tr_step_down(
         assert(c.votes.contains(w));
         assert(w.term <= c.servers[n].current_term);
     }
-    assert forall|m: nat| core2.tally.view_set().contains(m) implies voters_for(post, n, term).contains(m) by {}
+    assert forall|m: HostId| core2.tally.view_set().contains(m) implies voters_for(post, n, term).contains(m) by {}
 }
 
 /// **A `step_down` to a term that is not ahead is not the model's either.**
@@ -388,7 +388,7 @@ pub proof fn theorem_a_refused_step_down_is_disabled(
     core: ElectionCore,
     c: Cluster,
     post: Cluster,
-    n: ServerId,
+    n: HostId,
     term: nat,
 )
     requires
@@ -407,8 +407,8 @@ pub proof fn theorem_yield_is_the_append_role_change(
     core2: ElectionCore,
     c: Cluster,
     post: Cluster,
-    leader: ServerId,
-    n: ServerId,
+    leader: HostId,
+    n: HostId,
     prefix: nat,
 )
     requires
@@ -417,12 +417,12 @@ pub proof fn theorem_yield_is_the_append_role_change(
         core2.server.role.view() == Role::Follower,
         core2.server.current_term == core.server.current_term,
         core2.voted_for == core.voted_for,
-        forall|m: nat| !core2.tally.view_set().contains(m),
+        forall|m: HostId| !core2.tally.view_set().contains(m),
     ensures
         stands_for(core2, post, n),
 {
     assert(post.votes == c.votes);
-    assert forall|m: nat| core2.tally.view_set().contains(m) implies voters_for(
+    assert forall|m: HostId| core2.tally.view_set().contains(m) implies voters_for(
         post,
         n,
         core2.server.current_term as nat,

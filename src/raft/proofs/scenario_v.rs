@@ -24,6 +24,8 @@
 #![allow(unused_imports)]
 
 use vstd::prelude::*;
+
+use crate::host::HostId;
 use vstd::set_lib::*;
 
 use crate::raft::proofs::election::*;
@@ -32,7 +34,7 @@ use crate::raft::model::*;
 verus! {
 
 /// The three members of the scenario's cluster.
-pub open spec fn three() -> Set<ServerId> {
+pub open spec fn three() -> Set<HostId> {
     Set::empty().insert(0).insert(1).insert(2)
 }
 
@@ -41,7 +43,7 @@ pub open spec fn fresh_server() -> Server {
     Server { role: Role::Follower, current_term: 0, log: Seq::empty(), commit: 0 }
 }
 
-pub open spec fn all_followers() -> Map<ServerId, Server> {
+pub open spec fn all_followers() -> Map<HostId, Server> {
     Map::empty().insert(0, fresh_server()).insert(1, fresh_server()).insert(2, fresh_server())
 }
 
@@ -74,11 +76,11 @@ pub proof fn lemma_start_is_init()
     ensures
         raft_init(start()),
 {
-    assert forall|n: ServerId| start().members.contains(n) implies start().servers.contains_key(n)
+    assert forall|n: HostId| start().members.contains(n) implies start().servers.contains_key(n)
         by {
         assert(n == 0 || n == 1 || n == 2);
     }
-    assert forall|n: ServerId| start().servers.contains_key(n) implies is_follower(
+    assert forall|n: HostId| start().servers.contains_key(n) implies is_follower(
         start().servers[n],
     ) && start().servers[n].current_term == 0 && start().servers[n].log.len() == 0
         && start().servers[n].commit == 0 by {
@@ -206,7 +208,7 @@ pub proof fn scenario_a_leader_is_elected()
     assert(c1.servers[1].current_term == 0);
     assert(c1.servers[1].log.len() == 0);
     assert(at_least_as_up_to_date(0, 0, c1.servers[1].log));
-    assert forall|cand: ServerId| !c1.votes.contains(
+    assert forall|cand: HostId| !c1.votes.contains(
         Vote { voter: 1, term: 1, candidate: cand },
     ) by {
         assert(!c0.votes.contains(Vote { voter: 1, term: 1, candidate: cand }));
@@ -217,7 +219,7 @@ pub proof fn scenario_a_leader_is_elected()
     // Two of the three have now voted for 0 in term 1, which is a majority.
     assert(voters_for(c2, 0, 1) =~= Set::empty().insert(0).insert(1));
     assert(voters_for(c2, 0, 1).len() == 2);
-    assert forall|n: ServerId| voters_for(c2, 0, 1).contains(n) implies c2.members.contains(n) by {}
+    assert forall|n: HostId| voters_for(c2, 0, 1).contains(n) implies c2.members.contains(n) by {}
     assert(voters_for(c2, 0, 1).subset_of(c2.members));
     assert(won_election(c2, 0, 1));
 
@@ -285,7 +287,7 @@ pub proof fn scenario_a_leader_is_elected()
 /// This is the pairing that makes the scenario worth having: an election that
 /// happens, ending in a state where Election Safety is not vacuous because
 /// there is a leader for it to be about.
-pub proof fn scenario_the_elected_leader_is_the_only_one(c: Cluster, other: ServerId)
+pub proof fn scenario_the_elected_leader_is_the_only_one(c: Cluster, other: HostId)
     requires
         raft_inv(c),
         c.servers.contains_key(0),

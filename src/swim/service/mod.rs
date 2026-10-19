@@ -67,7 +67,10 @@ mod refusal;
 
 pub use node::{Event, Node};
 
-use crate::swim::steps::{ExecRecord, ExecStatus};
+use crate::{
+    host::HostId,
+    swim::steps::{ExecRecord, ExecStatus},
+};
 use jetstream::prelude::*;
 
 /// The most updates one message may carry.
@@ -94,7 +97,7 @@ pub enum Liveness {
 /// content, and has to be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, JetStreamWireFormat)]
 pub struct Update {
-    pub node: u64,
+    pub node: HostId,
     pub incarnation: u64,
     pub status: Liveness,
 }
@@ -111,7 +114,7 @@ impl Update {
         }
     }
 
-    pub(super) fn of(node: u64, r: ExecRecord) -> Update {
+    pub(super) fn of(node: HostId, r: ExecRecord) -> Update {
         Update {
             node,
             incarnation: r.incarnation,

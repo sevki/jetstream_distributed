@@ -24,6 +24,7 @@
 
 use vstd::prelude::*;
 
+use crate::host::HostId;
 use crate::swim::exec::*;
 use crate::swim::model::*;
 use crate::swim::proofs::merge::*;
@@ -35,25 +36,25 @@ verus! {
 
 /// The table stands for the cluster: they agree about every member.
 pub open spec fn stands_for(t: SwimTable, c: Cluster) -> bool {
-    forall|n: nat| #[trigger] t.record(n) == record_of(c, n)
+    forall|n: HostId| #[trigger] t.record(n) == record_of(c, n)
 }
 
 /// The cluster in which `n` has been heard about with `incoming` and nothing else
 /// has changed.
-pub open spec fn after_gossip(c: Cluster, n: NodeId, incoming: MemberRecord) -> Cluster {
+pub open spec fn after_gossip(c: Cluster, n: HostId, incoming: MemberRecord) -> Cluster {
     Cluster { members: c.members.insert(n, merge(record_of(c, n), incoming)) }
 }
 
 /// **A new table is the model's initial state.**
 pub proof fn theorem_new_table_is_the_initial_cluster(t: SwimTable)
     requires
-        forall|n: nat| t.record(n) == fresh_record(),
+        forall|n: HostId| t.record(n) == fresh_record(),
     ensures
         exists|c: Cluster| swim_init(c) && stands_for(t, c),
 {
     let c = Cluster { members: Map::empty() };
     assert(swim_init(c));
-    assert forall|n: nat| #[trigger] t.record(n) == record_of(c, n) by {
+    assert forall|n: HostId| #[trigger] t.record(n) == record_of(c, n) by {
         assert(!c.members.contains_key(n));
     }
 }
@@ -66,13 +67,13 @@ pub proof fn theorem_learn_is_a_gossip_step(
     pre: SwimTable,
     post: SwimTable,
     c: Cluster,
-    id: NodeId,
+    id: HostId,
     incoming: MemberRecord,
 )
     requires
         stands_for(pre, c),
         post.record(id) == merge(pre.record(id), incoming),
-        forall|n: nat| n != id ==> #[trigger] post.record(n) == pre.record(n),
+        forall|n: HostId| n != id ==> #[trigger] post.record(n) == pre.record(n),
     ensures
         tr_gossip(c, after_gossip(c, id, incoming), id, incoming),
         swim_next(c, after_gossip(c, id, incoming)),
@@ -82,7 +83,7 @@ pub proof fn theorem_learn_is_a_gossip_step(
     assert(tr_gossip(c, c2, id, incoming));
     let s = SwimStep::Gossip { node: id, incoming };
     assert(swim_step(c, c2, s));
-    assert forall|n: nat| #[trigger] post.record(n) == record_of(c2, n) by {
+    assert forall|n: HostId| #[trigger] post.record(n) == record_of(c2, n) by {
         if n == id {
             assert(c2.members.contains_key(id));
         } else {
@@ -96,13 +97,13 @@ pub proof fn theorem_learn_is_a_gossip_step(
 pub proof fn theorem_learning_never_lowers_a_belief(
     pre: SwimTable,
     post: SwimTable,
-    id: NodeId,
+    id: HostId,
     incoming: MemberRecord,
-    n: NodeId,
+    n: HostId,
 )
     requires
         post.record(id) == merge(pre.record(id), incoming),
-        forall|m: nat| m != id ==> #[trigger] post.record(m) == pre.record(m),
+        forall|m: HostId| m != id ==> #[trigger] post.record(m) == pre.record(m),
     ensures
         key_geq(post.record(n), pre.record(n)),
 {
@@ -124,7 +125,7 @@ pub proof fn theorem_hearing_oneself_accused_is_two_gossip_steps(
     pre: SwimTable,
     post: SwimTable,
     c: Cluster,
-    me: NodeId,
+    me: HostId,
     incoming: MemberRecord,
 )
     requires
@@ -133,7 +134,7 @@ pub proof fn theorem_hearing_oneself_accused_is_two_gossip_steps(
             let merged = merge(pre.record(me), incoming);
             &&& merged != pre.record(me)
             &&& post.record(me) == refutation(merged.incarnation)
-            &&& forall|n: nat| n != me ==> #[trigger] post.record(n) == pre.record(n)
+            &&& forall|n: HostId| n != me ==> #[trigger] post.record(n) == pre.record(n)
         }),
     ensures
         exists|c1: Cluster, c2: Cluster|
@@ -152,7 +153,7 @@ pub proof fn theorem_hearing_oneself_accused_is_two_gossip_steps(
     let c2 = after_gossip(c1, me, r);
     assert(tr_gossip(c1, c2, me, r));
     assert(merge(record_of(c1, me), r) == r);
-    assert forall|n: nat| #[trigger] post.record(n) == record_of(c2, n) by {
+    assert forall|n: HostId| #[trigger] post.record(n) == record_of(c2, n) by {
         if n == me {
             assert(c2.members.contains_key(me));
         } else {
@@ -172,14 +173,14 @@ pub proof fn theorem_a_table_stands_for_a_reachable_cluster_after_learning(
     pre: SwimTable,
     post: SwimTable,
     c: Cluster,
-    id: NodeId,
+    id: HostId,
     incoming: MemberRecord,
 )
     requires
         swim_reachable(c),
         stands_for(pre, c),
         post.record(id) == merge(pre.record(id), incoming),
-        forall|n: nat| n != id ==> #[trigger] post.record(n) == pre.record(n),
+        forall|n: HostId| n != id ==> #[trigger] post.record(n) == pre.record(n),
     ensures
         exists|c2: Cluster| swim_reachable(c2) && stands_for(post, c2),
 {

@@ -25,6 +25,7 @@ use std::sync::Arc;
 
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
+use jetstream_distributed::host::HostId;
 use jetstream_distributed::ownership::service::{
     EpochFloor, Event, FileFloor, MemoryFloor, Offer, Ownership, Registry,
 };
@@ -32,8 +33,8 @@ use jetstream_distributed::ownership::service::{
 const A: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
 const B: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
 
-fn roster() -> HashMap<IpAddr, u64> {
-    HashMap::from([(A, 0u64), (B, 1u64)])
+fn roster() -> HashMap<IpAddr, HostId> {
+    HashMap::from([(A, 0), (B, 1)])
 }
 
 /// A caller, identified the way the service identifies one: by where the

@@ -61,6 +61,7 @@ pub use coordinator::{Coordinator, Event};
 
 use crate::ownership::service::Offer;
 use crate::raymond::service::Standing;
+use crate::host::HostId;
 use jetstream::prelude::*;
 
 /// The node-facing protocol: the ownership layer's five calls, the routing
@@ -69,7 +70,7 @@ use jetstream::prelude::*;
 /// None takes the acting node's number. Seizing the privilege is **not** here:
 /// it is the coordinator's own step, and a node-facing service that offered it
 /// would let any node take the privilege from the one that holds it.
-#[service(uses(super::{Offer, Standing}))]
+#[service(uses(super::{HostId, Offer, Standing}))]
 pub trait Composed {
     // --- ownership, carried ---------------------------------------------
 
@@ -84,7 +85,7 @@ pub trait Composed {
     async fn write(&self, ctx: Context, epoch: u64) -> Result<u64>;
 
     /// The owner agrees to hand the actor to `to`.
-    async fn begin_transfer(&self, ctx: Context, to: u64) -> Result<()>;
+    async fn begin_transfer(&self, ctx: Context, to: HostId) -> Result<()>;
 
     /// The outgoing owner acknowledges the revocation.
     async fn release(&self, ctx: Context, epoch: u64) -> Result<()>;
@@ -98,10 +99,10 @@ pub trait Composed {
     async fn request_cs(&self, ctx: Context) -> Result<()>;
 
     /// Forward my request one hop towards the privilege.
-    async fn make_request(&self, ctx: Context) -> Result<u64>;
+    async fn make_request(&self, ctx: Context) -> Result<HostId>;
 
     /// A request `from` sent to me arrives.
-    async fn receive_request(&self, ctx: Context, from: u64) -> Result<()>;
+    async fn receive_request(&self, ctx: Context, from: HostId) -> Result<()>;
 
     /// I enter my critical section.
     async fn enter_cs(&self, ctx: Context) -> Result<()>;
@@ -113,7 +114,7 @@ pub trait Composed {
 
     /// `PassToken`: hand the privilege to the head of my queue — **only once
     /// the actor has been released.** Returns who got it.
-    async fn assign_privilege(&self, ctx: Context) -> Result<u64>;
+    async fn assign_privilege(&self, ctx: Context) -> Result<HostId>;
 
     /// `Reconcile`: the privilege was taken from me. I drop the belief that I
     /// hold it and leave the critical section I thought I was in.

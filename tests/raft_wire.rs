@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, OnceLock};
 
+use jetstream_distributed::host::HostId;
 use jetstream_distributed::raft::service::{
     consensus_protocol::{ConsensusChannel, ConsensusService},
     Acceptance, Appended, Ballot, Consensus, LogEntry, MemoryLog, MemoryLogStore, Peer, Standing,
@@ -33,11 +34,11 @@ const PORT: u16 = 9000;
 ///
 /// `turmoil::lookup` resolves a name only inside a live simulation and panics
 /// outside one, so every roster here is built inside a host or a client.
-fn roster() -> HashMap<IpAddr, u64> {
+fn roster() -> HashMap<IpAddr, HostId> {
     HashMap::from([
-        (turmoil::lookup("a"), 0u64),
-        (turmoil::lookup("b"), 1u64),
-        (turmoil::lookup("c"), 2u64),
+        (turmoil::lookup("a"), 0),
+        (turmoil::lookup("b"), 1),
+        (turmoil::lookup("c"), 2),
     ])
 }
 

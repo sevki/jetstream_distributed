@@ -100,6 +100,8 @@
 #![allow(unused_imports)]
 
 use vstd::prelude::*;
+
+use crate::host::HostId;
 use vstd::set_lib::*;
 
 use crate::raft::model::*;
@@ -201,7 +203,7 @@ pub proof fn lemma_untouched_records_keep_commit(pre: Cluster, post: Cluster)
 // ---------------------------------------------------------------------------
 
 /// Standing for election.
-pub proof fn lemma_timeout_preserves_commit(pre: Cluster, post: Cluster, n: ServerId)
+pub proof fn lemma_timeout_preserves_commit(pre: Cluster, post: Cluster, n: HostId)
     requires
         raft_commit_inv(pre),
         tr_timeout(pre, post, n),
@@ -216,8 +218,8 @@ pub proof fn lemma_timeout_preserves_commit(pre: Cluster, post: Cluster, n: Serv
 pub proof fn lemma_grant_vote_preserves_commit(
     pre: Cluster,
     post: Cluster,
-    voter: ServerId,
-    cand: ServerId,
+    voter: HostId,
+    cand: HostId,
     term: Term,
     cand_last_term: Term,
     cand_last_index: nat,
@@ -244,7 +246,7 @@ pub proof fn lemma_grant_vote_preserves_commit(
 pub proof fn lemma_become_leader_preserves_commit(
     pre: Cluster,
     post: Cluster,
-    n: ServerId,
+    n: HostId,
     term: Term,
 )
     requires
@@ -261,7 +263,7 @@ pub proof fn lemma_become_leader_preserves_commit(
 pub proof fn lemma_step_down_preserves_commit(
     pre: Cluster,
     post: Cluster,
-    n: ServerId,
+    n: HostId,
     term: Term,
 )
     requires
@@ -290,7 +292,7 @@ pub proof fn lemma_step_down_preserves_commit(
 pub proof fn lemma_client_request_preserves_commit(
     pre: Cluster,
     post: Cluster,
-    n: ServerId,
+    n: HostId,
     value: nat,
 )
     requires
@@ -336,7 +338,7 @@ pub proof fn lemma_client_request_preserves_commit(
 pub proof fn lemma_advance_commit_preserves_commit(
     pre: Cluster,
     post: Cluster,
-    n: ServerId,
+    n: HostId,
     upto: nat,
 )
     requires
@@ -524,7 +526,7 @@ pub proof fn theorem_reachable_commit_inv(c: Cluster)
 pub proof fn theorem_the_record_covers_the_count(
     pre: Cluster,
     post: Cluster,
-    n: ServerId,
+    n: HostId,
     upto: nat,
 )
     requires
@@ -572,7 +574,7 @@ pub proof fn theorem_the_record_covers_the_count(
 pub proof fn theorem_a_commit_was_on_a_quorum(
     pre: Cluster,
     post: Cluster,
-    n: ServerId,
+    n: HostId,
     upto: nat,
     k: Commit,
 )
@@ -581,7 +583,7 @@ pub proof fn theorem_a_commit_was_on_a_quorum(
         committed_by(pre.servers[n], upto).contains(k),
     ensures
         is_quorum(pre, replicated_on(pre, pre.servers[n].log, upto)),
-        forall|m: ServerId|
+        forall|m: HostId|
             #![trigger pre.servers[m].log]
             replicated_on(pre, pre.servers[n].log, upto).contains(m) ==> pre.servers.contains_key(m)
                 && k.index < pre.servers[m].log.len() && pre.servers[m].log[k.index as int]
@@ -592,7 +594,7 @@ pub proof fn theorem_a_commit_was_on_a_quorum(
     assert(k.index < upto);
     assert(k.entry == pre.servers[n].log[k.index as int]);
 
-    assert forall|m: ServerId| held.contains(m) implies pre.servers.contains_key(m) && k.index
+    assert forall|m: HostId| held.contains(m) implies pre.servers.contains_key(m) && k.index
         < pre.servers[m].log.len() && pre.servers[m].log[k.index as int] == k.entry by {
         assert(has_prefix(pre.servers[m].log, pre.servers[n].log, upto));
         assert(pre.servers[m].log[k.index as int] == pre.servers[n].log[k.index as int]);
@@ -676,7 +678,7 @@ pub proof fn lemma_a_labelled_execution_is_an_execution(tr: Seq<Cluster>, labels
 ///
 /// Giving it a name is the point. Left inline in a precondition it reads like
 /// bookkeeping; named, it is visible as the obligation it is.
-pub open spec fn replication_agrees_at(c: Cluster, s: RaftStep, n: ServerId, i: nat) -> bool {
+pub open spec fn replication_agrees_at(c: Cluster, s: RaftStep, n: HostId, i: nat) -> bool {
     step_replicates_to(s, n) ==> {
         &&& c.servers.contains_key(replicating_leader(s))
         &&& i < c.servers[replicating_leader(s)].log.len()
@@ -723,7 +725,7 @@ pub proof fn theorem_an_entry_persists_while_leaders_agree(
     labels: Seq<RaftStep>,
     a: int,
     b: int,
-    n: ServerId,
+    n: HostId,
     i: nat,
 )
     requires

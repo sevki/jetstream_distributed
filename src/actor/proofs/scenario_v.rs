@@ -12,6 +12,8 @@
 
 use vstd::prelude::*;
 
+use crate::host::HostId;
+
 use crate::actor::model::*;
 use crate::actor::proofs::delivery::*;
 use crate::actor::proofs::exclusive::*;
@@ -30,11 +32,11 @@ pub open spec fn sc_actor() -> ActorId {
     0
 }
 
-pub open spec fn sc_a() -> NodeId {
+pub open spec fn sc_a() -> HostId {
     1
 }
 
-pub open spec fn sc_b() -> NodeId {
+pub open spec fn sc_b() -> HostId {
     2
 }
 
@@ -48,7 +50,7 @@ pub open spec fn sc_env1() -> Envelope {
 
 /// The ownership layer at each point of the run.
 pub open spec fn sc_own(k: int) -> OwnershipSystem {
-    let nodes = Set::<NodeId>::empty().insert(1).insert(2);
+    let nodes = Set::<HostId>::empty().insert(1).insert(2);
     let grant_a = Message::Grant { actor: 0, to: 1, epoch: 41 };
     let revoke = Message::Revoke { actor: 0, target: 1, old_epoch: 41, new_epoch: 42 };
     let released = Message::Released { actor: 0, from: 1, new_epoch: 42 };
@@ -146,8 +148,8 @@ pub open spec fn sc_entry1() -> Entry {
 pub open spec fn sc_state(k: int) -> ActorSystem {
     let sent0 = Set::<Envelope>::empty().insert(sc_env0());
     let sent1 = sent0.insert(sc_env1());
-    let seq1 = Map::<NodeId, nat>::empty().insert(2, 1nat);
-    let seq2 = Map::<NodeId, nat>::empty().insert(2, 2nat);
+    let seq1 = Map::<HostId, nat>::empty().insert(2, 1nat);
+    let seq2 = Map::<HostId, nat>::empty().insert(2, 2nat);
     let j1 = Seq::<Entry>::empty().push(sc_entry0());
     let j2 = j1.push(sc_entry1());
     if k <= 2 {

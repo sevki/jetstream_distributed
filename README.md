@@ -108,13 +108,13 @@ events, and liveness of any kind. This model proves safety only, and says so.
 
 ```rust
 pub type ActorId = nat;
-pub type NodeId  = nat;
+// HostId is `crate::host::HostId`, a `u128`; a model names a host by it directly.
 pub type Epoch   = nat;
 
 pub enum OwnershipState {
-    Owned        { owner: NodeId, epoch: Epoch },
-    Transferring { from: NodeId, to: NodeId, old_epoch: Epoch, new_epoch: Epoch },
-    Unowned      { epoch: Epoch, intended_owner: NodeId },
+    Owned        { owner: HostId, epoch: Epoch },
+    Transferring { from: HostId, to: HostId, old_epoch: Epoch, new_epoch: Epoch },
+    Unowned      { epoch: Epoch, intended_owner: HostId },
 }
 ```
 
@@ -145,7 +145,7 @@ Two deliberate design points:
 
 ```rust
 // Who may perform an authoritative mutation.
-spec fn may_mutate(s: OwnershipState, node: NodeId, epoch: Epoch) -> bool {
+spec fn may_mutate(s: OwnershipState, node: HostId, epoch: Epoch) -> bool {
     match s {
         Owned { owner, epoch: e } => node == owner && epoch == e,
         Transferring { .. }       => false,
@@ -603,7 +603,7 @@ Routing and ownership are glued by one predicate:
 
 ```rust
 spec fn couples(r: Raymond, s: OwnershipState) -> bool {
-    forall|n: NodeId, e: Epoch| may_mutate(s, n, e) ==> has_token(r, n)
+    forall|n: HostId, e: Epoch| may_mutate(s, n, e) ==> has_token(r, n)
 }
 ```
 

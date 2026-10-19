@@ -20,6 +20,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
+use jetstream_distributed::host::HostId;
 use jetstream_distributed::raft::service::{
     Acceptance, Appended, Ballot, Consensus, LogEntry, LogStore, MemoryLog, Peer, RecordLogStore,
 };
@@ -31,15 +32,15 @@ const A: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
 const B: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
 const C: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3));
 
-fn roster() -> HashMap<IpAddr, u64> {
-    HashMap::from([(A, 0u64), (B, 1u64), (C, 2u64)])
+fn roster() -> HashMap<IpAddr, HostId> {
+    HashMap::from([(A, 0), (B, 1), (C, 2)])
 }
 
 fn from(addr: IpAddr) -> Context {
     Context::new(Some(RemoteAddr::IpAddr(addr)), None)
 }
 
-fn peer_with(me: u64, log: &RecordLogStore) -> Peer {
+fn peer_with(me: HostId, log: &RecordLogStore) -> Peer {
     Peer::new(roster(), me, Arc::new(MemoryLog::new()), Arc::new(log.clone()))
         .expect("the server is on the roster")
 }

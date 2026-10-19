@@ -18,7 +18,7 @@ use vstd::prelude::*;
 use crate::actor::mailbox::model::*;
 use crate::actor::mailbox::proofs::invariant::*;
 use crate::actor::model::Envelope;
-use crate::ownership::model::NodeId;
+use crate::host::HostId;
 
 verus! {
 
@@ -142,7 +142,7 @@ pub proof fn lemma_later_is_higher(m: Mailbox, i: int, j: int)
 }
 
 /// The count over a longer prefix is no smaller.
-proof fn lemma_count_between(a: Seq<Envelope>, p: int, q: int, x: NodeId)
+proof fn lemma_count_between(a: Seq<Envelope>, p: int, q: int, x: HostId)
     requires
         0 <= p <= q <= a.len(),
     ensures

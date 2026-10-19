@@ -19,6 +19,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use jetstream_distributed::host::HostId;
 use jetstream_distributed::raft::service::{
     Ballot, Consensus, Durable, Event, MemoryLog, MemoryLogStore, Peer, Persisted, Standing,
 };
@@ -29,8 +30,8 @@ const A: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
 const B: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
 const C: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3));
 
-fn roster() -> HashMap<IpAddr, u64> {
-    HashMap::from([(A, 0u64), (B, 1u64), (C, 2u64)])
+fn roster() -> HashMap<IpAddr, HostId> {
+    HashMap::from([(A, 0), (B, 1), (C, 2)])
 }
 
 /// A caller, identified the way the service identifies one: by where the
@@ -42,7 +43,7 @@ fn from(addr: IpAddr) -> Context {
 /// Every server in this file starts with an empty log, so the up-to-date check
 /// is satisfied by `(0, 0)` everywhere and these tests stay about *elections*.
 /// `tests/raft_log.rs` is where the log does the deciding.
-fn peer(me: u64, log: &MemoryLog) -> Peer {
+fn peer(me: HostId, log: &MemoryLog) -> Peer {
     Peer::new(roster(), me, Arc::new(log.clone()), Arc::new(MemoryLogStore::new()))
         .expect("the server is on the roster")
 }

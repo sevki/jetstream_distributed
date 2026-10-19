@@ -40,7 +40,7 @@
 
 use vstd::prelude::*;
 
-use crate::ownership::model::NodeId;
+use crate::host::HostId;
 
 verus! {
 
@@ -83,9 +83,9 @@ pub open spec fn pass_token_fires(actor_unowned: bool) -> bool {
 /// that holds the privilege, which is the one fact the routing layer owns.
 pub open spec fn seize_fires(
     actor_unowned: bool,
-    from: nat,
-    privilege: nat,
-    to: nat,
+    from: HostId,
+    privilege: HostId,
+    to: HostId,
     to_is_node: bool,
 ) -> bool {
     &&& actor_unowned
@@ -96,7 +96,7 @@ pub open spec fn seize_fires(
 
 /// `cs_acquire_under_token`'s guard, beyond the ownership layer's own: the
 /// node holds the privilege.
-pub open spec fn acquire_under_token_fires(privilege: nat, node: nat) -> bool {
+pub open spec fn acquire_under_token_fires(privilege: HostId, node: HostId) -> bool {
     privilege == node
 }
 
@@ -126,19 +126,19 @@ pub fn pass_token_step(actor_unowned: bool) -> (r: Result<(), CoupledRefusal>)
 /// May the privilege be seized from `from` and re-established at `to`?
 pub fn seize_step(
     actor_unowned: bool,
-    from: u64,
-    privilege: u64,
-    to: u64,
+    from: HostId,
+    privilege: HostId,
+    to: HostId,
     to_is_node: bool,
 ) -> (r: Result<(), CoupledRefusal>)
     ensures
         match r {
-            Ok(_) => seize_fires(actor_unowned, from as nat, privilege as nat, to as nat, to_is_node),
+            Ok(_) => seize_fires(actor_unowned, from, privilege, to, to_is_node),
             Err(_) => !seize_fires(
                 actor_unowned,
-                from as nat,
-                privilege as nat,
-                to as nat,
+                from,
+                privilege,
+                to,
                 to_is_node,
             ),
         },
@@ -155,11 +155,11 @@ pub fn seize_step(
 }
 
 /// May `node` take authority over the actor?
-pub fn acquire_under_token_step(privilege: u64, node: u64) -> (r: Result<(), CoupledRefusal>)
+pub fn acquire_under_token_step(privilege: HostId, node: HostId) -> (r: Result<(), CoupledRefusal>)
     ensures
         match r {
-            Ok(_) => acquire_under_token_fires(privilege as nat, node as nat),
-            Err(_) => !acquire_under_token_fires(privilege as nat, node as nat),
+            Ok(_) => acquire_under_token_fires(privilege, node),
+            Err(_) => !acquire_under_token_fires(privilege, node),
         },
 {
     if privilege == node {

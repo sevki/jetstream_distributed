@@ -84,6 +84,8 @@
 #![allow(unused_imports)]
 
 use vstd::prelude::*;
+
+use crate::host::HostId;
 use vstd::set_lib::*;
 
 use crate::raft::model::*;
@@ -109,7 +111,7 @@ pub proof fn theorem_a_term_never_falls_across_a_run(
     tr: Seq<Cluster>,
     a: int,
     b: int,
-    n: ServerId,
+    n: HostId,
 )
     requires
         raft_execution(tr),
@@ -157,9 +159,9 @@ pub proof fn theorem_a_term_never_falls_across_a_run(
 pub proof fn theorem_a_commit_quorum_is_at_or_past_its_term(
     pre: Cluster,
     post: Cluster,
-    n: ServerId,
+    n: HostId,
     upto: nat,
-    m: ServerId,
+    m: HostId,
 )
     requires
         raft_term_inv(pre),
@@ -196,7 +198,7 @@ pub proof fn theorem_a_replicating_leader_shares_the_followers_term(
     pre: Cluster,
     post: Cluster,
     s: RaftStep,
-    n: ServerId,
+    n: HostId,
 )
     requires
         raft_step(pre, post, s),
@@ -257,8 +259,8 @@ pub proof fn theorem_a_replicating_leader_shares_the_followers_term(
 ///
 /// A hypothesis that is stronger than the argument needs is not a safe
 /// over-approximation when the hypothesis is what someone else has to supply.
-pub open spec fn replicators_hold(c: Cluster, n: ServerId, i: nat, e: Entry) -> bool {
-    forall|m: ServerId|
+pub open spec fn replicators_hold(c: Cluster, n: HostId, i: nat, e: Entry) -> bool {
+    forall|m: HostId|
         #![trigger c.servers[m]]
         c.servers.contains_key(m) && is_leader(c.servers[m]) && c.servers[m].current_term
             == c.servers[n].current_term ==> i < c.servers[m].log.len()
@@ -274,7 +276,7 @@ pub open spec fn replicators_hold(c: Cluster, n: ServerId, i: nat, e: Entry) -> 
 /// induction reaches *up to* a term and no further: see
 /// [`replicators_hold`] for the finding that put it there.
 pub open spec fn leaders_within_hold(c: Cluster, t0: Term, t1: Term, i: nat, e: Entry) -> bool {
-    forall|m: ServerId|
+    forall|m: HostId|
         #![trigger c.servers[m]]
         c.servers.contains_key(m) && is_leader(c.servers[m]) && t0 <= c.servers[m].current_term <= t1
             ==> i < c.servers[m].log.len() && c.servers[m].log[i as int] == e
@@ -287,7 +289,7 @@ pub open spec fn leaders_within_hold(c: Cluster, t0: Term, t1: Term, i: nat, e: 
 /// `n` has `n`'s term, so if `n`'s term is in range then so is that leader's.
 pub proof fn lemma_a_bounded_hypothesis_covers_the_replicators(
     c: Cluster,
-    n: ServerId,
+    n: HostId,
     t0: Term,
     t1: Term,
     i: nat,
@@ -323,7 +325,7 @@ pub proof fn theorem_an_entry_survives_leaders_that_could_reach_it(
     labels: Seq<RaftStep>,
     a: int,
     b: int,
-    n: ServerId,
+    n: HostId,
     i: nat,
     e: Entry,
 )
@@ -421,9 +423,9 @@ pub proof fn theorem_a_commit_quorum_still_holds_it(
     labels: Seq<RaftStep>,
     at: int,
     later: int,
-    n: ServerId,
+    n: HostId,
     upto: nat,
-    m: ServerId,
+    m: HostId,
     i: nat,
     t1: Term,
 )

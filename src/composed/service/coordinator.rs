@@ -13,15 +13,16 @@ use crate::composed::exec::{
 use crate::ownership::service::{EpochFloor, Event as OwnershipEvent, Offer, Ownership, Registry};
 use crate::raymond::service::{Event as RoutingEvent, Router, Routing, Standing};
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
+use crate::host::HostId;
 use jetstream::prelude::*;
 
 /// What the coordinator did on its own account. The layers keep their own logs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {
     /// The privilege was taken from `from` and re-established at `to`.
-    Seized { from: u64, to: u64 },
+    Seized { from: HostId, to: HostId },
     /// `node` reconciled.
-    Reconciled { node: u64 },
+    Reconciled { node: HostId },
 }
 
 struct Debts {
@@ -57,7 +58,7 @@ pub struct Coordinator {
     /// async mutex.
     gate: Arc<tokio::sync::Mutex<()>>,
     debts: Arc<Mutex<Debts>>,
-    roster: Arc<HashMap<IpAddr, u64>>,
+    roster: Arc<HashMap<IpAddr, HostId>>,
 }
 
 impl Coordinator {
@@ -77,11 +78,11 @@ impl Coordinator {
     /// privilege and then grant authority to another with the same `Context`.
     /// One roster, owned here, closes both.
     pub fn new(
-        roster: HashMap<IpAddr, u64>,
-        first_owner: u64,
+        roster: HashMap<IpAddr, HostId>,
+        first_owner: HostId,
         floor: Arc<dyn EpochFloor>,
-        root: u64,
-        parent: HashMap<u64, u64>,
+        root: HostId,
+        parent: HashMap<HostId, HostId>,
     ) -> io::Result<Self> {
         let registry = Registry::new(roster.clone(), first_owner, floor)?;
         let router = Router::new(roster.clone(), root, parent)?;
@@ -100,10 +101,10 @@ impl Coordinator {
     /// As [`Coordinator::new`], with every other node pointing straight at
     /// `root`.
     pub fn star(
-        roster: HashMap<IpAddr, u64>,
-        first_owner: u64,
+        roster: HashMap<IpAddr, HostId>,
+        first_owner: HostId,
         floor: Arc<dyn EpochFloor>,
-        root: u64,
+        root: HostId,
     ) -> io::Result<Self> {
         let parent = roster
             .values()
@@ -114,7 +115,7 @@ impl Coordinator {
     }
 
     /// Where the privilege actually is.
-    pub fn privilege(&self) -> u64 {
+    pub fn privilege(&self) -> HostId {
         self.router.privilege()
     }
 
@@ -126,12 +127,12 @@ impl Coordinator {
 
     /// The nodes that believe they hold the privilege and do not. See
     /// [`Router::stale_holders`].
-    pub fn stale_holders(&self) -> Vec<u64> {
+    pub fn stale_holders(&self) -> Vec<HostId> {
         self.router.stale_holders()
     }
 
     /// A node's own routing entries, or `None` for a non-node.
-    pub fn standing_of(&self, node: u64) -> Option<Standing> {
+    pub fn standing_of(&self, node: HostId) -> Option<Standing> {
         self.router.standing_of(node)
     }
 
@@ -151,8 +152,8 @@ impl Coordinator {
     }
 
     /// The nodes that owe a reconciliation, in order.
-    pub fn seized(&self) -> Vec<u64> {
-        let mut v: Vec<u64> = self.debts.lock().expect("debts lock").seized.items.clone();
+    pub fn seized(&self) -> Vec<HostId> {
+        let mut v: Vec<HostId> = self.debts.lock().expect("debts lock").seized.items.clone();
         v.sort_unstable();
         v.dedup();
         v
@@ -171,7 +172,7 @@ impl Coordinator {
     /// Nothing belonging to the old holder is touched. It is left a stale
     /// holder — it believes it holds the privilege, it does not — and owes a
     /// reconciliation.
-    pub async fn seize_token(&self, to: u64) -> Result<u64> {
+    pub async fn seize_token(&self, to: HostId) -> Result<HostId> {
         let _gate = self.gate.lock().await;
         // The step, across both layers and the debts, is
         // `crate::composed::exec::seize_token`: `cs_seize_token`, checked.
@@ -188,12 +189,12 @@ impl Coordinator {
 
     /// The coordinator forcing progress on the ownership layer: revoke, reassign
     /// or abort. See [`Registry::force`]. Carried by `cs_own`.
-    pub async fn force(&self, next: u64) -> Result<u64> {
+    pub async fn force(&self, next: HostId) -> Result<HostId> {
         let _gate = self.gate.lock().await;
         self.registry.force(next)
     }
 
-    fn caller(&self, ctx: &Context) -> Result<u64> {
+    fn caller(&self, ctx: &Context) -> Result<HostId> {
         match ctx.remote() {
             Some(RemoteAddr::IpAddr(addr)) => self
                 .roster
@@ -230,7 +231,7 @@ impl Composed for Coordinator {
         self.registry.write(ctx, epoch).await
     }
 
-    async fn begin_transfer(&self, ctx: Context, to: u64) -> Result<()> {
+    async fn begin_transfer(&self, ctx: Context, to: HostId) -> Result<()> {
         let _gate = self.gate.lock().await;
         self.registry.begin_transfer(ctx, to).await
     }
@@ -250,12 +251,12 @@ impl Composed for Coordinator {
         self.router.request_cs(ctx).await
     }
 
-    async fn make_request(&self, ctx: Context) -> Result<u64> {
+    async fn make_request(&self, ctx: Context) -> Result<HostId> {
         let _gate = self.gate.lock().await;
         self.router.make_request(ctx).await
     }
 
-    async fn receive_request(&self, ctx: Context, from: u64) -> Result<()> {
+    async fn receive_request(&self, ctx: Context, from: HostId) -> Result<()> {
         let _gate = self.gate.lock().await;
         self.router.receive_request(ctx, from).await
     }
@@ -270,7 +271,7 @@ impl Composed for Coordinator {
         self.router.exit_cs(ctx).await
     }
 
-    async fn assign_privilege(&self, ctx: Context) -> Result<u64> {
+    async fn assign_privilege(&self, ctx: Context) -> Result<HostId> {
         let _gate = self.gate.lock().await;
         let me = self.caller(&ctx)?;
         // `cs_pass_token`: the coupling first, so that a refusal names it rather

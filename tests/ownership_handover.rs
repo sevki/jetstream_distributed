@@ -91,8 +91,8 @@ fn a_handover_fences_the_outgoing_owner() {
             let served = built
                 .get_or_init(|| {
                     let roster = HashMap::from([
-                        (turmoil::lookup("a"), 0u64),
-                        (turmoil::lookup("b"), 1u64),
+                        (turmoil::lookup("a"), 0),
+                        (turmoil::lookup("b"), 1),
                     ]);
                     Registry::new(roster, 0, Arc::new(seeded.clone()))
                         .expect("the floor is readable and node 0 is on the roster")

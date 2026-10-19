@@ -24,7 +24,7 @@ use crate::actor::mailbox::model::*;
 use crate::actor::mailbox::proofs::invariant::*;
 use crate::actor::mailbox::proofs::liveness::*;
 use crate::actor::model::Envelope;
-use crate::ownership::model::NodeId;
+use crate::host::HostId;
 use crate::temporal::*;
 
 verus! {
@@ -205,7 +205,7 @@ proof fn lemma_flags()
         !sc12().scheduled,
         sc12().dq is Await,
 {
-    assert(sc0().next_seq =~= Map::<NodeId, nat>::empty());
+    assert(sc0().next_seq =~= Map::<HostId, nat>::empty());
 }
 
 /// Each step of the fair run is a step of the machine.

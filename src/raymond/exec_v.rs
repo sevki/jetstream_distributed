@@ -41,7 +41,7 @@ use std::collections::VecDeque;
 
 use vstd::prelude::*;
 
-use crate::ownership::model::NodeId;
+use crate::host::HostId;
 use crate::raymond::model::*;
 use crate::raymond::proofs::refinement::*;
 use crate::raymond::steps::*;
@@ -51,11 +51,11 @@ verus! {
 /// One node's routing entries.
 pub struct RayEntry {
     /// Which node.
-    pub id: u64,
+    pub id: HostId,
     /// Where the node believes the privilege is, one hop.
-    pub holder: u64,
+    pub holder: HostId,
     /// Requests waiting at the node, front first.
-    pub queue: VecDeque<u64>,
+    pub queue: VecDeque<HostId>,
     /// A request towards `holder` is outstanding.
     pub asked: bool,
     /// The node is inside its critical section.
@@ -67,29 +67,29 @@ pub struct RayTable {
     /// One entry per node.
     pub entries: Vec<RayEntry>,
     /// Every request ever sent, `(originator, destination)`. Never shrinks.
-    pub requests: Vec<(u64, u64)>,
+    pub requests: Vec<(HostId, HostId)>,
     /// Where the privilege actually is.
-    pub privilege: u64,
+    pub privilege: HostId,
 }
 
 /// Where `n` is among `ids`, if it is.
-pub open spec fn index_in(ids: Seq<u64>, n: nat) -> int {
-    choose|i: int| 0 <= i < ids.len() && ids[i] as nat == n
+pub open spec fn index_in(ids: Seq<HostId>, n: HostId) -> int {
+    choose|i: int| 0 <= i < ids.len() && ids[i] == n
 }
 
 /// `n` is among `ids`.
-pub open spec fn ids_has(ids: Seq<u64>, n: nat) -> bool {
-    exists|i: int| 0 <= i < ids.len() && ids[i] as nat == n
+pub open spec fn ids_has(ids: Seq<HostId>, n: HostId) -> bool {
+    exists|i: int| 0 <= i < ids.len() && ids[i] == n
 }
 
 /// The queue as the model sees it.
-pub open spec fn queue_view(e: RayEntry) -> Seq<NodeId> {
-    e.queue@.map_values(|x: u64| x as nat)
+pub open spec fn queue_view(e: RayEntry) -> Seq<HostId> {
+    e.queue@
 }
 
 impl RayTable {
     /// The nodes, in entry order.
-    pub open spec fn ids(&self) -> Seq<u64> {
+    pub open spec fn ids(&self) -> Seq<HostId> {
         self.entries@.map_values(|e: RayEntry| e.id)
     }
 
@@ -98,34 +98,34 @@ impl RayTable {
         &&& forall|i: int, j: int|
             0 <= i < self.ids().len() && 0 <= j < self.ids().len() && self.ids()[i] == self.ids()[j]
                 ==> i == j
-        &&& ids_has(self.ids(), self.privilege as nat)
+        &&& ids_has(self.ids(), self.privilege)
     }
 
     /// `n` is a node.
-    pub open spec fn has_node(&self, n: nat) -> bool {
+    pub open spec fn has_node(&self, n: HostId) -> bool {
         ids_has(self.ids(), n)
     }
 
     /// The set of nodes.
-    pub open spec fn node_set(&self) -> Set<NodeId> {
-        self.ids().map_values(|x: u64| x as nat).to_set()
+    pub open spec fn node_set(&self) -> Set<HostId> {
+        self.ids().to_set()
     }
 
     /// Node `n`'s entry. Meaningful when `n` is a node.
-    pub open spec fn entry_of(&self, n: nat) -> RayEntry {
+    pub open spec fn entry_of(&self, n: HostId) -> RayEntry {
         self.entries@[index_in(self.ids(), n)]
     }
 
     /// `(a, b)` has been sent.
-    pub open spec fn has_request(&self, a: nat, b: nat) -> bool {
+    pub open spec fn has_request(&self, a: HostId, b: HostId) -> bool {
         exists|k: int|
-            0 <= k < self.requests@.len() && self.requests@[k].0 as nat == a
-                && self.requests@[k].1 as nat == b
+            0 <= k < self.requests@.len() && self.requests@[k].0 == a
+                && self.requests@[k].1 == b
     }
 
     /// The set of requests sent.
-    pub open spec fn request_set(&self) -> Set<(NodeId, NodeId)> {
-        self.requests@.map_values(|p: (u64, u64)| (p.0 as nat, p.1 as nat)).to_set()
+    pub open spec fn request_set(&self) -> Set<(HostId, HostId)> {
+        self.requests@.to_set()
     }
 }
 
@@ -136,21 +136,21 @@ impl View for RayTable {
     open spec fn view(&self) -> Raymond {
         Raymond {
             nodes: self.node_set(),
-            holder: Map::new(self.node_set(), |n: nat| self.entry_of(n).holder as nat),
-            queue: Map::new(self.node_set(), |n: nat| queue_view(self.entry_of(n))),
-            asked: Map::new(self.node_set(), |n: nat| self.entry_of(n).asked),
-            using: Map::new(self.node_set(), |n: nat| self.entry_of(n).using),
+            holder: Map::new(self.node_set(), |n: HostId| self.entry_of(n).holder),
+            queue: Map::new(self.node_set(), |n: HostId| queue_view(self.entry_of(n))),
+            asked: Map::new(self.node_set(), |n: HostId| self.entry_of(n).asked),
+            using: Map::new(self.node_set(), |n: HostId| self.entry_of(n).using),
             requests: self.request_set(),
-            privilege: self.privilege as nat,
+            privilege: self.privilege,
         }
     }
 }
 
 /// `r` with node `id`'s entries replaced by `e`'s.
-pub open spec fn upd(r: Raymond, id: NodeId, e: RayEntry) -> Raymond {
+pub open spec fn upd(r: Raymond, id: HostId, e: RayEntry) -> Raymond {
     Raymond {
         nodes: r.nodes,
-        holder: r.holder.insert(id, e.holder as nat),
+        holder: r.holder.insert(id, e.holder),
         queue: r.queue.insert(id, queue_view(e)),
         asked: r.asked.insert(id, e.asked),
         using: r.using.insert(id, e.using),
@@ -160,61 +160,61 @@ pub open spec fn upd(r: Raymond, id: NodeId, e: RayEntry) -> Raymond {
 }
 
 /// The node set is the nodes.
-pub proof fn lemma_node_set(t: RayTable, n: nat)
+pub proof fn lemma_node_set(t: RayTable, n: HostId)
     ensures
         t.node_set().contains(n) <==> t.has_node(n),
 {
-    let m = t.ids().map_values(|x: u64| x as nat);
+    let m = t.ids();
     m.to_set_ensures();
     assert(m.to_set().contains(n) <==> m.contains(n));
     if t.has_node(n) {
-        let i = choose|i: int| 0 <= i < t.ids().len() && t.ids()[i] as nat == n;
+        let i = choose|i: int| 0 <= i < t.ids().len() && t.ids()[i] == n;
         assert(m[i] == n);
         assert(m.contains(n));
     }
     if m.contains(n) {
         let i = choose|i: int| 0 <= i < m.len() && m[i] == n;
-        assert(t.ids()[i] as nat == n);
+        assert(t.ids()[i] == n);
     }
 }
 
 /// The request set is the requests.
-pub proof fn lemma_request_set(t: RayTable, a: nat, b: nat)
+pub proof fn lemma_request_set(t: RayTable, a: HostId, b: HostId)
     ensures
         t.request_set().contains((a, b)) <==> t.has_request(a, b),
 {
-    let m = t.requests@.map_values(|p: (u64, u64)| (p.0 as nat, p.1 as nat));
+    let m = t.requests@;
     m.to_set_ensures();
     if t.has_request(a, b) {
         let k = choose|k: int|
-            0 <= k < t.requests@.len() && t.requests@[k].0 as nat == a && t.requests@[k].1 as nat == b;
+            0 <= k < t.requests@.len() && t.requests@[k].0 == a && t.requests@[k].1 == b;
         assert(m[k] == (a, b));
         assert(m.contains((a, b)));
     }
     if m.contains((a, b)) {
         let k = choose|k: int| 0 <= k < m.len() && m[k] == (a, b);
-        assert(t.requests@[k].0 as nat == a);
+        assert(t.requests@[k].0 == a);
     }
 }
 
 /// **Sending a request that was already sent changes nothing**, which is what
 /// the model's `requests.insert` does to a set that has it.
-pub proof fn lemma_push_request_once(t0: RayTable, t1: RayTable, a: u64, b: u64)
+pub proof fn lemma_push_request_once(t0: RayTable, t1: RayTable, a: HostId, b: HostId)
     requires
         t0.well_formed(),
-        t0.has_request(a as nat, b as nat),
+        t0.has_request(a, b),
         t1.entries@ == t0.entries@,
         t1.requests@ == t0.requests@,
         t1.privilege == t0.privilege,
     ensures
         t1.well_formed(),
-        t1@ == (Raymond { requests: t0@.requests.insert((a as nat, b as nat)), ..t0@ }),
+        t1@ == (Raymond { requests: t0@.requests.insert((a, b)), ..t0@ }),
 {
     assert(t1.ids() == t0.ids());
     assert(t1.node_set() == t0.node_set());
-    lemma_request_set(t0, a as nat, b as nat);
+    lemma_request_set(t0, a, b);
     assert(t1.request_set() == t0.request_set());
-    assert(t0.request_set().insert((a as nat, b as nat)) == t0.request_set());
+    assert(t0.request_set().insert((a, b)) == t0.request_set());
     assert(t1@.holder == t0@.holder);
     assert(t1@.queue == t0@.queue);
     assert(t1@.asked == t0@.asked);
@@ -234,7 +234,7 @@ pub proof fn lemma_update_entry(t0: RayTable, t1: RayTable, i: int)
     ensures
         t1.well_formed(),
         t1.ids() == t0.ids(),
-        t1@ == upd(t0@, t0.entries@[i].id as nat, t1.entries@[i]),
+        t1@ == upd(t0@, t0.entries@[i].id, t1.entries@[i]),
 {
     assert(t1.ids() == t0.ids()) by {
         assert forall|k: int| 0 <= k < t0.ids().len() implies t1.ids()[k] == t0.ids()[k] by {
@@ -242,13 +242,13 @@ pub proof fn lemma_update_entry(t0: RayTable, t1: RayTable, i: int)
             assert(t0.ids()[k] == t0.entries@[k].id);
         }
     }
-    let id = t0.entries@[i].id as nat;
-    assert(t0.ids()[i] as nat == id);
+    let id = t0.entries@[i].id;
+    assert(t0.ids()[i] == id);
     assert(t0.has_node(id));
     lemma_node_set(t0, id);
     assert(index_in(t0.ids(), id) == i) by {
         let j = index_in(t0.ids(), id);
-        assert(0 <= j < t0.ids().len() && t0.ids()[j] as nat == id);
+        assert(0 <= j < t0.ids().len() && t0.ids()[j] == id);
         assert(t0.ids()[j] == t0.ids()[i]);
     }
     let e = t1.entries@[i];
@@ -256,14 +256,14 @@ pub proof fn lemma_update_entry(t0: RayTable, t1: RayTable, i: int)
     assert(t1.node_set() == t0.node_set());
     assert(t0@.nodes.contains(id));
     // The node `n` names is `id` or some other entry, which did not change.
-    assert forall|n: nat| t0.has_node(n) && n != id implies index_in(t0.ids(), n) != i by {
+    assert forall|n: HostId| t0.has_node(n) && n != id implies index_in(t0.ids(), n) != i by {
         let j = index_in(t0.ids(), n);
-        assert(t0.ids()[j] as nat == n);
+        assert(t0.ids()[j] == n);
         if j == i {
-            assert(t0.ids()[i] as nat == id);
+            assert(t0.ids()[i] == id);
         }
     }
-    assert forall|n: nat| t0.node_set().contains(n) && n != id implies t1.entry_of(n)
+    assert forall|n: HostId| t0.node_set().contains(n) && n != id implies t1.entry_of(n)
         == t0.entry_of(n) by {
         lemma_node_set(t0, n);
         let j = index_in(t0.ids(), n);
@@ -297,16 +297,16 @@ pub proof fn lemma_found(t: RayTable, i: int)
         t.well_formed(),
         0 <= i < t.entries@.len(),
     ensures
-        t.has_node(t.entries@[i].id as nat),
-        t@.nodes.contains(t.entries@[i].id as nat),
-        t.entry_of(t.entries@[i].id as nat) == t.entries@[i],
-        t@.holder[t.entries@[i].id as nat] == t.entries@[i].holder as nat,
-        t@.queue[t.entries@[i].id as nat] == queue_view(t.entries@[i]),
-        t@.asked[t.entries@[i].id as nat] == t.entries@[i].asked,
-        t@.using[t.entries@[i].id as nat] == t.entries@[i].using,
+        t.has_node(t.entries@[i].id),
+        t@.nodes.contains(t.entries@[i].id),
+        t.entry_of(t.entries@[i].id) == t.entries@[i],
+        t@.holder[t.entries@[i].id] == t.entries@[i].holder,
+        t@.queue[t.entries@[i].id] == queue_view(t.entries@[i]),
+        t@.asked[t.entries@[i].id] == t.entries@[i].asked,
+        t@.using[t.entries@[i].id] == t.entries@[i].using,
 {
-    let id = t.entries@[i].id as nat;
-    assert(t.ids()[i] as nat == id);
+    let id = t.entries@[i].id;
+    assert(t.ids()[i] == id);
     assert(t.has_node(id));
     lemma_node_set(t, id);
     let j = index_in(t.ids(), id);
@@ -315,21 +315,21 @@ pub proof fn lemma_found(t: RayTable, i: int)
 }
 
 /// A node that is not found is not in the view.
-pub proof fn lemma_absent(t: RayTable, id: u64)
+pub proof fn lemma_absent(t: RayTable, id: HostId)
     requires
         forall|k: int| 0 <= k < t.entries@.len() ==> t.entries@[k].id != id,
     ensures
-        !t@.nodes.contains(id as nat),
+        !t@.nodes.contains(id),
 {
-    lemma_node_set(t, id as nat);
-    if t.has_node(id as nat) {
-        let k = choose|k: int| 0 <= k < t.ids().len() && t.ids()[k] as nat == id as nat;
+    lemma_node_set(t, id);
+    if t.has_node(id) {
+        let k = choose|k: int| 0 <= k < t.ids().len() && t.ids()[k] == id;
         assert(t.entries@[k].id == id);
     }
 }
 
 /// **Sending a request adds it to the set sent, and nothing else changes.**
-pub proof fn lemma_push_request(t0: RayTable, t1: RayTable, a: u64, b: u64)
+pub proof fn lemma_push_request(t0: RayTable, t1: RayTable, a: HostId, b: HostId)
     requires
         t0.well_formed(),
         t1.entries@ == t0.entries@,
@@ -337,19 +337,19 @@ pub proof fn lemma_push_request(t0: RayTable, t1: RayTable, a: u64, b: u64)
         t1.privilege == t0.privilege,
     ensures
         t1.well_formed(),
-        t1@ == (Raymond { requests: t0@.requests.insert((a as nat, b as nat)), ..t0@ }),
+        t1@ == (Raymond { requests: t0@.requests.insert((a, b)), ..t0@ }),
 {
     assert(t1.ids() == t0.ids());
     assert(t1.node_set() == t0.node_set());
-    let m0 = t0.requests@.map_values(|p: (u64, u64)| (p.0 as nat, p.1 as nat));
-    let m1 = t1.requests@.map_values(|p: (u64, u64)| (p.0 as nat, p.1 as nat));
-    assert(m1 == m0.push((a as nat, b as nat)));
+    let m0 = t0.requests@;
+    let m1 = t1.requests@;
+    assert(m1 == m0.push((a, b)));
     m0.to_set_ensures();
     m1.to_set_ensures();
-    assert(t1.request_set() == t0.request_set().insert((a as nat, b as nat))) by {
-        assert forall|p: (nat, nat)| t1.request_set().contains(p) == t0.request_set()
-            .insert((a as nat, b as nat)).contains(p) by {
-            let x = (a as nat, b as nat);
+    assert(t1.request_set() == t0.request_set().insert((a, b))) by {
+        assert forall|p: (HostId, HostId)| t1.request_set().contains(p) == t0.request_set()
+            .insert((a, b)).contains(p) by {
+            let x = (a, b);
             assert(m1.to_set().contains(p) == m1.contains(p));
             assert(m0.to_set().contains(p) == m0.contains(p));
             assert(m1.len() == m0.len() + 1);
@@ -381,7 +381,7 @@ pub proof fn lemma_push_request(t0: RayTable, t1: RayTable, a: u64, b: u64)
 
 impl RayTable {
     /// Where node `id` is, if it is.
-    pub fn find(&self, id: u64) -> (found: Option<usize>)
+    pub fn find(&self, id: HostId) -> (found: Option<usize>)
         ensures
             match found {
                 Some(i) => i < self.entries@.len() && self.entries@[i as int].id == id,
@@ -404,9 +404,9 @@ impl RayTable {
     }
 
     /// Whether `(a, b)` has been sent.
-    pub fn sent(&self, a: u64, b: u64) -> (r: bool)
+    pub fn sent(&self, a: HostId, b: HostId) -> (r: bool)
         ensures
-            r == self.has_request(a as nat, b as nat),
+            r == self.has_request(a, b),
     {
         let mut k: usize = 0;
         while k < self.requests.len()
@@ -424,19 +424,19 @@ impl RayTable {
     }
 
     /// `RequestCs`: node `me` asks for the privilege for itself.
-    pub fn request_cs(&mut self, me: u64) -> (r: Result<(), RayRefusal>)
+    pub fn request_cs(&mut self, me: HostId) -> (r: Result<(), RayRefusal>)
         requires
             old(self).well_formed(),
         ensures
             final(self).well_formed(),
             match r {
                 Ok(_) => {
-                    &&& final(self)@ == request_cs_post(old(self)@, me as nat)
-                    &&& ray_request_cs(old(self)@, final(self)@, me as nat)
+                    &&& final(self)@ == request_cs_post(old(self)@, me)
+                    &&& ray_request_cs(old(self)@, final(self)@, me)
                 },
                 Err(_) => {
                     &&& final(self)@ == old(self)@
-                    &&& forall|p: Raymond| !ray_request_cs(old(self)@, p, me as nat)
+                    &&& forall|p: Raymond| !ray_request_cs(old(self)@, p, me)
                 },
             },
     {
@@ -459,21 +459,21 @@ impl RayTable {
             lemma_update_entry(t0, *self, i as int);
             let r0 = t0@;
             let e = self.entries@[i as int];
-            assert(queue_view(e) == queue_view(t0.entries@[i as int]).push(me as nat));
-            assert(self@.queue == request_cs_post(r0, me as nat).queue) by {
-                assert(r0.queue.insert(me as nat, queue_view(e)) == r0.queue.insert(
-                    me as nat,
-                    r0.queue[me as nat].push(me as nat),
+            assert(queue_view(e) == queue_view(t0.entries@[i as int]).push(me));
+            assert(self@.queue == request_cs_post(r0, me).queue) by {
+                assert(r0.queue.insert(me, queue_view(e)) == r0.queue.insert(
+                    me,
+                    r0.queue[me].push(me),
                 ));
             }
-            assert(self@.holder == r0.holder.insert(me as nat, r0.holder[me as nat])) ;
-            assert(self@.asked == r0.asked.insert(me as nat, r0.asked[me as nat]));
-            assert(self@.using == r0.using.insert(me as nat, r0.using[me as nat]));
-            assert(r0.holder.insert(me as nat, r0.holder[me as nat]) == r0.holder);
-            assert(r0.asked.insert(me as nat, r0.asked[me as nat]) == r0.asked);
-            assert(r0.using.insert(me as nat, r0.using[me as nat]) == r0.using);
-            assert(self@ == request_cs_post(r0, me as nat));
-            theorem_request_cs_post_is_the_model_step(r0, me as nat);
+            assert(self@.holder == r0.holder.insert(me, r0.holder[me])) ;
+            assert(self@.asked == r0.asked.insert(me, r0.asked[me]));
+            assert(self@.using == r0.using.insert(me, r0.using[me]));
+            assert(r0.holder.insert(me, r0.holder[me]) == r0.holder);
+            assert(r0.asked.insert(me, r0.asked[me]) == r0.asked);
+            assert(r0.using.insert(me, r0.using[me]) == r0.using);
+            assert(self@ == request_cs_post(r0, me));
+            theorem_request_cs_post_is_the_model_step(r0, me);
         }
         Ok(())
     }
@@ -493,23 +493,23 @@ pub proof fn lemma_view_total(t: RayTable)
     ensures
         ray_maps_total(t@),
 {
-    assert forall|n: NodeId| #[trigger] t@.nodes.contains(n) implies t@.holder.contains_key(n)
+    assert forall|n: HostId| #[trigger] t@.nodes.contains(n) implies t@.holder.contains_key(n)
         && t@.queue.contains_key(n) && t@.asked.contains_key(n) && t@.using.contains_key(n) by {
         assert(t@.holder.dom() == t.node_set());
     }
 }
 
 /// **Moving the privilege changes the view's `privilege`, and nothing else.**
-pub proof fn lemma_set_privilege(t0: RayTable, t1: RayTable, p: u64)
+pub proof fn lemma_set_privilege(t0: RayTable, t1: RayTable, p: HostId)
     requires
         t0.well_formed(),
         t1.entries@ == t0.entries@,
         t1.requests@ == t0.requests@,
         t1.privilege == p,
-        t0.has_node(p as nat),
+        t0.has_node(p),
     ensures
         t1.well_formed(),
-        t1@ == (Raymond { privilege: p as nat, ..t0@ }),
+        t1@ == (Raymond { privilege: p, ..t0@ }),
 {
     assert(t1.ids() == t0.ids());
     assert(t1.node_set() == t0.node_set());
@@ -525,7 +525,7 @@ impl RayTable {
     /// not a model step**: that the finished table is `ray_init` — every other
     /// node points somewhere, the pointers reach the root — is the service's
     /// check at start-up, not something proved here.
-    pub fn new(root: u64) -> (t: RayTable)
+    pub fn new(root: HostId) -> (t: RayTable)
         ensures
             t.well_formed(),
             t.privilege == root,
@@ -541,8 +541,8 @@ impl RayTable {
         let t = RayTable { entries, requests: Vec::new(), privilege: root };
         proof {
             assert(t.ids() == seq![root]);
-            assert(t.has_node(root as nat)) by {
-                assert(t.ids()[0] as nat == root as nat);
+            assert(t.has_node(root)) by {
+                assert(t.ids()[0] == root);
             }
         }
         t
@@ -551,20 +551,20 @@ impl RayTable {
     /// Add node `id`, pointing at `holder`, with nothing queued. Refused if `id`
     /// is already a node. Construction, not a model step; see
     /// [`RayTable::new`].
-    pub fn add_node(&mut self, id: u64, holder: u64) -> (added: bool)
+    pub fn add_node(&mut self, id: HostId, holder: HostId) -> (added: bool)
         requires
             old(self).well_formed(),
         ensures
             final(self).well_formed(),
             final(self).privilege == old(self).privilege,
             final(self).requests@ == old(self).requests@,
-            added == !old(self).has_node(id as nat),
+            added == !old(self).has_node(id),
     {
         let ghost t0 = *self;
         if self.find(id).is_some() {
             proof {
                 let k = choose|k: int| 0 <= k < t0.entries@.len() && t0.entries@[k].id == id;
-                assert(t0.ids()[k] as nat == id as nat);
+                assert(t0.ids()[k] == id);
             }
             return false;
         }
@@ -586,13 +586,13 @@ impl RayTable {
                     assert(t0.entries@[i].id != id);
                 }
             }
-            assert(ids_has(self.ids(), self.privilege as nat)) by {
-                let k = choose|k: int| 0 <= k < t0.ids().len() && t0.ids()[k] as nat == t0.privilege as nat;
-                assert(self.ids()[k] as nat == self.privilege as nat);
+            assert(ids_has(self.ids(), self.privilege)) by {
+                let k = choose|k: int| 0 <= k < t0.ids().len() && t0.ids()[k] == t0.privilege;
+                assert(self.ids()[k] == self.privilege);
             }
-            assert(!t0.has_node(id as nat)) by {
-                if t0.has_node(id as nat) {
-                    let k = choose|k: int| 0 <= k < t0.ids().len() && t0.ids()[k] as nat == id as nat;
+            assert(!t0.has_node(id)) by {
+                if t0.has_node(id) {
+                    let k = choose|k: int| 0 <= k < t0.ids().len() && t0.ids()[k] == id;
                     assert(t0.entries@[k].id == id);
                 }
             }
@@ -602,20 +602,20 @@ impl RayTable {
 
     /// `MakeRequest`: node `me` forwards a request one hop towards the privilege.
     /// Returns where it goes: the holder pointer, resolved now.
-    pub fn make_request(&mut self, me: u64) -> (r: Result<u64, RayRefusal>)
+    pub fn make_request(&mut self, me: HostId) -> (r: Result<HostId, RayRefusal>)
         requires
             old(self).well_formed(),
         ensures
             final(self).well_formed(),
             match r {
                 Ok(dest) => {
-                    &&& final(self)@ == make_request_post(old(self)@, me as nat)
-                    &&& ray_make_request(old(self)@, final(self)@, me as nat)
-                    &&& dest as nat == old(self)@.holder[me as nat]
+                    &&& final(self)@ == make_request_post(old(self)@, me)
+                    &&& ray_make_request(old(self)@, final(self)@, me)
+                    &&& dest == old(self)@.holder[me]
                 },
                 Err(_) => {
                     &&& final(self)@ == old(self)@
-                    &&& forall|p: Raymond| !ray_make_request(old(self)@, p, me as nat)
+                    &&& forall|p: Raymond| !ray_make_request(old(self)@, p, me)
                 },
             },
     {
@@ -642,8 +642,8 @@ impl RayTable {
         match make_request_step(me, holder, queue_len, asked) {
             Err(why) => {
                 proof {
-                    assert forall|p: Raymond| !ray_make_request(t0@, p, me as nat) by {
-                        theorem_make_request_step_refuses_exactly_when_disabled(t0@, p, me as nat);
+                    assert forall|p: Raymond| !ray_make_request(t0@, p, me) by {
+                        theorem_make_request_step_refuses_exactly_when_disabled(t0@, p, me);
                     }
                 }
                 Err(why)
@@ -669,7 +669,7 @@ impl RayTable {
                         lemma_push_request(t1, *self, me, dest);
                     }
                     let r0 = t0@;
-                    let n = me as nat;
+                    let n = me;
                     lemma_insert_same(r0.holder, n);
                     lemma_insert_same(r0.using, n);
                     assert(queue_view(t1.entries@[i as int]) == r0.queue[n]);
@@ -684,19 +684,19 @@ impl RayTable {
     }
 
     /// `ReceiveRequest`: node `at` accepts a request from `from` that was sent.
-    pub fn receive_request(&mut self, at: u64, from: u64) -> (r: Result<(), RayRefusal>)
+    pub fn receive_request(&mut self, at: HostId, from: HostId) -> (r: Result<(), RayRefusal>)
         requires
             old(self).well_formed(),
         ensures
             final(self).well_formed(),
             match r {
                 Ok(_) => {
-                    &&& final(self)@ == receive_request_post(old(self)@, at as nat, from as nat)
-                    &&& ray_receive_request(old(self)@, final(self)@, at as nat, from as nat)
+                    &&& final(self)@ == receive_request_post(old(self)@, at, from)
+                    &&& ray_receive_request(old(self)@, final(self)@, at, from)
                 },
                 Err(_) => {
                     &&& final(self)@ == old(self)@
-                    &&& forall|p: Raymond| !ray_receive_request(old(self)@, p, at as nat, from as nat)
+                    &&& forall|p: Raymond| !ray_receive_request(old(self)@, p, at, from)
                 },
             },
     {
@@ -716,7 +716,7 @@ impl RayTable {
         proof {
             lemma_found(t0, i as int);
             lemma_found(t0, _j as int);
-            lemma_request_set(t0, from as nat, at as nat);
+            lemma_request_set(t0, from, at);
         }
         let was_sent = self.sent(from, at);
         /* `from` being a node is checked by `find`, which refuses with `NotANode`; the
@@ -728,12 +728,12 @@ impl RayTable {
         match receive_request_step(was_sent) {
             Err(why) => {
                 proof {
-                    assert forall|p: Raymond| !ray_receive_request(t0@, p, at as nat, from as nat) by {
+                    assert forall|p: Raymond| !ray_receive_request(t0@, p, at, from) by {
                         theorem_receive_request_step_refuses_exactly_when_disabled(
                             t0@,
                             p,
-                            at as nat,
-                            from as nat,
+                            at,
+                            from,
                         );
                     }
                 }
@@ -744,13 +744,13 @@ impl RayTable {
                 proof {
                     lemma_update_entry(t0, *self, i as int);
                     let r0 = t0@;
-                    let n = at as nat;
+                    let n = at;
                     lemma_insert_same(r0.holder, n);
                     lemma_insert_same(r0.asked, n);
                     lemma_insert_same(r0.using, n);
-                    assert(queue_view(self.entries@[i as int]) == r0.queue[n].push(from as nat));
-                    assert(self@ == receive_request_post(r0, n, from as nat));
-                    theorem_receive_request_step_refines(r0, n, from as nat);
+                    assert(queue_view(self.entries@[i as int]) == r0.queue[n].push(from));
+                    assert(self@ == receive_request_post(r0, n, from));
+                    theorem_receive_request_step_refines(r0, n, from);
                 }
                 Ok(())
             },
@@ -759,19 +759,19 @@ impl RayTable {
 
     /// `EnterCs`: node `me`, at the head of its own queue and believing it holds
     /// the privilege, enters its critical section.
-    pub fn enter_cs(&mut self, me: u64) -> (r: Result<(), RayRefusal>)
+    pub fn enter_cs(&mut self, me: HostId) -> (r: Result<(), RayRefusal>)
         requires
             old(self).well_formed(),
         ensures
             final(self).well_formed(),
             match r {
                 Ok(_) => {
-                    &&& final(self)@ == enter_cs_post(old(self)@, me as nat)
-                    &&& ray_enter_cs(old(self)@, final(self)@, me as nat)
+                    &&& final(self)@ == enter_cs_post(old(self)@, me)
+                    &&& ray_enter_cs(old(self)@, final(self)@, me)
                 },
                 Err(_) => {
                     &&& final(self)@ == old(self)@
-                    &&& forall|p: Raymond| !ray_enter_cs(old(self)@, p, me as nat)
+                    &&& forall|p: Raymond| !ray_enter_cs(old(self)@, p, me)
                 },
             },
     {
@@ -803,11 +803,11 @@ impl RayTable {
         match enter_cs_step(me, holder, using, queue_len, head) {
             Err(why) => {
                 proof {
-                    assert forall|p: Raymond| !ray_enter_cs(t0@, p, me as nat) by {
+                    assert forall|p: Raymond| !ray_enter_cs(t0@, p, me) by {
                         if queue_len > 0 {
-                            theorem_enter_cs_step_refuses_exactly_when_disabled(t0@, p, me as nat);
+                            theorem_enter_cs_step_refuses_exactly_when_disabled(t0@, p, me);
                         } else {
-                            theorem_enter_cs_step_refuses_an_empty_queue(t0@, p, me as nat);
+                            theorem_enter_cs_step_refuses_an_empty_queue(t0@, p, me);
                         }
                     }
                 }
@@ -819,7 +819,7 @@ impl RayTable {
                 proof {
                     lemma_update_entry(t0, *self, i as int);
                     let r0 = t0@;
-                    let n = me as nat;
+                    let n = me;
                     lemma_insert_same(r0.holder, n);
                     lemma_insert_same(r0.asked, n);
                     assert(queue_view(self.entries@[i as int]) == r0.queue[n].drop_first());
@@ -832,19 +832,19 @@ impl RayTable {
     }
 
     /// `ExitCs`: node `me` leaves its critical section.
-    pub fn exit_cs(&mut self, me: u64) -> (r: Result<(), RayRefusal>)
+    pub fn exit_cs(&mut self, me: HostId) -> (r: Result<(), RayRefusal>)
         requires
             old(self).well_formed(),
         ensures
             final(self).well_formed(),
             match r {
                 Ok(_) => {
-                    &&& final(self)@ == exit_cs_post(old(self)@, me as nat)
-                    &&& ray_exit_cs(old(self)@, final(self)@, me as nat)
+                    &&& final(self)@ == exit_cs_post(old(self)@, me)
+                    &&& ray_exit_cs(old(self)@, final(self)@, me)
                 },
                 Err(_) => {
                     &&& final(self)@ == old(self)@
-                    &&& forall|p: Raymond| !ray_exit_cs(old(self)@, p, me as nat)
+                    &&& forall|p: Raymond| !ray_exit_cs(old(self)@, p, me)
                 },
             },
     {
@@ -867,8 +867,8 @@ impl RayTable {
         match exit_cs_step(using) {
             Err(why) => {
                 proof {
-                    assert forall|p: Raymond| !ray_exit_cs(t0@, p, me as nat) by {
-                        theorem_exit_cs_step_refuses_exactly_when_disabled(t0@, p, me as nat);
+                    assert forall|p: Raymond| !ray_exit_cs(t0@, p, me) by {
+                        theorem_exit_cs_step_refuses_exactly_when_disabled(t0@, p, me);
                     }
                 }
                 Err(why)
@@ -878,7 +878,7 @@ impl RayTable {
                 proof {
                     lemma_update_entry(t0, *self, i as int);
                     let r0 = t0@;
-                    let n = me as nat;
+                    let n = me;
                     lemma_insert_same(r0.holder, n);
                     lemma_insert_same(r0.asked, n);
                     assert(queue_view(self.entries@[i as int]) == r0.queue[n]);
@@ -893,19 +893,19 @@ impl RayTable {
 
     /// `AssignPrivilege`: node `me`, which holds the privilege and is not using
     /// it, hands it to the head of its queue. Returns the node it goes to.
-    pub fn assign_privilege(&mut self, me: u64) -> (r: Result<u64, RayRefusal>)
+    pub fn assign_privilege(&mut self, me: HostId) -> (r: Result<HostId, RayRefusal>)
         requires
             old(self).well_formed(),
         ensures
             final(self).well_formed(),
             match r {
                 Ok(head) => {
-                    &&& final(self)@ == assign_post(old(self)@, me as nat, head as nat)
-                    &&& ray_assign_privilege(old(self)@, final(self)@, me as nat, head as nat)
+                    &&& final(self)@ == assign_post(old(self)@, me, head)
+                    &&& ray_assign_privilege(old(self)@, final(self)@, me, head)
                 },
                 Err(_) => {
                     &&& final(self)@ == old(self)@
-                    &&& forall|p: Raymond, h: NodeId| !ray_assign_privilege(old(self)@, p, me as nat, h)
+                    &&& forall|p: Raymond, h: HostId| !ray_assign_privilege(old(self)@, p, me, h)
                 },
             },
     {
@@ -955,11 +955,11 @@ impl RayTable {
             Err(why) => {
                 proof {
                     let r0 = t0@;
-                    let n = me as nat;
-                    assert forall|p: Raymond, h: NodeId| !ray_assign_privilege(r0, p, n, h) by {
+                    let n = me;
+                    assert forall|p: Raymond, h: HostId| !ray_assign_privilege(r0, p, n, h) by {
                         if r0.queue[n].len() == 0 {
                             theorem_assign_step_refuses_an_empty_queue(r0, p, n, h);
-                        } else if h == head as nat {
+                        } else if h == head {
                             theorem_assign_step_refuses_exactly_when_disabled(r0, p, n, h);
                         }
                     }
@@ -993,8 +993,8 @@ impl RayTable {
                 proof {
                     lemma_set_privilege(t2, *self, to);
                     let r0 = t0@;
-                    let n = me as nat;
-                    let h = to as nat;
+                    let n = me;
+                    let h = to;
                     // Node `to`'s own entries are untouched, so only its holder pointer moves.
                     assert(t1.entries@[j as int] == t0.entries@[j as int]);
                     assert(queue_view(t1.entries@[i as int]) == r0.queue[n].drop_first());
@@ -1019,20 +1019,20 @@ impl RayTable {
     /// `Seize`: re-establish the privilege at `to`, which acts alone — nothing
     /// belonging to the old holder is touched. The composed coordinator, which
     /// checks the token, is the only caller.
-    pub fn seize(&mut self, to: u64) -> (r: Result<(), RayRefusal>)
+    pub fn seize(&mut self, to: HostId) -> (r: Result<(), RayRefusal>)
         requires
             old(self).well_formed(),
         ensures
             final(self).well_formed(),
             match r {
                 Ok(_) => {
-                    &&& ray_seize(old(self)@, final(self)@, old(self).privilege as nat, to as nat)
-                    &&& final(self)@.privilege == to as nat
+                    &&& ray_seize(old(self)@, final(self)@, old(self).privilege, to)
+                    &&& final(self)@.privilege == to
                 },
                 Err(_) => {
                     &&& final(self)@ == old(self)@
                     &&& forall|p: Raymond|
-                        !ray_seize(old(self)@, p, old(self).privilege as nat, to as nat)
+                        !ray_seize(old(self)@, p, old(self).privilege, to)
                 },
             },
     {
@@ -1063,7 +1063,7 @@ impl RayTable {
         proof {
             lemma_set_privilege(t1, *self, to);
             let r0 = t0@;
-            let n = to as nat;
+            let n = to;
             lemma_insert_same(r0.queue, n);
             lemma_insert_same(r0.asked, n);
             lemma_insert_same(r0.using, n);
@@ -1072,26 +1072,26 @@ impl RayTable {
             assert(self@.queue == r0.queue);
             assert(self@.asked == r0.asked);
             assert(self@.using == r0.using);
-            lemma_node_set(t0, t0.privilege as nat);
-            assert(has_token(r0, t0.privilege as nat));
+            lemma_node_set(t0, t0.privilege);
+            assert(has_token(r0, t0.privilege));
             assert(r0.nodes.contains(n));
-            assert(ray_seize(r0, self@, t0.privilege as nat, n));
+            assert(ray_seize(r0, self@, t0.privilege, n));
         }
         Ok(())
     }
 
     /// `Reconcile`: a stale holder — one that believes it holds the privilege and
     /// does not — learns the privilege was taken, and where it is.
-    pub fn reconcile(&mut self, node: u64) -> (r: Result<(), RayRefusal>)
+    pub fn reconcile(&mut self, node: HostId) -> (r: Result<(), RayRefusal>)
         requires
             old(self).well_formed(),
         ensures
             final(self).well_formed(),
             match r {
-                Ok(_) => ray_reconcile(old(self)@, final(self)@, node as nat),
+                Ok(_) => ray_reconcile(old(self)@, final(self)@, node),
                 Err(_) => {
                     &&& final(self)@ == old(self)@
-                    &&& forall|p: Raymond| !ray_reconcile(old(self)@, p, node as nat)
+                    &&& forall|p: Raymond| !ray_reconcile(old(self)@, p, node)
                 },
             },
     {
@@ -1125,7 +1125,7 @@ impl RayTable {
         proof {
             lemma_update_entry(t0, *self, i as int);
             let r0 = t0@;
-            let n = node as nat;
+            let n = node;
             lemma_insert_same(r0.queue, n);
             assert(queue_view(self.entries@[i as int]) == r0.queue[n]);
             assert(self@.holder == r0.holder.insert(n, r0.privilege));

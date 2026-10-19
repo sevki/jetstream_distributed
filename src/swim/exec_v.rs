@@ -29,6 +29,7 @@
 
 use vstd::prelude::*;
 
+use crate::host::HostId;
 use crate::swim::model::*;
 use crate::swim::proofs::refinement::*;
 use crate::swim::steps::*;
@@ -41,7 +42,7 @@ verus! {
 pub struct SwimTable {
     /// The members, each once. Private: a table built or edited from outside
     /// could have an id with no record, and every method here assumes it does not.
-    ids: Vec<u64>,
+    ids: Vec<HostId>,
     /// `records[i]` is what is believed about `ids[i]`.
     records: Vec<ExecRecord>,
 }
@@ -56,21 +57,21 @@ impl SwimTable {
     }
 
     /// Whether `n` has an entry.
-    pub closed spec fn has_entry(&self, n: nat) -> bool {
-        exists|i: int| 0 <= i < self.ids@.len() && self.ids@[i] as nat == n
+    pub closed spec fn has_entry(&self, n: HostId) -> bool {
+        exists|i: int| 0 <= i < self.ids@.len() && self.ids@[i] == n
     }
 
     /// What the table believes about `n`: its entry, or the fresh record.
-    pub closed spec fn record(&self, n: nat) -> MemberRecord {
+    pub closed spec fn record(&self, n: HostId) -> MemberRecord {
         if self.has_entry(n) {
-            self.records@[choose|i: int| 0 <= i < self.ids@.len() && self.ids@[i] as nat == n].view()
+            self.records@[choose|i: int| 0 <= i < self.ids@.len() && self.ids@[i] == n].view()
         } else {
             fresh_record()
         }
     }
 
     /// Where `id` is, if it is.
-    fn find(&self, id: u64) -> (found: Option<usize>)
+    fn find(&self, id: HostId) -> (found: Option<usize>)
         requires
             self.well_formed(),
         ensures
@@ -98,52 +99,52 @@ impl SwimTable {
     pub fn new() -> (t: SwimTable)
         ensures
             t.well_formed(),
-            forall|n: nat| t.record(n) == fresh_record(),
+            forall|n: HostId| t.record(n) == fresh_record(),
     {
         SwimTable { ids: Vec::new(), records: Vec::new() }
     }
 
     /// `record_of`: what the table believes about `id`.
-    pub fn get(&self, id: u64) -> (r: ExecRecord)
+    pub fn get(&self, id: HostId) -> (r: ExecRecord)
         requires
             self.well_formed(),
         ensures
-            r.view() == self.record(id as nat),
+            r.view() == self.record(id),
     {
         match self.find(id) {
             Some(i) => {
-                assert(self.has_entry(id as nat));
-                assert(self.ids@[i as int] as nat == id as nat);
-                assert(self.record(id as nat) == self.records@[i as int].view());
+                assert(self.has_entry(id));
+                assert(self.ids@[i as int] == id);
+                assert(self.record(id) == self.records@[i as int].view());
                 self.records[i]
             },
             None => {
-                assert(!self.has_entry(id as nat));
+                assert(!self.has_entry(id));
                 fresh_exec_record()
             },
         }
     }
 
     /// Write `rec` as the belief about `id`. Nothing else changes.
-    fn put(&mut self, id: u64, rec: ExecRecord)
+    fn put(&mut self, id: HostId, rec: ExecRecord)
         requires
             old(self).well_formed(),
         ensures
             final(self).well_formed(),
-            final(self).record(id as nat) == rec.view(),
-            forall|n: nat| n != id as nat ==> final(self).record(n) == old(self).record(n),
+            final(self).record(id) == rec.view(),
+            forall|n: HostId| n != id ==> final(self).record(n) == old(self).record(n),
     {
         match self.find(id) {
             Some(i) => {
                 self.records.set(i, rec);
                 proof {
-                    assert forall|n: nat| n != id as nat implies self.record(n) == old(self).record(n) by {
+                    assert forall|n: HostId| n != id implies self.record(n) == old(self).record(n) by {
                         if old(self).has_entry(n) {
-                            let j = choose|j: int| 0 <= j < old(self).ids@.len() && old(self).ids@[j] as nat == n;
-                            assert(self.ids@[j] as nat == n);
+                            let j = choose|j: int| 0 <= j < old(self).ids@.len() && old(self).ids@[j] == n;
+                            assert(self.ids@[j] == n);
                             assert(j != i as int);
                             assert(self.has_entry(n));
-                            let k = choose|k: int| 0 <= k < self.ids@.len() && self.ids@[k] as nat == n;
+                            let k = choose|k: int| 0 <= k < self.ids@.len() && self.ids@[k] == n;
                             assert(self.ids@[k] == self.ids@[j]);
                             assert(k == j);
                             assert(self.records@[k] == old(self).records@[j]);
@@ -151,8 +152,8 @@ impl SwimTable {
                             assert(!self.has_entry(n));
                         }
                     }
-                    assert(self.has_entry(id as nat));
-                    let k = choose|k: int| 0 <= k < self.ids@.len() && self.ids@[k] as nat == id as nat;
+                    assert(self.has_entry(id));
+                    let k = choose|k: int| 0 <= k < self.ids@.len() && self.ids@[k] == id;
                     assert(self.ids@[k] == self.ids@[i as int]);
                     assert(k == i as int);
                 }
@@ -163,8 +164,8 @@ impl SwimTable {
                 proof {
                     let last = (self.ids@.len() - 1) as int;
                     assert(self.ids@[last] == id);
-                    assert(self.has_entry(id as nat));
-                    let k = choose|k: int| 0 <= k < self.ids@.len() && self.ids@[k] as nat == id as nat;
+                    assert(self.has_entry(id));
+                    let k = choose|k: int| 0 <= k < self.ids@.len() && self.ids@[k] == id;
                     assert(self.ids@[k] == self.ids@[last]);
                     assert(k == last) by {
                         if k != last {
@@ -172,12 +173,12 @@ impl SwimTable {
                             assert(old(self).ids@[k] != id);
                         }
                     }
-                    assert forall|n: nat| n != id as nat implies self.record(n) == old(self).record(n) by {
+                    assert forall|n: HostId| n != id implies self.record(n) == old(self).record(n) by {
                         if old(self).has_entry(n) {
-                            let j = choose|j: int| 0 <= j < old(self).ids@.len() && old(self).ids@[j] as nat == n;
-                            assert(self.ids@[j] as nat == n);
+                            let j = choose|j: int| 0 <= j < old(self).ids@.len() && old(self).ids@[j] == n;
+                            assert(self.ids@[j] == n);
                             assert(self.has_entry(n));
-                            let k2 = choose|k2: int| 0 <= k2 < self.ids@.len() && self.ids@[k2] as nat == n;
+                            let k2 = choose|k2: int| 0 <= k2 < self.ids@.len() && self.ids@[k2] == n;
                             if k2 == last {
                                 assert(self.ids@[k2] == id);
                                 assert(false);
@@ -190,11 +191,11 @@ impl SwimTable {
                         } else {
                             assert(!self.has_entry(n)) by {
                                 if self.has_entry(n) {
-                                    let k3 = choose|k3: int| 0 <= k3 < self.ids@.len() && self.ids@[k3] as nat == n;
+                                    let k3 = choose|k3: int| 0 <= k3 < self.ids@.len() && self.ids@[k3] == n;
                                     if k3 == last {
                                         assert(self.ids@[k3] == id);
                                     } else {
-                                        assert(old(self).ids@[k3] as nat == n);
+                                        assert(old(self).ids@[k3] == n);
                                     }
                                 }
                             }
@@ -216,14 +217,14 @@ impl SwimTable {
 
     /// `tr_gossip`: adopt `incoming` about `id` if it is at least as
     /// authoritative as what is held. Returns whether the belief changed.
-    pub fn learn(&mut self, id: u64, incoming: ExecRecord) -> (changed: bool)
+    pub fn learn(&mut self, id: HostId, incoming: ExecRecord) -> (changed: bool)
         requires
             old(self).well_formed(),
         ensures
             final(self).well_formed(),
-            final(self).record(id as nat) == merge(old(self).record(id as nat), incoming.view()),
-            forall|n: nat| n != id as nat ==> final(self).record(n) == old(self).record(n),
-            changed == (final(self).record(id as nat) != old(self).record(id as nat)),
+            final(self).record(id) == merge(old(self).record(id), incoming.view()),
+            forall|n: HostId| n != id ==> final(self).record(n) == old(self).record(n),
+            changed == (final(self).record(id) != old(self).record(id)),
     {
         /* The table is a pair of vectors rather than a `HashMap` (vstd's hash-map
          * specs need `obeys_key_model`), so the read goes through `get`, the write
@@ -253,7 +254,7 @@ impl SwimTable {
         }
         proof {
             if !moved {
-                assert(self.record(id as nat) == held.view());
+                assert(self.record(id) == held.view());
             }
         }
         moved
@@ -269,7 +270,7 @@ impl SwimTable {
     ///
     /// At the top of the incarnation space there is nothing to refute with: the
     /// first step has happened, the second has not, and it says so.
-    pub fn hear(&mut self, id: u64, incoming: ExecRecord, me: u64) -> (r: Result<
+    pub fn hear(&mut self, id: HostId, incoming: ExecRecord, me: HostId) -> (r: Result<
         Heard,
         SwimRefusal,
     >)
@@ -277,10 +278,10 @@ impl SwimTable {
             old(self).well_formed(),
         ensures
             final(self).well_formed(),
-            forall|n: nat| n != id as nat ==> final(self).record(n) == old(self).record(n),
+            forall|n: HostId| n != id ==> final(self).record(n) == old(self).record(n),
             ({
-                let merged = merge(old(self).record(id as nat), incoming.view());
-                let changed = merged != old(self).record(id as nat);
+                let merged = merge(old(self).record(id), incoming.view());
+                let changed = merged != old(self).record(id);
                 match r {
                     Ok(h) => {
                         // At the top of the incarnation space there is nothing to
@@ -291,14 +292,14 @@ impl SwimTable {
                         &&& (h.refuted is Some) == (id == me && changed
                             && merged.incarnation < u64::MAX as nat)
                         &&& (h.refuted matches Some(a) ==> a.view() == refutation(merged.incarnation)
-                            && final(self).record(id as nat) == a.view())
-                        &&& (h.refuted is None ==> final(self).record(id as nat) == merged)
+                            && final(self).record(id) == a.view())
+                        &&& (h.refuted is None ==> final(self).record(id) == merged)
                     },
                     Err(_) => {
                         &&& id == me
                         &&& changed
                         &&& merged.incarnation >= u64::MAX as nat
-                        &&& final(self).record(id as nat) == merged
+                        &&& final(self).record(id) == merged
                     },
                 }
             }),

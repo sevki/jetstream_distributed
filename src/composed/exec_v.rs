@@ -39,7 +39,7 @@ use crate::composed::model::*;
 use crate::composed::proofs::refinement::*;
 use crate::composed::steps::*;
 use crate::ownership::fencing::*;
-use crate::ownership::model::NodeId;
+use crate::host::HostId;
 use crate::ownership::registry::*;
 use crate::ownership::spec::*;
 use crate::ownership::steps::*;
@@ -54,33 +54,33 @@ verus! {
 /// reconciliation.
 pub struct NodeSet {
     /// The members, possibly more than once.
-    pub items: Vec<u64>,
+    pub items: Vec<HostId>,
 }
 
 impl View for NodeSet {
-    type V = Set<nat>;
+    type V = Set<HostId>;
 
-    open spec fn view(&self) -> Set<nat> {
-        self.items@.map_values(|x: u64| x as nat).to_set()
+    open spec fn view(&self) -> Set<HostId> {
+        self.items@.to_set()
     }
 }
 
 /// A node is in the set exactly when it is among the items.
-pub proof fn lemma_in_items(items: Seq<u64>, n: nat)
+pub proof fn lemma_in_items(items: Seq<HostId>, n: HostId)
     ensures
-        items.map_values(|x: u64| x as nat).to_set().contains(n) <==> exists|i: int|
-            0 <= i < items.len() && items[i] as nat == n,
+        items.to_set().contains(n) <==> exists|i: int|
+            0 <= i < items.len() && items[i] == n,
 {
-    let m = items.map_values(|x: u64| x as nat);
+    let m = items;
     m.to_set_ensures();
-    if exists|i: int| 0 <= i < items.len() && items[i] as nat == n {
-        let i = choose|i: int| 0 <= i < items.len() && items[i] as nat == n;
+    if exists|i: int| 0 <= i < items.len() && items[i] == n {
+        let i = choose|i: int| 0 <= i < items.len() && items[i] == n;
         assert(m[i] == n);
         assert(m.contains(n));
     }
     if m.contains(n) {
         let i = choose|i: int| 0 <= i < m.len() && m[i] == n;
-        assert(items[i] as nat == n);
+        assert(items[i] == n);
     }
 }
 
@@ -88,11 +88,11 @@ impl NodeSet {
     /// The empty set.
     pub fn new() -> (s: NodeSet)
         ensures
-            forall|n: nat| !s@.contains(n),
+            forall|n: HostId| !s@.contains(n),
     {
         let s = NodeSet { items: Vec::new() };
         proof {
-            assert forall|n: nat| !s@.contains(n) by {
+            assert forall|n: HostId| !s@.contains(n) by {
                 lemma_in_items(s.items@, n);
             }
         }
@@ -100,9 +100,9 @@ impl NodeSet {
     }
 
     /// Whether `x` is in the set.
-    pub fn contains(&self, x: u64) -> (r: bool)
+    pub fn contains(&self, x: HostId) -> (r: bool)
         ensures
-            r == self@.contains(x as nat),
+            r == self@.contains(x),
     {
         let mut i: usize = 0;
         while i < self.items.len()
@@ -113,17 +113,17 @@ impl NodeSet {
         {
             if self.items[i] == x {
                 proof {
-                    lemma_in_items(self.items@, x as nat);
-                    assert(self.items@[i as int] as nat == x as nat);
+                    lemma_in_items(self.items@, x);
+                    assert(self.items@[i as int] == x);
                 }
                 return true;
             }
             i += 1;
         }
         proof {
-            lemma_in_items(self.items@, x as nat);
-            if self@.contains(x as nat) {
-                let k = choose|k: int| 0 <= k < self.items@.len() && self.items@[k] as nat == x as nat;
+            lemma_in_items(self.items@, x);
+            if self@.contains(x) {
+                let k = choose|k: int| 0 <= k < self.items@.len() && self.items@[k] == x;
                 assert(self.items@[k] == x);
             }
         }
@@ -131,9 +131,9 @@ impl NodeSet {
     }
 
     /// Add `x`.
-    pub fn insert(&mut self, x: u64)
+    pub fn insert(&mut self, x: HostId)
         ensures
-            final(self)@ == old(self)@.insert(x as nat),
+            final(self)@ == old(self)@.insert(x),
     {
         let ghost before = self.items@;
         if !self.contains(x) {
@@ -141,36 +141,36 @@ impl NodeSet {
         }
         proof {
             let after = self.items@;
-            assert forall|n: nat| self@.contains(n) == old(self)@.insert(x as nat).contains(n) by {
+            assert forall|n: HostId| self@.contains(n) == old(self)@.insert(x).contains(n) by {
                 lemma_in_items(before, n);
                 lemma_in_items(after, n);
-                if n == x as nat {
-                    lemma_in_items(before, x as nat);
-                    if !old(self)@.contains(x as nat) {
+                if n == x {
+                    lemma_in_items(before, x);
+                    if !old(self)@.contains(x) {
                         assert(after[after.len() - 1] == x);
                     }
                 } else {
                     if self@.contains(n) {
-                        let k = choose|k: int| 0 <= k < after.len() && after[k] as nat == n;
+                        let k = choose|k: int| 0 <= k < after.len() && after[k] == n;
                         assert(k < before.len());
                     }
                     if old(self)@.contains(n) {
-                        let k = choose|k: int| 0 <= k < before.len() && before[k] as nat == n;
+                        let k = choose|k: int| 0 <= k < before.len() && before[k] == n;
                         assert(after[k] == before[k]);
                     }
                 }
             }
-            assert(self@ == old(self)@.insert(x as nat));
+            assert(self@ == old(self)@.insert(x));
         }
     }
 
     /// Remove `x`.
-    pub fn remove(&mut self, x: u64)
+    pub fn remove(&mut self, x: HostId)
         ensures
-            final(self)@ == old(self)@.remove(x as nat),
+            final(self)@ == old(self)@.remove(x),
     {
         let ghost before = self.items@;
-        let mut out: Vec<u64> = Vec::new();
+        let mut out: Vec<HostId> = Vec::new();
         let mut i: usize = 0;
         while i < self.items.len()
             invariant
@@ -225,23 +225,23 @@ impl NodeSet {
         self.items = out;
         proof {
             let after = self.items@;
-            assert forall|n: nat| self@.contains(n) == old(self)@.remove(x as nat).contains(n) by {
+            assert forall|n: HostId| self@.contains(n) == old(self)@.remove(x).contains(n) by {
                 lemma_in_items(before, n);
                 lemma_in_items(after, n);
                 if self@.contains(n) {
-                    let k = choose|k: int| 0 <= k < after.len() && after[k] as nat == n;
+                    let k = choose|k: int| 0 <= k < after.len() && after[k] == n;
                     let j = choose|j: int| 0 <= j < before.len() && before[j] == after[k];
-                    assert(before[j] as nat == n);
-                    assert(n != x as nat);
+                    assert(before[j] == n);
+                    assert(n != x);
                 }
-                if old(self)@.remove(x as nat).contains(n) {
-                    let j = choose|j: int| 0 <= j < before.len() && before[j] as nat == n;
+                if old(self)@.remove(x).contains(n) {
+                    let j = choose|j: int| 0 <= j < before.len() && before[j] == n;
                     assert(before[j] != x);
                     let k = choose|k: int| 0 <= k < after.len() && after[k] == before[j];
-                    assert(after[k] as nat == n);
+                    assert(after[k] == n);
                 }
             }
-            assert(self@ == old(self)@.remove(x as nat));
+            assert(self@ == old(self)@.remove(x));
         }
     }
 }
@@ -272,8 +272,8 @@ pub fn actor_unowned(own: &RegistryCore) -> (r: bool)
 /// `cs_pass_token`: the node holding the privilege passes it to the head of its
 /// queue — but only once the actor has been released. The recipient's debt, if it
 /// had one, is discharged: receiving the privilege is learning the truth.
-pub fn pass_token(own: &RegistryCore, ray: &mut RayTable, seized: &mut NodeSet, me: u64) -> (r:
-    Result<u64, ComposedError>)
+pub fn pass_token(own: &RegistryCore, ray: &mut RayTable, seized: &mut NodeSet, me: HostId) -> (r:
+    Result<HostId, ComposedError>)
     requires
         old(ray).well_formed(),
     ensures
@@ -281,15 +281,15 @@ pub fn pass_token(own: &RegistryCore, ray: &mut RayTable, seized: &mut NodeSet, 
         match r {
             Ok(head) => {
                 &&& is_unowned(own.state.view())
-                &&& final(ray)@ == assign_post(old(ray)@, me as nat, head as nat)
-                &&& ray_assign_privilege(old(ray)@, final(ray)@, me as nat, head as nat)
-                &&& final(seized)@ == old(seized)@.remove(head as nat)
+                &&& final(ray)@ == assign_post(old(ray)@, me, head)
+                &&& ray_assign_privilege(old(ray)@, final(ray)@, me, head)
+                &&& final(seized)@ == old(seized)@.remove(head)
             },
             Err(_) => {
                 &&& final(ray)@ == old(ray)@
                 &&& final(seized)@ == old(seized)@
-                &&& (!is_unowned(own.state.view()) || forall|p: Raymond, h: NodeId|
-                    !ray_assign_privilege(old(ray)@, p, me as nat, h))
+                &&& (!is_unowned(own.state.view()) || forall|p: Raymond, h: HostId|
+                    !ray_assign_privilege(old(ray)@, p, me, h))
             },
         },
 {
@@ -315,8 +315,8 @@ pub fn pass_token(own: &RegistryCore, ray: &mut RayTable, seized: &mut NodeSet, 
 /// `cs_seize_token`: re-establish the privilege at `to`, once the actor has been
 /// released. **Only `to` acts**; the old holder now owes a reconciliation and
 /// `to` no longer does. Returns the old holder.
-pub fn seize_token(own: &RegistryCore, ray: &mut RayTable, seized: &mut NodeSet, to: u64) -> (r:
-    Result<u64, ComposedError>)
+pub fn seize_token(own: &RegistryCore, ray: &mut RayTable, seized: &mut NodeSet, to: HostId) -> (r:
+    Result<HostId, ComposedError>)
     requires
         old(ray).well_formed(),
     ensures
@@ -325,15 +325,15 @@ pub fn seize_token(own: &RegistryCore, ray: &mut RayTable, seized: &mut NodeSet,
             Ok(from) => {
                 &&& is_unowned(own.state.view())
                 &&& from == old(ray).privilege
-                &&& ray_seize(old(ray)@, final(ray)@, from as nat, to as nat)
-                &&& final(ray)@.privilege == to as nat
-                &&& final(seized)@ == old(seized)@.insert(from as nat).remove(to as nat)
+                &&& ray_seize(old(ray)@, final(ray)@, from, to)
+                &&& final(ray)@.privilege == to
+                &&& final(seized)@ == old(seized)@.insert(from).remove(to)
             },
             Err(_) => {
                 &&& final(ray)@ == old(ray)@
                 &&& final(seized)@ == old(seized)@
                 &&& (!is_unowned(own.state.view()) || forall|p: Raymond|
-                    !ray_seize(old(ray)@, p, old(ray).privilege as nat, to as nat))
+                    !ray_seize(old(ray)@, p, old(ray).privilege, to))
             },
         },
 {
@@ -372,7 +372,7 @@ pub fn seize_token(own: &RegistryCore, ray: &mut RayTable, seized: &mut NodeSet,
 
 /// `cs_acquire_under_token`: the ownership layer's acquire, for the node holding
 /// the privilege and nobody else.
-pub fn acquire_under_token(own: &mut RegistryCore, ray: &RayTable, node: u64, epoch: u64) -> (r:
+pub fn acquire_under_token(own: &mut RegistryCore, ray: &RayTable, node: HostId, epoch: u64) -> (r:
     Result<(), ComposedError>)
     requires
         ray.well_formed(),
@@ -381,25 +381,25 @@ pub fn acquire_under_token(own: &mut RegistryCore, ray: &RayTable, node: u64, ep
         grants_same(*old(own), *final(own)),
         match r {
             Ok(_) => {
-                &&& has_token(ray@, node as nat)
+                &&& has_token(ray@, node)
                 &&& acquire_fires(
                     old(own).state.view(),
-                    node as nat,
+                    node,
                     epoch as nat,
-                    old(own).has_grant(node as nat, epoch as nat),
+                    old(own).has_grant(node, epoch as nat),
                 )
-                &&& final(own).state.view() == acquire_next(old(own).state.view(), node as nat)
+                &&& final(own).state.view() == acquire_next(old(own).state.view(), node)
             },
             Err(ComposedError::Coupled(_)) => {
-                &&& !has_token(ray@, node as nat)
+                &&& !has_token(ray@, node)
                 &&& final(own).state.view() == old(own).state.view()
             },
             Err(ComposedError::Own(_)) => {
                 &&& !acquire_fires(
                     old(own).state.view(),
-                    node as nat,
+                    node,
                     epoch as nat,
-                    old(own).has_grant(node as nat, epoch as nat),
+                    old(own).has_grant(node, epoch as nat),
                 )
                 &&& final(own).state.view() == old(own).state.view()
             },
@@ -412,7 +412,7 @@ pub fn acquire_under_token(own: &mut RegistryCore, ray: &RayTable, node: u64, ep
      *              self.registry.acquire(ctx, epoch).await
      */
     proof {
-        lemma_node_set(*ray, ray.privilege as nat);
+        lemma_node_set(*ray, ray.privilege);
     }
     match acquire_under_token_step(ray.privilege, node) {
         Err(why) => Err(ComposedError::Coupled(why)),
@@ -425,7 +425,7 @@ pub fn acquire_under_token(own: &mut RegistryCore, ray: &RayTable, node: u64, ep
 
 /// `cs_reconcile`: a node that owes a reconciliation, and whose belief really is
 /// stale, learns the privilege was taken.
-pub fn reconcile(ray: &mut RayTable, seized: &mut NodeSet, node: u64) -> (r: Result<
+pub fn reconcile(ray: &mut RayTable, seized: &mut NodeSet, node: HostId) -> (r: Result<
     (),
     ComposedError,
 >)
@@ -435,15 +435,15 @@ pub fn reconcile(ray: &mut RayTable, seized: &mut NodeSet, node: u64) -> (r: Res
         final(ray).well_formed(),
         match r {
             Ok(_) => {
-                &&& old(seized)@.contains(node as nat)
-                &&& ray_reconcile(old(ray)@, final(ray)@, node as nat)
-                &&& final(seized)@ == old(seized)@.remove(node as nat)
+                &&& old(seized)@.contains(node)
+                &&& ray_reconcile(old(ray)@, final(ray)@, node)
+                &&& final(seized)@ == old(seized)@.remove(node)
             },
             Err(_) => {
                 &&& final(ray)@ == old(ray)@
                 &&& final(seized)@ == old(seized)@
-                &&& (!old(seized)@.contains(node as nat) || forall|p: Raymond|
-                    !ray_reconcile(old(ray)@, p, node as nat))
+                &&& (!old(seized)@.contains(node) || forall|p: Raymond|
+                    !ray_reconcile(old(ray)@, p, node))
             },
         },
 {

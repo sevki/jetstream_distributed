@@ -25,6 +25,8 @@
 
 use vstd::prelude::*;
 
+use crate::host::HostId;
+
 use crate::composed::exec::*;
 use crate::composed::model::*;
 use crate::composed::proofs::refinement::*;
@@ -61,22 +63,22 @@ pub proof fn theorem_pass_token_is_cs_pass_token(
     seized: NodeSet,
     seized2: NodeSet,
     c: Composed,
-    me: u64,
-    head: u64,
+    me: HostId,
+    head: HostId,
 )
     requires
         stands_for_composed(own, ray, seized, c),
-        c.own.live.contains(me as nat),
-        c.own.live.contains(head as nat),
+        c.own.live.contains(me),
+        c.own.live.contains(head),
         is_unowned(own.state.view()),
-        ray_assign_privilege(ray@, ray2@, me as nat, head as nat),
-        seized2@ == seized@.remove(head as nat),
+        ray_assign_privilege(ray@, ray2@, me, head),
+        seized2@ == seized@.remove(head),
     ensures
         cs_pass_token(
             c,
             Composed { own: c.own, ray: ray2@, actor: c.actor, seized: seized2@ },
-            me as nat,
-            head as nat,
+            me,
+            head,
         ),
 {
 }
@@ -88,15 +90,15 @@ pub proof fn theorem_refused_pass_token_is_disabled(
     seized: NodeSet,
     c: Composed,
     post: Composed,
-    me: u64,
-    head: NodeId,
+    me: HostId,
+    head: HostId,
 )
     requires
         stands_for_composed(own, ray, seized, c),
-        !is_unowned(own.state.view()) || forall|p: Raymond, h: NodeId|
-            !ray_assign_privilege(ray@, p, me as nat, h),
+        !is_unowned(own.state.view()) || forall|p: Raymond, h: HostId|
+            !ray_assign_privilege(ray@, p, me, h),
     ensures
-        !cs_pass_token(c, post, me as nat, head),
+        !cs_pass_token(c, post, me, head),
 {
 }
 
@@ -109,21 +111,21 @@ pub proof fn theorem_seize_token_is_cs_seize_token(
     seized: NodeSet,
     seized2: NodeSet,
     c: Composed,
-    from: u64,
-    to: u64,
+    from: HostId,
+    to: HostId,
 )
     requires
         stands_for_composed(own, ray, seized, c),
-        c.own.live.contains(to as nat),
+        c.own.live.contains(to),
         is_unowned(own.state.view()),
-        ray_seize(ray@, ray2@, from as nat, to as nat),
-        seized2@ == seized@.insert(from as nat).remove(to as nat),
+        ray_seize(ray@, ray2@, from, to),
+        seized2@ == seized@.insert(from).remove(to),
     ensures
         cs_seize_token(
             c,
             Composed { own: c.own, ray: ray2@, actor: c.actor, seized: seized2@ },
-            from as nat,
-            to as nat,
+            from,
+            to,
         ),
 {
 }
@@ -135,14 +137,14 @@ pub proof fn theorem_refused_seize_token_is_disabled(
     seized: NodeSet,
     c: Composed,
     post: Composed,
-    to: u64,
+    to: HostId,
 )
     requires
         stands_for_composed(own, ray, seized, c),
         !is_unowned(own.state.view()) || forall|p: Raymond|
-            !ray_seize(ray@, p, ray.privilege as nat, to as nat),
+            !ray_seize(ray@, p, ray.privilege, to),
     ensures
-        !cs_seize_token(c, post, ray.privilege as nat, to as nat),
+        !cs_seize_token(c, post, ray.privilege, to),
 {
 }
 
@@ -154,28 +156,28 @@ pub proof fn theorem_acquire_under_token_is_cs_acquire_under_token(
     ray: RayTable,
     seized: NodeSet,
     c: Composed,
-    node: u64,
+    node: HostId,
     epoch: u64,
 )
     requires
         stands_for_composed(own, ray, seized, c),
-        c.own.live.contains(node as nat),
-        has_token(ray@, node as nat),
-        acquire_fires(own.state.view(), node as nat, epoch as nat, own.has_grant(node as nat, epoch as nat)),
-        own2.state.view() == acquire_next(own.state.view(), node as nat),
+        c.own.live.contains(node),
+        has_token(ray@, node),
+        acquire_fires(own.state.view(), node, epoch as nat, own.has_grant(node, epoch as nat)),
+        own2.state.view() == acquire_next(own.state.view(), node),
         grants_same(own, own2),
     ensures
         cs_acquire_under_token(
             c,
             Composed {
-                own: acquire_post(c.own, c.actor, node as nat),
+                own: acquire_post(c.own, c.actor, node),
                 ray: c.ray,
                 actor: c.actor,
                 seized: c.seized,
             },
-            node as nat,
+            node,
         ),
-        stands_for(own2, acquire_post(c.own, c.actor, node as nat), c.actor),
+        stands_for(own2, acquire_post(c.own, c.actor, node), c.actor),
 {
     theorem_acquire_is_tr_acquire(own, own2, c.own, c.actor, node, epoch);
 }
@@ -187,13 +189,13 @@ pub proof fn theorem_acquire_without_the_privilege_is_disabled(
     seized: NodeSet,
     c: Composed,
     post: Composed,
-    node: u64,
+    node: HostId,
 )
     requires
         stands_for_composed(own, ray, seized, c),
-        !has_token(ray@, node as nat),
+        !has_token(ray@, node),
     ensures
-        !cs_acquire_under_token(c, post, node as nat),
+        !cs_acquire_under_token(c, post, node),
 {
 }
 
@@ -205,18 +207,18 @@ pub proof fn theorem_reconcile_is_cs_reconcile(
     seized: NodeSet,
     seized2: NodeSet,
     c: Composed,
-    node: u64,
+    node: HostId,
 )
     requires
         stands_for_composed(own, ray, seized, c),
-        seized@.contains(node as nat),
-        ray_reconcile(ray@, ray2@, node as nat),
-        seized2@ == seized@.remove(node as nat),
+        seized@.contains(node),
+        ray_reconcile(ray@, ray2@, node),
+        seized2@ == seized@.remove(node),
     ensures
         cs_reconcile(
             c,
             Composed { own: c.own, ray: ray2@, actor: c.actor, seized: seized2@ },
-            node as nat,
+            node,
         ),
 {
 }
@@ -228,13 +230,13 @@ pub proof fn theorem_refused_reconcile_is_disabled(
     seized: NodeSet,
     c: Composed,
     post: Composed,
-    node: u64,
+    node: HostId,
 )
     requires
         stands_for_composed(own, ray, seized, c),
-        !seized@.contains(node as nat) || forall|p: Raymond| !ray_reconcile(ray@, p, node as nat),
+        !seized@.contains(node) || forall|p: Raymond| !ray_reconcile(ray@, p, node),
     ensures
-        !cs_reconcile(c, post, node as nat),
+        !cs_reconcile(c, post, node),
 {
 }
 

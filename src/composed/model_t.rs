@@ -39,6 +39,8 @@
 
 use vstd::prelude::*;
 
+use crate::host::HostId;
+
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
 use crate::ownership::spec::*;
@@ -72,7 +74,7 @@ pub struct Composed {
     /// real deployment must perform is a modelled transition rather than an
     /// assumption, and [`recovers_a_seized_node`] is what stops a node coming
     /// back and acting on a belief it never corrected.
-    pub seized: Set<NodeId>,
+    pub seized: Set<HostId>,
 }
 
 /// `s` is an `Acquire` of actor `a`. This is the one ownership transition that
@@ -104,7 +106,7 @@ pub open spec fn composed_inv(c: Composed) -> bool {
     // coordinator has invalidated and not yet repaired. A seizure adds one and
     // creates one; reconciliation removes one and repairs one; no other step
     // creates a stale holder at all.
-    &&& (forall|n: NodeId| #[trigger] is_stale_holder(c.ray, n) ==> c.seized.contains(n))
+    &&& (forall|n: HostId| #[trigger] is_stale_holder(c.ray, n) ==> c.seized.contains(n))
 }
 
 /// Any Raymond step that does not move the token: request routing *and*
@@ -176,7 +178,7 @@ pub open spec fn cs_own(pre: Composed, post: Composed, s: Step) -> bool {
 /// from, and
 /// `proofs::composed::theorem_token_movement_is_partitioned` proves there is no
 /// third way.
-pub open spec fn cs_pass_token(pre: Composed, post: Composed, n: NodeId, head: NodeId) -> bool {
+pub open spec fn cs_pass_token(pre: Composed, post: Composed, n: HostId, head: HostId) -> bool {
     &&& is_unowned(pre.own.actors[pre.actor])
     // Both nodes must be live, because `ray_assign_privilege` has both of them
     // act: `n` chooses to pass the privilege on and rewrites its own belief,
@@ -255,7 +257,7 @@ pub open spec fn cs_pass_token(pre: Composed, post: Composed, n: NodeId, head: N
 /// `cs_pass_token` guards both `n` and `head`, this step guards `to` and says
 /// nothing about `from`, and `cs_reconcile` guards nobody - a node repairing
 /// its own belief is acting by definition.
-pub open spec fn cs_seize_token(pre: Composed, post: Composed, from: NodeId, to: NodeId) -> bool {
+pub open spec fn cs_seize_token(pre: Composed, post: Composed, from: HostId, to: HostId) -> bool {
     &&& is_unowned(pre.own.actors[pre.actor])
     &&& pre.own.live.contains(to)
     &&& ray_seize(pre.ray, post.ray, from, to)
@@ -277,7 +279,7 @@ pub open spec fn cs_seize_token(pre: Composed, post: Composed, from: NodeId, to:
 }
 
 /// A node takes ownership - **only** if it is the node holding the token.
-pub open spec fn cs_acquire_under_token(pre: Composed, post: Composed, n: NodeId) -> bool {
+pub open spec fn cs_acquire_under_token(pre: Composed, post: Composed, n: HostId) -> bool {
     &&& has_token(pre.ray, n)
     &&& tr_acquire(pre.own, post.own, pre.actor, n)
     &&& post.ray == pre.ray
@@ -317,7 +319,7 @@ pub open spec fn recovers_a_seized_node(c: Composed, s: Step) -> bool {
 /// ordering rule still enforces is the *crashed* case:
 /// [`recovers_a_seized_node`] refuses `Step::Recover` until this step has run,
 /// so a node cannot come back and start acting on a belief it never corrected.
-pub open spec fn cs_reconcile(pre: Composed, post: Composed, n: NodeId) -> bool {
+pub open spec fn cs_reconcile(pre: Composed, post: Composed, n: HostId) -> bool {
     &&& pre.seized.contains(n)
     &&& ray_reconcile(pre.ray, post.ray, n)
     &&& post.seized == pre.seized.remove(n)
@@ -329,10 +331,10 @@ pub open spec fn cs_reconcile(pre: Composed, post: Composed, n: NodeId) -> bool 
 pub enum ComposedStep {
     Ray { ray_step: RayStep },
     Own { own_step: Step },
-    PassToken { node: NodeId, head: NodeId },
-    SeizeToken { from: NodeId, to: NodeId },
-    Reconcile { node: NodeId },
-    AcquireUnderToken { node: NodeId },
+    PassToken { node: HostId, head: HostId },
+    SeizeToken { from: HostId, to: HostId },
+    Reconcile { node: HostId },
+    AcquireUnderToken { node: HostId },
 }
 
 pub open spec fn composed_step(pre: Composed, post: Composed, s: ComposedStep) -> bool {
@@ -353,10 +355,10 @@ pub open spec fn composed_next(pre: Composed, post: Composed) -> bool {
 /// Initial composed states: both layers start fresh, and the actor exists.
 pub open spec fn composed_init(c: Composed) -> bool {
     &&& init(c.own)
-    &&& (exists|root: NodeId| ray_init(c.ray, root))
+    &&& (exists|root: HostId| ray_init(c.ray, root))
     &&& c.own.actors.contains_key(c.actor)
     &&& c.ray.nodes == c.own.nodes
-    &&& c.seized == Set::<NodeId>::empty()
+    &&& c.seized == Set::<HostId>::empty()
 }
 
 /// `tr` is a finite execution of the composed machine.

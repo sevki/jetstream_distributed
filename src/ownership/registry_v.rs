@@ -39,6 +39,8 @@
 
 use vstd::prelude::*;
 
+use crate::host::HostId;
+
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
 use crate::ownership::spec::*;
@@ -51,7 +53,7 @@ pub struct RegistryCore {
     /// The actor's ownership record.
     pub state: ExecState,
     /// Grants published, as `(node, epoch)`: the model's `Grant` messages.
-    pub grants: Vec<(u64, u64)>,
+    pub grants: Vec<(HostId, u64)>,
     /// Writes landed so far.
     pub writes: u64,
 }
@@ -78,21 +80,21 @@ pub enum WriteOutcome {
 
 impl RegistryCore {
     /// `(n, e)` has been published.
-    pub open spec fn has_grant(&self, n: nat, e: nat) -> bool {
+    pub open spec fn has_grant(&self, n: HostId, e: nat) -> bool {
         exists|k: int|
-            0 <= k < self.grants@.len() && self.grants@[k].0 as nat == n && self.grants@[k].1 as nat
+            0 <= k < self.grants@.len() && self.grants@[k].0 == n && self.grants@[k].1 as nat
                 == e
     }
 }
 
 /// The grants are as they were.
 pub open spec fn grants_same(pre: RegistryCore, post: RegistryCore) -> bool {
-    forall|n: nat, e: nat| #[trigger] post.has_grant(n, e) == pre.has_grant(n, e)
+    forall|n: HostId, e: nat| #[trigger] post.has_grant(n, e) == pre.has_grant(n, e)
 }
 
 /// The grants are as they were, and `(node, epoch)` is now among them.
-pub open spec fn grants_plus(pre: RegistryCore, post: RegistryCore, node: nat, epoch: nat) -> bool {
-    forall|n: nat, e: nat|
+pub open spec fn grants_plus(pre: RegistryCore, post: RegistryCore, node: HostId, epoch: nat) -> bool {
+    forall|n: HostId, e: nat|
         #[trigger] post.has_grant(n, e) == (pre.has_grant(n, e) || (n == node && e == epoch))
 }
 
@@ -106,14 +108,14 @@ pub open spec fn unchanged(pre: RegistryCore, post: RegistryCore) -> bool {
 impl RegistryCore {
     /// An actor offered to `intended` at `epoch`, nothing published, nothing
     /// written. The model's initial record: `Unowned` and an empty network.
-    pub fn new(epoch: u64, intended: u64) -> (c: RegistryCore)
+    pub fn new(epoch: u64, intended: HostId) -> (c: RegistryCore)
         ensures
             c.state.view() == (OwnershipState::Unowned {
                 epoch: epoch as nat,
-                intended_owner: intended as nat,
+                intended_owner: intended,
             }),
             c.writes == 0,
-            forall|n: nat, e: nat| !c.has_grant(n, e),
+            forall|n: HostId, e: nat| !c.has_grant(n, e),
     {
         RegistryCore {
             state: ExecState::Unowned { epoch, intended },
@@ -123,9 +125,9 @@ impl RegistryCore {
     }
 
     /// Whether `(node, epoch)` has been published.
-    pub fn granted(&self, node: u64, epoch: u64) -> (r: bool)
+    pub fn granted(&self, node: HostId, epoch: u64) -> (r: bool)
         ensures
-            r == self.has_grant(node as nat, epoch as nat),
+            r == self.has_grant(node, epoch as nat),
     {
         let mut k: usize = 0;
         while k < self.grants.len()
@@ -143,11 +145,11 @@ impl RegistryCore {
     }
 
     /// Publish a grant.
-    fn publish(&mut self, node: u64, epoch: u64)
+    fn publish(&mut self, node: HostId, epoch: u64)
         ensures
             final(self).state.view() == old(self).state.view(),
             final(self).writes == old(self).writes,
-            grants_plus(*old(self), *final(self), node as nat, epoch as nat),
+            grants_plus(*old(self), *final(self), node, epoch as nat),
     {
         let ghost before = *self;
         // A set, not a log: a node polling the same offer in a loop publishes the
@@ -160,22 +162,22 @@ impl RegistryCore {
             self.grants.push((node, epoch));
         }
         proof {
-            assert forall|n: nat, e: nat|
-                #[trigger] self.has_grant(n, e) == (before.has_grant(n, e) || (n == node as nat
+            assert forall|n: HostId, e: nat|
+                #[trigger] self.has_grant(n, e) == (before.has_grant(n, e) || (n == node
                     && e == epoch as nat)) by {
-                if self.has_grant(n, e) && !(n == node as nat && e == epoch as nat) {
+                if self.has_grant(n, e) && !(n == node && e == epoch as nat) {
                     let k = choose|k: int|
-                        0 <= k < self.grants@.len() && self.grants@[k].0 as nat == n
+                        0 <= k < self.grants@.len() && self.grants@[k].0 == n
                             && self.grants@[k].1 as nat == e;
                     assert(k < before.grants@.len());
                 }
                 if before.has_grant(n, e) {
                     let k = choose|k: int|
-                        0 <= k < before.grants@.len() && before.grants@[k].0 as nat == n
+                        0 <= k < before.grants@.len() && before.grants@[k].0 == n
                             && before.grants@[k].1 as nat == e;
                     assert(self.grants@[k] == before.grants@[k]);
                 }
-                if n == node as nat && e == epoch as nat && !present {
+                if n == node && e == epoch as nat && !present {
                     let last = (self.grants@.len() - 1) as int;
                     assert(self.grants@[last] == (node, epoch));
                 }
@@ -186,13 +188,13 @@ impl RegistryCore {
     /// `poll`: what is on offer for `node`. A grant it answers with is published
     /// — `tr_issue_grant`, which is retransmission and always safe, the grant
     /// naming only state that is already public.
-    pub fn poll(&mut self, node: u64) -> (r: ExecOffer)
+    pub fn poll(&mut self, node: HostId) -> (r: ExecOffer)
         ensures
             r == poll_answer(old(self).state, node),
             final(self).state.view() == old(self).state.view(),
             final(self).writes == old(self).writes,
             match r {
-                ExecOffer::Grant(e) => grants_plus(*old(self), *final(self), node as nat, e as nat),
+                ExecOffer::Grant(e) => grants_plus(*old(self), *final(self), node, e as nat),
                 _ => grants_same(*old(self), *final(self)),
             },
     {
@@ -204,7 +206,7 @@ impl RegistryCore {
     }
 
     /// `tr_acquire`: take an offered grant — which has to have been published.
-    pub fn acquire(&mut self, node: u64, epoch: u64) -> (r: Result<(), Refusal>)
+    pub fn acquire(&mut self, node: HostId, epoch: u64) -> (r: Result<(), Refusal>)
         ensures
             final(self).writes == old(self).writes,
             grants_same(*old(self), *final(self)),
@@ -212,18 +214,18 @@ impl RegistryCore {
                 Ok(_) => {
                     &&& acquire_fires(
                         old(self).state.view(),
-                        node as nat,
+                        node,
                         epoch as nat,
-                        old(self).has_grant(node as nat, epoch as nat),
+                        old(self).has_grant(node, epoch as nat),
                     )
-                    &&& final(self).state.view() == acquire_next(old(self).state.view(), node as nat)
+                    &&& final(self).state.view() == acquire_next(old(self).state.view(), node)
                 },
                 Err(_) => {
                     &&& !acquire_fires(
                         old(self).state.view(),
-                        node as nat,
+                        node,
                         epoch as nat,
-                        old(self).has_grant(node as nat, epoch as nat),
+                        old(self).has_grant(node, epoch as nat),
                     )
                     &&& final(self).state.view() == old(self).state.view()
                 },
@@ -236,7 +238,7 @@ impl RegistryCore {
                 self.state = next;
                 proof {
                     assert(self.grants@ == before.grants@);
-                    assert forall|n: nat, e: nat| #[trigger] self.has_grant(n, e) == before.has_grant(n, e) by {}
+                    assert forall|n: HostId, e: nat| #[trigger] self.has_grant(n, e) == before.has_grant(n, e) by {}
                 }
                 Ok(())
             },
@@ -246,23 +248,23 @@ impl RegistryCore {
 
     /// The fence, at the point where the effect lands. A write that passes it is
     /// counted.
-    pub fn write(&mut self, node: u64, epoch: u64) -> (r: WriteOutcome)
+    pub fn write(&mut self, node: HostId, epoch: u64) -> (r: WriteOutcome)
         ensures
             final(self).state.view() == old(self).state.view(),
             grants_same(*old(self), *final(self)),
             match r {
                 WriteOutcome::Wrote(seq) => {
-                    &&& may_mutate(old(self).state.view(), node as nat, epoch as nat)
+                    &&& may_mutate(old(self).state.view(), node, epoch as nat)
                     &&& old(self).writes < u64::MAX
                     &&& seq == old(self).writes + 1
                     &&& final(self).writes == seq
                 },
                 WriteOutcome::Fenced => {
-                    &&& !may_mutate(old(self).state.view(), node as nat, epoch as nat)
+                    &&& !may_mutate(old(self).state.view(), node, epoch as nat)
                     &&& final(self).writes == old(self).writes
                 },
                 WriteOutcome::Exhausted => {
-                    &&& may_mutate(old(self).state.view(), node as nat, epoch as nat)
+                    &&& may_mutate(old(self).state.view(), node, epoch as nat)
                     &&& old(self).writes == u64::MAX
                     &&& final(self).writes == old(self).writes
                 },
@@ -283,8 +285,8 @@ impl RegistryCore {
     /// is written down: durable before visible.
     pub fn begin_transfer<F: FnOnce(u64) -> bool>(
         &mut self,
-        from: u64,
-        to: u64,
+        from: HostId,
+        to: HostId,
         to_is_node: bool,
         persist: F,
     ) -> (r: Result<(), BurnRefusal>)
@@ -297,22 +299,22 @@ impl RegistryCore {
                 Ok(_) => {
                     &&& begin_transfer_fires(
                         old(self).state.view(),
-                        from as nat,
-                        to as nat,
+                        from,
+                        to,
                         to_is_node,
                     )
                     &&& final(self).state.view() == begin_transfer_next(
                         old(self).state.view(),
-                        to as nat,
+                        to,
                     )
                 },
                 Err(BurnRefusal::Refused(why)) => {
-                    &&& (!begin_transfer_fires(old(self).state.view(), from as nat, to as nat, to_is_node)
+                    &&& (!begin_transfer_fires(old(self).state.view(), from, to, to_is_node)
                         || (why is Exhausted))
                     &&& final(self).state.view() == old(self).state.view()
                 },
                 Err(BurnRefusal::Down) => {
-                    &&& begin_transfer_fires(old(self).state.view(), from as nat, to as nat, to_is_node)
+                    &&& begin_transfer_fires(old(self).state.view(), from, to, to_is_node)
                     &&& final(self).state.view() == old(self).state.view()
                 },
             },
@@ -333,18 +335,18 @@ impl RegistryCore {
     /// `tr_handle_revoke` then `tr_complete_release`: the outgoing owner
     /// acknowledges, and the actor is offered on — and that offer is published.
     /// Returns the node it is offered to.
-    pub fn release(&mut self, node: u64, epoch: u64) -> (r: Result<u64, Refusal>)
+    pub fn release(&mut self, node: HostId, epoch: u64) -> (r: Result<HostId, Refusal>)
         ensures
             final(self).writes == old(self).writes,
             match r {
                 Ok(to) => {
-                    &&& release_fires(old(self).state.view(), node as nat, epoch as nat)
+                    &&& release_fires(old(self).state.view(), node, epoch as nat)
                     &&& final(self).state.view() == release_next(old(self).state.view())
-                    &&& to as nat == intended_owner(final(self).state.view())
-                    &&& grants_plus(*old(self), *final(self), to as nat, epoch as nat)
+                    &&& to == intended_owner(final(self).state.view())
+                    &&& grants_plus(*old(self), *final(self), to, epoch as nat)
                 },
                 Err(_) => {
-                    &&& !release_fires(old(self).state.view(), node as nat, epoch as nat)
+                    &&& !release_fires(old(self).state.view(), node, epoch as nat)
                     &&& final(self).state.view() == old(self).state.view()
                     &&& grants_same(*old(self), *final(self))
                 },
@@ -367,10 +369,10 @@ impl RegistryCore {
     /// and publishes that offer.
     pub fn force<F: FnOnce(u64) -> bool>(
         &mut self,
-        next: u64,
+        next: HostId,
         next_is_node: bool,
         persist: F,
-    ) -> (r: Result<u64, BurnRefusal>)
+    ) -> (r: Result<HostId, BurnRefusal>)
         requires
             forall|e: u64| call_requires(persist, (e,)),
         ensures
@@ -378,12 +380,12 @@ impl RegistryCore {
             match r {
                 Ok(offered) => {
                     &&& force_fires(old(self).state.view(), next_is_node)
-                    &&& final(self).state.view() == force_next(old(self).state.view(), next as nat)
-                    &&& offered as nat == force_offers_to(old(self).state.view(), next as nat)
+                    &&& final(self).state.view() == force_next(old(self).state.view(), next)
+                    &&& offered == force_offers_to(old(self).state.view(), next)
                     &&& grants_plus(
                         *old(self),
                         *final(self),
-                        offered as nat,
+                        offered,
                         current_epoch(final(self).state.view()),
                     )
                 },

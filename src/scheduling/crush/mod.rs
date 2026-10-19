@@ -1,6 +1,7 @@
 //! CRUSH
 use crate::host::HostId;
-use crate::scheduling::{Placement, PlacementError, Resource};
+use crate::scheduling::placement::PlacementError;
+use crate::scheduling::{Resource, placement::Placement};
 
 impl Placement for mycrush::crush::Map {
     fn place<W: Resource>(&self, what: W) -> Result<Vec<HostId>, PlacementError> {

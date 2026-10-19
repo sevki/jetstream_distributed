@@ -1355,11 +1355,17 @@ proved, not assumed.
 | MB7 | **The fairness rules are theorems**: WF1 (a step enabled while `p` holds, and the only way out of `p`, gives `p ~> q` under weak fairness of that step), transitivity, and case-splitting | `temporal::lemma_wf1`, `lemma_leads_to_trans`, `lemma_leads_to_cases`, `lemma_leads_to_implies` | none |
 | MB8 | **The liveness theorem is not vacuous.** A run of the machine that satisfies `mailbox_fair` and does work: one message is queued and processed, and a second that arrives *after* the drain took the queue is queued and processed, woken by the drain's last step seeing `has` — and the theorem applies to it | `actor::mailbox::proofs::scenario::scenario_a_fair_run_delivers_two_messages`, `scenario_the_theorem_applies_to_it` | none: the run is exhibited |
 | MB9 | **The fairness assumption is necessary.** A run of the machine in which a message is enqueued and never processed, and which is not fair: its sender's own `set_state` step stays possible forever and is never taken | `actor::mailbox::proofs::scenario::scenario_without_fairness_a_message_waits_forever` | none: the run is exhibited |
+| MB10 | **The executable core is the model.** `exec::MailboxCore` — the queue and flags the runtime keeps behind its lock — has one method per step, and each method's contract is the model's step: a fresh core is `mb_init`; `enqueue`, `set_state`, `schedule`, `claim`, `take` and `finish` each take the model to a state the core still stands for (`refines`), `take` handing out exactly what the model adds to `processed`; `set_state` returns what the sender's operation records | `actor::mailbox::proofs::refinement::theorem_new_refines_init`, `theorem_enqueue_refines`, `theorem_set_state_refines`, `theorem_schedule_refines`, `theorem_claim_refines`, `theorem_take_refines`, `theorem_finish_refines` | the sender's protocol: the item stands for the envelope the model numbers next, `set_state` is called for a `Marked` operation, `schedule` for a `Scheduling` one with the `had` it recorded |
+| MB11 | **A refused step is one the model could not take.** `claim` refuses exactly when the model's guard is false (so no second drain can claim while one runs), and `take` and `finish` out of phase change nothing — the model's stutter — and the model has no enabled `mb_drain` or `mb_finish` there | `actor::mailbox::proofs::refinement::theorem_claim_refuses_exactly_when_disabled`, `theorem_take_refuses_exactly_when_disabled`, `theorem_finish_refuses_exactly_when_disabled`, `theorem_a_stutter_refines` | `refines` |
 
-**What this does not do.** The proof is about the model. The protocol *is* run now —
-`service::Mailbox` is its six steps on real threads, and
+**What this does not do.** The model's proofs are about the model, and MB10–MB11
+connect the *core* to it. The protocol *is* run now —
+`service::Mailbox` wraps that core in a lock, and
 [The mailbox as a transport](#the-mailbox-as-a-transport) says how it is used — but
-that is a transcription the tests exercise, not a refinement Verus checks, and `Host`
+the lock, the capacity and permits, the wakers and the notification are plain Rust
+the tests exercise, and so is `requeue`, which puts back what a dropped round never
+handed out and is not a model step. Nothing checks that callers follow the sender's
+three steps; MB10 takes it as a hypothesis. And `Host`
 does not sit behind it yet: `Host` keeps the sent set of the actor's model and the
 owning node calls `accept`. The fairness assumption is *weak*
 fairness of those steps and nothing stronger, and it is an assumption about the
@@ -1528,10 +1534,12 @@ jetstream_distributed/
 │   │   ├── steps.rs        accept, send and the behaviour as executable u64 functions
 │   │   ├── mailbox/        the queue in front of the actor, and its wakeup protocol
 │   │   │   ├── model.rs    the three flags, six steps, and the step boundaries between them
+│   │   │   ├── exec.rs     MailboxCore: the protocol as verified code, one method per step
 │   │   │   └── proofs/
 │   │   │       ├── invariant.rs  the six-clause invariant, and that every step preserves it
 │   │   │       ├── safety.rs     nothing lost or repeated; per-sender order; no gaps
 │   │   │       ├── liveness.rs   a message enqueued is a message processed, under fairness
+│   │   │       ├── refinement.rs the executable core takes the model's steps, and refuses where it cannot
 │   │   │       └── scenario.rs   a fair run that delivers; an unfair one that does not
 │   │   ├── service/        the actor over Jetstream RPC   [feature = "service"]
 │   │   │   ├── mod.rs      the Actor trait and what goes on the wire
@@ -1934,9 +1942,10 @@ caller ── ActorBChannel ── Session ──▶ Mailbox ──▶ serve ─
 
 **What it does not claim.**
 
-* **It is a transcription, not a refinement.** Nothing checks `service::Mailbox`
-  against the model with Verus; the claim rests on each method being the step it is
-  named for and on the tests (`tests/actor_mailbox.rs` and the unit tests in
+* **Only the core is a refinement.** Verus checks `exec::MailboxCore` against the
+  model (MB10–MB11); it does not check the lock, capacity, permits, wakers or
+  notification around it, `requeue`, or that callers follow the sender's three
+  steps. Those rest on the tests (`tests/actor_mailbox.rs` and the unit tests in
   `mailbox.rs`: many senders into a small mailbox lose nothing and keep their order,
   a full one holds its callers back and not its queue, and an aborted drain answers
   only the request it dropped).
@@ -2441,7 +2450,8 @@ CI, with no `assume`/`admit`/`external_body`/`axiom`):
   the first liveness theorem here — **every enqueued message is eventually
   processed under weak fairness of the drain's and each sender's steps**, with the
   fairness rules proved in `temporal` and both the fair run that satisfies the
-  assumption and the unfair one that shows it is needed exhibited (MB1–MB9).
+  assumption and the unfair one that shows it is needed exhibited (MB1–MB9); and the
+  executable mailbox core, whose every step is checked to be the model's (MB10–MB11).
 
 **Modelled but not proven** (present in the state machine, no theorem beyond
 invariant preservation):
@@ -2517,7 +2527,8 @@ invariant preservation):
   `actor::mailbox` proves that a queue in front of it delivers every enqueued
   message, in order, under a stated fairness assumption. `service::Mailbox`,
   `Session` and `serve` run that protocol and deliver to any generated service, but
-  they are a transcription rather than a refinement, `serve` does not yet check the
+  only the queue-and-flags core under their lock is a verified refinement (the lock,
+  capacity and wakeups are not), `serve` does not yet check the
   ownership epoch around each call, and `Host` still keeps the actor's sent set and
   relies on its caller to call `accept`. Subscriptions are not served through the
   mailbox, and the reply path is not bounded. The actor's behaviour is a pure fold, so what a message *does* beyond

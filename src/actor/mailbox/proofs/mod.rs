@@ -3,5 +3,6 @@
 
 pub mod invariant;
 pub mod liveness;
+pub mod refinement;
 pub mod safety;
 pub mod scenario;

@@ -54,11 +54,14 @@
 //!
 //! # What is not claimed
 //!
-//! This is a transcription, not a refinement: nothing here is checked against
-//! the model by Verus, and the claim that it behaves like the model rests on each
-//! method being the model step it is named for, and on the tests below. It is the
-//! same line [`crate::actor::mailbox`] draws: the protocol is proved, connecting
-//! it to running code is this file.
+//! The protocol's steps are [`MailboxCore`]'s, which Verus checked refine the
+//! model ([`crate::actor::mailbox::proofs::refinement`]). Everything around them
+//! is plain Rust and is **not** verified: the lock, the capacity and the permits,
+//! the wakers and the [`Notify`], [`Round`]'s drop (including the `requeue` of
+//! messages a dropped round never handed out, which is not a model step), and
+//! that senders call `enqueue`, `set_state` and `schedule` in that order with
+//! what `set_state` returned — which [`Permit`] and [`Mailbox::send`] arrange and
+//! the tests below exercise.
 
 use std::collections::VecDeque;
 use std::future::poll_fn;
@@ -68,19 +71,15 @@ use std::task::{self, Poll, Waker};
 
 use tokio::sync::Notify;
 
+use crate::actor::mailbox::exec::MailboxCore;
+
 struct State<T> {
-    /// Messages waiting to be drained, oldest first.
-    queue: VecDeque<T>,
+    /// The queue and the three flags: the verified part.
+    core: MailboxCore<T>,
     /// Slots promised to a [`Permit`] and not yet used.
     reserved: u64,
     /// Senders waiting for a slot.
     waiting: Vec<Waker>,
-    /// Messages have been enqueued since the drain last looked.
-    has: bool,
-    /// The drain is running.
-    processing: bool,
-    /// The drain has been asked to run.
-    scheduled: bool,
 }
 
 /// How many messages a [`Mailbox`] holds before a sender has to wait.
@@ -130,7 +129,7 @@ impl<T> Permit<T> {
     pub fn enqueue(mut self, item: T) {
         let mut s = self.mailbox.state();
         s.reserved -= 1;
-        s.queue.push_back(item);
+        s.core.enqueue(item);
         self.spent = true;
     }
 }
@@ -161,12 +160,9 @@ impl<T> Mailbox<T> {
         Mailbox {
             shared: Arc::new(Shared {
                 state: Mutex::new(State {
-                    queue: VecDeque::new(),
+                    core: MailboxCore::new(),
                     reserved: 0,
                     waiting: Vec::new(),
-                    has: false,
-                    processing: false,
-                    scheduled: false,
                 }),
                 capacity,
                 wake: Notify::new(),
@@ -180,7 +176,7 @@ impl<T> Mailbox<T> {
 
     /// How many messages are queued, not yet taken by the drain.
     pub fn queued(&self) -> u64 {
-        self.state().queue.len() as u64
+        self.state().core.len() as u64
     }
 
     // --- a sender's steps -----------------------------------------------------
@@ -193,7 +189,7 @@ impl<T> Mailbox<T> {
 
     fn reserve_locked(&self, s: &mut State<T>) -> Option<Permit<T>> {
         if let Capacity::Bounded(room) = self.shared.capacity
-            && (s.queue.len() as u64) + s.reserved >= u64::from(room.get())
+            && (s.core.len() as u64) + s.reserved >= u64::from(room.get())
         {
             return None;
         }
@@ -223,7 +219,7 @@ impl<T> Mailbox<T> {
 
     /// `mb_set_state`: read `has` and set it. Returns what it was.
     pub fn set_state(&self) -> bool {
-        std::mem::replace(&mut self.state().has, true)
+        self.state().core.set_state()
     }
 
     /// `mb_schedule`: ask the drain to run — **if** `has` was clear when this
@@ -234,8 +230,8 @@ impl<T> Mailbox<T> {
     /// looks at `has` again.
     pub fn schedule(&self, had: bool) {
         let mut s = self.state();
-        if !had && !s.processing {
-            s.scheduled = true;
+        s.core.schedule(had);
+        if s.core.scheduled {
             self.shared.wake.notify_one();
         }
     }
@@ -263,22 +259,17 @@ impl<T> Mailbox<T> {
 
     /// `mb_claim`: once scheduled, mark the drain running and clear `has`, so a
     /// message that arrives from now on is noticed by [`finish`](Self::finish).
-    /// Returns `false`, changing nothing, if the drain has not been asked to run.
+    /// Returns `false`, changing nothing, if the drain has not been asked to run
+    /// or is already running a round: two drains never hold the queue at once.
     pub fn claim(&self) -> bool {
-        let mut s = self.state();
-        if !s.scheduled {
-            return false;
-        }
-        s.processing = true;
-        s.has = false;
-        true
+        self.state().core.claim()
     }
 
     /// `mb_drain`: take everything in the queue, in order. The slots it held are
     /// free again, and the senders waiting for one are woken.
     pub fn take(&self) -> VecDeque<T> {
         let mut s = self.state();
-        let taken = std::mem::take(&mut s.queue);
+        let taken = s.core.take();
         let waiting = std::mem::take(&mut s.waiting);
         drop(s);
         for waker in waiting {
@@ -291,9 +282,19 @@ impl<T> Mailbox<T> {
     /// ran, and otherwise go back to sleep. Returns whether it stays scheduled.
     pub fn finish(&self) -> bool {
         let mut s = self.state();
-        s.scheduled = s.has;
-        s.processing = false;
-        s.scheduled
+        let scheduled = s.core.finish();
+        if scheduled {
+            // Staying scheduled is a wakeup, and nobody else will ring it: the
+            // senders that set `has` found the drain running.
+            self.shared.wake.notify_one();
+        }
+        scheduled
+    }
+
+    /// Put back the messages of a round that was dropped before handing them
+    /// out. Not a model step; see [`MailboxCore::requeue`].
+    fn requeue(&self, rest: VecDeque<T>) {
+        self.state().core.requeue(rest);
     }
 
     /// Wait until the drain is asked to run, then claim it and take the queue:
@@ -333,6 +334,10 @@ impl<T> Iterator for Round<T> {
 
 impl<T> Drop for Round<T> {
     fn drop(&mut self) {
+        // Whatever the handler did not take is not lost with it: its senders
+        // are waiting on an answer.
+        let rest = std::mem::take(&mut self.items);
+        self.mailbox.requeue(rest);
         self.mailbox.finish();
     }
 }
@@ -427,6 +432,38 @@ mod tests {
         assert!(mb.claim());
         assert_eq!(mb.take(), [2]);
         assert!(!mb.finish());
+    }
+
+    /// While one round runs, a second drain cannot claim the queue, even though
+    /// the drain is still scheduled.
+    #[test]
+    fn a_second_drain_cannot_claim_while_a_round_runs() {
+        let mb = Mailbox::new(cap(8));
+        mb.try_send(1).unwrap();
+        assert!(mb.claim());
+        assert_eq!(mb.take(), [1]);
+        mb.try_send(2).unwrap();
+        assert!(!mb.claim(), "a round is running");
+        assert!(mb.finish());
+        assert!(mb.claim());
+        assert_eq!(mb.take(), [2]);
+    }
+
+    /// A round dropped before it handed everything out keeps the rest, ahead of
+    /// what arrived since, and stays scheduled.
+    #[tokio::test]
+    async fn dropping_a_round_early_keeps_what_it_did_not_hand_out() {
+        let mb = Mailbox::new(cap(8));
+        for n in 1..=3 {
+            mb.try_send(n).unwrap();
+        }
+        let mut round = mb.round().await;
+        assert_eq!(round.next(), Some(1));
+        mb.try_send(4).unwrap();
+        drop(round);
+
+        let again: Vec<_> = mb.round().await.collect();
+        assert_eq!(again, [2, 3, 4]);
     }
 
     /// A full mailbox refuses, handing the message back, and has room again once

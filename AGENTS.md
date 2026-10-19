@@ -22,8 +22,14 @@ Verus is pinned (`0.2026.09.20.aef82ed`, with `rust-toolchain.toml` and
 each guards against. Say so in a review rather than claiming a proof was checked.
 
 Code in `verus!` blocks is shared by two builds, a plain `rustc` one and the Verus
-one, so an edit that is fine for one can break the other. `src/**/steps.rs`,
-`exec.rs`, `store.rs` and `wire.rs` are verified executable code; `service` code
+one, so an edit that is fine for one can break the other. File names follow the
+vendored verified-storage convention: a `_t.rs` file is **trusted** (the models and
+specifications a reader audits, `model_t.rs`, `spec_t.rs`, `fencing_t.rs`,
+`temporal_t.rs`) and a `_v.rs` file is **verified** (`steps_v.rs`, `exec_v.rs`,
+`registry_v.rs`, `store_v.rs`, `wire_v.rs`, `transfer_v.rs` and everything under
+`proofs/`). The module keeps its plain name through `#[path]`, so only the file
+name carries the suffix. `src/**/steps_v.rs`, `exec_v.rs`, `registry_v.rs`,
+`store_v.rs` and `wire_v.rs` are verified executable code; `service` code
 (behind the `service` feature) is plain Rust that Verus never sees.
 
 ## Rules the repository holds itself to
@@ -50,7 +56,7 @@ diff and **does not change code**: use the review and eval skills, not `kverus-f
 The same instructions are packaged as a custom agent in
 `.github/agents/verus-specialist.agent.md`, which also covers repairing proofs.
 
-### Changes to code inside `verus!` (models, specs, proofs, `steps.rs`)
+### Changes to code inside `verus!` (models, specs, proofs, `steps_v.rs`)
 
 1. Run `kverus-review` on the change:
 
@@ -64,8 +70,8 @@ The same instructions are packaged as a custom agent in
    It reports four things:
 
    * **exec-code changes**, classified `semantic-change`, `likely-equivalent` or
-     `uncertain`. A `semantic-change` in a `steps.rs` is a change to what the
-     services run, so it needs a matching change in `proofs/refinement.rs` or an
+     `uncertain`. A `semantic-change` in a `steps_v.rs` is a change to what the
+     services run, so it needs a matching change in `proofs/refinement_v.rs` or an
      explanation of why not;
    * **new `=~=`** that `==` would do;
    * **deleted comments** — here these are design rationale, not migration

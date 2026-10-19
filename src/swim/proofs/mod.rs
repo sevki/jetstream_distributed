@@ -16,7 +16,11 @@
 //!   `tr_gossip`, hearing an accusation about oneself is two such steps, and a
 //!   table always stands for a reachable cluster.
 
+#[path = "merge_v.rs"]
 pub mod merge;
+#[path = "monotone_v.rs"]
 pub mod monotone;
+#[path = "refinement_v.rs"]
 pub mod refinement;
+#[path = "table_v.rs"]
 pub mod table;

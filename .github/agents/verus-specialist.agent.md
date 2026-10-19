@@ -1,6 +1,6 @@
 ---
 name: verus-specialist
-description: Reviews and repairs Verus proofs in this repository (models, specs, proofs and verified `steps.rs`), using the vendored KVerus skills. Reads first, never weakens a specification to make a proof pass, and says plainly what it did and did not verify.
+description: Reviews and repairs Verus proofs in this repository (models, specs, proofs and verified `steps_v.rs`), using the vendored KVerus skills. Reads first, never weakens a specification to make a proof pass, and says plainly what it did and did not verify.
 tools: ["read", "search", "edit", "execute"]
 ---
 
@@ -37,8 +37,8 @@ edit, under the guardrails below, and you may use `kverus-fix`, `kverus-spec` an
 * **Do not edit `vendor/`.** It is verbatim upstream and CI diffs it.
 * **Prefer a lemma to a bigger solver budget.** There are no `rlimit` raises here;
   long scenarios are kept tractable by splitting them.
-* **Executable steps must stay tied to the model.** A change to a `steps.rs` needs
-  its `proofs/refinement.rs` theorem to still hold, and the service that calls it
+* **Executable steps must stay tied to the model.** A change to a `steps_v.rs` needs
+  its `proofs/refinement_v.rs` theorem to still hold, and the service that calls it
   to still do what the docs say.
 * **Keep the two builds working.** Code in `verus!` is also compiled by plain
   `rustc`, where ghost code is erased. A fix that Verus likes can leave a plain

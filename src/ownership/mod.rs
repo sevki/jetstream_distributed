@@ -24,13 +24,20 @@
 //! * `service`    — the protocol over Jetstream RPC, behind the `service`
 //!   feature.
 
+#[path = "exec_v.rs"]
 pub mod exec;
+#[path = "fencing_t.rs"]
 pub mod fencing;
+#[path = "model_t.rs"]
 pub mod model;
 pub mod proofs;
+#[path = "registry_v.rs"]
 pub mod registry;
+#[path = "spec_t.rs"]
 pub mod spec;
+#[path = "steps_v.rs"]
 pub mod steps;
+#[path = "transfer_v.rs"]
 pub mod transfer;
 
 #[cfg(feature = "service")]

@@ -22,11 +22,16 @@
 //! Machine Safety are not.** [`model`]'s docs say exactly where that line falls
 //! and why it is where it is.
 
+#[path = "exec_v.rs"]
 pub mod exec;
+#[path = "model_t.rs"]
 pub mod model;
 pub mod proofs;
+#[path = "steps_v.rs"]
 pub mod steps;
+#[path = "store_v.rs"]
 pub mod store;
+#[path = "wire_v.rs"]
 pub mod wire;
 
 #[cfg(feature = "service")]

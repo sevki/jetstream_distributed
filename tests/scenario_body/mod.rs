@@ -29,7 +29,7 @@
 //!
 //! The one piece of `src/` this does use is `FenceGuard`, because it is the
 //! node-local check a real node performs, and exercising it against an
-//! authoritative fence is precisely the asymmetry `src/ownership/exec.rs`
+//! authoritative fence is precisely the asymmetry `src/ownership/exec_v.rs`
 //! documents.
 //!
 //! Everything here is deterministic: turmoil's network is seeded, its clock is
@@ -374,7 +374,7 @@ impl Coord {
 
             // The fence, at the point where the effect lands. This is
             // `can_mutate(sys, actor, node, epoch)` made executable, and it is
-            // the check `src/ownership/exec.rs` says a node cannot perform for itself.
+            // the check `src/ownership/exec_v.rs` says a node cannot perform for itself.
             ("WRITE", [node, epoch]) => {
                 let permitted = matches!(
                     self.state,
@@ -550,10 +550,10 @@ enum NodeCmd {
 
 /// A node's local state: the last generation it observed.
 ///
-/// `FenceGuard` is the verified `u64` check from `src/ownership/exec.rs`. It is what the
+/// `FenceGuard` is the verified `u64` check from `src/ownership/exec_v.rs`. It is what the
 /// node consults before bothering to send a write, and it is deliberately not
 /// authoritative: a partitioned node's guard goes on saying yes long after the
-/// system has moved on, which is the asymmetry `src/ownership/exec.rs` is at pains to
+/// system has moved on, which is the asymmetry `src/ownership/exec_v.rs` is at pains to
 /// document. The sim exercises both halves — the node asks its guard, the
 /// coordinator asks the registry, and the oracles watch what the registry did.
 #[derive(Default)]

@@ -15,9 +15,12 @@
 //! * `service`  — the two layers behind one coordinator, over Jetstream RPC,
 //!   behind the `service` feature.
 
+#[path = "exec_v.rs"]
 pub mod exec;
+#[path = "model_t.rs"]
 pub mod model;
 pub mod proofs;
+#[path = "steps_v.rs"]
 pub mod steps;
 
 #[cfg(feature = "service")]

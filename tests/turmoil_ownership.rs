@@ -66,7 +66,7 @@ fn wait() -> Action {
 /// A owns the actor, is cut off, the coordinator gives it to B, and A returns.
 ///
 /// This is the scenario the epoch is for. When A comes back it still holds
-/// `FenceGuard::new(0, 41)`, and that guard still says yes — `src/ownership/exec.rs` is
+/// `FenceGuard::new(0, 41)`, and that guard still says yes — `src/ownership/exec_v.rs` is
 /// explicit that a node cannot fence itself, and here that is not a caveat in
 /// a doc comment but an observable fact: A sends the write. What stops it is
 /// the coordinator, checking the write against authoritative state at the
@@ -1673,7 +1673,7 @@ fn oracles_accept_the_same_log_without_the_reassignment() {
 ///
 /// The bit is the fence and nothing else: same actions, same seed, same
 /// network, same oracles. What separates the two runs is exactly the check
-/// that `src/ownership/exec.rs` says has to happen where the effect lands.
+/// that `src/ownership/exec_v.rs` says has to happen where the effect lands.
 #[test]
 fn oracles_catch_an_unfenced_coordinator() {
     let log: Vec<Event> = run_scenario_unfenced(stale_owner_story())

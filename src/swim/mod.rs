@@ -42,9 +42,12 @@
 //!   transition (`tr_gossip`) and the run it generates.
 //! * [`proofs`] — the merge algebra, and what it buys once lifted to a run.
 
+#[path = "exec_v.rs"]
 pub mod exec;
+#[path = "model_t.rs"]
 pub mod model;
 pub mod proofs;
+#[path = "steps_v.rs"]
 pub mod steps;
 
 #[cfg(feature = "service")]

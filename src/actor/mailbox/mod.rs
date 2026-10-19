@@ -52,6 +52,8 @@
 //! `accept`, so `serve` does not enforce the ownership epoch: it hands requests to
 //! a service in order, and the fence belongs around it.
 
+#[path = "exec_v.rs"]
 pub mod exec;
+#[path = "model_t.rs"]
 pub mod model;
 pub mod proofs;

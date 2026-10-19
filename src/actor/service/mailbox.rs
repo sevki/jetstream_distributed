@@ -85,7 +85,20 @@ struct State<T> {
     /// the capacity, so putting them back cannot overfill the queue.
     held: u64,
     /// Senders waiting for a slot.
-    waiting: Vec<Waker>,
+    waiting: Vec<(u64, Waker)>,
+    /// The last id handed to a [`Waiter`].
+    next_waiter: u64,
+}
+
+impl<T> State<T> {
+    /// Every waiting sender's waker, leaving the line empty: they poll again, and
+    /// the ones that lose the race for a slot register again.
+    fn drain_waiters(&mut self) -> Vec<Waker> {
+        std::mem::take(&mut self.waiting)
+            .into_iter()
+            .map(|(_, waker)| waker)
+            .collect()
+    }
 }
 
 /// How many messages a [`Mailbox`] holds before a sender has to wait.
@@ -150,11 +163,28 @@ impl<T> Drop for Permit<T> {
             // cancelled, and waking only that one would leave the live waiters
             // asleep on a free slot with nothing queued to wake them. The ones
             // that lose the race register again when they poll.
-            let waiting = std::mem::take(&mut s.waiting);
+            let waiting = s.drain_waiters();
             drop(s);
             for waker in waiting {
                 waker.wake();
             }
+        }
+    }
+}
+
+/// A sender's place in line for a slot. Dropping it — a `reserve` that timed out,
+/// a [`Session`](super::Session) that went away — takes its waker off the
+/// mailbox, so a stalled actor does not collect a waker for every caller that
+/// ever gave up.
+pub struct Waiter<T> {
+    mailbox: Mailbox<T>,
+    id: Option<u64>,
+}
+
+impl<T> Drop for Waiter<T> {
+    fn drop(&mut self) {
+        if let Some(id) = self.id {
+            self.mailbox.state().waiting.retain(|(w, _)| *w != id);
         }
     }
 }
@@ -170,6 +200,7 @@ impl<T> Mailbox<T> {
                     reserved: 0,
                     held: 0,
                     waiting: Vec::new(),
+                    next_waiter: 0,
                 }),
                 capacity,
                 wake: Notify::new(),
@@ -207,21 +238,45 @@ impl<T> Mailbox<T> {
         })
     }
 
+    /// A place in line for [`poll_reserve`](Self::poll_reserve). It holds nothing
+    /// until polled.
+    pub fn waiter(&self) -> Waiter<T> {
+        Waiter {
+            mailbox: self.clone(),
+            id: None,
+        }
+    }
+
     /// Reserve a slot, or register `cx`'s task to be woken when one is free.
-    pub fn poll_reserve(&self, cx: &mut task::Context<'_>) -> Poll<Permit<T>> {
+    /// `waiter` is the caller's one place in line: polling again replaces its
+    /// waker, and dropping it gives the place up.
+    pub fn poll_reserve(
+        &self,
+        waiter: &mut Waiter<T>,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Permit<T>> {
         let mut s = self.state();
         if let Some(permit) = self.reserve_locked(&mut s) {
+            if let Some(id) = waiter.id.take() {
+                s.waiting.retain(|(w, _)| *w != id);
+            }
             return Poll::Ready(permit);
         }
-        if !s.waiting.iter().any(|w| w.will_wake(cx.waker())) {
-            s.waiting.push(cx.waker().clone());
+        let id = *waiter.id.get_or_insert_with(|| {
+            s.next_waiter += 1;
+            s.next_waiter
+        });
+        match s.waiting.iter_mut().find(|(w, _)| *w == id) {
+            Some((_, waker)) => waker.clone_from(cx.waker()),
+            None => s.waiting.push((id, cx.waker().clone())),
         }
         Poll::Pending
     }
 
     /// Wait for a slot.
     pub async fn reserve(&self) -> Permit<T> {
-        poll_fn(|cx| self.poll_reserve(cx)).await
+        let mut waiter = self.waiter();
+        poll_fn(|cx| self.poll_reserve(&mut waiter, cx)).await
     }
 
     /// `mb_set_state`: read `has` and set it. Returns what it was.
@@ -277,7 +332,7 @@ impl<T> Mailbox<T> {
     pub fn take(&self) -> VecDeque<T> {
         let mut s = self.state();
         let taken = s.core.take();
-        let waiting = std::mem::take(&mut s.waiting);
+        let waiting = s.drain_waiters();
         drop(s);
         for waker in waiting {
             waker.wake();
@@ -321,7 +376,7 @@ impl<T> Mailbox<T> {
     fn release_held(&self) {
         let mut s = self.state();
         s.held = s.held.saturating_sub(1);
-        let waiting = std::mem::take(&mut s.waiting);
+        let waiting = s.drain_waiters();
         drop(s);
         for waker in waiting {
             waker.wake();
@@ -497,6 +552,28 @@ mod tests {
 
         let again: Vec<_> = mb.round().await.collect();
         assert_eq!(again, [2, 3, 4]);
+    }
+
+    /// A reservation that is given up takes its waker with it, so a mailbox that
+    /// stays full does not collect one per caller that timed out.
+    #[tokio::test]
+    async fn a_cancelled_reserve_leaves_no_waker_behind() {
+        let mb = Mailbox::<u8>::new(cap(1));
+        let _held = mb.try_reserve().unwrap();
+        for _ in 0..50 {
+            let waiting = tokio::time::timeout(std::time::Duration::from_millis(1), mb.reserve());
+            assert!(waiting.await.is_err(), "the mailbox is full");
+        }
+        assert_eq!(mb.state().waiting.len(), 0);
+
+        // And a sender that is still waiting keeps exactly one place.
+        let mb2 = mb.clone();
+        let still = tokio::spawn(async move { mb2.reserve().await });
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert_eq!(mb.state().waiting.len(), 1);
+        still.abort();
+        let _ = still.await;
+        assert_eq!(mb.state().waiting.len(), 0);
     }
 
     /// A round cancelled part-way keeps its slots: senders cannot refill the

@@ -66,7 +66,7 @@ mod transport;
 mod refusal;
 
 pub use host::{Event, Host};
-pub use mailbox::{Capacity, Mailbox, Permit, Round};
+pub use mailbox::{Capacity, Mailbox, Permit, Round, Waiter};
 pub use session::{serve, Closer, Delivery, Session};
 pub use transport::Connection;
 

@@ -52,7 +52,7 @@ use jetstream::prelude::jetstream_rpc::server::Server;
 use jetstream::prelude::*;
 use tokio::sync::mpsc;
 
-use super::{Mailbox, Permit};
+use super::{Mailbox, Permit, Waiter};
 
 /// One request, on its way to the actor: who sent it, what it says, and where
 /// the answer goes.
@@ -74,6 +74,8 @@ pub struct Session<P: Protocol> {
     /// The slot `poll_ready` reserved for the request `start_send` is about to
     /// enqueue.
     permit: Option<Permit<Delivery<P>>>,
+    /// This session's place in line when the mailbox is full; dropped with it.
+    waiter: Waiter<Delivery<P>>,
 }
 
 impl<P: Protocol> Session<P> {
@@ -81,6 +83,7 @@ impl<P: Protocol> Session<P> {
     pub fn new(mailbox: Mailbox<Delivery<P>>, from: Context) -> Self {
         let (reply, replies) = mpsc::unbounded_channel();
         Session {
+            waiter: mailbox.waiter(),
             mailbox,
             from,
             reply,
@@ -132,8 +135,9 @@ impl<P: Protocol> Sink<Frame<P::Request>> for Session<P> {
     /// mailbox leaves the caller waiting here, and the drain wakes it.
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Result<()>> {
         if self.permit.is_none() {
-            let permit = std::task::ready!(self.mailbox.poll_reserve(cx));
-            self.permit = Some(permit);
+            let this = &mut *self;
+            let permit = std::task::ready!(this.mailbox.poll_reserve(&mut this.waiter, cx));
+            this.permit = Some(permit);
         }
         Poll::Ready(Ok(()))
     }

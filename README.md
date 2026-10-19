@@ -2001,6 +2001,16 @@ caller ── ActorBChannel ── Session ──▶ Mailbox ──▶ serve ─
   proved, that this loop asks it first is not. What a running handler does outside
   the fence, the fence cannot stop, and a request that ran but whose reply was
   lost will be retried at the new owner (at-least-once).
+* **`Supervisor`** owns the actors that run on a node (`LocalSupervisor` is the
+  in-process sketch): `spawn` takes a **required** `Fence` and serves through
+  `serve_fenced`, `status` says `Running`, `Stopped` (the handler panicked, so the
+  drain ended) or `Absent`, and spawning over a `Stopped` id restarts it. *Where* an
+  actor lives is the scheduler's existing `Discovery` trait asked about an
+  `ActorRef`; a supervisor answers for its own node only. Discovery may be stale and
+  nothing relies on it: a request to a host that no longer owns the actor is
+  answered `FENCED` and the caller asks again. **Tested, not proved**
+  (`tests/actor_supervisor.rs`). Not here: a lane to a remote host, a cooperative
+  drain, and tying the fence to a registry, host and epoch.
 * **Backpressure.** A mailbox is built with a `Capacity`, which is always the
   caller's to say: `Bounded(n)` makes `poll_ready` wait for a free slot (the drain
   wakes it), `Unbounded` never does, and there is no default and no number that

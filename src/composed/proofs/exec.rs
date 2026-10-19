@@ -17,8 +17,10 @@
 //!
 //! The model's steps also require that the nodes involved are live
 //! (`own.live.contains(..)`), a fact about connections the records do not hold;
-//! the theorems take it as a hypothesis, which is what the service's identity
-//! lookup supplies.
+//! the theorems take it as a hypothesis. The service's identity lookup speaks only
+//! for the *caller*; the recipient of a passed privilege (the head of a queue) and
+//! the target of a seizure are not callers, so for them nothing in the service
+//! establishes it.
 #![allow(unused_imports)]
 
 use vstd::prelude::*;

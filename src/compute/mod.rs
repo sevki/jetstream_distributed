@@ -150,11 +150,55 @@ impl Resources {
     }
 }
 
+/// A point in time: how long after the epoch of a clock the caller supplies.
+///
+/// This is not [`std::time::Instant`] on purpose. That one can only be read off
+/// the local clock, so a scheduler could not be driven by a test, replayed, or
+/// told when a job on another host started; it has no maximum, which a
+/// deadline of "never" needs; and it cannot be sent. An [`Instant`] is made
+/// from a number, compares and subtracts like a point in time, and only means
+/// something against other instants of the same clock. A span is still a
+/// [`Duration`], so a point and a span cannot be swapped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Instant(Duration);
+
+impl Instant {
+    /// The clock's zero.
+    pub const EPOCH: Self = Instant(Duration::ZERO);
+
+    /// Later than every other instant: a deadline that never arrives.
+    pub const MAX: Self = Instant(Duration::MAX);
+
+    /// `since_epoch` after the clock's zero.
+    pub const fn from_epoch(since_epoch: Duration) -> Self {
+        Instant(since_epoch)
+    }
+
+    pub const fn since_epoch(self) -> Duration {
+        self.0
+    }
+
+    /// `self + span`, stopping at [`Instant::MAX`].
+    pub fn saturating_add(self, span: Duration) -> Self {
+        Instant(self.0.saturating_add(span))
+    }
+}
+
+/// The span between two instants. Panics if `rhs` is later, like
+/// [`std::time::Instant`]'s; callers check the order first.
+impl Sub for Instant {
+    type Output = Duration;
+
+    fn sub(self, rhs: Self) -> Duration {
+        self.0 - rhs.0
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Job<F> {
     pub id: JobId,
     pub resources: Resources,
-    // TODO: surely this must be an Instant???
-    pub started_at: Duration,
+    /// When the job started, on the scheduler's clock.
+    pub started_at: Instant,
     pub features: F,
 }

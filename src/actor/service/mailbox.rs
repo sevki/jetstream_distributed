@@ -36,7 +36,10 @@
 //! mailbox makes it wait for one ([`Mailbox::reserve`], [`Mailbox::poll_reserve`]),
 //! or refuses it ([`Mailbox::try_reserve`]). Only a sender holding a permit can
 //! enqueue, so enqueueing never fails and never blocks. A slot comes back when
-//! the drain takes the queue, or when a permit is dropped unused.
+//! a [`Round`] hands its message out (or [`Mailbox::take`] takes the queue), or
+//! when a permit is dropped unused. A round's messages keep their slots until
+//! handed out, so one cancelled part-way can put the rest back without the queue
+//! outgrowing its capacity.
 //!
 //! The model's queue is unbounded, and a full mailbox is a sender that has not
 //! yet *begun* its operation: no step of the protocol happens, which the model
@@ -78,6 +81,9 @@ struct State<T> {
     core: MailboxCore<T>,
     /// Slots promised to a [`Permit`] and not yet used.
     reserved: u64,
+    /// Messages a [`Round`] has taken and not yet handed out. They count against
+    /// the capacity, so putting them back cannot overfill the queue.
+    held: u64,
     /// Senders waiting for a slot.
     waiting: Vec<Waker>,
 }
@@ -162,6 +168,7 @@ impl<T> Mailbox<T> {
                 state: Mutex::new(State {
                     core: MailboxCore::new(),
                     reserved: 0,
+                    held: 0,
                     waiting: Vec::new(),
                 }),
                 capacity,
@@ -189,7 +196,7 @@ impl<T> Mailbox<T> {
 
     fn reserve_locked(&self, s: &mut State<T>) -> Option<Permit<T>> {
         if let Capacity::Bounded(room) = self.shared.capacity
-            && (s.core.len() as u64) + s.reserved >= u64::from(room.get())
+            && (s.core.len() as u64) + s.reserved + s.held >= u64::from(room.get())
         {
             return None;
         }
@@ -294,7 +301,31 @@ impl<T> Mailbox<T> {
     /// Put back the messages of a round that was dropped before handing them
     /// out. Not a model step; see [`MailboxCore::requeue`].
     fn requeue(&self, rest: VecDeque<T>) {
-        self.state().core.requeue(rest);
+        let mut s = self.state();
+        s.core.requeue(rest);
+        // They are queued again, and counted as queued, not as held.
+        s.held = 0;
+    }
+
+    /// As [`take`](Self::take), for a [`Round`]: the slots stay spoken for until
+    /// each message is handed out, so a round cancelled part-way can put the rest
+    /// back without the queue having outgrown its capacity.
+    fn take_held(&self) -> VecDeque<T> {
+        let mut s = self.state();
+        let taken = s.core.take();
+        s.held = taken.len() as u64;
+        taken
+    }
+
+    /// One message of a round has been handed out: its slot is free.
+    fn release_held(&self) {
+        let mut s = self.state();
+        s.held = s.held.saturating_sub(1);
+        let waiting = std::mem::take(&mut s.waiting);
+        drop(s);
+        for waker in waiting {
+            waker.wake();
+        }
     }
 
     /// Wait until the drain is asked to run, then claim it and take the queue:
@@ -308,7 +339,7 @@ impl<T> Mailbox<T> {
             self.shared.wake.notified().await;
         }
         Round {
-            items: self.take(),
+            items: self.take_held(),
             mailbox: self.clone(),
         }
     }
@@ -328,7 +359,9 @@ impl<T> Iterator for Round<T> {
     type Item = T;
 
     fn next(&mut self) -> Option<T> {
-        self.items.pop_front()
+        let item = self.items.pop_front()?;
+        self.mailbox.release_held();
+        Some(item)
     }
 }
 
@@ -464,6 +497,28 @@ mod tests {
 
         let again: Vec<_> = mb.round().await.collect();
         assert_eq!(again, [2, 3, 4]);
+    }
+
+    /// A round cancelled part-way keeps its slots: senders cannot refill the
+    /// room its unhanded messages hold, so putting them back never overfills.
+    #[tokio::test]
+    async fn a_cancelled_round_cannot_overfill_the_mailbox() {
+        let mb = Mailbox::new(cap(2));
+        mb.try_send(1).unwrap();
+        mb.try_send(2).unwrap();
+
+        let round = mb.round().await;
+        assert!(mb.try_send(3).is_err(), "the round still holds both slots");
+        drop(round);
+        assert_eq!(mb.queued(), 2);
+        assert!(mb.try_send(3).is_err());
+
+        let mut round = mb.round().await;
+        assert_eq!(round.next(), Some(1));
+        mb.try_send(3).unwrap(); // the handed-out message's slot is free
+        assert!(mb.try_send(4).is_err());
+        drop(round);
+        assert_eq!(mb.queued(), 2);
     }
 
     /// A full mailbox refuses, handing the message back, and has room again once

@@ -2,8 +2,8 @@
 //!
 //! [`crate::composed::steps`] decides whether the *coupling* lets a step through.
 //! This is the step: it holds the two layers' records —
-//! [`RegistryCore`](crate::ownership::registry::RegistryCore) and
-//! [`RayTable`](crate::raymond::exec::RayTable) — and the set of nodes that owe a
+//! [`RegistryCore`] and
+//! [`RayTable`] — and the set of nodes that owe a
 //! reconciliation, and each function checks the coupling guard, takes the layers'
 //! steps, and keeps the debts, with one contract that is the model's composed
 //! step.
@@ -31,7 +31,7 @@
 //!
 //! The locks and their order, the gate, the identity lookup and the logs.
 #![allow(unused_imports)]
-#![allow(clippy::new_without_default)]
+#![allow(clippy::new_without_default, clippy::match_like_matches_macro)]
 
 use vstd::prelude::*;
 

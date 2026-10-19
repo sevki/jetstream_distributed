@@ -501,7 +501,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
         target: HostId,
         job: Job<F>,
         class: LifetimeClass,
-        now: Duration,
+        now: Instant,
     ) -> HostId {
         let host = self.hosts.get_mut(&target).unwrap();
         if host.state == HostState::Empty {
@@ -522,7 +522,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
     }
     /// Move a placed job to the best other host, at `now`, and return that host's
     /// id: [`migrate_with`](Self::migrate_with) with every host eligible.
-    pub fn migrate(&mut self, id: JobId, now: Duration) -> Result<HostId, Error> {
+    pub fn migrate(&mut self, id: JobId, now: Instant) -> Result<HostId, Error> {
         self.migrate_with(id, now, |_, _| true)
     }
     /// As [`migrate`](Self::migrate), but only to hosts `eligible` accepts.
@@ -541,7 +541,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
     pub fn migrate_with(
         &mut self,
         id: JobId,
-        now: Duration,
+        now: Instant,
         eligible: impl Fn(&Host<F>, &Job<F>) -> bool,
     ) -> Result<HostId, Error> {
         let source = self.location(id).ok_or(Error::UnknownJob)?;
@@ -793,9 +793,25 @@ mod tests {
     fn job(id: JobId, predicted: Duration) -> Job<EmpiricalLifetime> {
         Job {
             id,
-            resources: Resources { cpu: 1, memory: 1 },
-            started_at: Duration::ZERO,
+            resources: Resources {
+                cpu: Cpu::millicores(1),
+                memory: Memory::bytes(1),
+            },
+            started_at: Instant::EPOCH,
             features: EmpiricalLifetime::new(vec![predicted], hours(1)).unwrap(),
+        }
+    }
+
+    /// The instant `since_epoch` after the clock's zero.
+    fn at(since_epoch: Duration) -> Instant {
+        Instant::from_epoch(since_epoch)
+    }
+
+    /// A host big enough for any of these tests' jobs.
+    fn roomy() -> Resources {
+        Resources {
+            cpu: Cpu::millicores(100),
+            memory: Memory::bytes(100),
         }
     }
 
@@ -805,27 +821,23 @@ mod tests {
     #[test]
     fn a_host_promoted_on_timeout_recycles_and_is_demoted_when_its_residual_exits() {
         let mut scheduler = Scheduler::new(EmpiricalPredictor);
-        let capacity = Resources {
-            cpu: 100,
-            memory: 100,
-        };
-        scheduler.add_host(1, capacity).unwrap();
+        scheduler.add_host(1, roomy()).unwrap();
         scheduler
-            .place(job(7, Duration::from_secs(1800)), Duration::ZERO)
+            .place(job(7, Duration::from_secs(1800)), Instant::EPOCH)
             .unwrap();
         assert_eq!(scheduler.host(1).unwrap().class(), Some(Lc1));
         assert_eq!(scheduler.host(1).unwrap().state(), HostState::Open);
 
         // Past 1.1 hours the job is still there: the host is promoted.
-        scheduler.tick(hours(2)).unwrap();
+        scheduler.tick(at(hours(2))).unwrap();
         let host = scheduler.host(1).unwrap();
         assert_eq!(host.class(), Some(Lc2));
         assert_eq!(host.state(), HostState::Recycling);
         assert_eq!(host.residual().iter().copied().collect::<Vec<_>>(), [7]);
 
         // A second job joins; when the residual job exits the host drops a class.
-        scheduler.place(job(8, hours(5)), hours(2)).unwrap();
-        scheduler.remove(7, hours(2)).unwrap();
+        scheduler.place(job(8, hours(5)), at(hours(2))).unwrap();
+        scheduler.remove(7, at(hours(2))).unwrap();
         let host = scheduler.host(1).unwrap();
         assert_eq!(host.class(), Some(Lc1));
         assert_eq!(host.state(), HostState::Recycling);
@@ -836,24 +848,20 @@ mod tests {
     #[test]
     fn a_job_on_a_draining_host_migrates_to_another_host() {
         let mut scheduler = Scheduler::new(EmpiricalPredictor);
-        let capacity = Resources {
-            cpu: 100,
-            memory: 100,
-        };
-        scheduler.add_host(1, capacity).unwrap();
-        scheduler.add_host(2, capacity).unwrap();
-        scheduler.place(job(7, hours(2)), Duration::ZERO).unwrap();
+        scheduler.add_host(1, roomy()).unwrap();
+        scheduler.add_host(2, roomy()).unwrap();
+        scheduler.place(job(7, hours(2)), Instant::EPOCH).unwrap();
         assert_eq!(scheduler.location(7), Some(1));
 
-        let order = scheduler.begin_drain(1, Duration::ZERO, |_| true).unwrap();
+        let order = scheduler.begin_drain(1, Instant::EPOCH, |_| true).unwrap();
         assert_eq!(order, [7]);
         assert_eq!(
-            scheduler.place(job(7, hours(2)), Duration::ZERO),
+            scheduler.place(job(7, hours(2)), Instant::EPOCH),
             Err(Error::DuplicateJob),
             "placing a job that is still placed is a duplicate"
         );
 
-        assert_eq!(scheduler.migrate(7, Duration::ZERO), Ok(2));
+        assert_eq!(scheduler.migrate(7, Instant::EPOCH), Ok(2));
         assert_eq!(scheduler.location(7), Some(2));
         assert_eq!(scheduler.host(1).unwrap().state(), HostState::Empty);
         assert_eq!(scheduler.host(2).unwrap().state(), HostState::Open);
@@ -864,27 +872,19 @@ mod tests {
     #[test]
     fn a_migration_with_no_destination_keeps_the_job_on_its_source() {
         let mut scheduler = Scheduler::new(EmpiricalPredictor);
-        scheduler
-            .add_host(
-                1,
-                Resources {
-                    cpu: 100,
-                    memory: 100,
-                },
-            )
-            .unwrap();
-        scheduler.place(job(7, hours(2)), Duration::ZERO).unwrap();
-        scheduler.begin_drain(1, Duration::ZERO, |_| true).unwrap();
+        scheduler.add_host(1, roomy()).unwrap();
+        scheduler.place(job(7, hours(2)), Instant::EPOCH).unwrap();
+        scheduler.begin_drain(1, Instant::EPOCH, |_| true).unwrap();
 
         assert_eq!(
-            scheduler.migrate(7, Duration::ZERO),
+            scheduler.migrate(7, Instant::EPOCH),
             Err(Error::NoCapacity),
             "the only other candidate would be the host it is on"
         );
         assert_eq!(scheduler.location(7), Some(1));
         assert_eq!(scheduler.host(1).unwrap().jobs().count(), 1);
         assert_eq!(
-            scheduler.migrate(99, Duration::ZERO),
+            scheduler.migrate(99, Instant::EPOCH),
             Err(Error::UnknownJob)
         );
     }

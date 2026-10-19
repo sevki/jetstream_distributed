@@ -16,6 +16,8 @@
 
 use vstd::prelude::*;
 
+use crate::host::HostId;
+
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
 use crate::ownership::spec::*;
@@ -50,7 +52,7 @@ verus! {
 ///
 /// and in the final state A still physically holds its epoch-41 token, yet has
 /// no authority whatsoever.
-pub proof fn scenario_stale_owner_returns(x: ActorId, a: NodeId, b: NodeId)
+pub proof fn scenario_stale_owner_returns(x: ActorId, a: HostId, b: HostId)
     requires
         a != b,
     ensures
@@ -109,7 +111,7 @@ pub proof fn scenario_stale_owner_returns(x: ActorId, a: NodeId, b: NodeId)
                 &&& tr[9].network.contains(Message::Grant { actor: x, to: a, epoch: 41 })
             },
 {
-    let nodes = Set::<NodeId>::empty().insert(a).insert(b);
+    let nodes = Set::<HostId>::empty().insert(a).insert(b);
     let stale = Token { actor: x, epoch: 41, holder: a };
     let grant_41 = Message::Grant { actor: x, to: a, epoch: 41 };
 
@@ -353,7 +355,7 @@ pub proof fn theorem_stale_grant_cannot_be_used(
     pre: OwnershipSystem,
     post: OwnershipSystem,
     a: ActorId,
-    n: NodeId,
+    n: HostId,
     e: Epoch,
 )
     requires
@@ -439,7 +441,7 @@ pub proof fn theorem_crash_recovery_cannot_change_ownership(pre: OwnershipSystem
 /// and exports the abort as a named step between reachable states. Without it,
 /// the step property remains provable even if `AbortTransfer` were changed to
 /// be always false - a conditional lemma about an unreachable transition.
-pub proof fn scenario_interrupted_transfer(x: ActorId, a: NodeId, b: NodeId)
+pub proof fn scenario_interrupted_transfer(x: ActorId, a: HostId, b: HostId)
     requires
         a != b,
     ensures
@@ -469,7 +471,7 @@ pub proof fn scenario_interrupted_transfer(x: ActorId, a: NodeId, b: NodeId)
                 &&& tr[4].issued.contains(Token { actor: x, epoch: 41, holder: a })
             },
 {
-    let nodes = Set::<NodeId>::empty().insert(a).insert(b);
+    let nodes = Set::<HostId>::empty().insert(a).insert(b);
     let stale = Token { actor: x, epoch: 41, holder: a };
     let grant_41 = Message::Grant { actor: x, to: a, epoch: 41 };
 
@@ -604,8 +606,8 @@ pub proof fn theorem_interrupted_transfer_burns_the_epoch(
     pre: OwnershipSystem,
     post: OwnershipSystem,
     x: ActorId,
-    a: NodeId,
-    b: NodeId,
+    a: HostId,
+    b: HostId,
     e: Epoch,
 )
     requires
@@ -694,8 +696,8 @@ pub proof fn theorem_complete_release_outcome_is_fixed_by_state(
     pre: OwnershipSystem,
     post: OwnershipSystem,
     a: ActorId,
-    from: NodeId,
-    to: NodeId,
+    from: HostId,
+    to: HostId,
     old_epoch: Epoch,
     new_epoch: Epoch,
 )
@@ -711,7 +713,7 @@ pub proof fn theorem_complete_release_outcome_is_fixed_by_state(
     ensures
         post.actors[a] == (OwnershipState::Unowned { epoch: new_epoch, intended_owner: to }),
         current_epoch(post.actors[a]) == new_epoch,
-        forall|n: NodeId| !(#[trigger] may_mutate(post.actors[a], n, new_epoch)),
+        forall|n: HostId| !(#[trigger] may_mutate(post.actors[a], n, new_epoch)),
 {
     assert(tr_complete_release(pre, post, a));
 }

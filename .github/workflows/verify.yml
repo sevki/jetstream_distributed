@@ -495,6 +495,16 @@ jobs:
       - name: Build the services
         run: cargo +stable build --features service --locked
 
+      # The layering, held: a module outside `service` and `crush` names no
+      # Jetstream type and uses no `rand`, so each of these builds with nothing else
+      # switched on. The proof build is the first of them, and the one that matters.
+      - name: Each feature builds on its own
+        run: |
+          set -euo pipefail
+          cargo +stable build --lib --no-default-features --locked
+          cargo +stable build --lib --no-default-features --features service --locked
+          cargo +stable build --lib --no-default-features --features crush --locked
+
       # Named explicitly rather than as a bare `cargo test --features service`:
       # the simulation suite already runs under the pinned toolchain in the job
       # above, and running it twice under two compilers would make a failure

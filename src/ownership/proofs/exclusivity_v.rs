@@ -6,6 +6,8 @@
 
 use vstd::prelude::*;
 
+use crate::host::HostId;
+
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
 use crate::ownership::spec::*;
@@ -21,9 +23,9 @@ verus! {
 pub proof fn theorem_exclusive_mutable_ownership(
     sys: OwnershipSystem,
     a: ActorId,
-    node_a: NodeId,
+    node_a: HostId,
     epoch_a: Epoch,
-    node_b: NodeId,
+    node_b: HostId,
     epoch_b: Epoch,
 )
     requires
@@ -43,9 +45,9 @@ pub proof fn theorem_exclusive_mutable_ownership(
 /// need, not this one.
 pub proof fn theorem_exclusive_mutable_ownership_structural(
     s: OwnershipState,
-    node_a: NodeId,
+    node_a: HostId,
     epoch_a: Epoch,
-    node_b: NodeId,
+    node_b: HostId,
     epoch_b: Epoch,
 )
     requires

@@ -1,0 +1,6 @@
+[workspace]
+allow_dirty = true
+# Compare against crates.io registry, not git history
+changelog_update = false
+git_release_enable = false
+publish = false

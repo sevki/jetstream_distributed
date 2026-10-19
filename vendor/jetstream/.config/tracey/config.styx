@@ -1,0 +1,34 @@
+@schema {id crate:tracey-config@1, cli tracey}
+
+specs (
+    {
+        name jetstream
+        source_url https://github.com/sevki/jetstream
+        include (docs/specs/**/*.md)
+        impls (
+            {
+                name main
+                include (
+                    components/**/src/*.rs
+                    tests/**/*.rs
+                    tests/**/*.ts
+                    src/**/*.rs
+                    packages/**/*.ts
+                    Sources/**/*.swift
+                    Tests/**/*.swift
+                    Package.swift
+                )
+                exclude (
+                    target/**
+                    .direnv/**/*
+                    node_modules/**
+                )
+                test_include (
+                    Tests/**/*.swift
+                    packages/**/*.test.ts
+                    tests/**/tests/*.rs
+                )
+            }
+        )
+    }
+)

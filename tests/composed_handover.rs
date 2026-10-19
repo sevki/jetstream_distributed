@@ -17,6 +17,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
 use jetstream_distributed::composed::service::{Composed, Coordinator, Event};
+use jetstream_distributed::host::HostId;
 use jetstream_distributed::ownership::service::{MemoryFloor, Offer};
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
@@ -26,11 +27,11 @@ const ADDR_B: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
 const ADDR_C: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3));
 const STRANGER: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 9, 9, 9));
 
-const A: u64 = 0;
-const B: u64 = 1;
-const C: u64 = 2;
+const A: HostId = 0;
+const B: HostId = 1;
+const C: HostId = 2;
 
-fn roster() -> HashMap<IpAddr, u64> {
+fn roster() -> HashMap<IpAddr, HostId> {
     HashMap::from([(ADDR_A, A), (ADDR_B, B), (ADDR_C, C)])
 }
 

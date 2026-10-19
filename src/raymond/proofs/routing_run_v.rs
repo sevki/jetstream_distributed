@@ -29,6 +29,8 @@
 use vstd::assert_seqs_equal;
 use vstd::prelude::*;
 
+use crate::host::HostId;
+
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
 use crate::ownership::spec::*;
@@ -45,24 +47,24 @@ verus! {
 /// reachable **from** it. Without that anchor the exported endpoint is just a
 /// state satisfying `ray_inv`, which a directly constructed four-node state
 /// meets without any of the hops having happened.
-pub open spec fn routing_init_state(a: NodeId, b: NodeId, c: NodeId, d: NodeId) -> Raymond {
+pub open spec fn routing_init_state(a: HostId, b: HostId, c: HostId, d: HostId) -> Raymond {
     Raymond {
         privilege: c,
-        nodes: Set::<NodeId>::empty().insert(a).insert(b).insert(c).insert(d),
-        holder: Map::<NodeId, NodeId>::empty().insert(a, c).insert(b, a).insert(c, c).insert(d, b),
-        queue: Map::<NodeId, Seq<NodeId>>::empty().insert(a, Seq::<NodeId>::empty()).insert(
+        nodes: Set::<HostId>::empty().insert(a).insert(b).insert(c).insert(d),
+        holder: Map::<HostId, HostId>::empty().insert(a, c).insert(b, a).insert(c, c).insert(d, b),
+        queue: Map::<HostId, Seq<HostId>>::empty().insert(a, Seq::<HostId>::empty()).insert(
             b,
-            Seq::<NodeId>::empty(),
-        ).insert(c, Seq::<NodeId>::empty()).insert(d, Seq::<NodeId>::empty()),
-        asked: Map::<NodeId, bool>::empty().insert(a, false).insert(b, false).insert(
+            Seq::<HostId>::empty(),
+        ).insert(c, Seq::<HostId>::empty()).insert(d, Seq::<HostId>::empty()),
+        asked: Map::<HostId, bool>::empty().insert(a, false).insert(b, false).insert(
             c,
             false,
         ).insert(d, false),
-        using: Map::<NodeId, bool>::empty().insert(a, false).insert(b, false).insert(
+        using: Map::<HostId, bool>::empty().insert(a, false).insert(b, false).insert(
             c,
             false,
         ).insert(d, false),
-        requests: Set::<(NodeId, NodeId)>::empty(),
+        requests: Set::<(HostId, HostId)>::empty(),
     }
 }
 
@@ -76,7 +78,7 @@ pub open spec fn routing_init_state(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
 /// end state without `D`'s request ever being forwarded through `B` and `A`.
 /// Here there is exactly one `RequestCs`, it is `D`'s, and each `MakeRequest`
 /// is preceded by the `ReceiveRequest` that put something in that node's queue.
-pub open spec fn routing_labels(a: NodeId, b: NodeId, c: NodeId, d: NodeId) -> Seq<RayStep> {
+pub open spec fn routing_labels(a: HostId, b: HostId, c: HostId, d: HostId) -> Seq<RayStep> {
     seq![
         RayStep::RequestCs { node: d },
         RayStep::MakeRequest { node: d },
@@ -99,7 +101,7 @@ pub open spec fn routing_labels(a: NodeId, b: NodeId, c: NodeId, d: NodeId) -> S
 /// than as a literal, so the later phases never have to reason about the
 /// `Map`/`Set` nest built here. Replaying all twelve hops in one function made
 /// the single SMT query large enough to dominate the whole proof run.
-pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) -> (res: (
+pub proof fn routing_phase_requests(a: HostId, b: HostId, c: HostId, d: HostId) -> (res: (
     Raymond,
     Seq<Raymond>,
     Seq<RayStep>,
@@ -151,7 +153,7 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
     // `D -> B -> A -> C` is ranked by its distance from the root `C`.
     let ray_rank = Map::new(
         r0.nodes,
-        |k: NodeId|
+        |k: HostId|
             if k == c {
                 0nat
             } else if k == a {
@@ -162,9 +164,9 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
                 3nat
             },
     );
-    assert forall|n: NodeId| #[trigger] r0.nodes.contains(n) implies ray_rank.contains_key(n) by {
+    assert forall|n: HostId| #[trigger] r0.nodes.contains(n) implies ray_rank.contains_key(n) by {
     }
-    assert forall|n: NodeId|
+    assert forall|n: HostId|
         r0.nodes.contains(n) && #[trigger] r0.holder[n] != n implies ray_rank[r0.holder[n]]
             < ray_rank[n] by {
         assert(n == a || n == b || n == c || n == d);
@@ -389,7 +391,7 @@ pub proof fn routing_phase_requests(a: NodeId, b: NodeId, c: NodeId, d: NodeId) 
 /// [`crate::raymond::model::ray_holder_closed`]: reduced to a single transition, it
 /// still exceeded the solver's resource limit, which is how a cost that scales
 /// with nothing in the proof became visible.
-pub proof fn routing_one_hop(r: Raymond, n: NodeId, head: NodeId) -> (r2: Raymond)
+pub proof fn routing_one_hop(r: Raymond, n: HostId, head: HostId) -> (r2: Raymond)
     requires
         ray_inv(r),
         has_token(r, n),
@@ -431,10 +433,10 @@ pub proof fn routing_phase_token_hops(
     tr: Seq<Raymond>,
     labels: Seq<RayStep>,
     r7: Raymond,
-    a: NodeId,
-    b: NodeId,
-    c: NodeId,
-    d: NodeId,
+    a: HostId,
+    b: HostId,
+    c: HostId,
+    d: HostId,
 ) -> (res: (Raymond, Seq<Raymond>, Seq<RayStep>))
     requires
         a != b,
@@ -551,8 +553,8 @@ pub proof fn routing_phase_delivery(
     tr: Seq<Raymond>,
     labels: Seq<RayStep>,
     r10: Raymond,
-    b: NodeId,
-    d: NodeId,
+    b: HostId,
+    d: HostId,
 ) -> (res: (Raymond, Seq<Raymond>, Seq<RayStep>))
     requires
         b != d,
@@ -578,7 +580,7 @@ pub proof fn routing_phase_delivery(
         has_token(res.0, d),
         res.0.using[d],
         res.0.nodes == r10.nodes,
-        forall|m: NodeId| #[trigger] has_token(res.0, m) ==> m == d,
+        forall|m: HostId| #[trigger] has_token(res.0, m) ==> m == d,
         // The state the delayed redelivery fires in, at the index it occupies:
         // `D` already holds the token and is inside its critical section, and
         // its own original request to `B` - sent eleven steps earlier, against
@@ -624,7 +626,7 @@ pub proof fn routing_phase_delivery(
     assert(has_token(r12, d));
     assert(r12.using[d]);
     assert(r12.nodes == r10.nodes);
-    assert forall|m: NodeId| #[trigger] has_token(r12, m) implies m == d by {
+    assert forall|m: HostId| #[trigger] has_token(r12, m) implies m == d by {
         theorem_ray_at_most_one_token(r12, m, d);
     }
     assert(ray_inv(r11));
@@ -664,7 +666,7 @@ pub proof fn routing_phase_delivery(
 }
 
 /// Requests route `D -> B -> A -> C`, then the token routes `C -> A -> B -> D`.
-pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId, d: NodeId)
+pub proof fn scenario_request_and_token_routing(a: HostId, b: HostId, c: HostId, d: HostId)
     requires
         a != b,
         a != c,
@@ -707,7 +709,7 @@ pub proof fn scenario_request_and_token_routing(a: NodeId, b: NodeId, c: NodeId,
                 &&& ray_inv(tr[12])
                 &&& has_token(tr[12], d)
                 &&& tr[12].using[d]
-                &&& forall|m: NodeId| has_token(tr[12], m) ==> m == d
+                &&& forall|m: HostId| has_token(tr[12], m) ==> m == d
             },
 {
     let (after_requests, tr_r, l_r) = routing_phase_requests(a, b, c, d);

@@ -32,6 +32,8 @@
 
 use vstd::prelude::*;
 
+use crate::host::HostId;
+
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
 use crate::ownership::proofs::refinement::*;
@@ -46,7 +48,7 @@ verus! {
 pub open spec fn stands_for(c: RegistryCore, sys: OwnershipSystem, a: ActorId) -> bool {
     &&& sys.actors.contains_key(a)
     &&& sys.actors[a] == c.state.view()
-    &&& forall|n: nat, e: nat|
+    &&& forall|n: HostId, e: nat|
         #[trigger] c.has_grant(n, e) == sys.network.contains(
             Message::Grant { actor: a, to: n, epoch: e },
         )
@@ -59,25 +61,25 @@ pub proof fn theorem_poll_is_issue_grant(
     c2: RegistryCore,
     sys: OwnershipSystem,
     a: ActorId,
-    node: u64,
+    node: HostId,
     epoch: u64,
 )
     requires
         stands_for(c, sys, a),
         poll_answer(c.state, node) == ExecOffer::Grant(epoch),
         c2.state.view() == c.state.view(),
-        grants_plus(c, c2, node as nat, epoch as nat),
+        grants_plus(c, c2, node, epoch as nat),
     ensures
-        tr_issue_grant(sys, issue_grant_post(sys, a, node as nat, epoch as nat), a),
-        stands_for(c2, issue_grant_post(sys, a, node as nat, epoch as nat), a),
+        tr_issue_grant(sys, issue_grant_post(sys, a, node, epoch as nat), a),
+        stands_for(c2, issue_grant_post(sys, a, node, epoch as nat), a),
 {
     theorem_poll_step_refines_tr_issue_grant(sys, a, c.state, node, epoch);
-    let sys2 = issue_grant_post(sys, a, node as nat, epoch as nat);
-    assert forall|n: nat, e: nat|
+    let sys2 = issue_grant_post(sys, a, node, epoch as nat);
+    assert forall|n: HostId, e: nat|
         #[trigger] c2.has_grant(n, e) == sys2.network.contains(
             Message::Grant { actor: a, to: n, epoch: e },
         ) by {
-        assert(c2.has_grant(n, e) == (c.has_grant(n, e) || (n == node as nat && e == epoch as nat)));
+        assert(c2.has_grant(n, e) == (c.has_grant(n, e) || (n == node && e == epoch as nat)));
     }
 }
 
@@ -88,7 +90,7 @@ pub proof fn theorem_poll_without_a_grant_changes_nothing(
     c2: RegistryCore,
     sys: OwnershipSystem,
     a: ActorId,
-    node: u64,
+    node: HostId,
 )
     requires
         stands_for(c, sys, a),
@@ -98,7 +100,7 @@ pub proof fn theorem_poll_without_a_grant_changes_nothing(
     ensures
         stands_for(c2, sys, a),
 {
-    assert forall|n: nat, e: nat|
+    assert forall|n: HostId, e: nat|
         #[trigger] c2.has_grant(n, e) == sys.network.contains(
             Message::Grant { actor: a, to: n, epoch: e },
         ) by {
@@ -112,26 +114,26 @@ pub proof fn theorem_acquire_is_tr_acquire(
     c2: RegistryCore,
     sys: OwnershipSystem,
     a: ActorId,
-    node: u64,
+    node: HostId,
     epoch: u64,
 )
     requires
         stands_for(c, sys, a),
-        sys.live.contains(node as nat),
-        acquire_fires(c.state.view(), node as nat, epoch as nat, c.has_grant(node as nat, epoch as nat)),
-        c2.state.view() == acquire_next(c.state.view(), node as nat),
+        sys.live.contains(node),
+        acquire_fires(c.state.view(), node, epoch as nat, c.has_grant(node, epoch as nat)),
+        c2.state.view() == acquire_next(c.state.view(), node),
         grants_same(c, c2),
     ensures
-        tr_acquire(sys, acquire_post(sys, a, node as nat), a, node as nat),
-        stands_for(c2, acquire_post(sys, a, node as nat), a),
+        tr_acquire(sys, acquire_post(sys, a, node), a, node),
+        stands_for(c2, acquire_post(sys, a, node), a),
 {
-    let granted = c.has_grant(node as nat, epoch as nat);
+    let granted = c.has_grant(node, epoch as nat);
     assert(granted == sys.network.contains(
-        Message::Grant { actor: a, to: node as nat, epoch: epoch as nat },
+        Message::Grant { actor: a, to: node, epoch: epoch as nat },
     ));
-    theorem_acquire_step_refines_tr_acquire(sys, a, node as nat, epoch as nat, granted);
-    let sys2 = acquire_post(sys, a, node as nat);
-    assert forall|n: nat, e: nat|
+    theorem_acquire_step_refines_tr_acquire(sys, a, node, epoch as nat, granted);
+    let sys2 = acquire_post(sys, a, node);
+    assert forall|n: HostId, e: nat|
         #[trigger] c2.has_grant(n, e) == sys2.network.contains(
             Message::Grant { actor: a, to: n, epoch: e },
         ) by {
@@ -147,22 +149,22 @@ pub proof fn theorem_refused_acquire_is_disabled(
     sys: OwnershipSystem,
     post: OwnershipSystem,
     a: ActorId,
-    node: u64,
+    node: HostId,
     epoch: u64,
 )
     requires
         stands_for(c, sys, a),
         epoch as nat == current_epoch(sys.actors[a]),
-        !acquire_fires(c.state.view(), node as nat, epoch as nat, c.has_grant(node as nat, epoch as nat)),
+        !acquire_fires(c.state.view(), node, epoch as nat, c.has_grant(node, epoch as nat)),
     ensures
-        !tr_acquire(sys, post, a, node as nat),
+        !tr_acquire(sys, post, a, node),
 {
-    let granted = c.has_grant(node as nat, epoch as nat);
+    let granted = c.has_grant(node, epoch as nat);
     theorem_acquire_step_refuses_exactly_when_disabled(
         sys,
         post,
         a,
-        node as nat,
+        node,
         epoch as nat,
         granted,
     );
@@ -175,23 +177,23 @@ pub proof fn theorem_begin_transfer_is_tr_begin_transfer(
     c2: RegistryCore,
     sys: OwnershipSystem,
     a: ActorId,
-    from: u64,
-    to: u64,
+    from: HostId,
+    to: HostId,
 )
     requires
         stands_for(c, sys, a),
-        sys.live.contains(from as nat),
-        sys.nodes.contains(to as nat),
-        begin_transfer_fires(c.state.view(), from as nat, to as nat, true),
-        c2.state.view() == begin_transfer_next(c.state.view(), to as nat),
+        sys.live.contains(from),
+        sys.nodes.contains(to),
+        begin_transfer_fires(c.state.view(), from, to, true),
+        c2.state.view() == begin_transfer_next(c.state.view(), to),
         grants_same(c, c2),
     ensures
-        tr_begin_transfer(sys, begin_transfer_post(sys, a, from as nat, to as nat), a, from as nat, to as nat),
-        stands_for(c2, begin_transfer_post(sys, a, from as nat, to as nat), a),
+        tr_begin_transfer(sys, begin_transfer_post(sys, a, from, to), a, from, to),
+        stands_for(c2, begin_transfer_post(sys, a, from, to), a),
 {
-    theorem_begin_transfer_step_refines_tr_begin_transfer(sys, a, from as nat, to as nat);
-    let sys2 = begin_transfer_post(sys, a, from as nat, to as nat);
-    assert forall|n: nat, e: nat|
+    theorem_begin_transfer_step_refines_tr_begin_transfer(sys, a, from, to);
+    let sys2 = begin_transfer_post(sys, a, from, to);
+    assert forall|n: HostId, e: nat|
         #[trigger] c2.has_grant(n, e) == sys2.network.contains(
             Message::Grant { actor: a, to: n, epoch: e },
         ) by {
@@ -206,23 +208,23 @@ pub proof fn theorem_refused_begin_transfer_is_disabled(
     sys: OwnershipSystem,
     post: OwnershipSystem,
     a: ActorId,
-    from: u64,
-    to: u64,
+    from: HostId,
+    to: HostId,
     to_is_node: bool,
 )
     requires
         stands_for(c, sys, a),
-        to_is_node == sys.nodes.contains(to as nat),
-        !begin_transfer_fires(c.state.view(), from as nat, to as nat, to_is_node),
+        to_is_node == sys.nodes.contains(to),
+        !begin_transfer_fires(c.state.view(), from, to, to_is_node),
     ensures
-        !tr_begin_transfer(sys, post, a, from as nat, to as nat),
+        !tr_begin_transfer(sys, post, a, from, to),
 {
     theorem_begin_transfer_step_refuses_exactly_when_disabled(
         sys,
         post,
         a,
-        from as nat,
-        to as nat,
+        from,
+        to,
         to_is_node,
     );
 }
@@ -234,62 +236,62 @@ pub proof fn theorem_release_is_handle_revoke_then_complete_release(
     c2: RegistryCore,
     sys: OwnershipSystem,
     a: ActorId,
-    node: u64,
+    node: HostId,
     epoch: u64,
-    to: u64,
+    to: HostId,
     old_epoch: Epoch,
 )
     requires
         stands_for(c, sys, a),
-        sys.live.contains(node as nat),
-        release_fires(c.state.view(), node as nat, epoch as nat),
+        sys.live.contains(node),
+        release_fires(c.state.view(), node, epoch as nat),
         c2.state.view() == release_next(c.state.view()),
-        to as nat == intended_owner(c2.state.view()),
-        grants_plus(c, c2, to as nat, epoch as nat),
+        to == intended_owner(c2.state.view()),
+        grants_plus(c, c2, to, epoch as nat),
         sys.network.contains(
             Message::Revoke {
                 actor: a,
-                target: node as nat,
+                target: node,
                 old_epoch: old_epoch,
                 new_epoch: epoch as nat,
             },
         ),
         c.state.view() == (OwnershipState::Transferring {
-            from: node as nat,
-            to: to as nat,
+            from: node,
+            to: to,
             old_epoch: old_epoch,
             new_epoch: epoch as nat,
         }),
     ensures
         tr_handle_revoke(
             sys,
-            released_post(sys, a, node as nat, epoch as nat),
+            released_post(sys, a, node, epoch as nat),
             a,
-            node as nat,
+            node,
             old_epoch,
             epoch as nat,
         ),
         tr_complete_release(
-            released_post(sys, a, node as nat, epoch as nat),
-            release_post(sys, a, node as nat, to as nat, epoch as nat),
+            released_post(sys, a, node, epoch as nat),
+            release_post(sys, a, node, to, epoch as nat),
             a,
         ),
-        stands_for(c2, release_post(sys, a, node as nat, to as nat, epoch as nat), a),
+        stands_for(c2, release_post(sys, a, node, to, epoch as nat), a),
 {
     theorem_release_step_refines_handle_revoke_then_complete_release(
         sys,
         a,
-        node as nat,
-        to as nat,
+        node,
+        to,
         old_epoch,
         epoch as nat,
     );
-    let sys2 = release_post(sys, a, node as nat, to as nat, epoch as nat);
-    assert forall|n: nat, e: nat|
+    let sys2 = release_post(sys, a, node, to, epoch as nat);
+    assert forall|n: HostId, e: nat|
         #[trigger] c2.has_grant(n, e) == sys2.network.contains(
             Message::Grant { actor: a, to: n, epoch: e },
         ) by {
-        assert(c2.has_grant(n, e) == (c.has_grant(n, e) || (n == to as nat && e == epoch as nat)));
+        assert(c2.has_grant(n, e) == (c.has_grant(n, e) || (n == to && e == epoch as nat)));
     }
 }
 
@@ -300,21 +302,21 @@ pub proof fn theorem_force_from_owned_is_tr_revoke_owner(
     c2: RegistryCore,
     sys: OwnershipSystem,
     a: ActorId,
-    next: u64,
-    offered: u64,
+    next: HostId,
+    offered: HostId,
 )
     requires
         stands_for(c, sys, a),
-        sys.nodes.contains(next as nat),
+        sys.nodes.contains(next),
         is_owned(c.state.view()),
-        c2.state.view() == force_next(c.state.view(), next as nat),
-        offered as nat == force_offers_to(c.state.view(), next as nat),
-        grants_plus(c, c2, offered as nat, current_epoch(c2.state.view())),
+        c2.state.view() == force_next(c.state.view(), next),
+        offered == force_offers_to(c.state.view(), next),
+        grants_plus(c, c2, offered, current_epoch(c2.state.view())),
     ensures
-        tr_revoke_owner(sys, force_post(sys, a, next as nat), a, next as nat),
-        stands_for(c2, force_post(sys, a, next as nat), a),
+        tr_revoke_owner(sys, force_post(sys, a, next), a, next),
+        stands_for(c2, force_post(sys, a, next), a),
 {
-    theorem_force_step_refines_tr_revoke_owner(sys, a, next as nat);
+    theorem_force_step_refines_tr_revoke_owner(sys, a, next);
     lemma_force_publishes(c, c2, sys, a, next, offered);
 }
 
@@ -324,21 +326,21 @@ pub proof fn theorem_force_from_unowned_is_tr_reassign_unowned(
     c2: RegistryCore,
     sys: OwnershipSystem,
     a: ActorId,
-    next: u64,
-    offered: u64,
+    next: HostId,
+    offered: HostId,
 )
     requires
         stands_for(c, sys, a),
-        sys.nodes.contains(next as nat),
+        sys.nodes.contains(next),
         is_unowned(c.state.view()),
-        c2.state.view() == force_next(c.state.view(), next as nat),
-        offered as nat == force_offers_to(c.state.view(), next as nat),
-        grants_plus(c, c2, offered as nat, current_epoch(c2.state.view())),
+        c2.state.view() == force_next(c.state.view(), next),
+        offered == force_offers_to(c.state.view(), next),
+        grants_plus(c, c2, offered, current_epoch(c2.state.view())),
     ensures
-        tr_reassign_unowned(sys, force_post(sys, a, next as nat), a, next as nat),
-        stands_for(c2, force_post(sys, a, next as nat), a),
+        tr_reassign_unowned(sys, force_post(sys, a, next), a, next),
+        stands_for(c2, force_post(sys, a, next), a),
 {
-    theorem_force_step_refines_tr_reassign_unowned(sys, a, next as nat);
+    theorem_force_step_refines_tr_reassign_unowned(sys, a, next);
     lemma_force_publishes(c, c2, sys, a, next, offered);
 }
 
@@ -349,20 +351,20 @@ pub proof fn theorem_force_from_transferring_is_tr_abort_transfer(
     c2: RegistryCore,
     sys: OwnershipSystem,
     a: ActorId,
-    next: u64,
-    offered: u64,
+    next: HostId,
+    offered: HostId,
 )
     requires
         stands_for(c, sys, a),
         is_transferring(c.state.view()),
-        c2.state.view() == force_next(c.state.view(), next as nat),
-        offered as nat == force_offers_to(c.state.view(), next as nat),
-        grants_plus(c, c2, offered as nat, current_epoch(c2.state.view())),
+        c2.state.view() == force_next(c.state.view(), next),
+        offered == force_offers_to(c.state.view(), next),
+        grants_plus(c, c2, offered, current_epoch(c2.state.view())),
     ensures
-        tr_abort_transfer(sys, force_post(sys, a, next as nat), a),
-        stands_for(c2, force_post(sys, a, next as nat), a),
+        tr_abort_transfer(sys, force_post(sys, a, next), a),
+        stands_for(c2, force_post(sys, a, next), a),
 {
-    theorem_force_step_refines_tr_abort_transfer(sys, a, next as nat);
+    theorem_force_step_refines_tr_abort_transfer(sys, a, next);
     lemma_force_publishes(c, c2, sys, a, next, offered);
 }
 
@@ -372,25 +374,25 @@ proof fn lemma_force_publishes(
     c2: RegistryCore,
     sys: OwnershipSystem,
     a: ActorId,
-    next: u64,
-    offered: u64,
+    next: HostId,
+    offered: HostId,
 )
     requires
         stands_for(c, sys, a),
-        c2.state.view() == force_next(c.state.view(), next as nat),
-        offered as nat == force_offers_to(c.state.view(), next as nat),
-        grants_plus(c, c2, offered as nat, current_epoch(c2.state.view())),
+        c2.state.view() == force_next(c.state.view(), next),
+        offered == force_offers_to(c.state.view(), next),
+        grants_plus(c, c2, offered, current_epoch(c2.state.view())),
     ensures
-        stands_for(c2, force_post(sys, a, next as nat), a),
+        stands_for(c2, force_post(sys, a, next), a),
 {
-    let sys2 = force_post(sys, a, next as nat);
+    let sys2 = force_post(sys, a, next);
     assert(current_epoch(c2.state.view()) == current_epoch(c.state.view()) + 1);
     assert(sys2.actors[a] == c2.state.view());
-    assert forall|n: nat, e: nat|
+    assert forall|n: HostId, e: nat|
         #[trigger] c2.has_grant(n, e) == sys2.network.contains(
             Message::Grant { actor: a, to: n, epoch: e },
         ) by {
-        assert(c2.has_grant(n, e) == (c.has_grant(n, e) || (n == offered as nat && e
+        assert(c2.has_grant(n, e) == (c.has_grant(n, e) || (n == offered && e
             == current_epoch(c2.state.view()))));
     }
 }
@@ -401,16 +403,16 @@ pub proof fn theorem_a_landed_write_is_can_mutate(
     c: RegistryCore,
     sys: OwnershipSystem,
     a: ActorId,
-    node: u64,
+    node: HostId,
     epoch: u64,
 )
     requires
         stands_for(c, sys, a),
-        may_mutate(c.state.view(), node as nat, epoch as nat),
+        may_mutate(c.state.view(), node, epoch as nat),
     ensures
-        can_mutate(sys, a, node as nat, epoch as nat),
+        can_mutate(sys, a, node, epoch as nat),
 {
-    theorem_may_write_step_is_the_system_fence(sys, a, c.state, node as nat, epoch as nat);
+    theorem_may_write_step_is_the_system_fence(sys, a, c.state, node, epoch as nat);
 }
 
 } // verus!

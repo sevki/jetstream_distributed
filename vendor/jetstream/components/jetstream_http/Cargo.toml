@@ -1,0 +1,42 @@
+[package]
+name = "jetstream_http"
+version = "16.3.1"
+edition.workspace = true
+description.workspace = true
+documentation.workspace = true
+readme = "README.md"
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+askama = "0.16.0"
+async-trait = "0.1.89"
+axum = { version = "0.8.9", features = [], default-features = false }
+bytes = "1.11.0"
+futures ="0.3.32"
+h3 = { version = "0.0.8" }
+h3-webtransport = "0.1.2"
+h3-quinn = { version = "0.0.10" }
+http = "1.4.0"
+jetstream_error = { version = "16.3.1", path = "../jetstream_error"}
+jetstream_quic = { version = "16.3.1", path = "../jetstream_quic" }
+jetstream_rpc = { version = "16.3.1", path = "../jetstream_rpc", features = ["quinn", "x509"] }
+jetstream_wireformat = { version = "16.3.1", path = "../jetstream_wireformat" }
+pin-project = "1.1.11"
+quinn = { version = "0.11.9" }
+tokio = { version = "1.49.0", features = ["rt", "tracing"] }
+tokio-util.workspace = true
+tower-layer = "0.3.3"
+tower-service = "0.3.3"
+tracing = "0.1.44"
+h3-datagram = "0.0.2"
+semver = "1.0.28"
+base64 = "0.23"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+url = { workspace = true }
+
+[dev-dependencies]
+rcgen = "0.14"
+axum-test = "21"
+rustls-pemfile = "2"
+tokio = { version = "1.49.0", features = ["rt", "macros"] }

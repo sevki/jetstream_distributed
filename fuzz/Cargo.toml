@@ -27,6 +27,17 @@ turmoil = "=0.7.2"
 tokio = { version = "=1.47.1", features = ["io-util", "rt", "time"] }
 jetstream_distributed = { version = "0.1.0", path = ".." }
 
+# A patch table only applies at the root of the workspace it is in, and this is its
+# own workspace, so the root's does not reach it: without this it would resolve
+# `jetstream` from crates.io at 16.0.0, which has no `session` module. The same
+# crates as the root's, for the same reason; see its `[patch.crates-io]`.
+[patch.crates-io]
+jetstream = { path = "../vendor/jetstream" }
+jetstream_rpc = { path = "../vendor/jetstream/components/jetstream_rpc" }
+jetstream_wireformat = { path = "../vendor/jetstream/components/jetstream_wireformat" }
+jetstream_error = { path = "../vendor/jetstream/components/jetstream_error" }
+jetstream_macros = { path = "../vendor/jetstream/components/jetstream_macros" }
+
 [[bin]]
 name = "protocol"
 path = "fuzz_targets/protocol.rs"

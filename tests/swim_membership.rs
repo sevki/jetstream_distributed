@@ -18,30 +18,31 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 
-use jetstream_distributed::swim::service::{
-    Event, Liveness, Membership, Node, Update, MAX_UPDATES,
-};
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
+use jetstream_distributed::host::HostId;
+use jetstream_distributed::swim::service::{
+    Event, Liveness, MAX_UPDATES, Membership, Node, Update,
+};
 
 const A: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
 const B: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
 const C: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3));
 const STRANGER: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 9, 9, 9));
 
-fn roster() -> HashMap<IpAddr, u64> {
-    HashMap::from([(A, 0u64), (B, 1u64), (C, 2u64)])
+fn roster() -> HashMap<IpAddr, HostId> {
+    HashMap::from([(A, 0u128), (B, 1u128), (C, 2u128)])
 }
 
 fn from(addr: IpAddr) -> Context {
     Context::new(Some(RemoteAddr::IpAddr(addr)), None)
 }
 
-fn node(me: u64) -> Node {
+fn node(me: u128) -> Node {
     Node::new(roster(), me).expect("on the roster")
 }
 
-fn u(node: u64, incarnation: u64, status: Liveness) -> Update {
+fn u(node: HostId, incarnation: u64, status: Liveness) -> Update {
     Update {
         node,
         incarnation,
@@ -391,8 +392,8 @@ fn death_needs_a_suspicion_at_that_incarnation() {
 /// whole-table reply would exceed what `apply` accepts.
 #[test]
 fn a_roster_too_big_for_one_message_is_refused() {
-    let big = |n: usize| -> HashMap<IpAddr, u64> {
-        (0..n as u64)
+    let big = |n: usize| -> HashMap<IpAddr, HostId> {
+        (0..n as u128)
             .map(|i| (IpAddr::V4(Ipv4Addr::from(0x0a00_0000 + i as u32)), i))
             .collect()
     };

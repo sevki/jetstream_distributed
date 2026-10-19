@@ -17,6 +17,7 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 
+use jetstream_distributed::host::HostId;
 use jetstream_distributed::raymond::service::{Event, Router, Routing, Standing};
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
@@ -27,12 +28,12 @@ const ADDR_C: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3));
 const ADDR_D: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 4));
 const STRANGER: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 9, 9, 9));
 
-const A: u64 = 0;
-const B: u64 = 1;
-const C: u64 = 2;
-const D: u64 = 3;
+const A: HostId = 0;
+const B: HostId = 1;
+const C: HostId = 2;
+const D: HostId = 3;
 
-fn roster() -> HashMap<IpAddr, u64> {
+fn roster() -> HashMap<IpAddr, HostId> {
     HashMap::from([(ADDR_A, A), (ADDR_B, B), (ADDR_C, C), (ADDR_D, D)])
 }
 
@@ -51,7 +52,7 @@ fn code(e: Error) -> Option<String> {
 
 #[test]
 fn a_router_must_be_a_tree_rooted_at_the_privilege() {
-    let cases: [(&str, u64, HashMap<u64, u64>); 5] = [
+    let cases: [(&str, HostId, HashMap<HostId, HostId>); 5] = [
         ("root off the roster", 9, HashMap::new()),
         ("a node with no parent", C, HashMap::from([(A, C), (B, A)])),
         (

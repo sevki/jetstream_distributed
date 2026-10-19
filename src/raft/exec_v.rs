@@ -44,184 +44,11 @@
 
 use vstd::prelude::*;
 
+use crate::host::{HostId, HostSet};
 use crate::raft::model::*;
 use crate::raft::steps::*;
 
 verus! {
-
-/// The servers whose votes have been counted, each once.
-pub struct Tally {
-    /// The voters. Each appears at most once.
-    pub items: Vec<u64>,
-}
-
-impl Tally {
-    /// Each voter appears once.
-    pub open spec fn well_formed(&self) -> bool {
-        forall|i: int, j: int|
-            0 <= i < self.items@.len() && 0 <= j < self.items@.len() && self.items@[i]
-                == self.items@[j] ==> i == j
-    }
-
-    /// The voters, as the model's set of servers.
-    pub open spec fn view_set(&self) -> Set<nat> {
-        self.items@.map_values(|x: u64| x as nat).to_set()
-    }
-}
-
-/// A voter is in the tally exactly when it is among the items.
-pub proof fn lemma_in_tally(items: Seq<u64>, n: nat)
-    ensures
-        items.map_values(|x: u64| x as nat).to_set().contains(n) <==> exists|i: int|
-            0 <= i < items.len() && items[i] as nat == n,
-{
-    let m = items.map_values(|x: u64| x as nat);
-    m.to_set_ensures();
-    if exists|i: int| 0 <= i < items.len() && items[i] as nat == n {
-        let i = choose|i: int| 0 <= i < items.len() && items[i] as nat == n;
-        assert(m[i] == n);
-        assert(m.contains(n));
-    }
-    if m.contains(n) {
-        let i = choose|i: int| 0 <= i < m.len() && m[i] == n;
-        assert(items[i] as nat == n);
-    }
-}
-
-/// **A tally's count is its set's size**: each voter counted once.
-pub proof fn lemma_tally_len(t: Tally)
-    requires
-        t.well_formed(),
-    ensures
-        t.view_set().len() == t.items@.len(),
-{
-    let m = t.items@.map_values(|x: u64| x as nat);
-    assert(m.no_duplicates()) by {
-        assert forall|i: int, j: int| 0 <= i < m.len() && 0 <= j < m.len() && i != j implies m[i]
-            != m[j] by {
-            assert(t.items@[i] != t.items@[j]);
-        }
-    }
-    m.unique_seq_to_set();
-}
-
-impl Tally {
-    /// Nobody.
-    pub fn new() -> (t: Tally)
-        ensures
-            t.well_formed(),
-            t.items@.len() == 0,
-            forall|n: nat| !t.view_set().contains(n),
-    {
-        let t = Tally { items: Vec::new() };
-        proof {
-            assert forall|n: nat| !t.view_set().contains(n) by {
-                lemma_in_tally(t.items@, n);
-            }
-        }
-        t
-    }
-
-    /// Whether `x` has been counted.
-    pub fn contains(&self, x: u64) -> (r: bool)
-        ensures
-            r == self.view_set().contains(x as nat),
-    {
-        let mut i: usize = 0;
-        while i < self.items.len()
-            invariant
-                i <= self.items@.len(),
-                forall|k: int| 0 <= k < i ==> self.items@[k] != x,
-            decreases self.items@.len() - i,
-        {
-            if self.items[i] == x {
-                proof {
-                    lemma_in_tally(self.items@, x as nat);
-                    assert(self.items@[i as int] as nat == x as nat);
-                }
-                return true;
-            }
-            i += 1;
-        }
-        proof {
-            lemma_in_tally(self.items@, x as nat);
-            if self.view_set().contains(x as nat) {
-                let k = choose|k: int| 0 <= k < self.items@.len() && self.items@[k] as nat == x as nat;
-                assert(self.items@[k] == x);
-            }
-        }
-        false
-    }
-
-    /// Count `x`'s vote, once.
-    pub fn insert(&mut self, x: u64)
-        requires
-            old(self).well_formed(),
-        ensures
-            final(self).well_formed(),
-            final(self).view_set() == old(self).view_set().insert(x as nat),
-    {
-        let ghost before = self.items@;
-        let present = self.contains(x);
-        if !present {
-            self.items.push(x);
-        }
-        proof {
-            let after = self.items@;
-            lemma_in_tally(before, x as nat);
-            if !present {
-                assert forall|k: int| 0 <= k < before.len() implies before[k] != x by {
-                    if before[k] == x {
-                        assert(before[k] as nat == x as nat);
-                    }
-                }
-            }
-            assert forall|n: nat| self.view_set().contains(n) == old(self).view_set().insert(
-                x as nat,
-            ).contains(n) by {
-                lemma_in_tally(before, n);
-                lemma_in_tally(after, n);
-                if n == x as nat {
-                    lemma_in_tally(before, x as nat);
-                    if !old(self).view_set().contains(x as nat) {
-                        assert(after[after.len() - 1] == x);
-                    }
-                } else {
-                    if self.view_set().contains(n) {
-                        let k = choose|k: int| 0 <= k < after.len() && after[k] as nat == n;
-                        assert(k < before.len());
-                    }
-                    if old(self).view_set().contains(n) {
-                        let k = choose|k: int| 0 <= k < before.len() && before[k] as nat == n;
-                        assert(after[k] == before[k]);
-                    }
-                }
-            }
-            assert(self.view_set() == old(self).view_set().insert(x as nat));
-            assert forall|i: int, j: int|
-                0 <= i < after.len() && 0 <= j < after.len() && after[i] == after[j] implies i
-                == j by {
-                if after.len() > before.len() {
-                    let last = (after.len() - 1) as int;
-                    if i == last && j != last {
-                        assert(before[j] != x);
-                    }
-                    if j == last && i != last {
-                        assert(before[i] != x);
-                    }
-                }
-            }
-        }
-    }
-
-    /// How many voters have been counted.
-    pub fn len(&self) -> (n: usize)
-        ensures
-            n == self.items@.len(),
-    {
-        self.items.len()
-    }
-}
 
 /// What a vote request was answered with.
 #[derive(Clone, Copy)]
@@ -247,16 +74,9 @@ pub struct ElectionCore {
     /// Role and term.
     pub server: ExecServer,
     /// Whom this server voted for in `server.current_term`, if anyone.
-    pub voted_for: Option<u64>,
+    pub voted_for: Option<HostId>,
     /// The votes counted for this server's own candidacy in `server.current_term`.
-    pub tally: Tally,
-}
-
-impl ElectionCore {
-    /// The core is as it should be: its tally is a set.
-    pub open spec fn well_formed(&self) -> bool {
-        self.tally.well_formed()
-    }
+    pub tally: HostSet,
 }
 
 /// Nothing about the core changed.
@@ -264,24 +84,23 @@ pub open spec fn same_core(pre: ElectionCore, post: ElectionCore) -> bool {
     &&& post.server.role.view() == pre.server.role.view()
     &&& post.server.current_term == pre.server.current_term
     &&& post.voted_for == pre.voted_for
-    &&& post.tally.view_set() == pre.tally.view_set()
+    &&& post.tally@ == pre.tally@
 }
 
 impl ElectionCore {
     /// A follower at `term` that voted for `voted_for` there — what recovery
     /// produces, since there is no durable role.
-    pub fn recovered(term: u64, voted_for: Option<u64>) -> (c: ElectionCore)
+    pub fn recovered(term: u64, voted_for: Option<HostId>) -> (c: ElectionCore)
         ensures
-            c.well_formed(),
             c.server.role.view() == Role::Follower,
             c.server.current_term == term,
             c.voted_for == voted_for,
-            forall|n: nat| !c.tally.view_set().contains(n),
+            forall|n: HostId| !c.tally@.contains(n),
     {
         ElectionCore {
             server: ExecServer { role: ExecRole::Follower, current_term: term },
             voted_for,
-            tally: Tally::new(),
+            tally: HostSet::new(),
         }
     }
 
@@ -299,15 +118,13 @@ impl ElectionCore {
     /// `tr_timeout`: stand for election in the next term, voting for yourself.
     /// The term and the self-vote go to `persist` together; the server moves only
     /// if they are written down. Returns the term it stands in.
-    pub fn stand<F: FnOnce(u64, Option<u64>) -> bool>(&mut self, me: u64, persist: F) -> (r: Result<
+    pub fn stand<F: FnOnce(u64, Option<HostId>) -> bool>(&mut self, me: HostId, persist: F) -> (r: Result<
         u64,
         ElectRefusal,
     >)
         requires
-            old(self).well_formed(),
-            forall|t: u64, v: Option<u64>| call_requires(persist, (t, v)),
+            forall|t: u64, v: Option<HostId>| call_requires(persist, (t, v)),
         ensures
-            final(self).well_formed(),
             match r {
                 Ok(term) => {
                     &&& timeout_fires(old(self).server.role.view())
@@ -315,7 +132,7 @@ impl ElectionCore {
                     &&& term as nat == old(self).server.current_term as nat + 1
                     &&& final(self).server.current_term == term
                     &&& final(self).voted_for == Some(me)
-                    &&& final(self).tally.view_set() == Set::<nat>::empty().insert(me as nat)
+                    &&& final(self).tally@ == Set::<HostId>::empty().insert(me)
                 },
                 Err(ElectRefusal::Refused(why)) => {
                     &&& (!timeout_fires(old(self).server.role.view()) || (why is Exhausted))
@@ -343,7 +160,7 @@ impl ElectionCore {
                 if persist(term, Some(me)) {
                     self.server = next;
                     self.voted_for = Some(me);
-                    let mut tally = Tally::new();
+                    let mut tally = HostSet::new();
                     tally.insert(me);
                     self.tally = tally;
                     Ok(term)
@@ -358,20 +175,18 @@ impl ElectionCore {
     /// `tr_step_down`: adopt a strictly higher term, as a follower with no vote
     /// and no tally. Returns whether it moved; a term that is not ahead is not a
     /// refusal worth reporting.
-    pub fn step_down<F: FnOnce(u64, Option<u64>) -> bool>(&mut self, term: u64, persist: F) -> (r:
+    pub fn step_down<F: FnOnce(u64, Option<HostId>) -> bool>(&mut self, term: u64, persist: F) -> (r:
         Result<bool, ElectRefusal>)
         requires
-            old(self).well_formed(),
-            forall|t: u64, v: Option<u64>| call_requires(persist, (t, v)),
+            forall|t: u64, v: Option<HostId>| call_requires(persist, (t, v)),
         ensures
-            final(self).well_formed(),
             match r {
                 Ok(true) => {
                     &&& step_down_fires(old(self).server.current_term as nat, term as nat)
                     &&& final(self).server.role.view() == Role::Follower
                     &&& final(self).server.current_term == term
                     &&& final(self).voted_for is None
-                    &&& forall|n: nat| !final(self).tally.view_set().contains(n)
+                    &&& forall|n: HostId| !final(self).tally@.contains(n)
                 },
                 Ok(false) => {
                     &&& !step_down_fires(old(self).server.current_term as nat, term as nat)
@@ -394,7 +209,7 @@ impl ElectionCore {
                 if persist(term, None) {
                     self.server = next;
                     self.voted_for = None;
-                    self.tally = Tally::new();
+                    self.tally = HostSet::new();
                     Ok(true)
                 } else {
                     Err(ElectRefusal::Down)
@@ -410,9 +225,7 @@ impl ElectionCore {
     /// whether it moved.
     pub fn yield_to(&mut self, term: u64) -> (moved: bool)
         requires
-            old(self).well_formed(),
         ensures
-            final(self).well_formed(),
             if moved {
                 &&& follow_fires(
                     old(self).server.role.view(),
@@ -422,7 +235,7 @@ impl ElectionCore {
                 &&& final(self).server.role.view() == Role::Follower
                 &&& final(self).server.current_term == old(self).server.current_term
                 &&& final(self).voted_for == old(self).voted_for
-                &&& forall|n: nat| !final(self).tally.view_set().contains(n)
+                &&& forall|n: HostId| !final(self).tally@.contains(n)
             } else {
                 &&& !follow_fires(
                     old(self).server.role.view(),
@@ -439,7 +252,7 @@ impl ElectionCore {
         match follow_step(self.server, term) {
             RaftOutcome::Moved(next) => {
                 self.server = next;
-                self.tally = Tally::new();
+                self.tally = HostSet::new();
                 true
             },
             RaftOutcome::Refused(_) => false,
@@ -451,18 +264,16 @@ impl ElectionCore {
     /// the logs). A vote already given to the same candidate in the same term is
     /// given again — a retransmission, not a second vote — and a fresh one goes
     /// to `persist` before the record changes.
-    pub fn grant<F: FnOnce(u64, Option<u64>) -> bool>(
+    pub fn grant<F: FnOnce(u64, Option<HostId>) -> bool>(
         &mut self,
-        candidate: u64,
+        candidate: HostId,
         term: u64,
         up_to_date: bool,
         persist: F,
     ) -> (r: Result<VoteOutcome, ElectRefusal>)
         requires
-            old(self).well_formed(),
-            forall|t: u64, v: Option<u64>| call_requires(persist, (t, v)),
+            forall|t: u64, v: Option<HostId>| call_requires(persist, (t, v)),
         ensures
-            final(self).well_formed(),
             match r {
                 Ok(VoteOutcome::Granted) => {
                     ||| {
@@ -483,10 +294,10 @@ impl ElectionCore {
                         &&& final(self).server.current_term == term
                         &&& final(self).voted_for == Some(candidate)
                         // A candidacy does not outlive its term.
-                        &&& (term == old(self).server.current_term ==> final(self).tally.view_set()
-                            == old(self).tally.view_set())
-                        &&& (term != old(self).server.current_term ==> forall|n: nat|
-                            !final(self).tally.view_set().contains(n))
+                        &&& (term == old(self).server.current_term ==> final(self).tally@
+                            == old(self).tally@)
+                        &&& (term != old(self).server.current_term ==> forall|n: HostId|
+                            !final(self).tally@.contains(n))
                     }
                 },
                 Ok(VoteOutcome::Refused) => {
@@ -533,7 +344,7 @@ impl ElectionCore {
                     self.server = next;
                     self.voted_for = Some(candidate);
                     if moved_term {
-                        self.tally = Tally::new();
+                        self.tally = HostSet::new();
                     }
                     Ok(VoteOutcome::Granted)
                 } else {
@@ -552,19 +363,17 @@ impl ElectionCore {
     ///
     /// `counted` says the vote was counted; `won` says it was this ballot that
     /// made the server leader.
-    pub fn count(&mut self, from: u64, term: u64, members: u64) -> (r: Counted)
+    pub fn count(&mut self, from: HostId, term: u64, members: u64) -> (r: Counted)
         requires
-            old(self).well_formed(),
         ensures
-            final(self).well_formed(),
             final(self).voted_for == old(self).voted_for,
             final(self).server.current_term == old(self).server.current_term,
             r.leads == (final(self).server.role.view() == Role::Leader),
             if r.counted {
                 &&& old(self).server.current_term == term
-                &&& final(self).tally.view_set() == old(self).tally.view_set().insert(from as nat)
+                &&& final(self).tally@ == old(self).tally@.insert(from)
             } else {
-                &&& final(self).tally.view_set() == old(self).tally.view_set()
+                &&& final(self).tally@ == old(self).tally@
                 &&& final(self).server.role.view() == old(self).server.role.view()
                 &&& r.leads == (old(self).server.role.view() == Role::Leader)
             },
@@ -576,14 +385,14 @@ impl ElectionCore {
                     term as nat,
                     true,
                 )
-                &&& final(self).tally.view_set().len() + final(self).tally.view_set().len()
+                &&& final(self).tally@.len() + final(self).tally@.len()
                     > members as nat
-                &&& final(self).tally.view_set().len() <= members as nat
+                &&& final(self).tally@.len() <= members as nat
                 &&& final(self).server.role.view() == Role::Leader
             },
             !r.won && r.counted ==> {
-                &&& final(self).tally.view_set().len() + final(self).tally.view_set().len()
-                    <= members as nat || final(self).tally.view_set().len() > members as nat
+                &&& final(self).tally@.len() + final(self).tally@.len()
+                    <= members as nat || final(self).tally@.len() > members as nat
                     || !become_leader_fires(
                     old(self).server.role.view(),
                     old(self).server.current_term as nat,
@@ -604,9 +413,6 @@ impl ElectionCore {
         }
         self.tally.insert(from);
         let votes = self.tally.len() as u64;
-        proof {
-            lemma_tally_len(self.tally);
-        }
         let has_quorum = votes <= members && is_majority(votes, members);
         match become_leader_step(self.server, term, has_quorum) {
             RaftOutcome::Moved(next) => {

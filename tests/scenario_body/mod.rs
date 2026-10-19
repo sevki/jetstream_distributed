@@ -49,6 +49,7 @@ use std::{
     time::Duration,
 };
 
+use jetstream_distributed::host::HostId;
 use jetstream_distributed::ownership::exec::FenceGuard;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use turmoil::{
@@ -577,11 +578,11 @@ impl NodeState {
     /// The node-local verdict, through the verified guard.
     fn would_write(&self, node: u64) -> Option<(u64, u64)> {
         let (owner, epoch) = self.guard?;
-        let guard = FenceGuard::new(owner, epoch);
+        let guard = FenceGuard::new(HostId::from(owner), epoch);
         // `accepts` is `may_mutate(self.view(), ..)` — the node's own belief,
         // which is all a node has. Whether it is *right* is the coordinator's
         // business, and the whole point of the exercise.
-        if guard.accepts(node, epoch) {
+        if guard.accepts(HostId::from(node), epoch) {
             Some((owner, epoch))
         } else {
             None

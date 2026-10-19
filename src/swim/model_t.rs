@@ -41,9 +41,9 @@
 
 use vstd::prelude::*;
 
-verus! {
+use crate::host::HostId;
 
-pub type NodeId = nat;
+verus! {
 
 /// Where SWIM's gossip currently says a node stands, ordered by how dead it
 /// is. The order — not the declaration order, which Rust does not expose to
@@ -172,7 +172,7 @@ pub open spec fn merge(local: MemberRecord, incoming: MemberRecord) -> MemberRec
 /// a node this view has never heard of, which [`record_of`] treats as
 /// [`fresh_record`] rather than as an error.
 pub struct Cluster {
-    pub members: Map<NodeId, MemberRecord>,
+    pub members: Map<HostId, MemberRecord>,
 }
 
 /// What this view believes about `n`: its record if it has one, `fresh_record`
@@ -180,7 +180,7 @@ pub struct Cluster {
 /// than through `members` directly, so "no entry yet" and "entry is the
 /// initial one" are the same case everywhere rather than a distinction some
 /// call site forgets to make.
-pub open spec fn record_of(c: Cluster, n: NodeId) -> MemberRecord {
+pub open spec fn record_of(c: Cluster, n: HostId) -> MemberRecord {
     if c.members.contains_key(n) {
         c.members[n]
     } else {
@@ -199,7 +199,7 @@ pub open spec fn record_of(c: Cluster, n: NodeId) -> MemberRecord {
 /// is supposed to be indifferent to where a record came from, and giving the
 /// three cases three transitions would let that indifference be broken by
 /// accident in one of them without any theorem here noticing.
-pub open spec fn tr_gossip(pre: Cluster, post: Cluster, n: NodeId, incoming: MemberRecord) -> bool {
+pub open spec fn tr_gossip(pre: Cluster, post: Cluster, n: HostId, incoming: MemberRecord) -> bool {
     post.members == pre.members.insert(n, merge(record_of(pre, n), incoming))
 }
 
@@ -208,7 +208,7 @@ pub open spec fn tr_gossip(pre: Cluster, post: Cluster, n: NodeId, incoming: Mem
 /// produce a `Gossip` eventually; none of them needs a step of their own
 /// *here*, because none of them is a merge rule of its own.
 pub enum SwimStep {
-    Gossip { node: NodeId, incoming: MemberRecord },
+    Gossip { node: HostId, incoming: MemberRecord },
 }
 
 pub open spec fn swim_step(pre: Cluster, post: Cluster, s: SwimStep) -> bool {
@@ -223,7 +223,7 @@ pub open spec fn swim_next(pre: Cluster, post: Cluster) -> bool {
 
 /// Nothing heard from anybody yet.
 pub open spec fn swim_init(c: Cluster) -> bool {
-    forall|n: NodeId| !(#[trigger] c.members.contains_key(n))
+    forall|n: HostId| !(#[trigger] c.members.contains_key(n))
 }
 
 /// `tr` is a finite execution of the cluster.

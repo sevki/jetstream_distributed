@@ -8,6 +8,8 @@
 
 use vstd::prelude::*;
 
+use crate::host::HostId;
+
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
 use crate::ownership::spec::*;
@@ -38,7 +40,7 @@ pub proof fn theorem_transition_preserves_invariants(pre: OwnershipSystem, post:
 /// * during the two middle stages nobody has authority;
 /// * `A` is fenced out from the first transition onwards;
 /// * at the end exactly one node - `B` - has authority.
-pub proof fn theorem_handover_safety(a: NodeId, b: NodeId, e: Epoch, n: NodeId, x: Epoch)
+pub proof fn theorem_handover_safety(a: HostId, b: HostId, e: Epoch, n: HostId, x: Epoch)
     requires
         a != b,
     ensures
@@ -57,7 +59,7 @@ pub proof fn theorem_handover_safety(a: NodeId, b: NodeId, e: Epoch, n: NodeId, 
 
 /// **It is never possible for both nodes to have authority.** For every stage
 /// of a handover, `A` and `B` are never simultaneously permitted to mutate.
-pub proof fn theorem_handover_never_both(a: NodeId, b: NodeId, e: Epoch, ea: Epoch, eb: Epoch)
+pub proof fn theorem_handover_never_both(a: HostId, b: HostId, e: Epoch, ea: Epoch, eb: Epoch)
     requires
         a != b,
     ensures
@@ -75,7 +77,7 @@ pub proof fn theorem_handover_never_both(a: NodeId, b: NodeId, e: Epoch, ea: Epo
 /// **Interrupted transfer.** If a handover is abandoned while `Transferring`,
 /// recovery burns another epoch. Neither the outgoing owner's epoch nor the
 /// abandoned incoming epoch is usable afterwards.
-pub proof fn theorem_interrupted_transfer_fences_both(a: NodeId, b: NodeId, e: Epoch)
+pub proof fn theorem_interrupted_transfer_fences_both(a: HostId, b: HostId, e: Epoch)
     ensures
         !may_mutate(OwnershipState::Unowned { epoch: e + 2, intended_owner: a }, a, e),
         !may_mutate(OwnershipState::Unowned { epoch: e + 2, intended_owner: a }, b, e + 1),
@@ -96,7 +98,7 @@ pub proof fn theorem_ownership_only_via_acquire(
     post: OwnershipSystem,
     s: Step,
     a: ActorId,
-    n: NodeId,
+    n: HostId,
     e: Epoch,
 )
     requires

@@ -28,6 +28,8 @@
 #![allow(unused_imports)]
 
 use vstd::prelude::*;
+
+use crate::host::HostId;
 use vstd::set_lib::*;
 
 use crate::raft::model::*;
@@ -40,7 +42,7 @@ verus! {
 // ---------------------------------------------------------------------------
 
 /// Where standing for election sends the cluster.
-pub open spec fn timeout_post(c: Cluster, n: ServerId) -> Cluster {
+pub open spec fn timeout_post(c: Cluster, n: HostId) -> Cluster {
     Cluster {
         members: c.members,
         servers: c.servers.insert(
@@ -90,8 +92,8 @@ pub open spec fn timeout_post(c: Cluster, n: ServerId) -> Cluster {
 /// would be describing a different transition.
 pub open spec fn grant_vote_post(
     c: Cluster,
-    voter: ServerId,
-    cand: ServerId,
+    voter: HostId,
+    cand: HostId,
     term: Term,
     cand_last_term: Term,
     cand_last_index: nat,
@@ -128,7 +130,7 @@ pub open spec fn grant_vote_post(
 }
 
 /// Where taking the term sends it.
-pub open spec fn become_leader_post(c: Cluster, n: ServerId, term: Term) -> Cluster {
+pub open spec fn become_leader_post(c: Cluster, n: HostId, term: Term) -> Cluster {
     Cluster {
         members: c.members,
         servers: c.servers.insert(
@@ -150,7 +152,7 @@ pub open spec fn become_leader_post(c: Cluster, n: ServerId, term: Term) -> Clus
 }
 
 /// Where stepping down sends it.
-pub open spec fn step_down_post(c: Cluster, n: ServerId, term: Term) -> Cluster {
+pub open spec fn step_down_post(c: Cluster, n: HostId, term: Term) -> Cluster {
     Cluster {
         members: c.members,
         servers: c.servers.insert(
@@ -175,7 +177,7 @@ pub open spec fn step_down_post(c: Cluster, n: ServerId, term: Term) -> Cluster 
 // Timeout
 // ---------------------------------------------------------------------------
 
-pub proof fn theorem_timeout_step_refines_tr_timeout(c: Cluster, n: ServerId)
+pub proof fn theorem_timeout_step_refines_tr_timeout(c: Cluster, n: HostId)
     requires
         c.members.contains(n),
         c.servers.contains_key(n),
@@ -194,7 +196,7 @@ pub proof fn theorem_timeout_step_refines_tr_timeout(c: Cluster, n: ServerId)
 pub proof fn theorem_timeout_step_refuses_exactly_when_disabled(
     c: Cluster,
     post: Cluster,
-    n: ServerId,
+    n: HostId,
 )
     requires
         !timeout_fires(c.servers[n].role),
@@ -209,8 +211,8 @@ pub proof fn theorem_timeout_step_refuses_exactly_when_disabled(
 
 pub proof fn theorem_grant_vote_step_refines_tr_grant_vote(
     c: Cluster,
-    voter: ServerId,
-    cand: ServerId,
+    voter: HostId,
+    cand: HostId,
     term: Term,
     cand_last_term: Term,
     cand_last_index: nat,
@@ -258,8 +260,8 @@ pub proof fn theorem_grant_vote_step_refines_tr_grant_vote(
 pub proof fn theorem_grant_vote_step_refuses_exactly_when_disabled(
     c: Cluster,
     post: Cluster,
-    voter: ServerId,
-    cand: ServerId,
+    voter: HostId,
+    cand: HostId,
     term: Term,
     cand_last_term: Term,
     cand_last_index: nat,
@@ -277,7 +279,7 @@ pub proof fn theorem_grant_vote_step_refuses_exactly_when_disabled(
 
 pub proof fn theorem_become_leader_step_refines_tr_become_leader(
     c: Cluster,
-    n: ServerId,
+    n: HostId,
     term: Term,
 )
     requires
@@ -298,7 +300,7 @@ pub proof fn theorem_become_leader_step_refines_tr_become_leader(
 pub proof fn theorem_become_leader_step_refuses_exactly_when_disabled(
     c: Cluster,
     post: Cluster,
-    n: ServerId,
+    n: HostId,
     term: Term,
 )
     requires
@@ -320,7 +322,7 @@ pub proof fn theorem_become_leader_step_refuses_exactly_when_disabled(
 /// `carries_term` is a hypothesis rather than something the step checks: a
 /// server steps down because a message arrived carrying the higher term, and
 /// that the message is on the network is a fact about how the step was reached.
-pub proof fn theorem_step_down_step_refines_tr_step_down(c: Cluster, n: ServerId, term: Term)
+pub proof fn theorem_step_down_step_refines_tr_step_down(c: Cluster, n: HostId, term: Term)
     requires
         c.servers.contains_key(n),
         carries_term(c, term),
@@ -336,7 +338,7 @@ pub proof fn theorem_step_down_step_refines_tr_step_down(c: Cluster, n: ServerId
 pub proof fn theorem_step_down_step_refuses_exactly_when_disabled(
     c: Cluster,
     post: Cluster,
-    n: ServerId,
+    n: HostId,
     term: Term,
 )
     requires
@@ -361,8 +363,8 @@ pub proof fn theorem_step_down_step_refuses_exactly_when_disabled(
 pub proof fn theorem_an_append_makes_its_receiver_a_follower(
     c: Cluster,
     post: Cluster,
-    leader: ServerId,
-    follower: ServerId,
+    leader: HostId,
+    follower: HostId,
     prefix: nat,
 )
     requires
@@ -381,8 +383,8 @@ pub proof fn theorem_an_append_makes_its_receiver_a_follower(
 pub proof fn theorem_follow_step_agrees_with_tr_append_entries(
     c: Cluster,
     post: Cluster,
-    leader: ServerId,
-    follower: ServerId,
+    leader: HostId,
+    follower: HostId,
     prefix: nat,
     term: Term,
 )
@@ -410,8 +412,8 @@ pub proof fn theorem_follow_step_agrees_with_tr_append_entries(
 pub proof fn theorem_follow_step_refuses_exactly_when_disabled(
     c: Cluster,
     post: Cluster,
-    leader: ServerId,
-    follower: ServerId,
+    leader: HostId,
+    follower: HostId,
     prefix: nat,
     term: Term,
 )
@@ -438,7 +440,7 @@ pub proof fn theorem_follow_step_refuses_exactly_when_disabled(
 /// configuration, and neither is a thing a step function can check.
 pub proof fn theorem_majority_count_is_a_quorum(
     c: Cluster,
-    s: Set<ServerId>,
+    s: Set<HostId>,
     votes: u64,
     members: u64,
 )
@@ -453,7 +455,7 @@ pub proof fn theorem_majority_count_is_a_quorum(
 
 /// A tally is never larger than the membership, which is [`is_majority`]'s
 /// precondition and the reason its subtraction cannot go below zero.
-pub proof fn theorem_a_tally_fits_in_the_membership(c: Cluster, s: Set<ServerId>)
+pub proof fn theorem_a_tally_fits_in_the_membership(c: Cluster, s: Set<HostId>)
     requires
         s.subset_of(c.members),
     ensures

@@ -1,0 +1,643 @@
+name: Fuzzing
+
+# A fuzzer is only worth the electricity if what it learns survives the
+# night. Three things have to hold for that:
+#
+#   * What it finds must be kept. `fuzz/corpus` and `fuzz/artifacts` were
+#     gitignored, so every run started from nothing and any input that
+#     broke something died with the runner. They are committed now, and
+#     coverage growth is carried forward on `fuzz/corpus-accumulated`
+#     rather than left in an artifact nothing downloads.
+#   * The run must end on its own terms. `cargo fuzz run` runs until
+#     something stops it, and the only thing stopping it was
+#     `timeout-minutes`. A cancelled job runs no further steps, so this
+#     workflow could never act on its own results. It is bounded by
+#     `-max_total_time` now.
+#   * A green night must mean fuzzing happened. A tolerated exit code is
+#     how a job that never compiled reports success, so each search
+#     classifies its own failure: a crasher or a failing seed is filed,
+#     and anything else fails the job loudly.
+#
+# What it finds is committed and filed rather than discarded:
+# `tests/fuzz_regressions.rs` replays every committed input on every pull
+# request, and `scenarios_hold_their_invariants` replays every committed
+# seed, so a bug found here cannot come back unnoticed.
+#
+# ## Why this pushes as `BOT_PAT`
+#
+# There is a fourth thing, and it is GitHub's rule rather than this
+# workflow's: **no workflow runs on anything `GITHUB_TOKEN` did.** A
+# branch this job pushes with the default token, and a pull request it
+# opens with it, get no checks — not pending ones, none — so the corpus
+# pull request could never go green and could never merge. That is the
+# rule that made the nightly look broken from the outside even on the
+# nights it worked perfectly.
+#
+# `BOT_PAT` is the way out, and it already exists: `release-please.yml`
+# pushes and opens its release pull requests with it for exactly this
+# reason. Reusing it rather than adding a second token keeps one secret
+# to rotate instead of two.
+#
+# The fallback to `GITHUB_TOKEN` is a safety net, not the expected state:
+# if the secret is ever missing or unreadable the corpus still
+# accumulates and crashers are still committed and filed, but the pull
+# requests sit without checks. The "Warn if the pull requests will have
+# no checks" step says so out loud rather than leaving it to be
+# rediscovered.
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+    inputs:
+      fuzz_minutes:
+        description: "Minutes to fuzz the wireformat target"
+        default: "60"
+      scenario_fuzz_minutes:
+        description: "Minutes to fuzz the scenarios target"
+        default: "60"
+      scenario_seeds:
+        description: "Scenario seeds to search"
+        default: "20000"
+      scenario_start:
+        description: "First scenario seed (blank: derive a fresh window from the run number)"
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  # Where coverage-increasing inputs accumulate between nights. A branch
+  # rather than an artifact: artifacts expire and no later run downloads
+  # them, so what the fuzzer learned would be thrown away every midnight.
+  #
+  # One branch for both targets. They write disjoint directories, and a
+  # branch per target would mean a pull request per target for what is
+  # the same thing — inputs the fuzzer thought were worth keeping.
+  CORPUS_BRANCH: fuzz/corpus-accumulated
+
+jobs:
+  # Coverage-guided fuzzing, one entry per target.
+  #
+  # A matrix rather than a job each: everything below but the target name
+  # is the same work — restore the corpus, run bounded, keep what was
+  # found, file what broke — and a second copy of two hundred lines is a
+  # second copy to forget to fix.
+  #
+  # Serial on purpose. Both entries push the same corpus branch, and two
+  # jobs racing there means one push is rejected and that target's whole
+  # night is thrown away. An hour each is affordable for work nobody is
+  # waiting on.
+  fuzz:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          # The wire format decoder: bytes in, frame out.
+          - target: wireformat
+            minutes: ${{ github.event.inputs.fuzz_minutes || '60' }}
+          # A whole session over a simulated network. The invariants
+          # worth the most are about sequences — that a producer stops
+          # when its subscriber goes, that nothing follows an ending —
+          # and reaching those needs a server, a client and a network
+          # that can be cut, not a decode.
+          - target: scenarios
+            minutes: ${{ github.event.inputs.scenario_fuzz_minutes || '60' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      # Full history: both jobs push branches, and GitHub rejects a
+      # push whose history is shallow.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # The token the later `git push` uses, and therefore the one
+          # that decides whether the pull requests this job opens get
+          # checks. See the note at the top of this file.
+          token: ${{ secrets.BOT_PAT || secrets.GITHUB_TOKEN }}
+
+      # Tested as a boolean rather than by reading the secret, so the
+      # token itself never enters the environment just to be checked for
+      # emptiness.
+      - name: Warn if the pull requests will have no checks
+        env:
+          HAVE_PAT: ${{ secrets.BOT_PAT != '' }}
+        run: |
+          set -eu
+          if [ "${HAVE_PAT}" != "true" ]; then
+            echo "::warning::BOT_PAT is not readable here, so this job will push and open pull requests as GITHUB_TOKEN. GitHub runs no workflows on those — anything opened tonight sits with no checks until someone approves them by hand. See the note at the top of .github/workflows/fuzzing.yml."
+          fi
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      # Start from everything previous nights learned. Without this the
+      # corpus is only ever the committed seeds, and each night rederives
+      # the same shallow coverage from the same starting point.
+      - name: Restore the accumulated corpus
+        run: |
+          set -uo pipefail
+          if git fetch origin "${CORPUS_BRANCH}" 2>/dev/null; then
+            # A named ref, because later steps fetch other branches and
+            # FETCH_HEAD would no longer mean this one.
+            git update-ref refs/corpus-base FETCH_HEAD
+            git checkout refs/corpus-base -- fuzz/corpus/${{ matrix.target }}
+            git reset -q -- fuzz/corpus/${{ matrix.target }}
+            echo "restored $(find fuzz/corpus/${{ matrix.target }} -type f | wc -l) inputs from ${CORPUS_BRANCH}"
+          else
+            echo "no ${CORPUS_BRANCH} yet; starting from the committed seeds"
+          fi
+
+      # Bounded, so the step finishes and the ones below get to run. The
+      # exit code is recorded rather than acted on here: a crash is the
+      # interesting outcome, not a reason to stop, and telling a crash
+      # apart from a build failure needs the next step's evidence.
+      - name: Fuzz
+        id: fuzz
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -uo pipefail
+          minutes="${{ matrix.minutes }}"
+          find fuzz/corpus/${{ matrix.target }} -type f | sort | xargs -r sha256sum \
+            | sha256sum > /tmp/corpus-before
+          status=0
+          cargo fuzz run "${TARGET}" -- -max_total_time=$(( minutes * 60 )) || status=$?
+          echo "status=${status}" >> "$GITHUB_OUTPUT"
+          echo "cargo fuzz exited ${status}"
+
+      - name: Look at what the run left behind
+        id: found
+        run: |
+          set -euo pipefail
+          # Untracked files only: exactly what this run produced, rather
+          # than a crasher some earlier fix already committed here.
+          crash=$(comm -13 \
+                    <(git ls-files fuzz/artifacts/${{ matrix.target }} | sort) \
+                    <(find fuzz/artifacts/${{ matrix.target }} -type f | sort) \
+                  | head -1 || true)
+          echo "crash=${crash}" >> "$GITHUB_OUTPUT"
+          if [ -n "${crash}" ]; then
+            echo "digest=$(sha256sum "${crash}" | cut -c1-16)" >> "$GITHUB_OUTPUT"
+            # `od`, not `xxd`: xxd ships with vim rather than coreutils,
+            # and under `set -e` a missing one would kill this step on the
+            # one night it has something to report.
+            echo "hex=$(od -An -v -tx1 "${crash}" | tr -d ' \n' | head -c 512)" >> "$GITHUB_OUTPUT"
+          fi
+          # Compared by content, not by git status: the restore step above
+          # leaves the accumulated inputs looking "changed" to git, which
+          # would report growth on a night that found nothing.
+          find fuzz/corpus/${{ matrix.target }} -type f | sort | xargs -r sha256sum \
+            | sha256sum > /tmp/corpus-after
+          if ! cmp -s /tmp/corpus-before /tmp/corpus-after; then
+            echo "corpus=grew" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Keep it regardless, so a crasher is recoverable even if the steps
+      # below cannot open anything.
+      - name: Keep the corpus and any crasher
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}-corpus
+          path: |
+            fuzz/corpus/${{ matrix.target }}
+            fuzz/artifacts/${{ matrix.target }}
+          retention-days: 30
+
+      # The durable half of the same thing: an artifact expires and no
+      # later run reads it, so coverage goes onto a branch the next run
+      # restores from.
+      - name: Carry the corpus growth forward
+        if: steps.found.outputs.corpus == 'grew'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Build on whatever the branch already holds rather than
+          # replacing it, so nothing that landed there is dropped.
+          tmp=$(mktemp -d)
+          cp -r fuzz/corpus/${{ matrix.target }}/. "${tmp}/"
+          # Out of the way before switching: these inputs are untracked
+          # here but tracked on the corpus branch, and git refuses a
+          # checkout that would overwrite untracked files. They come back
+          # from `tmp` immediately below.
+          rm -rf fuzz/corpus/${{ matrix.target }}
+          if git rev-parse --verify refs/corpus-base >/dev/null 2>&1; then
+            git checkout -B "${CORPUS_BRANCH}" refs/corpus-base
+          else
+            git checkout -B "${CORPUS_BRANCH}"
+          fi
+          mkdir -p fuzz/corpus/${{ matrix.target }}
+          cp -r "${tmp}/." fuzz/corpus/${{ matrix.target }}/
+          git add -f fuzz/corpus/${{ matrix.target }}
+          if git diff --cached --quiet; then
+            echo "nothing new once merged with the branch"
+            exit 0
+          fi
+          git commit -m "test(fuzz): inputs the nightly run found interesting
+
+          Coverage-increasing inputs from the ${{ matrix.target }} target, kept
+          the next run starts where this one left off instead of
+          rederiving the same coverage from the committed seeds."
+          # No force: this branch is built on top of what it already has,
+          # so a plain push is enough, and anything pushed here by hand
+          # survives.
+          git push origin "${CORPUS_BRANCH}"
+
+      - name: Keep one standing pull request for the corpus
+        if: steps.found.outputs.corpus == 'grew'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.BOT_PAT || secrets.GITHUB_TOKEN }}
+          script: |
+            const head = process.env.CORPUS_BRANCH;
+
+            // Let it land on its own. This is the one pull request the
+            // fuzzer opens that is *supposed* to merge — the inputs do
+            // not break anything, and putting them in front of
+            // `tests/fuzz_regressions.rs` is the entire point of opening
+            // it. Auto-merge is not a bypass: GitHub still waits for
+            // every required check, so a corpus that did break something
+            // would sit here instead of landing.
+            //
+            // Nightly work that needs a human to click merge every
+            // morning is nightly work that stops getting merged.
+            const autoMerge = async (number, id) => {
+              try {
+                await github.graphql(
+                  `mutation($id: ID!) {
+                     enablePullRequestAutoMerge(
+                       input: { pullRequestId: $id, mergeMethod: SQUASH }
+                     ) { clientMutationId }
+                   }`,
+                  { id },
+                );
+                core.info(`auto-merge enabled on #${number}`);
+              } catch (e) {
+                // Auto-merge can be disabled for the repository, and
+                // GitHub refuses it on a pull request that is already
+                // mergeable with nothing to wait for. Neither is a
+                // reason to fail a night of fuzzing.
+                core.warning(
+                  `could not enable auto-merge on #${number}: ${e.message}`,
+                );
+              }
+            };
+
+            // One long-lived pull request, updated by every push. Opening
+            // a new one nightly is how a useful job becomes a muted one.
+            const open = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: `${context.repo.owner}:${head}`,
+              state: 'open',
+            });
+            if (open.data.length > 0) {
+              // It may predate the token that lets checks run on it, so
+              // arm it now rather than only at creation.
+              core.info(`already open: #${open.data[0].number}`);
+              await autoMerge(open.data[0].number, open.data[0].node_id);
+              return;
+            }
+            const created = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head,
+              base: context.payload.repository.default_branch,
+              // Deliberately not a draft, unlike every other pull
+              // request this workflow opens: GitHub refuses auto-merge
+              // on a draft, and this is the one that is meant to land.
+              draft: false,
+              title: 'test(fuzz): corpus the nightly run has accumulated',
+              body: [
+                `Coverage-increasing inputs the nightly fuzz targets have`,
+                `found. Each night restores this branch before fuzzing and pushes`,
+                `back what it learned, so the corpus compounds instead of being`,
+                `rederived from the committed seeds every midnight.`,
+                ``,
+                `Unlike the crash reproducers, **this is safe to merge on its own**:`,
+                `these inputs do not break anything. Merging periodically is what`,
+                `puts them in front of \`tests/fuzz_regressions.rs\` on every pull`,
+                `request, and what keeps this branch from drifting far from the`,
+                `default branch.`,
+                ``,
+                `Auto-merge is on: it lands by itself once the checks`,
+                `agree, and waits if they do not.`,
+              ].join('\n'),
+            });
+            await autoMerge(created.data.number, created.data.node_id);
+
+      - name: Commit the crasher on a branch
+        id: reproducer
+        if: steps.found.outputs.crash != ''
+        run: |
+          set -euo pipefail
+          branch="fuzz/crash-${{ matrix.target }}-${{ steps.found.outputs.digest }}"
+          # If the branch is already there, someone may have pushed a fix
+          # onto it — which the pull request below explicitly invites, as
+          # that is what makes checks run. Rediscovering the same input is
+          # expected until the fix merges, and must not reset their work.
+          git fetch origin "${branch}" 2>/dev/null && exists=yes || exists=no
+          if [ "${exists}" = "yes" ]; then
+            echo "::notice::${branch} already exists; leaving it as it is"
+            echo "pushed=no" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Explicitly off the commit this run checked out: the corpus
+          # step above may have left HEAD on the corpus branch, and a
+          # reproducer carrying a corpus commit is not a minimal one.
+          git checkout -b "${branch}" "${{ github.sha }}"
+          git add -f "${{ steps.found.outputs.crash }}"
+          git commit -m "test(fuzz): a ${{ matrix.target }} input that breaks something
+
+          Found by the nightly fuzzer. Committed so it is replayed by
+          \`tests/fuzz_regressions.rs\` on every pull request: once this
+          is fixed it stays fixed.
+
+          Digest ${{ steps.found.outputs.digest }}."
+          git push origin "${branch}"
+          echo "pushed=yes" >> "$GITHUB_OUTPUT"
+
+      - name: File it
+        if: steps.reproducer.outputs.pushed == 'yes'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.BOT_PAT || secrets.GITHUB_TOKEN }}
+          script: |
+            const target = '${{ matrix.target }}';
+            const digest = '${{ steps.found.outputs.digest }}';
+            const file = '${{ steps.found.outputs.crash }}';
+            const hex = '${{ steps.found.outputs.hex }}';
+            const branch = `fuzz/crash-${target}-${digest}`;
+            const marker = `fuzz-crash:${target}:${digest}`;
+
+            // One issue per distinct input. A nightly job that opens the
+            // same issue every night is a nightly job people mute.
+            const existing = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${context.repo.owner}/${context.repo.repo} is:issue "${marker}"`,
+            });
+            if (existing.data.total_count > 0) {
+              core.info(`already filed: #${existing.data.items[0].number}`);
+              return;
+            }
+
+            const body = [
+              `The nightly fuzzer found an input that breaks the \`${target}\` target.`,
+              ``,
+              `\`${marker}\``,
+              ``,
+              `**Input** (\`${file}\`, hex, truncated to 256 bytes):`,
+              ``,
+              '```',
+              hex.replace(/(.{64})/g, '$1\n'),
+              '```',
+              ``,
+              `The bytes are committed on \`${branch}\`, which carries them into`,
+              `\`fuzz/artifacts/${{ matrix.target }}/\`. \`tests/fuzz_regressions.rs\` replays`,
+              `everything in there on every pull request, so merging that branch`,
+              `**with the fix** is what stops this recurring. Merging it alone would`,
+              `only make the tests red — the branch is a reproducer, not a fix.`,
+              ``,
+              `Reproduce locally:`,
+              ``,
+              '```',
+              `cargo +nightly fuzz run ${target} ${file}`,
+              '```',
+              ``,
+              `---`,
+              `_Filed by the nightly [Fuzzing](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/workflows/fuzzing.yml) workflow_`,
+            ].join('\n');
+
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Fuzz: the ${target} target breaks on a ${digest} input`,
+              body,
+            });
+
+            await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: branch,
+              base: context.payload.repository.default_branch,
+              draft: true,
+              title: `test(fuzz): reproducer for the ${digest} ${target} crash`,
+              body: [
+                `Carries the failing input into \`fuzz/artifacts/${{ matrix.target }}/\`, where`,
+                `\`tests/fuzz_regressions.rs\` replays it.`,
+                ``,
+                `**Do not merge this on its own.** It is a reproducer: on its own it`,
+                `only turns the test suite red. Merge it together with the fix, so the`,
+                `input becomes a regression test in the same change that stops it`,
+                `failing.`,
+                ``,
+                `Analysis in #${issue.data.number}.`,
+                ``,
+                `Note: opened by \`GITHUB_TOKEN\`, so no checks run on it until someone`,
+                `pushes to it — that is GitHub's rule for token-created pull requests,`,
+                `not a problem with the branch. Pushing the fix here is safe: later`,
+                `nightly runs that rediscover this input leave an existing branch`,
+                `alone rather than resetting it.`,
+              ].join('\n'),
+            });
+
+      # Last, so everything above has already kept and filed what it can.
+      # A nonzero exit with no crasher is not a fuzzing result: the target
+      # failed to build, cargo-fuzz was called wrong, or the process died
+      # before writing anything. Reporting that as a green night is how
+      # nobody notices the fuzzer stopped running months ago.
+      - name: Fail if nothing was actually fuzzed
+        if: always() && steps.fuzz.outputs.status != '0' && steps.found.outputs.crash == ''
+        run: |
+          echo "::error::cargo fuzz exited ${{ steps.fuzz.outputs.status }} without producing a crasher: no fuzzing result to file"
+          exit 1
+
+  # The turmoil seed walk. No nightly toolchain and no cargo-fuzz: a
+  # failing scenario is one u64, so the corpus is a text file and the
+  # search is an ordinary test run for longer than CI can afford.
+  #
+  # It covers the same runner as the `scenarios` fuzz target above and
+  # does not duplicate it. This walks seeds in order — cheap, exactly
+  # reproducible from one number, and completely blind. That target
+  # steers by coverage, which finds the scenario nobody would have
+  # counted up to but reports it as a byte string rather than a seed.
+  seed-walk:
+    name: scenario seed walk
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # The seed window has to move. Without a start the test searches
+      # 0..seeds, so every night searched the same 20000 scenarios and
+      # could not find anything the first such night had not already
+      # found — 16 minutes a night re-running a fixed test suite.
+      #
+      # The run number tiles the space: consecutive runs get adjacent,
+      # non-overlapping windows, and nothing needs storing between runs
+      # to know where the last one stopped. A hand-dispatched run with a
+      # different count can overlap or skip a little, which is fine — a
+      # dispatch is a deliberate deep dive, not part of the tiling.
+      - name: Search
+        id: search
+        env:
+          JETSTREAM_SCENARIO_SEEDS: ${{ github.event.inputs.scenario_seeds || '20000' }}
+          SCENARIO_START_INPUT: ${{ github.event.inputs.scenario_start }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -uo pipefail
+          if [ -n "${SCENARIO_START_INPUT}" ]; then
+            JETSTREAM_SCENARIO_START="${SCENARIO_START_INPUT}"
+          else
+            JETSTREAM_SCENARIO_START=$(( RUN_NUMBER * JETSTREAM_SCENARIO_SEEDS ))
+          fi
+          export JETSTREAM_SCENARIO_START
+          echo "searching seeds ${JETSTREAM_SCENARIO_START}..$(( JETSTREAM_SCENARIO_START + JETSTREAM_SCENARIO_SEEDS ))"
+          status=0
+          cargo test --test turmoil_scenarios --all-features -- --nocapture \
+            2>&1 | tee /tmp/scenarios.log || status=$?
+          echo "status=${status}" >> "$GITHUB_OUTPUT"
+
+      - name: Find the seed that broke
+        id: seed
+        if: steps.search.outputs.status != '0'
+        run: |
+          set -euo pipefail
+          seed=$(grep -oE 'seed [0-9]+ failed' /tmp/scenarios.log \
+                 | head -1 | grep -oE '[0-9]+' || true)
+          echo "seed=${seed}" >> "$GITHUB_OUTPUT"
+          # A committed seed breaking again is a different event: it is
+          # already filed, so it must not open a duplicate, and it must
+          # not pass silently either. The step below fails the job.
+          regressed=$(grep -oE 'committed seed [0-9]+ regressed' /tmp/scenarios.log \
+                      | head -1 || true)
+          echo "regressed=${regressed}" >> "$GITHUB_OUTPUT"
+
+      - name: Commit the seed on a branch
+        id: reproducer
+        if: steps.seed.outputs.seed != ''
+        run: |
+          set -euo pipefail
+          seed="${{ steps.seed.outputs.seed }}"
+          branch="fuzz/scenario-seed-${seed}"
+          # As with the crash branches: an existing branch may carry
+          # someone's fix, and rediscovering the seed until that fix
+          # merges is expected. Never reset it.
+          git fetch origin "${branch}" 2>/dev/null && exists=yes || exists=no
+          if [ "${exists}" = "yes" ]; then
+            echo "::notice::${branch} already exists; leaving it as it is"
+            echo "pushed=no" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "${branch}"
+          echo "${seed}" >> tests/seeds/scenarios.txt
+          git add tests/seeds/scenarios.txt
+          git commit -m "test(turmoil): a scenario seed that breaks an invariant
+
+          Found by the nightly search. \`scenarios_hold_their_invariants\`
+          replays every committed seed, so once this is fixed it stays
+          fixed."
+          git push origin "${branch}"
+          echo "pushed=yes" >> "$GITHUB_OUTPUT"
+
+      - name: File it
+        if: steps.reproducer.outputs.pushed == 'yes'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.BOT_PAT || secrets.GITHUB_TOKEN }}
+          script: |
+            const seed = '${{ steps.seed.outputs.seed }}';
+            const branch = `fuzz/scenario-seed-${seed}`;
+            const marker = `scenario-seed:${seed}`;
+
+            const existing = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${context.repo.owner}/${context.repo.repo} is:issue "${marker}"`,
+            });
+            if (existing.data.total_count > 0) {
+              core.info(`already filed: #${existing.data.items[0].number}`);
+              return;
+            }
+
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Turmoil: scenario seed ${seed} breaks an invariant`,
+              body: [
+                `The nightly scenario search found a run that breaks one of the`,
+                `invariants in \`tests/turmoil_scenarios.rs\`.`,
+                ``,
+                `\`${marker}\``,
+                ``,
+                `The seed drives both the action sequence and turmoil's network`,
+                `schedule, so this is exactly reproducible:`,
+                ``,
+                '```',
+                `cargo test --test turmoil_scenarios --all-features -- --nocapture`,
+                '```',
+                ``,
+                `with \`${seed}\` in \`tests/seeds/scenarios.txt\`, which is what`,
+                `branch \`${branch}\` does.`,
+                ``,
+                `**Check the invariant before the implementation.** The first thing`,
+                `this search found was not a bug in the code but a claim the code`,
+                `never made — see #716. An assertion that outruns the specification`,
+                `fails honestly and still needs changing.`,
+                ``,
+                `---`,
+                `_Filed by the nightly [Fuzzing](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/workflows/fuzzing.yml) workflow_`,
+              ].join('\n'),
+            });
+
+            await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: branch,
+              base: context.payload.repository.default_branch,
+              draft: true,
+              title: `test(turmoil): reproducer for scenario seed ${seed}`,
+              body: [
+                `Adds \`${seed}\` to \`tests/seeds/scenarios.txt\`, which`,
+                `\`scenarios_hold_their_invariants\` replays on every pull request.`,
+                ``,
+                `**Do not merge this on its own** — it only turns the suite red.`,
+                `Merge it with the fix, so the seed becomes a regression test in the`,
+                `same change that stops it failing.`,
+                ``,
+                `Analysis in #${issue.data.number}.`,
+              ].join('\n'),
+            });
+
+      # The search failing in a way this job cannot file is still the
+      # search failing. Compilation errors, a broken harness, and a
+      # committed seed regressing all reach here — and all of them would
+      # otherwise leave a green nightly job that searched nothing.
+      - name: Fail if the search broke without a new seed to file
+        if: always() && steps.search.outputs.status != '0' && steps.seed.outputs.seed == ''
+        run: |
+          set -uo pipefail
+          if [ -n "${{ steps.seed.outputs.regressed }}" ]; then
+            echo "::error::${{ steps.seed.outputs.regressed }} — already filed, so nothing new to open; fix it or reopen its issue"
+          else
+            echo "::error::the scenario search failed and produced no seed to file: it did not run"
+          fi
+          tail -60 /tmp/scenarios.log || true
+          exit 1

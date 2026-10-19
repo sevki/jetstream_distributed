@@ -26,6 +26,8 @@
 
 use vstd::prelude::*;
 
+use crate::host::HostId;
+
 use crate::ownership::model::*;
 use crate::raymond::model::*;
 use crate::raymond::steps::*;
@@ -33,7 +35,7 @@ use crate::raymond::steps::*;
 verus! {
 
 /// Where `RequestCs` sends the routing state.
-pub open spec fn request_cs_post(r: Raymond, n: NodeId) -> Raymond {
+pub open spec fn request_cs_post(r: Raymond, n: HostId) -> Raymond {
     Raymond {
         nodes: r.nodes,
         holder: r.holder,
@@ -46,7 +48,7 @@ pub open spec fn request_cs_post(r: Raymond, n: NodeId) -> Raymond {
 }
 
 /// Where `MakeRequest` sends it.
-pub open spec fn make_request_post(r: Raymond, n: NodeId) -> Raymond {
+pub open spec fn make_request_post(r: Raymond, n: HostId) -> Raymond {
     Raymond {
         nodes: r.nodes,
         holder: r.holder,
@@ -59,7 +61,7 @@ pub open spec fn make_request_post(r: Raymond, n: NodeId) -> Raymond {
 }
 
 /// Where `ReceiveRequest` sends it.
-pub open spec fn receive_request_post(r: Raymond, at: NodeId, from: NodeId) -> Raymond {
+pub open spec fn receive_request_post(r: Raymond, at: HostId, from: HostId) -> Raymond {
     Raymond {
         nodes: r.nodes,
         holder: r.holder,
@@ -72,7 +74,7 @@ pub open spec fn receive_request_post(r: Raymond, at: NodeId, from: NodeId) -> R
 }
 
 /// Where `AssignPrivilege` sends it.
-pub open spec fn assign_post(r: Raymond, n: NodeId, head: NodeId) -> Raymond {
+pub open spec fn assign_post(r: Raymond, n: HostId, head: HostId) -> Raymond {
     Raymond {
         nodes: r.nodes,
         holder: r.holder.insert(n, head).insert(head, head),
@@ -85,7 +87,7 @@ pub open spec fn assign_post(r: Raymond, n: NodeId, head: NodeId) -> Raymond {
 }
 
 /// Where `EnterCs` sends it.
-pub open spec fn enter_cs_post(r: Raymond, n: NodeId) -> Raymond {
+pub open spec fn enter_cs_post(r: Raymond, n: HostId) -> Raymond {
     Raymond {
         nodes: r.nodes,
         holder: r.holder,
@@ -98,7 +100,7 @@ pub open spec fn enter_cs_post(r: Raymond, n: NodeId) -> Raymond {
 }
 
 /// Where `ExitCs` sends it.
-pub open spec fn exit_cs_post(r: Raymond, n: NodeId) -> Raymond {
+pub open spec fn exit_cs_post(r: Raymond, n: HostId) -> Raymond {
     Raymond {
         nodes: r.nodes,
         holder: r.holder,
@@ -113,7 +115,7 @@ pub open spec fn exit_cs_post(r: Raymond, n: NodeId) -> Raymond {
 /// `RequestCs` has no scalar guard — a node may always ask — so its step is the
 /// queue push and there is nothing to refuse. The theorem is that the post-state
 /// above is the model's.
-pub proof fn theorem_request_cs_post_is_the_model_step(r: Raymond, n: NodeId)
+pub proof fn theorem_request_cs_post_is_the_model_step(r: Raymond, n: HostId)
     requires
         r.nodes.contains(n),
     ensures
@@ -122,7 +124,7 @@ pub proof fn theorem_request_cs_post_is_the_model_step(r: Raymond, n: NodeId)
 }
 
 /// When the make request step fires, the model's transition fires, to exactly the state computed.
-pub proof fn theorem_make_request_step_refines(r: Raymond, n: NodeId)
+pub proof fn theorem_make_request_step_refines(r: Raymond, n: HostId)
     requires
         ray_maps_total(r),
         r.nodes.contains(n),
@@ -137,7 +139,7 @@ pub proof fn theorem_make_request_step_refines(r: Raymond, n: NodeId)
 pub proof fn theorem_make_request_step_refuses_exactly_when_disabled(
     r: Raymond,
     post: Raymond,
-    n: NodeId,
+    n: HostId,
 )
     requires
         ray_maps_total(r),
@@ -149,7 +151,7 @@ pub proof fn theorem_make_request_step_refuses_exactly_when_disabled(
 }
 
 /// When the receive request step fires, the model's transition fires, to exactly the state computed.
-pub proof fn theorem_receive_request_step_refines(r: Raymond, at: NodeId, from: NodeId)
+pub proof fn theorem_receive_request_step_refines(r: Raymond, at: HostId, from: HostId)
     requires
         r.nodes.contains(at),
         r.nodes.contains(from),
@@ -163,8 +165,8 @@ pub proof fn theorem_receive_request_step_refines(r: Raymond, at: NodeId, from: 
 pub proof fn theorem_receive_request_step_refuses_exactly_when_disabled(
     r: Raymond,
     post: Raymond,
-    at: NodeId,
-    from: NodeId,
+    at: HostId,
+    from: HostId,
 )
     requires
         r.nodes.contains(at),
@@ -176,7 +178,7 @@ pub proof fn theorem_receive_request_step_refuses_exactly_when_disabled(
 }
 
 /// When the assign step fires, the model's transition fires, to exactly the state computed.
-pub proof fn theorem_assign_step_refines(r: Raymond, n: NodeId, head: NodeId)
+pub proof fn theorem_assign_step_refines(r: Raymond, n: HostId, head: HostId)
     requires
         ray_maps_total(r),
         r.nodes.contains(n),
@@ -200,8 +202,8 @@ pub proof fn theorem_assign_step_refines(r: Raymond, n: NodeId, head: NodeId)
 pub proof fn theorem_assign_step_refuses_exactly_when_disabled(
     r: Raymond,
     post: Raymond,
-    n: NodeId,
-    head: NodeId,
+    n: HostId,
+    head: HostId,
 )
     requires
         ray_maps_total(r),
@@ -227,8 +229,8 @@ pub proof fn theorem_assign_step_refuses_exactly_when_disabled(
 pub proof fn theorem_assign_step_refuses_an_empty_queue(
     r: Raymond,
     post: Raymond,
-    n: NodeId,
-    head: NodeId,
+    n: HostId,
+    head: HostId,
 )
     requires
         ray_maps_total(r),
@@ -240,7 +242,7 @@ pub proof fn theorem_assign_step_refuses_an_empty_queue(
 }
 
 /// When the enter cs step fires, the model's transition fires, to exactly the state computed.
-pub proof fn theorem_enter_cs_step_refines(r: Raymond, n: NodeId)
+pub proof fn theorem_enter_cs_step_refines(r: Raymond, n: HostId)
     requires
         ray_maps_total(r),
         r.nodes.contains(n),
@@ -255,7 +257,7 @@ pub proof fn theorem_enter_cs_step_refines(r: Raymond, n: NodeId)
 pub proof fn theorem_enter_cs_step_refuses_exactly_when_disabled(
     r: Raymond,
     post: Raymond,
-    n: NodeId,
+    n: HostId,
 )
     requires
         ray_maps_total(r),
@@ -268,7 +270,7 @@ pub proof fn theorem_enter_cs_step_refuses_exactly_when_disabled(
 }
 
 /// With an empty queue there is nothing at the head, so the model's enter cs transition is not enabled either.
-pub proof fn theorem_enter_cs_step_refuses_an_empty_queue(r: Raymond, post: Raymond, n: NodeId)
+pub proof fn theorem_enter_cs_step_refuses_an_empty_queue(r: Raymond, post: Raymond, n: HostId)
     requires
         ray_maps_total(r),
         r.nodes.contains(n),
@@ -279,7 +281,7 @@ pub proof fn theorem_enter_cs_step_refuses_an_empty_queue(r: Raymond, post: Raym
 }
 
 /// When the exit cs step fires, the model's transition fires, to exactly the state computed.
-pub proof fn theorem_exit_cs_step_refines(r: Raymond, n: NodeId)
+pub proof fn theorem_exit_cs_step_refines(r: Raymond, n: HostId)
     requires
         ray_maps_total(r),
         r.nodes.contains(n),
@@ -293,7 +295,7 @@ pub proof fn theorem_exit_cs_step_refines(r: Raymond, n: NodeId)
 pub proof fn theorem_exit_cs_step_refuses_exactly_when_disabled(
     r: Raymond,
     post: Raymond,
-    n: NodeId,
+    n: HostId,
 )
     requires
         ray_maps_total(r),

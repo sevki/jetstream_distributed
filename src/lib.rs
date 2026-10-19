@@ -61,9 +61,15 @@
 
 pub mod actor;
 pub mod composed;
+pub mod compute;
+// Vivaldi coordinates need `rand` and a wire format, so they are with the services.
+#[cfg(feature = "service")]
+pub mod coordinate;
+pub mod host;
 pub mod ownership;
 pub mod raft;
 pub mod raymond;
+pub mod scheduling;
 pub mod swim;
 #[path = "temporal_t.rs"]
 pub mod temporal;

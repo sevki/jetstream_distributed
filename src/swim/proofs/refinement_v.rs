@@ -17,6 +17,7 @@
 
 use vstd::prelude::*;
 
+use crate::host::HostId;
 use crate::swim::model::*;
 use crate::swim::proofs::merge::*;
 use crate::swim::steps::*;
@@ -39,7 +40,7 @@ pub open spec fn refutation(accused: nat) -> MemberRecord {
 pub proof fn theorem_merge_step_is_a_gossip_step(
     pre: Cluster,
     post: Cluster,
-    n: NodeId,
+    n: HostId,
     local: ExecRecord,
     incoming: ExecRecord,
     result: ExecRecord,
@@ -86,7 +87,7 @@ pub proof fn theorem_a_refutation_outranks_what_it_answers(accused: nat, held: M
 pub proof fn theorem_a_refutation_is_a_gossip_step(
     pre: Cluster,
     post: Cluster,
-    n: NodeId,
+    n: HostId,
     accused: nat,
 )
     requires

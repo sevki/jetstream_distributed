@@ -1,0 +1,193 @@
+[package]
+name = "jetstream"
+version = "16.3.1"
+edition = "2021"
+description = "Jetstream is a RPC framework for Rust, based on the 9P protocol and QUIC."
+documentation = "https://jetstream.rs"
+repository = "https://github.com/sevki/jetstream"
+license = "BSD-3-Clause"
+
+[package.metadata.docs.rs]
+# Features to pass to Cargo (default: [])
+features = ["all"]
+
+[lib]
+bench = false
+crate-type = ["cdylib", "rlib"]
+
+[[example]]
+bench = false
+name = "echo"
+required-features = ["quic"]
+
+[[example]]
+bench = false
+name = "echo_with_tracing"
+required-features = ["quic"]
+
+[[example]]
+bench = false
+name = "http"
+required-features = ["quic"]
+
+[[example]]
+bench = false
+name = "sqlite_mtls"
+required-features = ["quic"]
+
+[[example]]
+name = "iroh_echo"
+bench = false
+required-features = ["iroh"]
+
+[[example]]
+bench = false
+name = "session_lanes"
+
+[[example]]
+bench = false
+name = "quic_session"
+required-features = ["quic"]
+
+[[test]]
+bench = false
+name = "jetstream_wire_format"
+path = "tests/jetstream_wire_format/mod.rs"
+
+[[test]]
+name = "server"
+bench = false
+
+[[bench]]
+harness = false
+name = "perf"
+
+
+[dependencies]
+async-trait = "0.1.89"
+futures = "0.3.31"
+jetstream_9p = { version = "16.3.1", path = "components/jetstream_9p", optional = true }
+jetstream_iroh = { version = "16.3.1", path = "components/jetstream_iroh", optional = true }
+jetstream_macros = { version = "16.3.1", path = "components/jetstream_macros" }
+jetstream_rpc = { version = "16.3.1", path = "components/jetstream_rpc" }
+jetstream_error = { version = "16.3.1", path = "components/jetstream_error" }
+jetstream_wireformat = { version = "16.3.1", path = "components/jetstream_wireformat" }
+lazy_static = "1.5.0"
+tracing = { version = "0.1.41", optional = true }
+tracing-subscriber = { version = "0.3.20", optional = true }
+trait-variant = "0.1.2"
+rand = "0.10.0"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }
+jetstream_wasm = { version = "16.3.1", path = "components/jetstream_wasm" }
+
+# QUIC and the HTTP transport built on it are native-only: quinn reaches for
+# UDP sockets, which wasm32-unknown-unknown has no equivalent of. Declaring
+# them here rather than in [dependencies] keeps that a property of the
+# *target*, not of the feature -- so enabling `quic` (or `http`, which
+# implies it) in a workspace that also builds for wasm32 doesn't drag quinn
+# into the wasm build.
+#
+# That distinction is invisible to cargo, which resolves features per build
+# anyway, but it matters to anything that resolves a single feature set for
+# a whole workspace across several target triples -- Bazel's crate_universe
+# being the case in hand. A target-gated dependency becomes a `select()`
+# there, where a feature-gated one is unconditional.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+jetstream_quic = { version = "16.3.1", path = "components/jetstream_quic", optional = true }
+jetstream_http = { version = "16.3.1", path = "components/jetstream_http", optional = true }
+
+[build-dependencies]
+cfg_aliases = { workspace = true }
+
+[dev-dependencies]
+askama = "0.15.1"
+axum = "0.8.8"
+criterion = { version = "0.8.2", features = ["async_tokio"] }
+hyper = { version = "1.8.1", features = ["full"] }
+hyper-util = { version = "0.1.19", features = ["full"] }
+insta = "1.46.1"
+jetstream_error = { version = "16.3.1", path = "components/jetstream_error", features = [
+  "quinn",
+  "test-paths",
+] }
+jetstream_http = { path = "components/jetstream_http" }
+jetstream_rpc = { version = "16.3.1", path = "components/jetstream_rpc", default-features=false, features = [
+  "quinn",
+  "turmoil",
+] }
+jetstream_wireformat = { version = "16.3.1", path = "components/jetstream_wireformat", features = [
+  "all",
+] }
+miette = "7.6.0"
+prost = "0.14.3"
+quinn = { version = "0.11", default-features = false, features = [
+  "runtime-tokio",
+  "rustls",
+] }
+rcgen = "0.14.7"
+rusqlite = { version = "0.38.0", features = ["bundled"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pemfile = "2.2.0"
+sha256 = "1.6.0"
+term-transcript = "0.4.0"
+iroh = { workspace = true, features = ["test-utils"] }
+tokio = { version = "1.47.1", features = ["full"] }
+tokio-rustls = "0.26.4"
+tower = { version = "0.5.3", features = ["util"] }
+tower-service = "0.3.3"
+turmoil = { workspace = true }
+tower-http = { version = "0.7.1", features = ["fs"] }
+
+[features]
+default = ["tracing"]
+miette = ["jetstream_error/miette"]
+source-info = ["jetstream_error/source-info"]
+9p = ["dep:jetstream_9p"]
+all = ["9p", "http", "iroh", "quic", "tracing", "wasm"]
+iroh = ["dep:jetstream_iroh", "jetstream_rpc/iroh", "jetstream_error/iroh"]
+quic = [
+  "dep:jetstream_quic",
+  "jetstream_rpc/quinn",
+  "jetstream_error/quinn",
+]
+tracing = ["dep:tracing", "dep:tracing-subscriber", "miette", "source-info"]
+wasm = []
+serde = ["jetstream_rpc/serde"]
+http = ["dep:jetstream_http", "quic"]
+
+
+[workspace]
+members = [
+  "fuzz",
+  "tools/mdbook-changelog",
+  "components/jetstream_9p",
+  "components/jetstream_iroh",
+  "components/jetstream_libc",
+  "components/jetstream_macros",
+  "components/jetstream_quic",
+  "components/jetstream_rpc",
+  "components/jetstream_ufs",
+  "components/jetstream_wireformat",
+  "components/jetstream_error",
+  "components/jetstream_http",
+  "components/jetstream_codegen",
+  "components/jetstream_wasm",
+  "tests/jetstream_interop",
+]
+
+[workspace.package]
+edition = "2021"
+description = "Jetstream is a RPC framework for Rust, based on the 9P protocol and QUIC."
+documentation = "https://jetstream.rs"
+readme = "README.md"
+repository = "https://github.com/sevki/jetstream"
+license = "BSD-3-Clause"
+
+[workspace.dependencies]
+iroh = "1.0.2"
+tokio-util = { version = "0.7.16", features = ["codec"] }
+turmoil = "0.7.2"
+url = "2.5.7"
+cfg_aliases = "0.2.2"

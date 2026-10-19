@@ -7,6 +7,8 @@
 
 use vstd::prelude::*;
 
+use crate::host::HostId;
+
 use crate::actor::model::*;
 use crate::ownership::model::*;
 
@@ -22,7 +24,7 @@ pub proof fn lemma_push_then_drop_last(j: Seq<Entry>, e: Entry)
 
 /// **Pushing an entry adds one to its sender's count, and nothing to anyone
 /// else's.**
-pub proof fn lemma_accepted_from_push(j: Seq<Entry>, e: Entry, s: NodeId)
+pub proof fn lemma_accepted_from_push(j: Seq<Entry>, e: Entry, s: HostId)
     ensures
         accepted_from(j.push(e), s) == accepted_from(j, s) + if e.env.sender == s {
             1nat
@@ -63,7 +65,7 @@ pub proof fn lemma_take_all(j: Seq<Entry>)
 
 /// **Counting one more entry from `s` is counting what the prefix had, plus one
 /// if that entry is `s`'s.**
-pub proof fn lemma_accepted_from_next(j: Seq<Entry>, i: int, s: NodeId)
+pub proof fn lemma_accepted_from_next(j: Seq<Entry>, i: int, s: HostId)
     requires
         0 <= i < j.len(),
     ensures
@@ -78,7 +80,7 @@ pub proof fn lemma_accepted_from_next(j: Seq<Entry>, i: int, s: NodeId)
 }
 
 /// **A count never falls as the prefix grows.**
-pub proof fn lemma_accepted_from_monotone(j: Seq<Entry>, a: int, b: int, s: NodeId)
+pub proof fn lemma_accepted_from_monotone(j: Seq<Entry>, a: int, b: int, s: HostId)
     requires
         0 <= a <= b <= j.len(),
     ensures

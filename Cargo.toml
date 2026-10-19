@@ -51,13 +51,24 @@ required-features = ["service"]
 # to be asked about. Turn the feature on and the same modules compile against the
 # same verified step functions.
 #
+# The rule that keeps that true: a module outside `service` and `crush` uses `std`
+# and `vstd` and nothing else: no Jetstream type, no `rand`, and no `thiserror`
+# (errors write their own `Display`), because the bare `verus` build has no way to
+# build a dependency. CI builds `--no-default-features` and each feature alone, and
+# runs the bare `verus` build, to hold it.
+#
 # It also keeps the toolchain question honest. `rust-toolchain.toml` pins the
 # Rust release the Verus build was made against, and that pin exists so the
 # proofs verify, not so a service is stuck on it. The services build with
 # `cargo +stable`, which is what Jetstream tracks.
 [features]
-default = ["service"]
-service = ["dep:jetstream", "dep:tokio"]
+default = ["service", "crush"]
+# Everything that needs Jetstream, tokio or a random number generator: the
+# services, and the Vivaldi coordinates they exchange.
+service = ["dep:jetstream", "dep:tokio", "dep:rand"]
+# Placement by CRUSH. A feature of its own because it is a dependency of its own
+# (`mycrush`), and because it needs nothing of Jetstream: it places on `HostId`s.
+crush = ["dep:mycrush"]
 
 [dependencies]
 # `vstd` is the Verus standard library. This is the version that ships with
@@ -66,14 +77,14 @@ service = ["dep:jetstream", "dep:tokio"]
 # CI entry point (`verus --crate-type=lib src/lib.rs`) uses the prebuilt vstd
 # inside the Verus release archive instead.
 vstd = "=0.0.0-2026-09-20-0158"
-
-# Not `"16.3.1"` from crates.io — that version is not published there (16.0.0 is
-# the latest release), and the services are written against the working tree,
-# whose `Context` carries the peer identity their design depends on. Pinned to
-# the exact commit the API was read from rather than to a branch, so a service
-# is checked against a tree that cannot move under it.
-jetstream = { git = "https://github.com/sevki/jetstream", rev = "9761e74f69c792c28885eaac934d0f070a66281c", optional = true }
 tokio = { version = "1", features = ["io-util", "rt", "sync", "time"], optional = true }
+# From crates.io by requirement, and built from `vendor/jetstream` by the
+# `[patch.crates-io]` table below: the services are written against a tree whose
+# `Context` carries the peer identity their design depends on, which is newer than
+# the 16.0.0 that is published.
+jetstream = { version = "16.0.0", optional = true }
+mycrush = { version = "1.0.1", optional = true }
+rand = { version = "0.10.3", optional = true }
 
 # Opt this crate into verification.
 #
@@ -113,7 +124,19 @@ tokio = { version = "=1.47.1", features = ["io-util", "macros", "net", "rt", "ti
 # which is exactly what jetstream's own dev-dependencies do for its turmoil
 # suite. A dev-dependency rather than an optional one: `cargo verus verify`
 # does not build dev-dependencies, so this never reaches the verified build.
-jetstream_rpc = { git = "https://github.com/sevki/jetstream", rev = "9761e74f69c792c28885eaac934d0f070a66281c", default-features = false, features = ["turmoil"] }
+jetstream_rpc = { version = "16.0.0", default-features = false, features = ["turmoil"] }
+
+# Jetstream, built from `vendor/jetstream` instead of from crates.io. Every
+# `jetstream_*` crate the graph can reach is patched, so there is one copy of each:
+# the facade reaches its components by path, and a registry copy of any of them
+# next to those would be a second, incompatible `Context`. See `vendor/JETSTREAM.md`
+# for what that tree is, and is not.
+[patch.crates-io]
+jetstream = { path = "vendor/jetstream" }
+jetstream_rpc = { path = "vendor/jetstream/components/jetstream_rpc" }
+jetstream_wireformat = { path = "vendor/jetstream/components/jetstream_wireformat" }
+jetstream_error = { path = "vendor/jetstream/components/jetstream_error" }
+jetstream_macros = { path = "vendor/jetstream/components/jetstream_macros" }
 
 # The simulation suite, which needs no service.
 [[test]]

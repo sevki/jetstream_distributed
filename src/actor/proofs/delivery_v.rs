@@ -13,6 +13,8 @@
 
 use vstd::prelude::*;
 
+use crate::host::HostId;
+
 use crate::actor::model::*;
 use crate::actor::proofs::invariant::*;
 use crate::actor::proofs::journal::*;
@@ -87,7 +89,7 @@ pub proof fn theorem_a_message_is_accepted_at_most_once(c: ActorSystem, i: int, 
 pub proof fn theorem_a_redelivered_message_is_refused(
     pre: ActorSystem,
     post: ActorSystem,
-    host: NodeId,
+    host: HostId,
     epoch: Epoch,
     env: Envelope,
     i: int,
@@ -111,7 +113,7 @@ pub proof fn theorem_a_redelivered_message_is_refused(
 pub proof fn theorem_a_message_ahead_of_its_turn_is_refused(
     pre: ActorSystem,
     post: ActorSystem,
-    host: NodeId,
+    host: HostId,
     epoch: Epoch,
     env: Envelope,
 )

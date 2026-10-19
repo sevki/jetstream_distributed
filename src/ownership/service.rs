@@ -83,6 +83,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::host::HostId;
 use crate::ownership::registry::{BurnRefusal, RegistryCore, WriteOutcome};
 use crate::ownership::steps::{may_write_step, ExecOffer, ExecState, Refusal};
 use jetstream::prelude::*;
@@ -111,7 +112,7 @@ pub enum Offer {
 /// Six transitions in the model, five methods here, and no method takes a node
 /// number — see the module docs. The sixth, `tr_revoke_owner`, is the
 /// coordinator's and is not on the wire.
-#[service(uses(super::{Offer}))]
+#[service(uses(super::{HostId, Offer}))]
 pub trait Ownership {
     /// What is on offer for the caller?
     async fn poll(&self, ctx: Context) -> Result<Offer>;
@@ -131,7 +132,7 @@ pub trait Ownership {
     ///
     /// Agreeing is an action *by* the owner, which is why this is a call the
     /// owner makes rather than something done to it.
-    async fn begin_transfer(&self, ctx: Context, to: u64) -> Result<()>;
+    async fn begin_transfer(&self, ctx: Context, to: HostId) -> Result<()>;
 
     /// `tr_complete_release`: the outgoing owner acknowledges the revocation,
     /// naming the transfer's new epoch.
@@ -346,19 +347,19 @@ impl EpochFloor for FileFloor {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {
     /// A grant was issued to a node at an epoch.
-    Granted { node: u64, epoch: u64 },
+    Granted { node: HostId, epoch: u64 },
     /// A node took the actor.
-    Acquired { node: u64, epoch: u64 },
+    Acquired { node: HostId, epoch: u64 },
     /// A write landed, at this sequence number.
-    Wrote { node: u64, epoch: u64, seq: u64 },
+    Wrote { node: HostId, epoch: u64, seq: u64 },
     /// A write was refused by the fence. Named by the *request's* epoch.
-    Fenced { node: u64, epoch: u64 },
+    Fenced { node: HostId, epoch: u64 },
     /// An owner was told to stop.
-    Revoked { node: u64, new_epoch: u64 },
+    Revoked { node: HostId, new_epoch: u64 },
     /// An epoch was burned, cooperatively or by force.
-    EpochBurned { from_epoch: u64, to_epoch: u64, next: u64, forced: bool },
+    EpochBurned { from_epoch: u64, to_epoch: u64, next: HostId, forced: bool },
     /// A revoked owner acknowledged.
-    Released { node: u64, new_epoch: u64 },
+    Released { node: HostId, new_epoch: u64 },
 }
 
 // ---------------------------------------------------------------------------
@@ -425,7 +426,7 @@ pub struct Registry {
     inner: Arc<Mutex<Inner>>,
     /// Connection address to node number. See the module docs: this is the
     /// stated assumption, and the first thing to replace with TLS identity.
-    roster: Arc<HashMap<IpAddr, u64>>,
+    roster: Arc<HashMap<IpAddr, HostId>>,
     /// Where the epoch goes before it is used. See the module docs.
     floor: Arc<dyn EpochFloor>,
 }
@@ -445,8 +446,8 @@ impl Registry {
     /// a resource worth conserving: the model's are unbounded, and `u64`'s run
     /// out only after six hundred years of burning one a nanosecond.
     pub fn new(
-        roster: HashMap<IpAddr, u64>,
-        first_owner: u64,
+        roster: HashMap<IpAddr, HostId>,
+        first_owner: HostId,
         floor: Arc<dyn EpochFloor>,
     ) -> io::Result<Self> {
         // An actor held for a node that cannot connect is held for nobody, and
@@ -515,7 +516,7 @@ impl Registry {
     /// be, and refused 10 and 20, which are the only two nodes there are. A
     /// forced revoke could then hand the actor to a node that cannot take it,
     /// leaving it offered to nobody.
-    fn is_node(&self, node: u64) -> bool {
+    fn is_node(&self, node: HostId) -> bool {
         self.roster.values().any(|&n| n == node)
     }
 
@@ -559,7 +560,7 @@ impl Registry {
     /// before deciding anything else about a message, so a host that is not the
     /// owner learns nothing about the journal; the effect itself still goes
     /// through [`Ownership::write`], which makes the same check under the lock.
-    pub fn may_write(&self, node: u64, epoch: u64) -> bool {
+    pub fn may_write(&self, node: HostId, epoch: u64) -> bool {
         may_write_step(self.inner.lock().expect("registry lock").core.state, node, epoch)
     }
 
@@ -570,7 +571,7 @@ impl Registry {
     /// no node, whatever it claims. Note there is nothing to compare *against*
     /// here — no argument claims a node — so this cannot disagree with the
     /// request the way the line protocol's connection could.
-    fn caller(&self, ctx: &Context) -> Option<u64> {
+    fn caller(&self, ctx: &Context) -> Option<HostId> {
         match ctx.remote() {
             Some(RemoteAddr::IpAddr(addr)) => self.roster.get(addr).copied(),
             _ => None,
@@ -606,7 +607,7 @@ impl Registry {
     /// recovers an interrupted handover unreachable whenever the coordinator
     /// named a stranger, leaving the actor stuck mid-transfer — a liveness bug
     /// produced by a validity check on an argument that is not used.
-    pub fn force(&self, next: u64) -> Result<u64> {
+    pub fn force(&self, next: HostId) -> Result<HostId> {
         let mut g = self.inner.lock().expect("registry lock");
         let from_epoch = g.core.state.current();
         // Which of the three transitions this is, where it sends the actor and
@@ -734,7 +735,7 @@ impl Ownership for Registry {
         }
     }
 
-    async fn begin_transfer(&self, ctx: Context, to: u64) -> Result<()> {
+    async fn begin_transfer(&self, ctx: Context, to: HostId) -> Result<()> {
         let Some(from) = self.caller(&ctx) else {
             return Err(refuse_no("unknown caller"));
         };

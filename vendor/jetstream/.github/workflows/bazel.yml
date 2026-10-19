@@ -1,0 +1,74 @@
+name: "Bazel Build & Test"
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".bazelrc"
+      - "BUILD.bazel"
+      - "MODULE.bazel"
+      - ".cargo/config.toml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "Package.swift"
+      - "Sources/**"
+      - "Tests/**"
+      - "packages/**"
+      - "src/**"
+      - "tests/bazel_smoke.rs"
+      - "tests/jetstream_interop/**"
+      - "components/jetstream_codegen/**"
+      - "components/jetstream_error/**"
+      - "components/jetstream_libc/**"
+      - "components/jetstream_macros/**"
+      - "components/jetstream_rpc/**"
+      - "components/jetstream_wireformat/**"
+      - ".github/workflows/bazel.yml"
+  # Every pull request, not only those targeting `main`. The path
+  # filter below already selects only what matters, and what it selects
+  # is mostly Rust: a stacked PR touching `jetstream_rpc` or
+  # `jetstream_macros` gets real `bazel build //...` signal from it.
+  pull_request:
+    paths:
+      - ".bazelrc"
+      - "BUILD.bazel"
+      - "MODULE.bazel"
+      - ".cargo/config.toml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "Package.swift"
+      - "Sources/**"
+      - "Tests/**"
+      - "packages/**"
+      - "src/**"
+      - "tests/bazel_smoke.rs"
+      - "tests/jetstream_interop/**"
+      - "components/jetstream_codegen/**"
+      - "components/jetstream_error/**"
+      - "components/jetstream_libc/**"
+      - "components/jetstream_macros/**"
+      - "components/jetstream_rpc/**"
+      - "components/jetstream_wireformat/**"
+      - ".github/workflows/bazel.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  bazel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-version: "1.x"
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-${{ runner.os }}
+          external-cache: true
+          repository-cache: true
+          cache-save: ${{ github.event_name != 'pull_request' }}
+      - name: Build Bazel targets
+        run: bazel build //...
+      - name: Run Bazel tests
+        run: bazel test //...

@@ -35,6 +35,8 @@
 
 use vstd::prelude::*;
 
+use crate::host::HostId;
+
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
 use crate::ownership::spec::*;
@@ -43,11 +45,11 @@ verus! {
 
 /// The routing state of the whole cluster.
 pub struct Raymond {
-    pub nodes: Set<NodeId>,
-    pub holder: Map<NodeId, NodeId>,
-    pub queue: Map<NodeId, Seq<NodeId>>,
-    pub asked: Map<NodeId, bool>,
-    pub using: Map<NodeId, bool>,
+    pub nodes: Set<HostId>,
+    pub holder: Map<HostId, HostId>,
+    pub queue: Map<HostId, Seq<HostId>>,
+    pub asked: Map<HostId, bool>,
+    pub using: Map<HostId, bool>,
     /// Every request ever sent, as `(originator, destination)`.
     ///
     /// Like `OwnershipSystem::network` in the ownership layer this set never shrinks and
@@ -57,7 +59,7 @@ pub struct Raymond {
     /// at send time is what makes that last case expressible: a guard phrased
     /// against the *current* `holder[from]` would silently drop an in-flight
     /// request the moment the token moved.
-    pub requests: Set<(NodeId, NodeId)>,
+    pub requests: Set<(HostId, HostId)>,
     /// The node that **actually** holds the privilege.
     ///
     /// This is the authoritative fact, and it is deliberately *not* derived from
@@ -74,7 +76,7 @@ pub struct Raymond {
     /// *believing* it holds the privilege, and the theorems prove that inert
     /// too - see [`is_stale_holder`] and
     /// `crate::raymond::proofs::routing_layer::theorem_stale_holder_confers_no_authority`.
-    pub privilege: NodeId,
+    pub privilege: HostId,
 }
 
 /// `n` **believes** it holds the privilege.
@@ -82,7 +84,7 @@ pub struct Raymond {
 /// Belief is per-node state and can be wrong: after a seizure the old holder
 /// still believes, and goes on believing until it reconciles. Raymond's own
 /// transitions are driven by belief, because a node has nothing else to act on.
-pub open spec fn believes_holds(r: Raymond, n: NodeId) -> bool {
+pub open spec fn believes_holds(r: Raymond, n: HostId) -> bool {
     r.nodes.contains(n) && r.holder.contains_key(n) && r.holder[n] == n
 }
 
@@ -90,7 +92,7 @@ pub open spec fn believes_holds(r: Raymond, n: NodeId) -> bool {
 ///
 /// This is the predicate [`couples`] is written against, so authority over the
 /// actor tracks the real privilege and never a node's belief about it.
-pub open spec fn has_token(r: Raymond, n: NodeId) -> bool {
+pub open spec fn has_token(r: Raymond, n: HostId) -> bool {
     r.nodes.contains(n) && r.privilege == n
 }
 
@@ -99,7 +101,7 @@ pub open spec fn has_token(r: Raymond, n: NodeId) -> bool {
 /// This state is what a seizure creates, and being able to write it down is the
 /// point. It is the routing counterpart of a stale capability token: physically
 /// present, entirely inert.
-pub open spec fn is_stale_holder(r: Raymond, n: NodeId) -> bool {
+pub open spec fn is_stale_holder(r: Raymond, n: HostId) -> bool {
     believes_holds(r, n) && !has_token(r, n)
 }
 
@@ -111,12 +113,12 @@ pub open spec fn is_stale_holder(r: Raymond, n: NodeId) -> bool {
 /// belief-level guarantees do not hold. Theorems that need those guarantees say
 /// so by requiring this.
 pub open spec fn ray_no_stale_holders(r: Raymond) -> bool {
-    forall|n: NodeId| #[trigger] believes_holds(r, n) ==> has_token(r, n)
+    forall|n: HostId| #[trigger] believes_holds(r, n) ==> has_token(r, n)
 }
 
 /// Every node has an entry in every per-node map.
 pub open spec fn ray_maps_total(r: Raymond) -> bool {
-    forall|n: NodeId|
+    forall|n: HostId|
         #[trigger] r.nodes.contains(n) ==> r.holder.contains_key(n) && r.queue.contains_key(n)
             && r.asked.contains_key(n) && r.using.contains_key(n)
 }
@@ -137,7 +139,7 @@ pub open spec fn ray_maps_total(r: Raymond) -> bool {
 /// is a `nodes.contains` fact, which creates no new `holder[_]` term to fire it
 /// again.
 pub open spec fn ray_holder_closed(r: Raymond) -> bool {
-    forall|n: NodeId| r.nodes.contains(n) ==> r.nodes.contains(#[trigger] r.holder[n])
+    forall|n: HostId| r.nodes.contains(n) ==> r.nodes.contains(#[trigger] r.holder[n])
 }
 
 /// Every node has an entry in every map, and every holder pointer points at a
@@ -157,7 +159,7 @@ pub open spec fn ray_wf(r: Raymond) -> bool {
 /// the dangerous state was unrepresentable. Belief is where the multiplicity
 /// now lives, and belief is inert.
 pub open spec fn ray_unique_token(r: Raymond) -> bool {
-    forall|n: NodeId, m: NodeId|
+    forall|n: HostId, m: HostId|
         #![trigger has_token(r, n), has_token(r, m)]
         has_token(r, n) && has_token(r, m) ==> n == m
 }
@@ -170,7 +172,7 @@ pub open spec fn ray_unique_token(r: Raymond) -> bool {
 /// "exactly one token" rather than "at most one", and it is what lets every
 /// theorem parameterised by `ray_inv` rely on a root being there.
 pub open spec fn ray_token_exists(r: Raymond) -> bool {
-    exists|n: NodeId| #[trigger] has_token(r, n)
+    exists|n: HostId| #[trigger] has_token(r, n)
 }
 
 /// **The node that holds the privilege believes it does.**
@@ -179,7 +181,7 @@ pub open spec fn ray_token_exists(r: Raymond) -> bool {
 /// [`is_stale_holder`] names. This direction never fails: the privilege only
 /// ever moves to a node that is told about it in the same step.
 pub open spec fn ray_authority_believes(r: Raymond) -> bool {
-    forall|n: NodeId| #[trigger] has_token(r, n) ==> believes_holds(r, n)
+    forall|n: HostId| #[trigger] has_token(r, n) ==> believes_holds(r, n)
 }
 
 /// A rank witnessing that the holder pointers form a forest directed at its
@@ -188,9 +190,9 @@ pub open spec fn ray_authority_believes(r: Raymond) -> bool {
 /// A strictly decreasing `nat` along every edge is exactly well-foundedness, so
 /// no cycle can satisfy this - going round one would have to return to a rank
 /// it had already gone below.
-pub open spec fn ray_ranked_by(r: Raymond, rank: Map<NodeId, nat>) -> bool {
-    &&& (forall|n: NodeId| #[trigger] r.nodes.contains(n) ==> rank.contains_key(n))
-    &&& (forall|n: NodeId|
+pub open spec fn ray_ranked_by(r: Raymond, rank: Map<HostId, nat>) -> bool {
+    &&& (forall|n: HostId| #[trigger] r.nodes.contains(n) ==> rank.contains_key(n))
+    &&& (forall|n: HostId|
         r.nodes.contains(n) && #[trigger] r.holder[n] != n ==> rank[r.holder[n]] < rank[n])
 }
 
@@ -215,11 +217,11 @@ pub open spec fn ray_ranked_by(r: Raymond, rank: Map<NodeId, nat>) -> bool {
 /// by one with the new root sent to zero (see
 /// `crate::raymond::proofs::routing_layer::lemma_repoint_acyclic`).
 pub open spec fn ray_acyclic(r: Raymond) -> bool {
-    exists|rank: Map<NodeId, nat>| #[trigger] ray_ranked_by(r, rank)
+    exists|rank: Map<HostId, nat>| #[trigger] ray_ranked_by(r, rank)
 }
 
 /// Following holder pointers `k` times from `n`.
-pub open spec fn holder_iter(r: Raymond, n: NodeId, k: nat) -> NodeId
+pub open spec fn holder_iter(r: Raymond, n: HostId, k: nat) -> HostId
     decreases k,
 {
     if k == 0 {
@@ -241,7 +243,7 @@ pub open spec fn holder_iter(r: Raymond, n: NodeId, k: nat) -> NodeId
 /// because [`couples`] is written against authority. See
 /// `crate::raymond::proofs::routing_layer::theorem_stale_holder_confers_no_authority`.
 pub open spec fn ray_using_implies_belief(r: Raymond) -> bool {
-    forall|n: NodeId| #[trigger] r.nodes.contains(n) && r.using[n] ==> believes_holds(r, n)
+    forall|n: HostId| #[trigger] r.nodes.contains(n) && r.using[n] ==> believes_holds(r, n)
 }
 
 /// The Raymond safety invariant.
@@ -257,7 +259,7 @@ pub open spec fn ray_inv(r: Raymond) -> bool {
 // ---------------------------------------------------------------------------
 
 /// `n` wants the token: it appends itself to its own queue.
-pub open spec fn ray_request_cs(pre: Raymond, post: Raymond, n: NodeId) -> bool {
+pub open spec fn ray_request_cs(pre: Raymond, post: Raymond, n: HostId) -> bool {
     &&& pre.nodes.contains(n)
     &&& post.queue == pre.queue.insert(n, pre.queue[n].push(n))
     &&& post.holder == pre.holder
@@ -272,7 +274,7 @@ pub open spec fn ray_request_cs(pre: Raymond, post: Raymond, n: NodeId) -> bool 
 ///
 /// The destination is resolved *here*, at send time, and recorded in
 /// `requests`. Everything after this point is the network's business.
-pub open spec fn ray_make_request(pre: Raymond, post: Raymond, n: NodeId) -> bool {
+pub open spec fn ray_make_request(pre: Raymond, post: Raymond, n: HostId) -> bool {
     &&& pre.nodes.contains(n)
     &&& pre.holder[n] != n
     &&& pre.queue[n].len() > 0
@@ -295,7 +297,7 @@ pub open spec fn ray_make_request(pre: Raymond, post: Raymond, n: NodeId) -> boo
 /// moved and `from`'s holder pointer no longer points at `at`. All that happens
 /// is that `at`'s queue picks up extra entries, which costs fairness, not
 /// safety.
-pub open spec fn ray_receive_request(pre: Raymond, post: Raymond, at: NodeId, from: NodeId) -> bool {
+pub open spec fn ray_receive_request(pre: Raymond, post: Raymond, at: HostId, from: HostId) -> bool {
     &&& pre.nodes.contains(at)
     &&& pre.nodes.contains(from)
     &&& pre.requests.contains((from, at))
@@ -315,8 +317,8 @@ pub open spec fn ray_receive_request(pre: Raymond, post: Raymond, at: NodeId, fr
 pub open spec fn ray_assign_privilege(
     pre: Raymond,
     post: Raymond,
-    n: NodeId,
-    head: NodeId,
+    n: HostId,
+    head: HostId,
 ) -> bool {
     &&& has_token(pre, n)
     &&& believes_holds(pre, n)
@@ -340,7 +342,7 @@ pub open spec fn ray_assign_privilege(
 
 /// The token holder is itself at the head of its queue, so it enters the
 /// critical section.
-pub open spec fn ray_enter_cs(pre: Raymond, post: Raymond, n: NodeId) -> bool {
+pub open spec fn ray_enter_cs(pre: Raymond, post: Raymond, n: HostId) -> bool {
     // Belief, not authority: a node decides to enter on what it knows, and a
     // stale holder does not know it is stale. Guarding this on `has_token`
     // would be assuming the conclusion.
@@ -362,7 +364,7 @@ pub open spec fn ray_enter_cs(pre: Raymond, post: Raymond, n: NodeId) -> bool {
 /// Guarded on `n` actually being in it: without that, an arbitrary node could
 /// "leave" a section it never entered, and the transition relation would admit
 /// executions that are not Raymond executions.
-pub open spec fn ray_exit_cs(pre: Raymond, post: Raymond, n: NodeId) -> bool {
+pub open spec fn ray_exit_cs(pre: Raymond, post: Raymond, n: HostId) -> bool {
     &&& pre.nodes.contains(n)
     &&& pre.using[n]
     &&& post.using == pre.using.insert(n, false)
@@ -376,12 +378,12 @@ pub open spec fn ray_exit_cs(pre: Raymond, post: Raymond, n: NodeId) -> bool {
 
 /// The labelled Raymond transitions.
 pub enum RayStep {
-    RequestCs { node: NodeId },
-    MakeRequest { node: NodeId },
-    ReceiveRequest { at: NodeId, from: NodeId },
-    AssignPrivilege { node: NodeId, head: NodeId },
-    EnterCs { node: NodeId },
-    ExitCs { node: NodeId },
+    RequestCs { node: HostId },
+    MakeRequest { node: HostId },
+    ReceiveRequest { at: HostId, from: HostId },
+    AssignPrivilege { node: HostId, head: HostId },
+    EnterCs { node: HostId },
+    ExitCs { node: HostId },
 }
 
 pub open spec fn ray_step(pre: Raymond, post: Raymond, s: RayStep) -> bool {
@@ -407,7 +409,7 @@ pub open spec fn ray_step(pre: Raymond, post: Raymond, s: RayStep) -> bool {
 /// guarded on `preserves_token`, and
 /// [`crate::composed::model::cs_pass_token`] guards both of its nodes explicitly. The
 /// arm below exists only to keep this function total.
-pub open spec fn ray_step_actor(s: RayStep) -> NodeId {
+pub open spec fn ray_step_actor(s: RayStep) -> HostId {
     match s {
         RayStep::RequestCs { node } => node,
         RayStep::MakeRequest { node } => node,
@@ -452,7 +454,7 @@ pub open spec fn preserves_token(s: RayStep) -> bool {
 
 /// Initial routing state: exactly one node holds the token, no requests are
 /// outstanding, nobody is in the critical section.
-pub open spec fn ray_init(r: Raymond, root: NodeId) -> bool {
+pub open spec fn ray_init(r: Raymond, root: HostId) -> bool {
     &&& ray_wf(r)
     &&& r.nodes.contains(root)
     &&& r.holder[root] == root
@@ -466,10 +468,10 @@ pub open spec fn ray_init(r: Raymond, root: NodeId) -> bool {
     // `r.nodes.contains(r.holder[n])`, which matches this trigger again at
     // `r.holder[n]` and introduces `r.holder[r.holder[n]]`. Same loop as the one
     // documented on `ray_holder_closed`, spread across two quantifiers.
-    &&& (forall|n: NodeId| r.nodes.contains(n) && n != root ==> #[trigger] r.holder[n] != n)
-    &&& (forall|n: NodeId|
+    &&& (forall|n: HostId| r.nodes.contains(n) && n != root ==> #[trigger] r.holder[n] != n)
+    &&& (forall|n: HostId|
         #[trigger] r.nodes.contains(n) ==> r.queue[n].len() == 0 && !r.asked[n] && !r.using[n])
-    &&& (forall|m: (NodeId, NodeId)| !(#[trigger] r.requests.contains(m)))
+    &&& (forall|m: (HostId, HostId)| !(#[trigger] r.requests.contains(m)))
     // Without this clause `ray_init` admits a non-root cycle in `holder` - the
     // clause above forbids only a non-root pointing at itself - so an initial
     // state could contain nodes that never reach the token at all. See
@@ -503,7 +505,7 @@ pub open spec fn ray_init(r: Raymond, root: NodeId) -> bool {
 /// authority is what makes it writable, and
 /// `crate::raymond::proofs::routing_layer::theorem_stale_holder_confers_no_authority` is what
 /// makes it harmless.
-pub open spec fn ray_seize(pre: Raymond, post: Raymond, from: NodeId, to: NodeId) -> bool {
+pub open spec fn ray_seize(pre: Raymond, post: Raymond, from: HostId, to: HostId) -> bool {
     &&& has_token(pre, from)
     &&& pre.nodes.contains(to)
     &&& to != from
@@ -531,7 +533,7 @@ pub open spec fn ray_seize(pre: Raymond, post: Raymond, from: NodeId, to: NodeId
 /// [`ray_seize`]. That asymmetry is the whole content of the step: the belief
 /// is dropped by the node that holds it, at the moment it comes back, rather
 /// than by the coordinator at the moment it left.
-pub open spec fn ray_reconcile(pre: Raymond, post: Raymond, n: NodeId) -> bool {
+pub open spec fn ray_reconcile(pre: Raymond, post: Raymond, n: HostId) -> bool {
     &&& is_stale_holder(pre, n)
     // It re-points at the node that actually holds the privilege. A real
     // implementation might learn any node on a path to the holder; pointing
@@ -600,7 +602,7 @@ pub open spec fn ray_reachable_from(pre: Raymond, post: Raymond) -> bool {
 /// constrains who could possibly have it. Authority still comes exclusively
 /// from the ownership state and its epoch.
 pub open spec fn couples(r: Raymond, s: OwnershipState) -> bool {
-    forall|n: NodeId, e: Epoch| #[trigger] may_mutate(s, n, e) ==> has_token(r, n)
+    forall|n: HostId, e: Epoch| #[trigger] may_mutate(s, n, e) ==> has_token(r, n)
 }
 
 } // verus!

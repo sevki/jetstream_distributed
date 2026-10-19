@@ -5,6 +5,7 @@ use std::io;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 
+use crate::host::HostId;
 use super::refusal::{refuse, refuse_err, refuse_no};
 use super::{Actor, Receipt, Record, Snapshot, MAX_READ};
 use crate::actor::steps::{accept_step, apply_step, send_step};
@@ -16,13 +17,13 @@ use jetstream::prelude::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {
     Sent {
-        sender: u64,
+        sender: HostId,
         seq: u64,
     },
     Accepted {
-        host: u64,
+        host: HostId,
         epoch: u64,
-        sender: u64,
+        sender: HostId,
         seq: u64,
         index: u64,
     },
@@ -31,15 +32,15 @@ pub enum Event {
 struct Inner {
     /// Every message ever sent, by `(sender, seq)`. Never shrinks, and accepting
     /// does not consume — the model's `sent`, for the model's reason.
-    sent: HashMap<(u64, u64), u64>,
+    sent: HashMap<(HostId, u64), u64>,
     /// Each sender's next sequence number.
-    next_seq: HashMap<u64, u64>,
+    next_seq: HashMap<HostId, u64>,
     /// The journal.
     journal: Vec<Record>,
     /// How many messages the journal holds from each sender: the count
     /// `accept_step` is handed. Kept beside the journal so an append is constant
     /// time, and checked against it by `accepted_from`.
-    accepted: HashMap<u64, u64>,
+    accepted: HashMap<HostId, u64>,
     /// The state the journal folds to.
     state: u64,
     log: Vec<Event>,
@@ -56,7 +57,7 @@ pub struct Host {
     inner: Arc<Mutex<Inner>>,
     /// Connection address to node number. The stated assumption; see the module
     /// docs.
-    roster: Arc<HashMap<IpAddr, u64>>,
+    roster: Arc<HashMap<IpAddr, HostId>>,
 }
 
 impl Host {
@@ -67,8 +68,8 @@ impl Host {
     /// `Ownership` trait takes `&self`, so a handle to the registry would be a
     /// handle to `write`, bypassing the gate. See the module docs.
     pub fn new(
-        roster: HashMap<IpAddr, u64>,
-        first_owner: u64,
+        roster: HashMap<IpAddr, HostId>,
+        first_owner: HostId,
         floor: Arc<dyn EpochFloor>,
     ) -> io::Result<Self> {
         let registry = Registry::new(roster.clone(), first_owner, floor)?;
@@ -115,12 +116,12 @@ impl Host {
     /// reassign or abort. See `Registry::force`.
     ///
     /// Inherent, not on the trait: no node may cause it.
-    pub async fn force(&self, next: u64) -> Result<u64> {
+    pub async fn force(&self, next: HostId) -> Result<HostId> {
         let _gate = self.gate.lock().await;
         self.registry.force(next)
     }
 
-    fn caller(&self, ctx: &Context) -> Result<u64> {
+    fn caller(&self, ctx: &Context) -> Result<HostId> {
         match ctx.remote() {
             Some(RemoteAddr::IpAddr(addr)) => self
                 .roster
@@ -143,7 +144,7 @@ impl Actor for Host {
         self.registry.acquire(ctx, epoch).await
     }
 
-    async fn begin_transfer(&self, ctx: Context, to: u64) -> Result<()> {
+    async fn begin_transfer(&self, ctx: Context, to: HostId) -> Result<()> {
         let _gate = self.gate.lock().await;
         self.registry.begin_transfer(ctx, to).await
     }
@@ -165,7 +166,7 @@ impl Actor for Host {
         Ok(seq)
     }
 
-    async fn accept(&self, ctx: Context, epoch: u64, sender: u64, seq: u64) -> Result<Receipt> {
+    async fn accept(&self, ctx: Context, epoch: u64, sender: HostId, seq: u64) -> Result<Receipt> {
         let _gate = self.gate.lock().await;
         let host = self.caller(&ctx)?;
         let (body, index, state) = {

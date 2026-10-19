@@ -12,6 +12,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use jetstream_distributed::host::HostId;
 use jetstream_distributed::composed::service::{
     composed_protocol::{ComposedChannel, ComposedService},
     Composed, Coordinator,
@@ -23,12 +24,12 @@ use turmoil::net::{TcpListener, TcpStream};
 
 const PORT: u16 = 9300;
 
-const A: u64 = 0;
-const B: u64 = 1;
+const A: HostId = 0;
+const B: HostId = 1;
 
 /// Who is which node, by address. Built inside a host or a client:
 /// `turmoil::lookup` panics outside a live simulation.
-fn roster() -> HashMap<IpAddr, u64> {
+fn roster() -> HashMap<IpAddr, HostId> {
     HashMap::from([(turmoil::lookup("a"), A), (turmoil::lookup("b"), B)])
 }
 

@@ -31,6 +31,8 @@
 use vstd::assert_seqs_equal;
 use vstd::prelude::*;
 
+use crate::host::HostId;
+
 use crate::composed::model::*;
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
@@ -51,7 +53,7 @@ verus! {
 
 /// After phase one: the actor has been released at epoch 42, and `A` still
 /// holds the token.
-pub open spec fn handover_released_state(c: Composed, x: ActorId, a: NodeId, b: NodeId) -> bool {
+pub open spec fn handover_released_state(c: Composed, x: ActorId, a: HostId, b: HostId) -> bool {
     &&& c.actor == x
     &&& c.own.actors[x] == (OwnershipState::Unowned { epoch: 42, intended_owner: b })
     &&& c.own.live.contains(a)
@@ -70,7 +72,7 @@ pub open spec fn handover_released_state(c: Composed, x: ActorId, a: NodeId, b: 
 
 /// After phase two: `B`'s request has reached `A`, which now has `B` at the
 /// head of its queue. The ownership layer is untouched by the whole phase.
-pub open spec fn handover_requested_state(c: Composed, x: ActorId, a: NodeId, b: NodeId) -> bool {
+pub open spec fn handover_requested_state(c: Composed, x: ActorId, a: HostId, b: HostId) -> bool {
     &&& c.actor == x
     &&& c.own.actors[x] == (OwnershipState::Unowned { epoch: 42, intended_owner: b })
     &&& c.own.live.contains(a)
@@ -87,7 +89,7 @@ pub open spec fn handover_requested_state(c: Composed, x: ActorId, a: NodeId, b:
 
 /// After phase three: the token is at `B`, and the actor is still unowned - the
 /// routing layer moved first and conferred nothing by moving.
-pub open spec fn handover_passed_state(c: Composed, x: ActorId, a: NodeId, b: NodeId) -> bool {
+pub open spec fn handover_passed_state(c: Composed, x: ActorId, a: HostId, b: HostId) -> bool {
     &&& c.actor == x
     &&& c.own.actors[x] == (OwnershipState::Unowned { epoch: 42, intended_owner: b })
     &&& c.own.live.contains(b)
@@ -102,7 +104,7 @@ pub open spec fn handover_passed_state(c: Composed, x: ActorId, a: NodeId, b: No
 /// Written out as one spec function so that the phases and the scenario agree
 /// on it by construction, and so the scenario's postcondition can say "the run
 /// is *this*" in a single clause.
-pub open spec fn handover_labels(x: ActorId, a: NodeId, b: NodeId) -> Seq<ComposedStep> {
+pub open spec fn handover_labels(x: ActorId, a: HostId, b: HostId) -> Seq<ComposedStep> {
     seq![
         ComposedStep::Own { own_step: Step::IssueGrant { actor: x } },
         ComposedStep::AcquireUnderToken { node: a },
@@ -126,7 +128,7 @@ pub open spec fn handover_labels(x: ActorId, a: NodeId, b: NodeId) -> Seq<Compos
 /// the caller keep the literal is what keeps the proof tractable: each phase
 /// reasons about a handful of `insert`s over an opaque base instead of a dozen
 /// nested `Map`/`Set` literals, which is what exhausted the solver before.
-pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (res: (
+pub proof fn handover_phase_release(x: ActorId, a: HostId, b: HostId) -> (res: (
     Composed,
     Seq<Composed>,
     Seq<ComposedStep>,
@@ -171,9 +173,9 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (res: (
         }),
         res.1[5] == res.0,
 {
-    let nodes = Set::<NodeId>::empty().insert(a).insert(b);
+    let nodes = Set::<HostId>::empty().insert(a).insert(b);
     let stale = Token { actor: x, epoch: 41, holder: a };
-    let empty_q = Seq::<NodeId>::empty();
+    let empty_q = Seq::<HostId>::empty();
 
     let own0 = OwnershipSystem {
         actors: Map::<ActorId, OwnershipState>::empty().insert(
@@ -188,20 +190,20 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (res: (
     let ray0 = Raymond {
         privilege: a,
         nodes: nodes,
-        holder: Map::<NodeId, NodeId>::empty().insert(a, a).insert(b, a),
-        queue: Map::<NodeId, Seq<NodeId>>::empty().insert(a, empty_q).insert(b, empty_q),
-        asked: Map::<NodeId, bool>::empty().insert(a, false).insert(b, false),
-        using: Map::<NodeId, bool>::empty().insert(a, false).insert(b, false),
-        requests: Set::<(NodeId, NodeId)>::empty(),
+        holder: Map::<HostId, HostId>::empty().insert(a, a).insert(b, a),
+        queue: Map::<HostId, Seq<HostId>>::empty().insert(a, empty_q).insert(b, empty_q),
+        asked: Map::<HostId, bool>::empty().insert(a, false).insert(b, false),
+        using: Map::<HostId, bool>::empty().insert(a, false).insert(b, false),
+        requests: Set::<(HostId, HostId)>::empty(),
     };
     assert(ray0.holder[a] == a);
     assert(ray0.holder[b] == a);
     // `ray_init` requires the holder pointers to be acyclic; `A` is the root and
     // `B` is its only child, so ranking `A` below `B` witnesses it.
-    let ray_rank = Map::new(ray0.nodes, |k: NodeId| if k == a { 0nat } else { 1nat });
-    assert forall|n: NodeId| #[trigger] ray0.nodes.contains(n) implies ray_rank.contains_key(n) by {
+    let ray_rank = Map::new(ray0.nodes, |k: HostId| if k == a { 0nat } else { 1nat });
+    assert forall|n: HostId| #[trigger] ray0.nodes.contains(n) implies ray_rank.contains_key(n) by {
     }
-    assert forall|n: NodeId|
+    assert forall|n: HostId|
         ray0.nodes.contains(n) && #[trigger] ray0.holder[n] != n implies ray_rank[ray0.holder[n]]
             < ray_rank[n] by {
         assert(n == a || n == b);
@@ -212,7 +214,7 @@ pub proof fn handover_phase_release(x: ActorId, a: NodeId, b: NodeId) -> (res: (
     assert(ray_acyclic(ray0));
     assert(ray_init(ray0, a));
 
-    let c0 = Composed { own: own0, ray: ray0, actor: x, seized: Set::<NodeId>::empty() };
+    let c0 = Composed { own: own0, ray: ray0, actor: x, seized: Set::<HostId>::empty() };
     assert(own0.actors.contains_key(x));
     assert(init(own0));
     assert(own0.nodes == ray0.nodes);
@@ -414,8 +416,8 @@ pub proof fn handover_phase_request(
     labels: Seq<ComposedStep>,
     c: Composed,
     x: ActorId,
-    a: NodeId,
-    b: NodeId,
+    a: HostId,
+    b: HostId,
 ) -> (res: (Composed, Seq<Composed>, Seq<ComposedStep>))
     requires
         a != b,
@@ -567,8 +569,8 @@ pub proof fn handover_phase_pass_token(
     labels: Seq<ComposedStep>,
     c: Composed,
     x: ActorId,
-    a: NodeId,
-    b: NodeId,
+    a: HostId,
+    b: HostId,
 ) -> (res: (Composed, Seq<Composed>, Seq<ComposedStep>))
     requires
         a != b,
@@ -643,8 +645,8 @@ pub proof fn handover_phase_acquire(
     labels: Seq<ComposedStep>,
     c: Composed,
     x: ActorId,
-    a: NodeId,
-    b: NodeId,
+    a: HostId,
+    b: HostId,
 ) -> (res: (Composed, Seq<Composed>, Seq<ComposedStep>))
     requires
         a != b,
@@ -711,7 +713,7 @@ pub proof fn handover_phase_acquire(
 /// This is the non-vacuity witness for every `composed_reachable` theorem: it
 /// exhibits a reachable composed state in which somebody actually owns the actor
 /// and actually holds the token.
-pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
+pub proof fn scenario_composed_handover(x: ActorId, a: HostId, b: HostId)
     requires
         a != b,
     ensures
@@ -844,7 +846,7 @@ pub proof fn scenario_composed_handover(x: ActorId, a: NodeId, b: NodeId)
 /// on its own it does not establish that any reachable composed state has
 /// `using` set. This does: it drives `RequestCs`, `EnterCs` and `ExitCs` from
 /// `composed_init` through `lemma_composed_reachable_step`.
-pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId)
+pub proof fn scenario_composed_critical_section(x: ActorId, a: HostId, b: HostId)
     requires
         a != b,
     ensures
@@ -867,8 +869,8 @@ pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId
                 &&& has_token(tr[2].ray, a)
             },
 {
-    let nodes = Set::<NodeId>::empty().insert(a).insert(b);
-    let empty_q = Seq::<NodeId>::empty();
+    let nodes = Set::<HostId>::empty().insert(a).insert(b);
+    let empty_q = Seq::<HostId>::empty();
 
     let own0 = OwnershipSystem {
         actors: Map::<ActorId, OwnershipState>::empty().insert(
@@ -883,20 +885,20 @@ pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId
     let ray0 = Raymond {
         privilege: a,
         nodes: nodes,
-        holder: Map::<NodeId, NodeId>::empty().insert(a, a).insert(b, a),
-        queue: Map::<NodeId, Seq<NodeId>>::empty().insert(a, empty_q).insert(b, empty_q),
-        asked: Map::<NodeId, bool>::empty().insert(a, false).insert(b, false),
-        using: Map::<NodeId, bool>::empty().insert(a, false).insert(b, false),
-        requests: Set::<(NodeId, NodeId)>::empty(),
+        holder: Map::<HostId, HostId>::empty().insert(a, a).insert(b, a),
+        queue: Map::<HostId, Seq<HostId>>::empty().insert(a, empty_q).insert(b, empty_q),
+        asked: Map::<HostId, bool>::empty().insert(a, false).insert(b, false),
+        using: Map::<HostId, bool>::empty().insert(a, false).insert(b, false),
+        requests: Set::<(HostId, HostId)>::empty(),
     };
     assert(ray0.holder[a] == a);
     assert(ray0.holder[b] == a);
     // `ray_init` requires the holder pointers to be acyclic; `A` is the root and
     // `B` is its only child, so ranking `A` below `B` witnesses it.
-    let ray_rank = Map::new(ray0.nodes, |k: NodeId| if k == a { 0nat } else { 1nat });
-    assert forall|n: NodeId| #[trigger] ray0.nodes.contains(n) implies ray_rank.contains_key(n) by {
+    let ray_rank = Map::new(ray0.nodes, |k: HostId| if k == a { 0nat } else { 1nat });
+    assert forall|n: HostId| #[trigger] ray0.nodes.contains(n) implies ray_rank.contains_key(n) by {
     }
-    assert forall|n: NodeId|
+    assert forall|n: HostId|
         ray0.nodes.contains(n) && #[trigger] ray0.holder[n] != n implies ray_rank[ray0.holder[n]]
             < ray_rank[n] by {
         assert(n == a || n == b);
@@ -907,7 +909,7 @@ pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId
     assert(ray_acyclic(ray0));
     assert(ray_init(ray0, a));
 
-    let c0 = Composed { own: own0, ray: ray0, actor: x, seized: Set::<NodeId>::empty() };
+    let c0 = Composed { own: own0, ray: ray0, actor: x, seized: Set::<HostId>::empty() };
     assert(own0.actors.contains_key(x));
     assert(init(own0));
     assert(own0.nodes == ray0.nodes);
@@ -1046,7 +1048,7 @@ pub proof fn scenario_composed_critical_section(x: ActorId, a: NodeId, b: NodeId
 ///
 /// `A`'s epoch-41 token is still in `issued` at the end, and still confers
 /// nothing.
-pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
+pub proof fn scenario_composed_crash_takeover(x: ActorId, a: HostId, b: HostId)
     requires
         a != b,
     ensures
@@ -1110,8 +1112,8 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
                 &&& !tr[8].seized.contains(a)
             },
 {
-    let nodes = Set::<NodeId>::empty().insert(a).insert(b);
-    let empty_q = Seq::<NodeId>::empty();
+    let nodes = Set::<HostId>::empty().insert(a).insert(b);
+    let empty_q = Seq::<HostId>::empty();
     let stale = Token { actor: x, epoch: 41, holder: a };
 
     let own0 = OwnershipSystem {
@@ -1127,20 +1129,20 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
     let ray0 = Raymond {
         privilege: a,
         nodes: nodes,
-        holder: Map::<NodeId, NodeId>::empty().insert(a, a).insert(b, a),
-        queue: Map::<NodeId, Seq<NodeId>>::empty().insert(a, empty_q).insert(b, empty_q),
-        asked: Map::<NodeId, bool>::empty().insert(a, false).insert(b, false),
-        using: Map::<NodeId, bool>::empty().insert(a, false).insert(b, false),
-        requests: Set::<(NodeId, NodeId)>::empty(),
+        holder: Map::<HostId, HostId>::empty().insert(a, a).insert(b, a),
+        queue: Map::<HostId, Seq<HostId>>::empty().insert(a, empty_q).insert(b, empty_q),
+        asked: Map::<HostId, bool>::empty().insert(a, false).insert(b, false),
+        using: Map::<HostId, bool>::empty().insert(a, false).insert(b, false),
+        requests: Set::<(HostId, HostId)>::empty(),
     };
     assert(ray0.holder[a] == a);
     assert(ray0.holder[b] == a);
     // `ray_init` requires the holder pointers to be acyclic; `A` is the root and
     // `B` is its only child, so ranking `A` below `B` witnesses it.
-    let ray_rank = Map::new(ray0.nodes, |k: NodeId| if k == a { 0nat } else { 1nat });
-    assert forall|n: NodeId| #[trigger] ray0.nodes.contains(n) implies ray_rank.contains_key(n) by {
+    let ray_rank = Map::new(ray0.nodes, |k: HostId| if k == a { 0nat } else { 1nat });
+    assert forall|n: HostId| #[trigger] ray0.nodes.contains(n) implies ray_rank.contains_key(n) by {
     }
-    assert forall|n: NodeId|
+    assert forall|n: HostId|
         ray0.nodes.contains(n) && #[trigger] ray0.holder[n] != n implies ray_rank[ray0.holder[n]]
             < ray_rank[n] by {
         assert(n == a || n == b);
@@ -1151,7 +1153,7 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: NodeId, b: NodeId)
     assert(ray_acyclic(ray0));
     assert(ray_init(ray0, a));
 
-    let c0 = Composed { own: own0, ray: ray0, actor: x, seized: Set::<NodeId>::empty() };
+    let c0 = Composed { own: own0, ray: ray0, actor: x, seized: Set::<HostId>::empty() };
     assert(own0.actors.contains_key(x));
     assert(init(own0));
     assert(own0.nodes == ray0.nodes);

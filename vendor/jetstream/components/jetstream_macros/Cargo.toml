@@ -1,0 +1,34 @@
+[package]
+name = "jetstream_macros"
+version = "16.3.1"
+edition = { workspace = true }
+description = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+readme = "README.md"
+documentation = { workspace = true }
+[dependencies]
+syn = { version = "2.0.117", features = ["full", "extra-traits"] }
+quote = "^1"
+proc-macro2 = { version = "1.0.92", features = ["span-locations"] }
+convert_case = "0.12.0"
+sha256 = "1.5.0"
+lazy_static = "1.5.0"
+prettyplease = "0.2.37"
+ident_case = "1.0.1"
+jetstream_codegen = { version = "16.3.1", path = "../jetstream_codegen" }
+
+[lib]
+proc-macro = true
+
+bench = false
+
+[dev-dependencies]
+insta = { version = "1.47.2", features = ["filters", "yaml"] }
+pretty_assertions = "1.4.0"
+
+sha256 = "1.5.0"
+trybuild = "1.0.116"
+futures = "0.3.32"
+tokio = { version = "1.48.0", features = ["full"] }
+turmoil = "0.7.2"

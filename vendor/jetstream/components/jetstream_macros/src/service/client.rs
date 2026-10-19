@@ -1,0 +1,277 @@
+use std::collections::HashMap;
+
+use proc_macro2::TokenStream;
+use quote::quote;
+use syn::{Attribute, Ident, TraitItem};
+
+use crate::{
+    service::subscription::{done_struct_name, Streaming},
+    utils::case_conversion::IdentCased,
+};
+#[allow(clippy::too_many_arguments)]
+pub fn generate_client(
+    channel_name: &Ident,
+    trait_name: &Ident,
+    trait_items: &[TraitItem],
+    tmsgs: &[(Ident, TokenStream)],
+    rmsgs: &[(Ident, TokenStream)],
+    method_attrs: &[Vec<Attribute>],
+    enable_tracing: bool,
+    streaming: &HashMap<String, Streaming>,
+) -> TokenStream {
+    let client_calls = generate_client_calls(
+        trait_items,
+        tmsgs,
+        rmsgs,
+        method_attrs,
+        enable_tracing,
+        streaming,
+    );
+
+    // Add RPC-level tracing span if tracing is enabled
+    let _rpc_span = if enable_tracing {
+        quote! {
+            let _span = tracing::debug_span!(
+                "rpc_client",
+                service = stringify!(#trait_name),
+                tag = frame.tag
+            );
+            let _enter = _span.enter();
+        }
+    } else {
+        quote! {}
+    };
+
+    // r[impl jetstream.subscription.cancel]
+    // The client's half of cancellation. Without it a dropped
+    // subscription marks its tag abandoned and tells the service
+    // nothing, so the producer runs on — which is the whole failure the
+    // cancellation rule exists to prevent, and it is silent.
+    let tcancel_impl = if streaming.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            fn tcancel(oldtag: u16, binding: u64) -> Option<Tmessage> {
+                Some(Tmessage::Cancel(
+                    jetstream::prelude::subscription::Tcancel {
+                        oldtag,
+                        binding,
+                    },
+                ))
+            }
+        }
+    };
+
+    quote! {
+        pub struct #channel_name {
+            // r[impl jetstream.subscription.surface.rust]
+            // Shared, because a subscription outlives the call that
+            // opened it: the stream reads through this multiplexer long
+            // after the borrow that produced it is gone.
+            mux: std::sync::Arc<Mux<Self>>,
+        }
+
+        impl #channel_name {
+            pub fn new(max_concurrent_requests:u16,inner: Box<dyn ClientTransport<Self>>) -> Self {
+                Self { mux: std::sync::Arc::new(Mux::new(max_concurrent_requests,inner)) }
+            }
+
+            // r[impl jetstream.version.framer.client-handshake]
+            /// Perform Tversion/Rversion handshake with the server.
+            /// Must be called after `new()` and before any RPC calls.
+            pub async fn negotiate_version(&self, msize: u32) -> std::result::Result<jetstream::prelude::Rversion, Error> {
+                let req = Tmessage::Version(jetstream::prelude::Tversion {
+                    msize,
+                    version: PROTOCOL_VERSION.to_string(),
+                });
+                let context = Context::default();
+                let rframe = self.mux.rpc(context, req).await.await?;
+                match rframe.msg {
+                    Rmessage::Version(rversion) => {
+                        if rversion.version == "unknown" {
+                            Err(Error::new("server rejected version negotiation"))
+                        } else {
+                            Ok(rversion)
+                        }
+                    }
+                    Rmessage::Error(err) => Err(err),
+                    _ => Err(Error::new("unexpected response to Tversion")),
+                }
+            }
+        }
+
+        impl Protocol for #channel_name {
+            type Request = Tmessage;
+            type Response = Rmessage;
+            // r[impl jetstream.macro.error-type]
+            type Error = Error;
+            const VERSION: &'static str = PROTOCOL_VERSION;
+            const NAME: &'static str = PROTOCOL_NAME;
+
+            #tcancel_impl
+        }
+
+        impl #trait_name for #channel_name
+        {
+            #(#client_calls)*
+        }
+    }
+}
+
+fn generate_client_calls(
+    trait_items: &[TraitItem],
+    tmsgs: &[(Ident, TokenStream)],
+    rmsgs: &[(Ident, TokenStream)],
+    method_attrs: &[Vec<Attribute>],
+    enable_tracing: bool,
+    streaming: &HashMap<String, Streaming>,
+) -> Vec<TokenStream> {
+    trait_items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            if let TraitItem::Fn(method) = item {
+                let method_name = &method.sig.ident;
+                let reciever = match &method.sig.receiver(){
+                    Some(recv) => {
+                        if recv.mutability.is_some() {
+                            quote! {&mut self}
+                        } else {
+                            quote! { &self }
+                        }
+                    },
+                    None => quote!{},
+                };
+                let variant_name: Ident = IdentCased(method_name.clone()).to_pascal_case().into();
+                let retn = &method.sig.output;
+                let is_async = method.sig.asyncness.is_some();
+                let maybe_async = if is_async { quote! { async } } else { quote! {} };
+
+                let request_struct_ident = &tmsgs[index].0;
+
+                let inputs = method.sig.inputs.iter().map(|arg| {
+                    match arg {
+                        syn::FnArg::Typed(pat) => {
+                            let name = pat.pat.clone();
+                            let ty = pat.ty.clone();
+                            // if context add #[allow(unused)]
+                            let allow_unused = if let syn::Type::Path(type_path) = &ty.as_ref() {
+                                if let Some(segment) = type_path.path.segments.last() {
+                                    if segment.ident == "Context" {
+                                        quote! { #[allow(unused)] }
+                                    } else {
+                                        quote! {}
+                                    }
+                                } else {
+                                    quote! {}
+                                }
+                            } else {
+                                quote! {}
+                            };
+
+                            quote! { #allow_unused #name: #ty, }
+                        }
+                        syn::FnArg::Receiver(_) => quote! {},
+                    }
+                });
+
+                let args = method.sig.inputs.iter().filter_map(|arg| {
+                    match arg {
+                        syn::FnArg::Typed(pat) => {
+                            let name = pat.pat.clone();
+                            let ty = &pat.ty;
+                            // Skip Context type - it's not in the request struct
+                            if let syn::Type::Path(type_path) = &**ty {
+                                if let Some(segment) = type_path.path.segments.last() {
+                                    if segment.ident == "Context" {
+                                        return None;
+                                    }
+                                }
+                            }
+                            Some(quote! { #name, })
+                        }
+                        syn::FnArg::Receiver(_) => None,
+                    }
+                });
+
+                // Get tracing attributes for this method
+                let attrs = &method_attrs[index];
+
+                // If enable_tracing is true and no explicit attributes, add default
+                let tracing_attrs: Vec<TokenStream> = if enable_tracing && attrs.is_empty() {
+                    vec![quote! { #[tracing::instrument(skip(self))] }]
+                } else {
+                    attrs.iter().map(|attr| quote! { #attr }).collect()
+                };
+
+                // r[impl jetstream.subscription.surface.rust]
+                // A subscription is a `Stream`, cancelled by dropping
+                // it. It opens on first poll, which is what lets the
+                // method be the plain `fn` the surface calls for while
+                // acquiring a tag and sending a request stay
+                // asynchronous.
+                if streaming.contains_key(&method_name.to_string()) {
+                    let return_struct_ident = &rmsgs[index].0;
+                    let done_ident = done_struct_name(return_struct_ident);
+                    let args: Vec<_> = args.collect();
+                    return Some(quote! {
+                        #(#tracing_attrs)*
+                        fn #method_name(#reciever, #(#inputs)*) #retn {
+                            let mux = self.mux.clone();
+                            let req = Tmessage::#variant_name(#request_struct_ident {
+                                #(#args)*
+                            });
+                            Subscription::opening(async move {
+                                let frames = mux
+                                    .rpc_stream(Context::default(), req, 64)
+                                    .await;
+                                Subscription::from_frames(frames, |frame| {
+                                    match frame.msg {
+                                        Rmessage::#variant_name(item) => {
+                                            Ok(Some(Item::Next(item.0)))
+                                        }
+                                        Rmessage::Done(Done::#variant_name(
+                                            #done_ident(value),
+                                        )) => Ok(Some(Item::Done(value))),
+                                        // Cut short: the tag is freed and
+                                        // the sequence ends, carrying no
+                                        // result because the producer
+                                        // never produced one.
+                                        Rmessage::Done(Done::Cancelled) => {
+                                            Ok(None)
+                                        }
+                                        Rmessage::Error(err) => Err(err),
+                                        _ => Err(Error::new(
+                                            "unexpected response in a subscription",
+                                        )),
+                                    }
+                                })
+                            })
+                        }
+                    });
+                }
+
+                // r[impl jetstream.macro.client-error]
+                Some(quote! {
+                    #(#tracing_attrs)*
+                    #maybe_async fn #method_name(#reciever, #(#inputs)*) #retn {
+                        let req = Tmessage::#variant_name(#request_struct_ident {
+                            #(#args)*
+                        });
+                        let context = Context::default();
+                        let rframe = self.mux.rpc(context, req).await.await?;
+                        let rmsg = rframe.msg;
+                        match rmsg {
+                            Rmessage::#variant_name(msg) => Ok(msg.0),
+                            // When client receives an error frame, convert it to jetstream::prelude::Error
+                            Rmessage::Error(err) => Err(err),
+                            _ => Err(Error::new("invalid reposne")),
+                        }
+                    }
+                })
+            } else {
+                None
+            }
+        })
+        .collect()
+}

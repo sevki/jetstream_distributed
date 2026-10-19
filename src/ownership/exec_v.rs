@@ -42,6 +42,8 @@
 
 use vstd::prelude::*;
 
+use crate::host::HostId;
+
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
 use crate::ownership::spec::*;
@@ -52,7 +54,7 @@ verus! {
 /// `epoch`". This is the `Owned` case of [`OwnershipState`] narrowed to `u64`,
 /// which is the only case in which anybody may mutate anything.
 pub struct FenceGuard {
-    owner: u64,
+    owner: HostId,
     epoch: u64,
 }
 
@@ -63,7 +65,7 @@ impl FenceGuard {
     /// an opaque, immutable record, and the only way to learn what it stands
     /// for is the postcondition of [`FenceGuard::new`].
     pub closed spec fn view(self) -> OwnershipState {
-        OwnershipState::Owned { owner: self.owner as nat, epoch: self.epoch as nat }
+        OwnershipState::Owned { owner: self.owner, epoch: self.epoch as nat }
     }
 
     /// The only constructor.
@@ -74,9 +76,9 @@ impl FenceGuard {
     /// `Owned(A, e)` to `Owned(B, e + 1)` the way a mutable guard could, which
     /// would be the atomic ownership assignment the model exists to forbid.
     /// Observing a *new* generation means constructing a *new* guard.
-    pub fn new(owner: u64, epoch: u64) -> (r: FenceGuard)
+    pub fn new(owner: HostId, epoch: u64) -> (r: FenceGuard)
         ensures
-            r.view() == (OwnershipState::Owned { owner: owner as nat, epoch: epoch as nat }),
+            r.view() == (OwnershipState::Owned { owner: owner, epoch: epoch as nat }),
     {
         FenceGuard { owner, epoch }
     }
@@ -84,24 +86,24 @@ impl FenceGuard {
     /// **The node-local staleness check.** Returns exactly the model's verdict
     /// *for the generation this guard records* — see the module docs on why
     /// that is not the same as fencing. A stale guard accepts stale requests.
-    pub fn accepts(&self, node: u64, epoch: u64) -> (r: bool)
+    pub fn accepts(&self, node: HostId, epoch: u64) -> (r: bool)
         ensures
-            r == may_mutate(self.view(), node as nat, epoch as nat),
+            r == may_mutate(self.view(), node, epoch as nat),
     {
         node == self.owner && epoch == self.epoch
     }
 
     /// A request carrying a superseded epoch is rejected. This is
     /// `theorem_stale_epoch_cannot_mutate` made executable.
-    pub fn rejects_stale(&self, node: u64, epoch: u64) -> (r: bool)
+    pub fn rejects_stale(&self, node: HostId, epoch: u64) -> (r: bool)
         requires
             (epoch as nat) < current_epoch(self.view()),
         ensures
             r,
-            !may_mutate(self.view(), node as nat, epoch as nat),
+            !may_mutate(self.view(), node, epoch as nat),
     {
         proof {
-            lemma_stale_epoch_cannot_mutate(self.view(), node as nat, epoch as nat);
+            lemma_stale_epoch_cannot_mutate(self.view(), node, epoch as nat);
         }
         !self.accepts(node, epoch)
     }

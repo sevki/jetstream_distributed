@@ -9,6 +9,7 @@ is proved, and what is not.
 
 ```bash
 cargo build --tests --examples          # the services are on by default
+cargo build --lib --no-default-features # the core alone; each feature alone must build too
 cargo test                              # services, simulated-network tests, unit tests
 cargo clippy --all-targets              # must be clean
 cargo doc --no-deps --lib --examples    # must be clean
@@ -40,7 +41,10 @@ name carries the suffix. `src/**/steps_v.rs`, `exec_v.rs`, `registry_v.rs`,
 * **Nothing vendored is edited.** `vendor/verified-storage` and `vendor/kverus` are
   verbatim copies of upstream at a pinned commit, and CI diffs them. To change one,
   re-vendor from upstream and update the pin in the workflow and in the README that
-  describes it (`vendor/README.md`, `vendor/kverus/README.md`).
+  describes it (`vendor/README.md`, `vendor/kverus/README.md`). **The exception is
+  `vendor/jetstream`**: it is a copy of a working tree, not a pinned upstream commit,
+  nothing checks it, and the services are built from it through `[patch.crates-io]`
+  (`vendor/JETSTREAM.md`). Treat a change to it as a change to a dependency.
 * **Say what is proved and what is merely tested.** `service::Mailbox` is a
   transcription of the mailbox model, not a refinement; docs must not blur that.
 * Add dependencies with `cargo add`, not by editing `Cargo.toml`.

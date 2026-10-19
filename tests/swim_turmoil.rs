@@ -14,11 +14,12 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, OnceLock};
 
-use jetstream_distributed::swim::service::{
-    membership_protocol::{MembershipChannel, MembershipService},
-    Liveness, Membership, Node, Update,
-};
 use jetstream::prelude::*;
+use jetstream_distributed::host::HostId;
+use jetstream_distributed::swim::service::{
+    Liveness, Membership, Node, Update,
+    membership_protocol::{MembershipChannel, MembershipService},
+};
 use jetstream_rpc::session::{Session, SingleLaneSession};
 use turmoil::net::{TcpListener, TcpStream};
 
@@ -26,15 +27,15 @@ const PORT: u16 = 9100;
 
 /// Who is which member, by address. Built inside a host or a client:
 /// `turmoil::lookup` panics outside a live simulation.
-fn roster() -> HashMap<IpAddr, u64> {
+fn roster() -> HashMap<IpAddr, HostId> {
     HashMap::from([
-        (turmoil::lookup("a"), 0u64),
-        (turmoil::lookup("b"), 1u64),
-        (turmoil::lookup("c"), 2u64),
+        (turmoil::lookup("a"), 0u128),
+        (turmoil::lookup("b"), 1u128),
+        (turmoil::lookup("c"), 2u128),
     ])
 }
 
-fn u(node: u64, incarnation: u64, status: Liveness) -> Update {
+fn u(node: HostId, incarnation: u64, status: Liveness) -> Update {
     Update {
         node,
         incarnation,

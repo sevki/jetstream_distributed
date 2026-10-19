@@ -51,14 +51,11 @@ required-features = ["service"]
 # to be asked about. Turn the feature on and the same modules compile against the
 # same verified step functions.
 #
-# The rule that keeps that true: a module outside `service` and `crush` names no
-# Jetstream type and uses no `rand`, so `cargo build --no-default-features` and each
-# feature alone build. CI holds that.
-#
-# **One exception that the rule does not cover: `thiserror`.** `scheduling` and its
-# `lava` derive their errors with it, and it is an unconditional dependency. Cargo
-# builds it, but the bare `verus --crate-type=lib src/lib.rs` build has no way to
-# build a dependency and would not find it.
+# The rule that keeps that true: a module outside `service` and `crush` uses `std`
+# and `vstd` and nothing else: no Jetstream type, no `rand`, and no `thiserror`
+# (errors write their own `Display`), because the bare `verus` build has no way to
+# build a dependency. CI builds `--no-default-features` and each feature alone, and
+# runs the bare `verus` build, to hold it.
 #
 # It also keeps the toolchain question honest. `rust-toolchain.toml` pins the
 # Rust release the Verus build was made against, and that pin exists so the
@@ -88,7 +85,6 @@ tokio = { version = "1", features = ["io-util", "rt", "sync", "time"], optional 
 jetstream = { version = "16.0.0", optional = true }
 mycrush = { version = "1.0.1", optional = true }
 rand = { version = "0.10.3", optional = true }
-thiserror = "2.0.21"
 
 # Opt this crate into verification.
 #

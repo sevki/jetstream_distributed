@@ -17,7 +17,7 @@ impl Resources {
 }
 
 #[derive(Debug, Clone)]
-pub struct Computer<F> {
+pub struct Job<F> {
     pub id: ComputerId,
     pub resources: Resources,
     pub started_at: Duration,

@@ -49,18 +49,27 @@ pub struct Coordinate {
 }
 
 /// Errors that can occur when working with coordinates
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum CoordinateError {
     /// The coordinate dimensionality does not match
-    #[error("coordinate dimensionality does not match")]
     DimensionalityConflict,
     /// The coordinate contains invalid values
-    #[error("coordinate contains invalid values")]
     InvalidValues,
     /// The round trip time is not in a valid range
-    #[error("round trip time not in valid range")]
     InvalidRtt,
 }
+
+impl std::fmt::Display for CoordinateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            CoordinateError::DimensionalityConflict => "coordinate dimensionality does not match",
+            CoordinateError::InvalidValues => "coordinate contains invalid values",
+            CoordinateError::InvalidRtt => "round trip time not in valid range",
+        })
+    }
+}
+
+impl std::error::Error for CoordinateError {}
 
 // Constants
 const SECONDS_TO_NANOSECONDS: f64 = 1.0e9;

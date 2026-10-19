@@ -844,7 +844,6 @@ dependencies = [
  "jetstream_rpc",
  "mycrush",
  "rand 0.10.3",
- "thiserror",
  "tokio",
  "turmoil",
  "vstd",

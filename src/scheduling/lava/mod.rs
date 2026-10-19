@@ -8,10 +8,8 @@ use std::{
     time::Duration,
 };
 
-use thiserror::Error;
-
 use crate::{
-    compute::{Computer, ComputerId, Resources},
+    compute::{ComputerId, Job, Resources},
     host::HostId,
 };
 
@@ -133,7 +131,7 @@ pub enum HostState {
 pub struct Host<F> {
     id: HostId,
     capacity: Resources,
-    vms: BTreeMap<ComputerId, Computer<F>>,
+    vms: BTreeMap<ComputerId, Job<F>>,
     state: HostState,
     class: Option<LifetimeClass>,
     deadline: Option<Duration>,
@@ -151,7 +149,7 @@ impl<F> Host<F> {
         self.capacity
     }
     /// The VMs on the host, in order of id.
-    pub fn vms(&self) -> impl Iterator<Item = &Computer<F>> {
+    pub fn vms(&self) -> impl Iterator<Item = &Job<F>> {
         self.vms.values()
     }
     /// Where the host is in its life cycle.
@@ -231,43 +229,52 @@ impl<F> Host<F> {
 }
 
 /// Why a [`Scheduler`] or [`EmpiricalLifetime`] call was refused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     /// Invalid capacity: a host was added with no CPU or no memory.
-    #[error("invalid capacity")]
     InvalidCapacity,
     /// Invalid request: a VM asked for no CPU and no memory.
-    #[error("invalid request")]
     InvalidRequest,
     /// Invalid distribution: an [`EmpiricalLifetime`] had no samples, a zero sample, or a zero tail.
-    #[error("invalid distribution")]
     InvalidDistribution,
     /// Duplicate host: a host with this id is already known.
-    #[error("duplicate host")]
     DuplicateHost,
-    /// Duplicate VM: a VM with this id is already placed.
-    #[error("duplicate vm")]
-    DuplicateVm,
+    /// Duplicate job: a job with this id is already placed.
+    DuplicateJob,
     /// Unknown host: no host with this id is known.
-    #[error("unknown host")]
     UnknownHost,
-    /// Unknown VM: no VM with this id is known.
-    #[error("unknown vm")]
-    UnknownVm,
+    /// Unknown job: no job with this id is known.
+    UnknownJob,
     /// Clock went backwards: the time given is earlier than one already given.
-    #[error("clock went backwards")]
     ClockWentBackwards,
-    /// Future VM: the VM is said to have started after `now`.
-    #[error("future vm")]
-    FutureVm,
+    /// Future job: the job is said to have started after `now`.
+    FutureJob,
     /// No capacity: no schedulable, eligible host has room for the VM.
-    #[error("no capacity")]
     NoCapacity,
     /// Migration not approved: [`Scheduler::begin_drain`] was refused because the approval gate did not
     /// cover every VM on the host.
-    #[error("migration not approved")]
     MigrationNotApproved,
 }
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Error::InvalidCapacity => "invalid capacity",
+            Error::InvalidRequest => "invalid request",
+            Error::InvalidDistribution => "invalid distribution",
+            Error::DuplicateHost => "duplicate host",
+            Error::DuplicateJob => "duplicate job",
+            Error::UnknownHost => "unknown host",
+            Error::UnknownJob => "unknown job",
+            Error::ClockWentBackwards => "clock went backwards",
+            Error::FutureJob => "future job",
+            Error::NoCapacity => "no capacity",
+            Error::MigrationNotApproved => "migration not approved",
+        })
+    }
+}
+
+impl std::error::Error for Error {}
 
 /// Bucket indices follow §4.2's example: 70 minutes has temporal cost 2.
 /// Boundaries are lower edges, with [168h,infinity) an overflow bucket.
@@ -380,8 +387,8 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
     /// Place a VM on the best host, at `now`, and return the host's id. Every
     /// schedulable host with room is a candidate; see
     /// [`place_with`](Self::place_with) to restrict them.
-    pub fn place(&mut self, vm: Computer<F>, now: Duration) -> Result<HostId, Error> {
-        self.place_with(vm, now, |_, _| true)
+    pub fn place(&mut self, job: Job<F>, now: Duration) -> Result<HostId, Error> {
+        self.place_with(job, now, |_, _| true)
     }
     /// As [`place`](Self::place), but only on hosts `eligible` accepts: a hard
     /// constraint LAVA knows nothing about, such as a zone or an anti-affinity rule.
@@ -391,32 +398,34 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
     /// that goes over 90% of its CPU or memory becomes recycling, and the VMs on it
     /// at that moment become its residual set.
     ///
-    /// [`Error::DuplicateVm`], [`Error::InvalidRequest`], [`Error::FutureVm`],
+    /// [`Error::DuplicateJob`], [`Error::InvalidRequest`], [`Error::FutureJob`],
     /// [`Error::ClockWentBackwards`] for a bad request, and [`Error::NoCapacity`]
     /// if no candidate has room.
     pub fn place_with(
         &mut self,
-        vm: Computer<F>,
+        job: Job<F>,
         now: Duration,
-        eligible: impl Fn(&Host<F>, &Computer<F>) -> bool,
+        eligible: impl Fn(&Host<F>, &Job<F>) -> bool,
     ) -> Result<HostId, Error> {
-        if self.locations.contains_key(&vm.id) {
-            return Err(Error::DuplicateVm);
+        if self.locations.contains_key(&job.id) {
+            return Err(Error::DuplicateJob);
         }
-        if vm.resources.cpu == 0 && vm.resources.memory == 0 {
+        if job.resources.cpu == 0 && job.resources.memory == 0 {
             return Err(Error::InvalidRequest);
         }
-        if vm.started_at > now {
-            return Err(Error::FutureVm);
+        if job.started_at > now {
+            return Err(Error::FutureJob);
         }
         self.tick(now)?;
-        let remaining = self.predictor.remaining(&vm.features, now - vm.started_at);
+        let remaining = self
+            .predictor
+            .remaining(&job.features, now - job.started_at);
         let class = LifetimeClass::of(remaining);
         let target = self
             .hosts
             .values()
-            .filter(|h| h.schedulable && vm.resources.fits(h.free()) && eligible(h, &vm))
-            .min_by_key(|h| self.score(h, &vm, class, remaining, now))
+            .filter(|h| h.schedulable && job.resources.fits(h.free()) && eligible(h, &job))
+            .min_by_key(|h| self.score(h, &job, class, remaining, now))
             .map(|h| h.id)
             .ok_or(Error::NoCapacity)?;
         let host = self.hosts.get_mut(&target).unwrap();
@@ -424,8 +433,8 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
             host.state = HostState::Open;
             host.assign_class(class, now);
         }
-        self.locations.insert(vm.id, target);
-        host.vms.insert(vm.id, vm);
+        self.locations.insert(job.id, target);
+        host.vms.insert(job.id, job);
         let used = host.used();
         if host.state == HostState::Open
             && (u128::from(used.cpu) * 10 > u128::from(host.capacity.cpu) * 9
@@ -439,7 +448,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
     fn score(
         &self,
         host: &Host<F>,
-        vm: &Computer<F>,
+        job: &Job<F>,
         class: LifetimeClass,
         remaining: Duration,
         now: Duration,
@@ -459,9 +468,9 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
         let temporal = temporal_cost(remaining.saturating_sub(host_remaining));
         let free = host.free();
         // Normalized CPU+memory slack in millionths, lower is tighter packing.
-        let waste = u128::from(free.cpu - vm.resources.cpu) * 1_000_000
+        let waste = u128::from(free.cpu - job.resources.cpu) * 1_000_000
             / u128::from(host.capacity.cpu)
-            + u128::from(free.memory - vm.resources.memory) * 1_000_000
+            + u128::from(free.memory - job.resources.memory) * 1_000_000
                 / u128::from(host.capacity.memory);
         (tier, distance, temporal, waste, host.id)
     }
@@ -470,9 +479,9 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
     ///
     /// The VM leaves the host's residual set before the host is refreshed, so an
     /// exit at the moment of a deadline counts as an exit and not as a timeout.
-    /// [`Error::UnknownVm`] if it is not placed.
-    pub fn remove(&mut self, id: ComputerId, now: Duration) -> Result<Computer<F>, Error> {
-        let host_id = self.location(id).ok_or(Error::UnknownVm)?;
+    /// [`Error::UnknownJob`] if it is not placed.
+    pub fn remove(&mut self, id: ComputerId, now: Duration) -> Result<Job<F>, Error> {
+        let host_id = self.location(id).ok_or(Error::UnknownJob)?;
         if now < self.now {
             return Err(Error::ClockWentBackwards);
         }
@@ -502,7 +511,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
         &mut self,
         id: HostId,
         now: Duration,
-        approved: impl Fn(&Computer<F>) -> bool,
+        approved: impl Fn(&Job<F>) -> bool,
     ) -> Result<Vec<ComputerId>, Error> {
         let host = self.hosts.get(&id).ok_or(Error::UnknownHost)?;
         if !host.vms.values().all(approved) {

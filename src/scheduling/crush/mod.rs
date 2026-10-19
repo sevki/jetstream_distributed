@@ -1,20 +1,14 @@
 //! CRUSH
-use std::any::TypeId;
-
-use jetstream::prelude::*;
-use jetstream_rpc::context::RemoteAddr;
-
-use crate::scheduling::Placement;
+use crate::host::HostId;
+use crate::scheduling::{Placement, PlacementError, Resource};
 
 impl Placement for mycrush::crush::Map {
-    fn place<W: super::Resource>(
-        &self,
-        what: W,
-    ) -> std::prelude::v1::Result<Vec<RemoteAddr>, super::PlacementError> {
-        if what.type_id() == TypeId::of::<Data>() {
-            todo!()
-        } else {
-            Err(super::PlacementError::NotFound)
-        }
+    fn place<W: Resource>(&self, what: W) -> Result<Vec<HostId>, PlacementError> {
+        // Not written yet. What it has to do: derive `x` from a stable encoding of
+        // the resource's identity (never from a `TypeId`, which is not stable across
+        // builds), choose a rule, take the device weights from the membership view,
+        // run `do_rule`, and map the device ids it returns to hosts.
+        let _ = what;
+        todo!("CRUSH placement")
     }
 }

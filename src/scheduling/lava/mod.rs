@@ -233,28 +233,39 @@ impl<F> Host<F> {
 /// Why a [`Scheduler`] or [`EmpiricalLifetime`] call was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum Error {
-    /// A host was added with no CPU or no memory.
+    /// Invalid capacity: a host was added with no CPU or no memory.
+    #[error("invalid capacity")]
     InvalidCapacity,
-    /// A VM asked for no CPU and no memory.
+    /// Invalid request: a VM asked for no CPU and no memory.
+    #[error("invalid request")]
     InvalidRequest,
-    /// An [`EmpiricalLifetime`] had no samples, a zero sample, or a zero tail.
+    /// Invalid distribution: an [`EmpiricalLifetime`] had no samples, a zero sample, or a zero tail.
+    #[error("invalid distribution")]
     InvalidDistribution,
-    /// A host with this id is already known.
+    /// Duplicate host: a host with this id is already known.
+    #[error("duplicate host")]
     DuplicateHost,
-    /// A VM with this id is already placed.
+    /// Duplicate VM: a VM with this id is already placed.
+    #[error("duplicate vm")]
     DuplicateVm,
-    /// No host has this id.
+    /// Unknown host: no host with this id is known.
+    #[error("unknown host")]
     UnknownHost,
-    /// No VM with this id is placed.
+    /// Unknown VM: no VM with this id is known.
+    #[error("unknown vm")]
     UnknownVm,
-    /// The time given is earlier than one already given.
+    /// Clock went backwards: the time given is earlier than one already given.
+    #[error("clock went backwards")]
     ClockWentBackwards,
-    /// The VM is said to have started after `now`.
+    /// Future VM: the VM is said to have started after `now`.
+    #[error("future vm")]
     FutureVm,
-    /// No schedulable, eligible host has room for the VM.
+    /// No capacity: no schedulable, eligible host has room for the VM.
+    #[error("no capacity")]
     NoCapacity,
-    /// [`Scheduler::begin_drain`] was refused because the approval gate did not
+    /// Migration not approved: [`Scheduler::begin_drain`] was refused because the approval gate did not
     /// cover every VM on the host.
+    #[error("migration not approved")]
     MigrationNotApproved,
 }
 

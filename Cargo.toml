@@ -51,13 +51,26 @@ required-features = ["service"]
 # to be asked about. Turn the feature on and the same modules compile against the
 # same verified step functions.
 #
+# The rule that keeps that true: a module outside `service` and `crush` names no
+# Jetstream type and uses no `rand`, so `cargo build --no-default-features` and each
+# feature alone build. CI holds that.
+#
+# **One exception that the rule does not cover: `thiserror`.** `scheduling` and its
+# `lava` derive their errors with it, and it is an unconditional dependency. Cargo
+# builds it, but the bare `verus --crate-type=lib src/lib.rs` build has no way to
+# build a dependency and would not find it.
+#
 # It also keeps the toolchain question honest. `rust-toolchain.toml` pins the
 # Rust release the Verus build was made against, and that pin exists so the
 # proofs verify, not so a service is stuck on it. The services build with
 # `cargo +stable`, which is what Jetstream tracks.
 [features]
 default = ["service", "crush"]
-service = ["dep:jetstream", "dep:tokio"]
+# Everything that needs Jetstream, tokio or a random number generator: the
+# services, and the Vivaldi coordinates they exchange.
+service = ["dep:jetstream", "dep:tokio", "dep:rand"]
+# Placement by CRUSH. A feature of its own because it is a dependency of its own
+# (`mycrush`), and because it needs nothing of Jetstream: it places on `HostId`s.
 crush = ["dep:mycrush"]
 
 [dependencies]
@@ -73,9 +86,9 @@ tokio = { version = "1", features = ["io-util", "rt", "sync", "time"], optional 
 # `Context` carries the peer identity their design depends on, which is newer than
 # the 16.0.0 that is published.
 jetstream = { version = "16.0.0", optional = true }
-thiserror = "2.0.21"
 mycrush = { version = "1.0.1", optional = true }
-rand = "0.10.3"
+rand = { version = "0.10.3", optional = true }
+thiserror = "2.0.21"
 
 # Opt this crate into verification.
 #

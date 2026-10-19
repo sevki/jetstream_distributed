@@ -9,6 +9,7 @@ is proved, and what is not.
 
 ```bash
 cargo build --tests --examples          # the services are on by default
+cargo build --lib --no-default-features # the core alone; each feature alone must build too
 cargo test                              # services, simulated-network tests, unit tests
 cargo clippy --all-targets              # must be clean
 cargo doc --no-deps --lib --examples    # must be clean

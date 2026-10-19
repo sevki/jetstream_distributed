@@ -492,11 +492,11 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
             .min_by_key(|h| self.score(h, &job, class, remaining, now))
             .map(|h| h.id)
             .ok_or(Error::NoCapacity)?;
-        Ok(self.admit(target, job, class, now))
+        Ok(self.seat(target, job, class, now))
     }
     /// Put `job` on `target`, which has been chosen and has room: give an empty
     /// host the job's class, and make a host that is now over 90% full recycling.
-    fn admit(
+    fn seat(
         &mut self,
         target: HostId,
         job: Job<F>,
@@ -562,7 +562,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
             .ok_or(Error::NoCapacity)?;
         // The destination is settled; now the job leaves the source.
         let job = self.remove(id, now)?;
-        Ok(self.admit(target, job, class, now))
+        Ok(self.seat(target, job, class, now))
     }
     fn score(
         &self,

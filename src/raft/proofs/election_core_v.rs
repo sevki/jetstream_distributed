@@ -255,6 +255,31 @@ pub proof fn theorem_refused_grant_is_disabled(
     );
 }
 
+/// **A refusal for a log that is behind is a step the model could not take**,
+/// provided the caller's `up_to_date` is the model's comparison of the
+/// candidate's last entry with the voter's own log. `grant` takes the verdict as
+/// an argument; this is the statement of what the verdict has to be, and the
+/// caller supplying it is the hypothesis.
+pub proof fn theorem_refused_stale_log_is_disabled(
+    core: ElectionCore,
+    c: Cluster,
+    post: Cluster,
+    voter: ServerId,
+    cand: ServerId,
+    term: nat,
+    cand_last_term: Term,
+    cand_last_index: nat,
+    up_to_date: bool,
+)
+    requires
+        stands_for(core, c, voter),
+        up_to_date == at_least_as_up_to_date(cand_last_term, cand_last_index, c.servers[voter].log),
+        !up_to_date,
+    ensures
+        !tr_grant_vote(c, post, voter, cand, term, cand_last_term, cand_last_index),
+{
+}
+
 /// **Taking the term on a majority is `tr_become_leader`.** The tally is a set of
 /// voters who each voted, so a majority of it is a quorum of the cluster's votes.
 pub proof fn theorem_a_won_count_is_tr_become_leader(

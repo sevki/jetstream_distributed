@@ -1990,6 +1990,17 @@ caller ── ActorBChannel ── Session ──▶ Mailbox ──▶ serve ─
   them. Identity is read off the delivery, not the lane: a mailbox has many senders
   and one drain, and `Server::rpc` takes the `Context` per call. A request in flight
   when the drain is aborted is answered with an error, and only that one.
+* **`serve_fenced(mailbox, &mut service, &fence)`** is `serve` asking a `Fence`
+  before it starts each request. A request the fence refuses is answered `FENCED`
+  to its sender and never reaches the service; the drain goes on, so a host that
+  regains the epoch serves again. The fence is meant to be the registry's
+  `may_write(host, epoch)` about the host's own claim, so it turns false when the
+  epoch moves, whether by `BeginTransfer` or `RevokeOwner`. It is checked
+  *between* requests: a handler already running finishes, so a handover waits for
+  nothing. **Tested, not proved** (`tests/actor_fence.rs`): the ownership fence is
+  proved, that this loop asks it first is not. What a running handler does outside
+  the fence, the fence cannot stop, and a request that ran but whose reply was
+  lost will be retried at the new owner (at-least-once).
 * **Backpressure.** A mailbox is built with a `Capacity`, which is always the
   caller's to say: `Bounded(n)` makes `poll_ready` wait for a free slot (the drain
   wakes it), `Unbounded` never does, and there is no default and no number that

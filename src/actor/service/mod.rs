@@ -69,7 +69,7 @@ mod refusal;
 pub use directory::{ActorId, Directory, LocalDirectory, Placement};
 pub use host::{Event, Host};
 pub use mailbox::{Capacity, Mailbox, Permit, Round, Waiter};
-pub use session::{serve, Closer, Delivery, Session};
+pub use session::{serve, serve_fenced, Closer, Delivery, Fence, Session};
 pub use transport::Connection;
 
 use crate::host::HostId;

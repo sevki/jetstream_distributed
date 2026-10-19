@@ -160,7 +160,7 @@ impl NodeSet {
                     }
                 }
             }
-            assert(self@ =~= old(self)@.insert(x as nat));
+            assert(self@ == old(self)@.insert(x as nat));
         }
     }
 
@@ -241,7 +241,7 @@ impl NodeSet {
                     assert(after[k] as nat == n);
                 }
             }
-            assert(self@ =~= old(self)@.remove(x as nat));
+            assert(self@ == old(self)@.remove(x as nat));
         }
     }
 }
@@ -293,6 +293,12 @@ pub fn pass_token(own: &RegistryCore, ray: &mut RayTable, seized: &mut NodeSet, 
             },
         },
 {
+    /* The guard, the routing step and the debt move into one function over the
+     * layers' records; the coordinator took each layer's lock itself.
+     * Origin Rust: pass_token_step(self.registry.actor_is_unowned()).map_err(refuse)?;
+     *              let head = self.router.assign_privilege(ctx).await?;
+     *              self.debts.lock().expect("debts lock").seized.remove(&head);
+     */
     let unowned = actor_unowned(own);
     match pass_token_step(unowned) {
         Err(why) => Err(ComposedError::Coupled(why)),
@@ -331,6 +337,12 @@ pub fn seize_token(own: &RegistryCore, ray: &mut RayTable, seized: &mut NodeSet,
             },
         },
 {
+    /* The guard and the two layers' effects, over the records.
+     * Origin Rust: seize_step(..)?;
+     *              self.router.seize_to(to);
+     *              d.seized.insert(from);
+     *              d.seized.remove(&to);
+     */
     let unowned = actor_unowned(own);
     let from = ray.privilege;
     let found = ray.find(to);
@@ -394,6 +406,11 @@ pub fn acquire_under_token(own: &mut RegistryCore, ray: &RayTable, node: u64, ep
             Err(ComposedError::Ray(_)) => false,
         },
 {
+    /* The coupling test reads the table's privilege, then the ownership layer's
+     * own acquire runs.
+     * Origin Rust: acquire_under_token_step(self.router.privilege(), node).map_err(refuse)?;
+     *              self.registry.acquire(ctx, epoch).await
+     */
     proof {
         lemma_node_set(*ray, ray.privilege as nat);
     }
@@ -430,6 +447,14 @@ pub fn reconcile(ray: &mut RayTable, seized: &mut NodeSet, node: u64) -> (r: Res
             },
         },
 {
+    /* The three facts the guard reads come off the two records instead of three
+     * lock-protected structures.
+     * Origin Rust: let owes = self.debts.lock().expect("debts lock").seized.contains(&node);
+     *              reconcile_step(owes, self.router.believes_holds(node),
+     *                  self.router.privilege() == node).map_err(refuse)?;
+     *              self.router.reconcile_node(node);
+     *              d.seized.remove(&node);
+     */
     let owes = seized.contains(node);
     let Some(i) = ray.find(node) else {
         proof {

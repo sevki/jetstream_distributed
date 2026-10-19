@@ -59,12 +59,14 @@
 //! [`Context::remote`] against a roster fixed at construction, and an address is
 //! not a credential.
 
+mod directory;
 mod host;
 mod mailbox;
 mod session;
 mod transport;
 mod refusal;
 
+pub use directory::{ActorId, Directory, LocalDirectory, Placement};
 pub use host::{Event, Host};
 pub use mailbox::{Capacity, Mailbox, Permit, Round, Waiter};
 pub use session::{serve, Closer, Delivery, Session};

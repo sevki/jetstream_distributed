@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex};
 
 use super::refusal::{refuse, refuse_err, refuse_no};
 use super::{Liveness, Membership, Update, MAX_UPDATES};
-use crate::swim::steps::{key_geq_exec, merge_step, refute_step, ExecRecord, ExecStatus};
+use crate::swim::exec::SwimTable;
+use crate::swim::steps::{key_geq_exec, ExecRecord, ExecStatus};
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
 
@@ -30,7 +31,7 @@ struct Inner {
     /// One record per member that has ever been heard about. A member with no
     /// entry is exactly a member at its fresh record — the model's `record_of`
     /// says the same.
-    table: HashMap<u64, ExecRecord>,
+    table: SwimTable,
     log: Vec<Event>,
 }
 
@@ -43,10 +44,6 @@ pub struct Node {
     roster: Arc<HashMap<IpAddr, u64>>,
     /// This node's own number.
     me: u64,
-}
-
-fn fresh() -> ExecRecord {
-    crate::swim::steps::fresh_exec_record()
 }
 
 /// `a` and `b` are the same record.
@@ -87,7 +84,7 @@ impl Node {
         }
         Ok(Node {
             inner: Arc::new(Mutex::new(Inner {
-                table: HashMap::new(),
+                table: SwimTable::new(),
                 log: Vec::new(),
             })),
             roster: Arc::new(roster),
@@ -106,10 +103,7 @@ impl Node {
             return None;
         }
         let g = self.inner.lock().expect("node lock");
-        Some(Update::of(
-            node,
-            g.table.get(&node).copied().unwrap_or_else(fresh),
-        ))
+        Some(Update::of(node, g.table.get(node)))
     }
 
     /// The whole table, one record per member, in member order.
@@ -203,7 +197,7 @@ impl Node {
         let members: BTreeSet<u64> = self.roster.values().copied().collect();
         members
             .into_iter()
-            .map(|n| Update::of(n, g.table.get(&n).copied().unwrap_or_else(fresh)))
+            .map(|n| Update::of(n, g.table.get(n)))
             .collect()
     }
 
@@ -222,7 +216,7 @@ impl Node {
             return Err(refuse_err("not a member"));
         }
         let mut g = self.inner.lock().expect("node lock");
-        let held = g.table.get(&node).copied().unwrap_or_else(fresh);
+        let held = g.table.get(node);
         if required.is_some_and(|r| !same(held, r)) {
             return Ok(false);
         }
@@ -231,36 +225,41 @@ impl Node {
         Ok(g.log.len() != before)
     }
 
-    /// Merge one update. The only place a table entry is written.
-    ///
-    /// The merge is [`merge_step`], the verified function. What this adds is the
-    /// one thing the model leaves to the node: if the record that just changed
-    /// is this node's *own*, somebody has said something about it that
-    /// out-ranks what it believes, and it answers with [`refute_step`] — an
-    /// `Alive` one incarnation above the accusation — merged in through the same
-    /// door, so the refutation is a gossip step like any other
-    /// (`proofs::refinement::theorem_a_refutation_is_a_gossip_step`).
+    /// Merge one update. The only place the table is written, and it is
+    /// [`SwimTable::hear`]: the verified merge, and — if the record that changed
+    /// is this node's *own*, so somebody has said something about it that
+    /// out-ranks what it believes — the refutation, an `Alive` one incarnation
+    /// above the accusation, merged in through the same door. Both are gossip
+    /// steps (`proofs::table::theorem_hearing_oneself_accused_is_two_gossip_steps`).
+    /// What this adds is the audit log.
     fn merge_one(&self, g: &mut Inner, u: Update) -> Result<()> {
-        let held = g.table.get(&u.node).copied().unwrap_or_else(fresh);
-        let merged = merge_step(held, u.record());
-        if same(merged, held) {
-            return Ok(());
+        match g.table.hear(u.node, u.record(), self.me) {
+            Ok(heard) => {
+                if let Some(merged) = heard.learned {
+                    g.log.push(Event::Learned {
+                        about: u.node,
+                        incarnation: merged.incarnation,
+                        status: Update::of(u.node, merged).status,
+                    });
+                }
+                if let Some(after) = heard.refuted {
+                    g.log.push(Event::Refuted {
+                        incarnation: after.incarnation,
+                    });
+                }
+                Ok(())
+            }
+            Err(why) => {
+                // The accusation was merged and could not be answered.
+                let merged = g.table.get(u.node);
+                g.log.push(Event::Learned {
+                    about: u.node,
+                    incarnation: merged.incarnation,
+                    status: Update::of(u.node, merged).status,
+                });
+                Err(refuse(why))
+            }
         }
-        g.table.insert(u.node, merged);
-        g.log.push(Event::Learned {
-            about: u.node,
-            incarnation: merged.incarnation,
-            status: Update::of(u.node, merged).status,
-        });
-        if u.node == self.me {
-            let refutation = refute_step(merged.incarnation).map_err(refuse)?;
-            let after = merge_step(merged, refutation);
-            g.table.insert(self.me, after);
-            g.log.push(Event::Refuted {
-                incarnation: after.incarnation,
-            });
-        }
-        Ok(())
     }
 
     /// The reply to a `ping`: the receiver's records for the members the message
@@ -270,7 +269,7 @@ impl Node {
         about.extend(mentioned.iter().map(|u| u.node));
         about
             .into_iter()
-            .map(|n| Update::of(n, g.table.get(&n).copied().unwrap_or_else(fresh)))
+            .map(|n| Update::of(n, g.table.get(n)))
             .collect()
     }
 }

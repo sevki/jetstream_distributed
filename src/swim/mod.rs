@@ -24,20 +24,25 @@
 //!
 //! * [`steps`]   — the merge and the refutation as executable `u64` functions,
 //!   verified against the model.
+//! * [`exec`]    — the node's table as verified code: `learn` is the model's
+//!   `tr_gossip`, and `hear` is it twice when the record that changed is the
+//!   node's own.
 //! * `service`   — the protocol over Jetstream RPC, behind the `service`
 //!   feature: a `Membership` trait with `ping` and `sync`.
 //!
 //! Not here yet: the probe timer, the indirect-ping fallback, and the piggyback
 //! *selection* that decides which records ride on which probe. Those are a real
 //! network protocol with real timing, and nothing in [`model`] says anything
-//! about timing. A `service::Node` is a table that obeys the merge
-//! rule and answers its peers; the loop that picks a peer, waits out a timeout
+//! about timing. A `service::Node` is a verified table ([`exec::SwimTable`]) behind
+//! a roster and a lock that answers its peers; the roster, lock and log are not
+//! verified; the loop that picks a peer, waits out a timeout
 //! and calls `suspect` is the caller's.
 //!
 //! * [`model`]  — state space: a member's record, the merge rule, one
 //!   transition (`tr_gossip`) and the run it generates.
 //! * [`proofs`] — the merge algebra, and what it buys once lifted to a run.
 
+pub mod exec;
 pub mod model;
 pub mod proofs;
 pub mod steps;

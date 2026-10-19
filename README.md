@@ -1415,6 +1415,15 @@ of *which* record arrived, not a different rule for applying it.
 | S8 | **A refutation out-ranks the accusation it answers, and everything its author could have held when it was made** — alive at one incarnation above beats suspect *and* dead at the accusation's, because a higher incarnation wins at any status | `swim::proofs::refinement::theorem_a_refutation_outranks_what_it_answers` | `held.incarnation <= accused` |
 | S9 | **A refutation is a gossip step, not a new kind of step, and `refute_step` computes it** — the model gains no transition for answering an accusation; the node applies `tr_gossip` to a record it made itself, and the executable step makes exactly that record or refuses at the top of the `u64` space | `swim::proofs::refinement::theorem_a_refutation_is_a_gossip_step`, `theorem_refute_step_is_the_refutation`, `swim::steps::refute_step` (its `ensures`) | none |
 
+| S10 | **The node's table is the model.** `exec::SwimTable` — what a node keeps — reads the model's `record_of` (no entry is the fresh record), and `learn` writes `merge` of what is held and what arrived and changes nothing else; a table standing for a cluster that learns a record stands for the cluster `tr_gossip` leads to, and a fresh table stands for `swim_init` | `swim::proofs::table::theorem_new_table_is_the_initial_cluster`, `theorem_learn_is_a_gossip_step` | the table is well formed (each member once) |
+| S11 | **Hearing an accusation about oneself is two gossip steps.** `SwimTable::hear` merges the record and, if it was the node's *own* that changed, merges the refutation on top of it; the model sees `tr_gossip` twice, and the table ends up believing the refutation. At the top of the incarnation space the second step is refused and the first has happened | `swim::proofs::table::theorem_hearing_oneself_accused_is_two_gossip_steps` | the table stands for the cluster |
+| S12 | **A table never believes less than it did, and always stands for a reachable cluster.** Whatever it learns, what it then holds for any member out-ranks or equals what it held; and a reachable cluster plus a learned record is a reachable cluster, so S5 is a statement about what the table holds | `swim::proofs::table::theorem_learning_never_lowers_a_belief`, `theorem_a_table_stands_for_a_reachable_cluster_after_learning` | the table stands for a reachable cluster |
+
+**What S10–S12 do not cover.** The table is a verified core, and `Node` is the
+shell around it: the roster (which numbers are members, who may speak), the lock,
+the audit log, the batch limit, and the order a batch is applied in are plain Rust
+that the tests exercise. The theorems are about one record at a time.
+
 **S4 is worth pausing on, because the asymmetry it dismisses is real.**
 `key_geq(a, b)` and `key_geq(b, a)` are different expressions, and reading
 `merge`'s definition — `if key_geq(incoming, local) { incoming } else {
@@ -1441,7 +1450,8 @@ network-timing piece that is still future work.
 `src/swim/service/` serves the protocol over
 [Jetstream](https://github.com/sevki/jetstream) RPC: `#[service] trait
 Membership` with `ping` and `sync`, implemented by a `Node` whose table is
-written in exactly one place, by `steps::merge_step`.
+written in exactly one place, by `exec::SwimTable::hear` — the verified table, whose
+merge is `steps::merge_step` (S10–S12).
 
 Both methods do the same thing to the receiver — merge every `Update` in the
 message — and differ in the reply. `ping` answers with the receiver's records
@@ -1580,6 +1590,7 @@ jetstream_distributed/
 │   └── swim/               gossip membership: merge, not majority
 │       ├── model.rs        the record, the merge rule, one transition
 │       ├── steps.rs        the merge and the refutation as executable u64 functions
+│       ├── exec.rs         SwimTable: the node's table as verified code, learn and hear
 │       ├── service/        the protocol over Jetstream RPC   [feature = "service"]
 │       │   ├── mod.rs          the Membership trait and what goes on the wire
 │       │   ├── node.rs         the table, and the merge into it
@@ -1587,7 +1598,8 @@ jetstream_distributed/
 │       └── proofs/
 │           ├── merge.rs        idempotent, absorbs a repeat, never regresses, commutative, associative
 │           ├── monotone.rs     lifted through a step and then through a run
-│           └── refinement.rs   steps.rs agrees with the model's tr_gossip
+│           ├── refinement.rs   steps.rs agrees with the model's tr_gossip
+│           └── table.rs        the table learns by tr_gossip; a refutation is a second one
 ├── tests/
 │   ├── scenario_body/mod.rs    the executable protocol + the runtime oracles
 │   ├── turmoil_ownership.rs    named stories, each with an expected ending
@@ -2436,7 +2448,8 @@ CI, with no `assume`/`admit`/`external_body`/`axiom`):
   — and, lifted through every step of a run, no node's record about any peer
   ever moves backward (S1–S6); the executable merge is that rule, and a
   refutation out-ranks the accusation it answers and is itself a gossip step
-  (S7–S9);
+  (S7–S9); and the node's table is checked to learn by the model's `tr_gossip`, a
+  refutation being a second one (S10–S12);
 * the Raymond routing steps and the composed machine's coupling guards agree
   with their models in both directions — each fires exactly when the model's
   transition is enabled — and a step a layer already proved is carried by the

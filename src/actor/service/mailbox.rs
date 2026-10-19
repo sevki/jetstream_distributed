@@ -33,7 +33,7 @@
 //! and a bare number would make `0` a silent choice of never waiting. Saying
 //! [`Capacity::Unbounded`] is a thing you wrote on purpose. A sender
 //! first takes a [`Permit`] — a slot reserved for its message — and a full
-//! mailbox makes it wait for one ([`Mailbox::reserve`], [`Mailbox::poll_reserve`]),
+//! mailbox makes it wait for one ([`Mailbox::reserve`], [`Waiter::poll_reserve`]),
 //! or refuses it ([`Mailbox::try_reserve`]). Only a sender holding a permit can
 //! enqueue, so enqueueing never fails and never blocks. A slot comes back when
 //! a [`Round`] hands its message out (or [`Mailbox::take`] takes the queue), or
@@ -181,6 +181,34 @@ pub struct Waiter<T> {
     id: Option<u64>,
 }
 
+impl<T> Waiter<T> {
+    /// Reserve a slot, or register `cx`'s task to be woken when one is free.
+    ///
+    /// The place in line is the caller's one: polling again replaces its waker,
+    /// and dropping it gives the place up. The mailbox is the one the waiter was
+    /// made by, and cannot be any other — a waiter polled against a mailbox that
+    /// did not make it would register in one queue and unregister from another.
+    pub fn poll_reserve(&mut self, cx: &mut task::Context<'_>) -> Poll<Permit<T>> {
+        let mailbox = self.mailbox.clone();
+        let mut s = mailbox.state();
+        if let Some(permit) = mailbox.reserve_locked(&mut s) {
+            if let Some(id) = self.id.take() {
+                s.waiting.retain(|(w, _)| *w != id);
+            }
+            return Poll::Ready(permit);
+        }
+        let id = *self.id.get_or_insert_with(|| {
+            s.next_waiter += 1;
+            s.next_waiter
+        });
+        match s.waiting.iter_mut().find(|(w, _)| *w == id) {
+            Some((_, waker)) => waker.clone_from(cx.waker()),
+            None => s.waiting.push((id, cx.waker().clone())),
+        }
+        Poll::Pending
+    }
+}
+
 impl<T> Drop for Waiter<T> {
     fn drop(&mut self) {
         if let Some(id) = self.id {
@@ -238,8 +266,8 @@ impl<T> Mailbox<T> {
         })
     }
 
-    /// A place in line for [`poll_reserve`](Self::poll_reserve). It holds nothing
-    /// until polled.
+    /// A place in line for a slot in **this** mailbox, polled with
+    /// [`Waiter::poll_reserve`]. It holds nothing until polled.
     pub fn waiter(&self) -> Waiter<T> {
         Waiter {
             mailbox: self.clone(),
@@ -247,36 +275,10 @@ impl<T> Mailbox<T> {
         }
     }
 
-    /// Reserve a slot, or register `cx`'s task to be woken when one is free.
-    /// `waiter` is the caller's one place in line: polling again replaces its
-    /// waker, and dropping it gives the place up.
-    pub fn poll_reserve(
-        &self,
-        waiter: &mut Waiter<T>,
-        cx: &mut task::Context<'_>,
-    ) -> Poll<Permit<T>> {
-        let mut s = self.state();
-        if let Some(permit) = self.reserve_locked(&mut s) {
-            if let Some(id) = waiter.id.take() {
-                s.waiting.retain(|(w, _)| *w != id);
-            }
-            return Poll::Ready(permit);
-        }
-        let id = *waiter.id.get_or_insert_with(|| {
-            s.next_waiter += 1;
-            s.next_waiter
-        });
-        match s.waiting.iter_mut().find(|(w, _)| *w == id) {
-            Some((_, waker)) => waker.clone_from(cx.waker()),
-            None => s.waiting.push((id, cx.waker().clone())),
-        }
-        Poll::Pending
-    }
-
     /// Wait for a slot.
     pub async fn reserve(&self) -> Permit<T> {
         let mut waiter = self.waiter();
-        poll_fn(|cx| self.poll_reserve(&mut waiter, cx)).await
+        poll_fn(|cx| waiter.poll_reserve(cx)).await
     }
 
     /// `mb_set_state`: read `has` and set it. Returns what it was.

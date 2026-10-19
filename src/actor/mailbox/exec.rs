@@ -181,6 +181,10 @@ impl<T> MailboxCore<T> {
         ensures
             core_enqueue(*old(self), *final(self), item),
     {
+        /* Unchanged in effect: the push moved from the service's `State` onto the
+         * core's own queue; the slot accounting (`reserved`) stays in the service.
+         * Origin Rust: s.queue.push_back(item);
+         */
         self.queue.push_back(item);
     }
 
@@ -190,6 +194,10 @@ impl<T> MailboxCore<T> {
             had == old(self).has,
             core_set_state(*old(self), *final(self)),
     {
+        /* `std::mem::replace` on a field behind a lock guard is not specified by vstd;
+         * the read and the write are spelled out on the core's own field.
+         * Origin Rust: std::mem::replace(&mut self.state().has, true)
+         */
         let had = self.has;
         self.has = true;
         had
@@ -203,6 +211,13 @@ impl<T> MailboxCore<T> {
         ensures
             core_schedule(*old(self), *final(self), had),
     {
+        /* The drain running is the `phase`, not a flag of its own, so the test reads
+         * the phase; the `Notify` wake that followed stays in the service.
+         * Origin Rust: if !had && !s.processing {
+         *                  s.scheduled = true;
+         *                  self.shared.wake.notify_one();
+         *              }
+         */
         let asleep = match self.phase {
             Phase::Await => true,
             _ => false,
@@ -224,6 +239,13 @@ impl<T> MailboxCore<T> {
                 core_stutter(*old(self), *final(self))
             },
     {
+        /* `processing` became the phase, so the claim also refuses while a round is
+         * running (the earlier test read `scheduled` alone).
+         * Origin Rust: if !s.scheduled { return false; }
+         *              s.processing = true;
+         *              s.has = false;
+         *              true
+         */
         let ready = match self.phase {
             Phase::Await => self.scheduled,
             _ => false,
@@ -245,6 +267,10 @@ impl<T> MailboxCore<T> {
                 core_stutter(*old(self), *final(self)) && taken@ == Seq::<T>::empty()
             },
     {
+        /* `std::mem::take` on a `VecDeque` is not specified by vstd; `swap` is, and
+         * the step is only taken between a claim and a finish (`phase`).
+         * Origin Rust: std::mem::take(&mut s.queue)
+         */
         let mut taken = VecDeque::new();
         match self.phase {
             Phase::Claimed => {
@@ -268,6 +294,11 @@ impl<T> MailboxCore<T> {
                 core_stutter(*old(self), *final(self))
             },
     {
+        /* The running flag is the phase; leaving `Drained` is what ends the round.
+         * Origin Rust: s.scheduled = s.has;
+         *              s.processing = false;
+         *              s.scheduled
+         */
         match self.phase {
             Phase::Drained => {
                 self.scheduled = self.has;
@@ -294,6 +325,11 @@ impl<T> MailboxCore<T> {
             final(self).scheduled == old(self).scheduled,
             final(self).phase == old(self).phase,
     {
+        /* New executable code: the unbounded-queue service had no way to put back
+         * what a dropped round did not hand out, and the round's `Drop` only ended
+         * the round.
+         * Origin Rust: <none; new executable code>
+         */
         if rest.len() > 0 {
             let mut front = rest;
             front.append(&mut self.queue);

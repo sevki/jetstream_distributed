@@ -14,7 +14,7 @@
 //!
 //! # The sender's steps are the sink's
 //!
-//! `poll_ready` reserves a slot ([`Mailbox::poll_reserve`]) and `start_send` is
+//! `poll_ready` reserves a slot ([`Waiter::poll_reserve`]) and `start_send` is
 //! [`Permit::enqueue`]: the request is on the queue. `poll_flush`
 //! is the rest of the sender's operation — [`Mailbox::set_state`] and
 //! [`Mailbox::schedule`] — which is where the drain is woken. They are separate
@@ -135,9 +135,8 @@ impl<P: Protocol> Sink<Frame<P::Request>> for Session<P> {
     /// mailbox leaves the caller waiting here, and the drain wakes it.
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Result<()>> {
         if self.permit.is_none() {
-            let this = &mut *self;
-            let permit = std::task::ready!(this.mailbox.poll_reserve(&mut this.waiter, cx));
-            this.permit = Some(permit);
+            let permit = std::task::ready!(self.waiter.poll_reserve(cx));
+            self.permit = Some(permit);
         }
         Poll::Ready(Ok(()))
     }

@@ -12,6 +12,7 @@ use jetstream::prelude::*;
 // A job, or anything that does compute, e.g. a VM, container, v8 isolate, or
 // interpreter, is named by an `Id`.
 pub use crate::id::Id;
+use crate::scheduling;
 
 /// CPU, held as millicores: 1000 of them are one core.
 ///
@@ -183,6 +184,16 @@ impl Instant {
     pub fn saturating_add(self, span: Duration) -> Self {
         Instant(self.0.saturating_add(span))
     }
+
+    /// The process's own monotonic clock, whose zero is the first call. It never
+    /// goes backwards, which a scheduler's `tick` requires, and it is not a wall
+    /// clock: instants from two processes are not comparable, and neither is one
+    /// across a restart. A caller that needs either supplies its own clock with
+    /// [`Instant::from_epoch`].
+    pub fn now() -> Self {
+        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        Instant(START.get_or_init(std::time::Instant::now).elapsed())
+    }
 }
 
 /// The span between two instants. Panics if `rhs` is later, like
@@ -203,3 +214,5 @@ pub struct Job<F> {
     pub started_at: Instant,
     pub features: F,
 }
+
+impl<F: 'static> scheduling::Resource for Job<F> {}

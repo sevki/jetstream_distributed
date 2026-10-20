@@ -24,6 +24,8 @@ use vstd::prelude::*;
 verus! {
 
 /// An identifier: 128 bits, as a UUID or a ULID is.
+// allowed because this is in the verified build, not the wire format
+#[allow(clippy::derived_hash_with_manual_eq)]
 #[derive(Clone, Copy, Debug, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "service", derive(JetStreamWireFormat))]
 pub struct Id(pub u128);

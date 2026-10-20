@@ -1,12 +1,13 @@
-#[cfg(feature = "service")]
+#![cfg(feature = "service")]
 use core::fmt;
 
 use crate::id::Id;
+use jetstream::prelude::*;
+use std::result::Result;
 
 use super::Resource;
 
 /// An error that can occur during discovery.
-#[cfg(feature = "service")]
 #[derive(Debug, Clone, PartialEq)]
 pub enum DiscoveryError {
     /// The requested resource was not found.
@@ -15,7 +16,6 @@ pub enum DiscoveryError {
     InternalError,
 }
 
-#[cfg(feature = "service")]
 impl fmt::Display for DiscoveryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
@@ -25,13 +25,16 @@ impl fmt::Display for DiscoveryError {
     }
 }
 
-#[cfg(feature = "service")]
 impl std::error::Error for DiscoveryError {}
 
 /// A trait for discovering resources.
-#[cfg(feature = "service")]
+#[async_trait]
 pub trait Discovery {
+    /// The type of resource to discover.
+    type Resource: Resource + Send + Sync;
+    /// The type of location to return.
+    type Location: Send + Sync;
     /// Discover a resource and return the remote addresses of the nodes that
     /// host it.
-    fn discover<W: Resource>(&self, what: W) -> Result<Vec<Id>, DiscoveryError>;
+    async fn discover(&self, what: Self::Resource) -> Result<Vec<Self::Location>, DiscoveryError>;
 }

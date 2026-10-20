@@ -85,7 +85,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::id::Id;
 use crate::ownership::registry::{BurnRefusal, RegistryCore, WriteOutcome};
-use crate::ownership::steps::{may_write_step, ExecOffer, ExecState, Refusal};
+use crate::ownership::steps::{ExecOffer, ExecState, Refusal, may_write_step};
 use jetstream::prelude::*;
 // Not in the prelude's re-export list, and `jetstream_rpc` is not a direct
 // dependency of this crate — so it comes through the `pub extern crate` the
@@ -285,7 +285,9 @@ pub struct FileFloor {
 
 impl FileFloor {
     pub fn new(path: impl AsRef<Path>) -> Self {
-        FileFloor { path: path.as_ref().to_path_buf() }
+        FileFloor {
+            path: path.as_ref().to_path_buf(),
+        }
     }
 }
 
@@ -329,7 +331,11 @@ impl EpochFloor for FileFloor {
         // failure this type exists to prevent, arrived at one level down and
         // reachable only through a spelling.
         let dir = self.path.parent().unwrap_or_else(|| Path::new(""));
-        let dir = if dir.as_os_str().is_empty() { Path::new(".") } else { dir };
+        let dir = if dir.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            dir
+        };
         fs::File::open(dir)?.sync_all()?;
         Ok(())
     }
@@ -357,7 +363,12 @@ pub enum Event {
     /// An owner was told to stop.
     Revoked { node: Id, new_epoch: u64 },
     /// An epoch was burned, cooperatively or by force.
-    EpochBurned { from_epoch: u64, to_epoch: u64, next: Id, forced: bool },
+    EpochBurned {
+        from_epoch: u64,
+        to_epoch: u64,
+        next: Id,
+        forced: bool,
+    },
     /// A revoked owner acknowledged.
     Released { node: Id, new_epoch: u64 },
 }
@@ -532,7 +543,10 @@ impl Registry {
     ///
     /// For the composed coordinator, which takes this lock and the router's, in
     /// that order, behind its own gate, and runs a step across both layers.
-    pub(crate) fn with_state<R>(&self, f: impl FnOnce(&mut RegistryCore, &mut Vec<Event>) -> R) -> R {
+    pub(crate) fn with_state<R>(
+        &self,
+        f: impl FnOnce(&mut RegistryCore, &mut Vec<Event>) -> R,
+    ) -> R {
         let mut g = self.inner.lock().expect("registry lock");
         let Inner { core, log } = &mut *g;
         f(core, log)
@@ -561,7 +575,11 @@ impl Registry {
     /// owner learns nothing about the journal; the effect itself still goes
     /// through [`Ownership::write`], which makes the same check under the lock.
     pub fn may_write(&self, node: Id, epoch: u64) -> bool {
-        may_write_step(self.inner.lock().expect("registry lock").core.state, node, epoch)
+        may_write_step(
+            self.inner.lock().expect("registry lock").core.state,
+            node,
+            epoch,
+        )
     }
 
     /// Which node is calling, from the connection rather than from the request.
@@ -772,7 +790,10 @@ impl Ownership for Registry {
         };
         let mut g = self.inner.lock().expect("registry lock");
         let to = g.core.release(node, epoch).map_err(refuse)?;
-        g.log.push(Event::Released { node, new_epoch: epoch });
+        g.log.push(Event::Released {
+            node,
+            new_epoch: epoch,
+        });
         // `tr_complete_release` publishes `Grant { to, new_epoch }` as part of
         // the same step, and the core did (`proofs::registry`): without it the
         // registry's idea of which grants exist stops matching the model's, and

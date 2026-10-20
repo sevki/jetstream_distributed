@@ -37,6 +37,31 @@
 //! retry; nothing in this file does that, and it is the composition described under
 //! *Not decided*.
 //!
+//! # Draining
+//!
+//! [`Supervisor::drain`] is the cooperative way for a host to stop being an actor's
+//! host, as the handover needs: **fence first, let the running handler finish, then
+//! let go.**
+//!
+//! 1. The actor's own fence is closed, so it starts no further request. Anything
+//!    queued, and anything that arrives, is answered `FENCED`.
+//! 2. A handler already running is **not** interrupted. `drain` returns after it
+//!    has finished. (A handover that cannot wait — the owner is gone — is not a
+//!    drain; the fence at the point where the effect lands is what keeps a stale
+//!    host's effect from being authoritative.)
+//! 3. The service is dropped, releasing whatever the actor held. The status is
+//!    [`Status::Retired`].
+//!
+//! The mailbox is **kept**. A [`Session`] made before the drain holds it, and with
+//! no drain behind it a request it queued would wait for good; so a small task
+//! stays on it and answers every request `FENCED` ([`refuse_all`]), which is also
+//! what a caller needs to hear: ask where the actor lives now. If the actor comes
+//! back to this host, [`Supervisor::spawn`] takes the same mailbox over, and those
+//! sessions work again.
+//!
+//! A request that ran but whose reply was lost is retried at the new owner, so
+//! delivery is at-least-once; nothing here prevents that. **Tested, not proved.**
+//!
 //! # Not decided
 //!
 //! This is a sketch to argue with, and it is deliberately the smallest thing that
@@ -46,10 +71,9 @@
 //!   host. The composition that asks Discovery, then hands out a [`Session`] for a
 //!   local actor or a [`Connection`](super::Connection) lane for a remote one, is the
 //!   next piece, and it needs the roster keyed by `RemoteAddr` (#35).
-//! * **Draining.** [`Supervisor::status`] says an actor has stopped and
-//!   [`Supervisor::spawn`] replaces a stopped one, which is how it is restarted. A
-//!   cooperative handover that lets the running handler finish and then removes the
-//!   slot is not here yet.
+//! * **Who calls `drain`.** [`Supervisor::drain`] is the mechanism. Nothing here
+//!   decides *when*: a handover that notices the epoch has moved and drains the
+//!   actor on its old host is a composition with the ownership layer.
 //! * **Ownership of the fence's inputs.** The caller builds the fence; nothing here
 //!   ties it to a registry, a host or an epoch.
 //! * **Identity.** `transport` is told who is calling. In a real deployment that
@@ -67,15 +91,19 @@ use std::{
     any::{Any, TypeId},
     collections::HashMap,
     future::Future,
-    sync::Mutex,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use jetstream::prelude::{
     jetstream_rpc::{client::ClientTransport, context::Context, server::Server},
     *,
 };
+use tokio::sync::{Notify, watch};
 
-use super::{Capacity, Delivery, Fence, Mailbox, Session, serve_fenced};
+use super::{Capacity, Delivery, Fence, Mailbox, Session, refuse_all, serve_until};
 use crate::id::Id;
 use crate::scheduling::{
     Resource,
@@ -93,6 +121,14 @@ impl Resource for ActorRef {}
 pub enum Status {
     /// Hosted here, and its drain is running.
     Running,
+    /// [`Supervisor::drain`] has been asked for, and a handler that was already
+    /// running has not finished. It starts no new request: they are answered
+    /// `FENCED`.
+    Draining,
+    /// Drained. The service has been dropped; the mailbox is kept, and every request
+    /// that reaches it is answered `FENCED`. A new [`Supervisor::transport`] is
+    /// refused. [`Supervisor::spawn`] hosts the id again, on the same mailbox.
+    Retired,
     /// Was hosted here, and its drain has ended: its handler panicked. A new
     /// [`Supervisor::transport`] is refused. A session obtained earlier still holds
     /// the mailbox and can queue requests, and the ones already queued stay there;
@@ -110,16 +146,18 @@ pub trait Supervisor: Send + Sync {
 
     /// Host `id` here: give it a mailbox of the given capacity, and serve `service`
     /// from the other end of it, one request at a time, each one only if `fence`
-    /// still lets this host serve ([`serve_fenced`]).
+    /// still lets this host serve ([`serve_fenced`](super::serve_fenced)).
     ///
     /// `C` is the protocol callers' channels speak (`BChannel`) and `S` the one the
     /// service speaks (`BService<Impl>`): the same requests and responses, as for
-    /// [`serve`](super::serve). An error if `id` is already [`Status::Running`]; a
-    /// [`Status::Stopped`] one is replaced, which is how an actor whose handler
-    /// panicked is restarted: if it speaks the same protocol the new drain takes over
-    /// the **same mailbox** (and `capacity` is ignored), so sessions obtained before
-    /// the stop and the requests queued behind the panic are served, not stranded.
-    /// A different protocol gets a fresh mailbox, and the old one is not served.
+    /// [`serve`](super::serve). An error if `id` is [`Status::Running`] or
+    /// [`Status::Draining`]. A [`Status::Stopped`] or [`Status::Retired`] one is
+    /// replaced: a stopped one is how an actor whose handler panicked is restarted,
+    /// and a retired one is how an actor comes back to a host it was drained from.
+    /// If it speaks the same protocol the new drain takes over the **same mailbox**
+    /// (and `capacity` is ignored), so sessions obtained before, and the requests
+    /// queued behind a panic, are served, not stranded. A different protocol gets a
+    /// fresh mailbox, and the old one is not served.
     fn spawn<C, S, F>(
         &self,
         id: Id,
@@ -131,6 +169,17 @@ pub trait Supervisor: Send + Sync {
         C: Protocol<Error = Error> + 'static,
         S: Server<Request = C::Request, Response = C::Response> + 'static,
         F: Fence + 'static;
+
+    /// Stop `id` being served here, cooperatively: close its fence, wait for a
+    /// handler that is running to finish, drop the service, and leave a responder on
+    /// the mailbox that answers every request `FENCED` ([`Status::Retired`]).
+    ///
+    /// Returns when the actor is retired, so a caller that goes on to hand the actor
+    /// to another host knows nothing is still running here. Draining a retired actor
+    /// returns at once. An error if `id` is not hosted, or if its drain ended — the
+    /// handler panicked — before it retired: there is nothing left to drain, and
+    /// nothing answering `FENCED` either, so the actor is [`Status::Stopped`].
+    fn drain(&self, id: Id) -> impl Future<Output = Result<()>> + Send;
 
     /// A transport to `id` on this node, calling as `from`. Wrap it in the service's
     /// channel: `BChannel::new(64, transport)`.
@@ -154,14 +203,48 @@ struct Slot {
     /// A `Mailbox<Delivery<C>>`.
     mailbox: Box<dyn Any + Send + Sync>,
     drain: tokio::task::JoinHandle<()>,
+    /// Set by [`Supervisor::drain`], and read by the actor's fence: from then on it
+    /// starts no request.
+    retiring: Arc<AtomicBool>,
+    /// Wakes the drain task to retire when it is next idle.
+    retire: Arc<Notify>,
+    /// `true` once the task has dropped the service. If the task ends without
+    /// sending it, the sender is dropped and a waiter sees that.
+    released: watch::Receiver<bool>,
 }
 
 impl Slot {
-    /// Whether the drain is still running. It ends only if the service's handler
-    /// panicked (or the runtime is shutting down): `serve_fenced` loops for as long
-    /// as the mailbox is held, and the slot holds it.
+    /// Whether the drain task is still running. It ends only if the service's
+    /// handler panicked (or the runtime is shutting down): the task loops for as
+    /// long as the mailbox is held, and the slot holds it. A retired actor's task
+    /// is still running; it is the one answering `FENCED`.
     fn running(&self) -> bool {
         !self.drain.is_finished()
+    }
+
+    fn status(&self) -> Status {
+        if !self.running() {
+            Status::Stopped
+        } else if *self.released.borrow() {
+            Status::Retired
+        } else if self.retiring.load(Ordering::SeqCst) {
+            Status::Draining
+        } else {
+            Status::Running
+        }
+    }
+}
+
+/// The caller's fence, and the supervisor's own: a drained actor serves nothing,
+/// whatever the caller's fence says.
+struct Retiring<F> {
+    inner: F,
+    retiring: Arc<AtomicBool>,
+}
+
+impl<F: Fence> Fence for Retiring<F> {
+    fn may_serve(&self) -> bool {
+        !self.retiring.load(Ordering::SeqCst) && self.inner.may_serve()
     }
 }
 
@@ -203,7 +286,11 @@ impl Discovery for LocalSupervisor {
         };
         match self.status(*id) {
             Status::Running => Ok(vec![self.me]),
-            Status::Stopped | Status::Absent => Err(DiscoveryError::NotFound),
+            // A draining actor starts nothing, and a retired one answers `FENCED`:
+            // neither is where a caller should go.
+            Status::Draining | Status::Retired | Status::Stopped | Status::Absent => {
+                Err(DiscoveryError::NotFound)
+            }
         }
     }
 }
@@ -211,9 +298,33 @@ impl Discovery for LocalSupervisor {
 impl Supervisor for LocalSupervisor {
     fn status(&self, id: Id) -> Status {
         match self.slots.lock().expect("supervisor lock").get(&id) {
-            Some(slot) if slot.running() => Status::Running,
-            Some(_) => Status::Stopped,
+            Some(slot) => slot.status(),
             None => Status::Absent,
+        }
+    }
+
+    async fn drain(&self, id: Id) -> Result<()> {
+        let (retiring, retire, mut released) = {
+            let slots = self.slots.lock().expect("supervisor lock");
+            let slot = slots
+                .get(&id)
+                .ok_or_else(|| Error::new(format!("no actor {id}")))?;
+            (
+                slot.retiring.clone(),
+                slot.retire.clone(),
+                slot.released.clone(),
+            )
+        };
+        // The fence first, so that nothing starts from here on; then the signal,
+        // which a task that is busy keeps (a stored permit) until it is next idle.
+        retiring.store(true, Ordering::SeqCst);
+        retire.notify_one();
+        match released.wait_for(|released| *released).await {
+            Ok(_) => Ok(()),
+            // The task ended without releasing the service: its handler panicked.
+            Err(_) => Err(Error::new(format!(
+                "actor {id} stopped before it could be drained"
+            ))),
         }
     }
 
@@ -230,22 +341,48 @@ impl Supervisor for LocalSupervisor {
         F: Fence + 'static,
     {
         let mut slots = self.slots.lock().expect("supervisor lock");
-        // A slot whose drain has ended is not hosting anything: replacing it is how
-        // an actor whose handler panicked is restarted.
-        if slots.get(&id).is_some_and(Slot::running) {
-            return Err(Error::new(format!("actor {id} is already hosted")));
+        // Only an actor that is not being served is replaced: one whose drain has
+        // ended (a panic restarts it) or that was drained (it comes back).
+        match slots.get(&id).map(Slot::status) {
+            Some(Status::Running | Status::Draining) => {
+                return Err(Error::new(format!("actor {id} is already hosted")));
+            }
+            Some(Status::Retired | Status::Stopped) | None => {}
+            Some(Status::Absent) => unreachable!("a slot is never absent"),
         }
-        // Sessions made before a stop hold this mailbox, and `Round::drop` put the
-        // requests behind the panic back on it. A new mailbox would strand both.
+        // Sessions made before hold this mailbox, `Round::drop` put the requests
+        // behind a panic back on it, and a retired actor's callers are still
+        // being answered `FENCED` from it. A new mailbox would strand them all.
         let reused = slots
             .get(&id)
             .filter(|old| old.protocol == TypeId::of::<C>())
             .and_then(|old| old.mailbox.downcast_ref::<Mailbox<Delivery<C>>>())
             .cloned();
         let mailbox = reused.unwrap_or_else(|| Mailbox::<Delivery<C>>::new(capacity));
+        // The old slot goes first, and with it its task (the `FENCED` responder of a
+        // retired actor, or one that has already ended), so that the new drain is not
+        // started beside it. The abort lands the next time that task is polled; a
+        // request it answers in that instant is refused `FENCED` and retried, which is
+        // the safe way to be wrong.
+        drop(slots.remove(&id));
+        let retiring = Arc::new(AtomicBool::new(false));
+        let retire = Arc::new(Notify::new());
+        let (released_tx, released) = watch::channel(false);
         let drain = tokio::spawn({
             let mailbox = mailbox.clone();
-            async move { serve_fenced(mailbox, &mut service, &fence).await }
+            let fence = Retiring {
+                inner: fence,
+                retiring: retiring.clone(),
+            };
+            let retire = retire.clone();
+            async move {
+                serve_until(mailbox.clone(), &mut service, &fence, retire.notified()).await;
+                // Idle, and told to stop: nothing is running, so the service can go.
+                drop(service);
+                let _ = released_tx.send(true);
+                // What is left of the actor answers anyone who still comes.
+                refuse_all(mailbox).await
+            }
         });
         slots.insert(
             id,
@@ -253,6 +390,9 @@ impl Supervisor for LocalSupervisor {
                 protocol: TypeId::of::<C>(),
                 mailbox: Box::new(mailbox),
                 drain,
+                retiring,
+                retire,
+                released,
             },
         );
         Ok(())
@@ -266,9 +406,16 @@ impl Supervisor for LocalSupervisor {
         let slot = slots
             .get(&id)
             .ok_or_else(|| Error::new(format!("no actor {id}")))?;
-        if !slot.running() {
+        match slot.status() {
+            Status::Running => {}
+            // A new session would only be told `FENCED`: send the caller to ask
+            // where the actor lives instead.
+            Status::Draining | Status::Retired => {
+                return Err(Error::new(format!("actor {id} is not served here")));
+            }
             // A new session would queue behind a drain that is gone.
-            return Err(Error::new(format!("actor {id} has stopped")));
+            Status::Stopped => return Err(Error::new(format!("actor {id} has stopped"))),
+            Status::Absent => unreachable!("a slot is never absent"),
         }
         if slot.protocol != TypeId::of::<P>() {
             return Err(Error::new(format!(

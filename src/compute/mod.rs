@@ -9,8 +9,9 @@ use std::{
 #[cfg(feature = "service")]
 use jetstream::prelude::*;
 
-// Something that does compute, e.g. a VM, container, v8 isolate, or interpreter.
-pub type JobId = u128;
+// A job, or anything that does compute, e.g. a VM, container, v8 isolate, or
+// interpreter, is named by an `Id`.
+pub use crate::id::Id;
 
 /// CPU, held as millicores: 1000 of them are one core.
 ///
@@ -196,7 +197,7 @@ impl Sub for Instant {
 
 #[derive(Debug, Clone)]
 pub struct Job<F> {
-    pub id: JobId,
+    pub id: Id,
     pub resources: Resources,
     /// When the job started, on the scheduler's clock.
     pub started_at: Instant,

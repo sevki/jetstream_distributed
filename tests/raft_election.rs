@@ -19,7 +19,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use jetstream_distributed::host::HostId;
+use jetstream_distributed::id::Id;
 use jetstream_distributed::raft::service::{
     Ballot, Consensus, Durable, Event, MemoryLog, MemoryLogStore, Peer, Persisted, Standing,
 };
@@ -30,8 +30,8 @@ const A: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
 const B: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
 const C: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3));
 
-fn roster() -> HashMap<IpAddr, HostId> {
-    HashMap::from([(A, 0), (B, 1), (C, 2)])
+fn roster() -> HashMap<IpAddr, Id> {
+    HashMap::from([(A, Id(0)), (B, Id(1)), (C, Id(2))])
 }
 
 /// A caller, identified the way the service identifies one: by where the
@@ -43,7 +43,7 @@ fn from(addr: IpAddr) -> Context {
 /// Every server in this file starts with an empty log, so the up-to-date check
 /// is satisfied by `(0, 0)` everywhere and these tests stay about *elections*.
 /// `tests/raft_log.rs` is where the log does the deciding.
-fn peer(me: HostId, log: &MemoryLog) -> Peer {
+fn peer(me: Id, log: &MemoryLog) -> Peer {
     Peer::new(roster(), me, Arc::new(log.clone()), Arc::new(MemoryLogStore::new()))
         .expect("the server is on the roster")
 }
@@ -52,7 +52,7 @@ fn peer(me: HostId, log: &MemoryLog) -> Peer {
 #[tokio::test]
 async fn a_candidate_with_two_of_three_leads() {
     let (la, lb, lc) = (MemoryLog::new(), MemoryLog::new(), MemoryLog::new());
-    let (a, b, c) = (peer(0, &la), peer(1, &lb), peer(2, &lc));
+    let (a, b, c) = (peer(Id(0),&la), peer(Id(1),&lb), peer(Id(2),&lc));
 
     let term = a.stand_for_election().unwrap();
     assert_eq!(term, 1, "a fresh server stands for term 1");
@@ -60,7 +60,7 @@ async fn a_candidate_with_two_of_three_leads() {
 
     // A asks B, which has no reason to refuse.
     assert_eq!(b.request_vote(from(A), term, 0, 0).await.unwrap(), Ballot::Granted(1));
-    let leads = a.count_ballot(1, term, Ballot::Granted(term)).unwrap();
+    let leads = a.count_ballot(Id(1),term, Ballot::Granted(term)).unwrap();
     assert!(leads, "two of three is a majority");
     assert_eq!(a.standing_now(), Standing { term: 1, leading: true });
 
@@ -79,14 +79,14 @@ async fn a_candidate_with_two_of_three_leads() {
 #[tokio::test]
 async fn two_candidates_cannot_both_win_a_term() {
     let (la, lb, lc) = (MemoryLog::new(), MemoryLog::new(), MemoryLog::new());
-    let (a, b, c) = (peer(0, &la), peer(1, &lb), peer(2, &lc));
+    let (a, b, c) = (peer(Id(0),&la), peer(Id(1),&lb), peer(Id(2),&lc));
 
     assert_eq!(a.stand_for_election().unwrap(), 1);
     assert_eq!(b.stand_for_election().unwrap(), 1);
 
     // A gets to C first.
     assert_eq!(c.request_vote(from(A), 1, 0, 0).await.unwrap(), Ballot::Granted(1));
-    assert!(a.count_ballot(2, 1, Ballot::Granted(1)).unwrap(), "A has its own vote and C's");
+    assert!(a.count_ballot(Id(2),1, Ballot::Granted(1)).unwrap(), "A has its own vote and C's");
 
     // B now has nowhere to go. C has spent its vote...
     assert_eq!(
@@ -114,17 +114,17 @@ async fn a_restarted_voter_does_not_vote_twice() {
     let lc = MemoryLog::new();
 
     {
-        let c = peer(2, &lc);
+        let c = peer(Id(2),&lc);
         assert_eq!(c.request_vote(from(A), 1, 0, 0).await.unwrap(), Ballot::Granted(1));
     }
     assert_eq!(
         lc.load().unwrap(),
-        Persisted { current_term: 1, voted_for: Some(0) },
+        Persisted { current_term: 1, voted_for: Some(Id(0)) },
         "the vote is on stable storage, not only in the server's head"
     );
 
     // Everything the server knew is gone except the record.
-    let c = peer(2, &lc);
+    let c = peer(Id(2),&lc);
     assert_eq!(c.standing_now().term, 1, "a recovered server resumes its term");
     assert_eq!(
         c.request_vote(from(B), 1, 0, 0).await.unwrap(),
@@ -146,12 +146,12 @@ async fn a_restarted_voter_does_not_vote_twice() {
 #[tokio::test]
 async fn a_forgetful_voter_votes_twice_and_elects_two_leaders() {
     {
-        let c = peer(2, &MemoryLog::new());
+        let c = peer(Id(2),&MemoryLog::new());
         assert_eq!(c.request_vote(from(A), 1, 0, 0).await.unwrap(), Ballot::Granted(1));
     }
 
     // A fresh log, standing in for a server that wrote nothing down.
-    let c = peer(2, &MemoryLog::new());
+    let c = peer(Id(2),&MemoryLog::new());
     assert_eq!(c.standing_now().term, 0, "it has forgotten the term as well as the vote");
     assert_eq!(
         c.request_vote(from(B), 1, 0, 0).await.unwrap(),
@@ -160,11 +160,11 @@ async fn a_forgetful_voter_votes_twice_and_elects_two_leaders() {
     );
 
     // Which is not untidy: both candidates now hold two of three.
-    let (a, b) = (peer(0, &MemoryLog::new()), peer(1, &MemoryLog::new()));
+    let (a, b) = (peer(Id(0),&MemoryLog::new()), peer(Id(1),&MemoryLog::new()));
     assert_eq!(a.stand_for_election().unwrap(), 1);
     assert_eq!(b.stand_for_election().unwrap(), 1);
-    assert!(a.count_ballot(2, 1, Ballot::Granted(1)).unwrap());
-    assert!(b.count_ballot(2, 1, Ballot::Granted(1)).unwrap());
+    assert!(a.count_ballot(Id(2),1, Ballot::Granted(1)).unwrap());
+    assert!(b.count_ballot(Id(2),1, Ballot::Granted(1)).unwrap());
     assert!(
         a.standing_now().leading && b.standing_now().leading,
         "two leaders in term 1 — the state `theorem_election_safety` says is \
@@ -176,12 +176,12 @@ async fn a_forgetful_voter_votes_twice_and_elects_two_leaders() {
 /// cluster, and a vote cannot be counted from one.
 #[tokio::test]
 async fn strangers_are_not_servers() {
-    assert!(Peer::new(roster(), 7, Arc::new(MemoryLog::new()), Arc::new(MemoryLogStore::new()))
+    assert!(Peer::new(roster(), Id(7),Arc::new(MemoryLog::new()), Arc::new(MemoryLogStore::new()))
             .is_err());
 
-    let a = peer(0, &MemoryLog::new());
+    let a = peer(Id(0),&MemoryLog::new());
     a.stand_for_election().unwrap();
-    let refused = a.count_ballot(7, 1, Ballot::Granted(1)).unwrap_err();
+    let refused = a.count_ballot(Id(7),1, Ballot::Granted(1)).unwrap_err();
     assert_eq!(refused.code(), Some("ERR"), "{refused:?}");
 
     // And a caller the roster does not know names no server, whatever it claims.
@@ -200,18 +200,18 @@ async fn strangers_are_not_servers() {
 /// same class of mistake as a stale epoch buying a write.
 #[tokio::test]
 async fn a_vote_for_a_term_the_candidate_has_left_is_not_counted() {
-    let a = peer(0, &MemoryLog::new());
+    let a = peer(Id(0),&MemoryLog::new());
     assert_eq!(a.stand_for_election().unwrap(), 1);
     assert_eq!(a.stand_for_election().unwrap(), 2, "standing again burns a term");
 
     assert!(
-        !a.count_ballot(1, 1, Ballot::Granted(1)).unwrap(),
+        !a.count_ballot(Id(1),1, Ballot::Granted(1)).unwrap(),
         "a vote for term 1 must not count towards term 2"
     );
     assert!(!a.standing_now().leading);
 
     // The same voter, voting in the term actually being contested, does count.
-    assert!(a.count_ballot(1, 2, Ballot::Granted(2)).unwrap());
+    assert!(a.count_ballot(Id(1),2, Ballot::Granted(2)).unwrap());
 }
 
 /// **A refusal is not a vote, and a caller cannot make it one.**
@@ -224,7 +224,7 @@ async fn a_vote_for_a_term_the_candidate_has_left_is_not_counted() {
 #[tokio::test]
 async fn a_refused_ballot_is_not_a_vote() {
     let (la, lb) = (MemoryLog::new(), MemoryLog::new());
-    let (a, b) = (peer(0, &la), peer(1, &lb));
+    let (a, b) = (peer(Id(0),&la), peer(Id(1),&lb));
 
     // B stands first and spends its vote on itself, so it refuses A.
     assert_eq!(b.stand_for_election().unwrap(), 1);
@@ -232,13 +232,13 @@ async fn a_refused_ballot_is_not_a_vote() {
     let ballot = b.request_vote(from(A), 1, 0, 0).await.unwrap();
     assert_eq!(ballot, Ballot::Refused(1));
 
-    assert!(!a.count_ballot(1, 1, ballot).unwrap(), "a refusal counts for nothing");
+    assert!(!a.count_ballot(Id(1),1, ballot).unwrap(), "a refusal counts for nothing");
     assert!(!a.standing_now().leading, "one vote of three is not a majority");
 
     // And the tally did not quietly grow: the only way it could have is the
     // ballot A actually received.
     assert!(
-        !a.log().iter().any(|e| matches!(e, Event::Counted { from: 1, .. })),
+        !a.log().iter().any(|e| matches!(e, Event::Counted { from: Id(1), .. })),
         "{:?}",
         a.log()
     );
@@ -252,10 +252,10 @@ async fn a_refused_ballot_is_not_a_vote() {
 /// its own candidacy rather than a network that was slow.
 #[tokio::test]
 async fn a_ballot_for_another_term_is_refused() {
-    let a = peer(0, &MemoryLog::new());
+    let a = peer(Id(0),&MemoryLog::new());
     assert_eq!(a.stand_for_election().unwrap(), 1);
 
-    let refused = a.count_ballot(1, 1, Ballot::Granted(2)).unwrap_err();
+    let refused = a.count_ballot(Id(1),1, Ballot::Granted(2)).unwrap_err();
     assert_eq!(refused.code(), Some("NO"), "{refused:?}");
     assert!(!a.standing_now().leading);
 }
@@ -269,7 +269,7 @@ async fn a_ballot_for_another_term_is_refused() {
 #[tokio::test]
 async fn a_candidate_adopts_a_term_a_refusal_carried() {
     let (la, lb) = (MemoryLog::new(), MemoryLog::new());
-    let (a, b) = (peer(0, &la), peer(1, &lb));
+    let (a, b) = (peer(Id(0),&la), peer(Id(1),&lb));
 
     // B is far ahead.
     for _ in 0..4 {
@@ -281,7 +281,7 @@ async fn a_candidate_adopts_a_term_a_refusal_carried() {
     let ballot = b.request_vote(from(A), 1, 0, 0).await.unwrap();
     assert_eq!(ballot, Ballot::Refused(4), "B tells A what term it is really in");
 
-    assert!(!a.count_ballot(1, 1, ballot).unwrap());
+    assert!(!a.count_ballot(Id(1),1, ballot).unwrap());
     assert_eq!(
         a.standing_now(),
         Standing { term: 4, leading: false },
@@ -299,10 +299,10 @@ async fn a_candidate_adopts_a_term_a_refusal_carried() {
 #[tokio::test]
 async fn a_stale_leader_steps_down_on_the_reply_to_its_own_heartbeat() {
     let (la, lb) = (MemoryLog::new(), MemoryLog::new());
-    let (a, b) = (peer(0, &la), peer(1, &lb));
+    let (a, b) = (peer(Id(0),&la), peer(Id(1),&lb));
 
     assert_eq!(a.stand_for_election().unwrap(), 1);
-    assert!(a.count_ballot(1, 1, Ballot::Granted(1)).unwrap());
+    assert!(a.count_ballot(Id(1),1, Ballot::Granted(1)).unwrap());
     assert!(a.standing_now().leading);
 
     // While A was away, B took term 3.
@@ -326,7 +326,7 @@ async fn a_stale_leader_steps_down_on_the_reply_to_its_own_heartbeat() {
 #[tokio::test]
 async fn a_candidate_yields_to_the_winner_of_its_own_term() {
     let (la, lb) = (MemoryLog::new(), MemoryLog::new());
-    let (a, b) = (peer(0, &la), peer(1, &lb));
+    let (a, b) = (peer(Id(0),&la), peer(Id(1),&lb));
 
     assert_eq!(a.stand_for_election().unwrap(), 1);
     assert_eq!(b.stand_for_election().unwrap(), 1, "a split vote: both stand at 1");
@@ -342,7 +342,7 @@ async fn a_candidate_yields_to_the_winner_of_its_own_term() {
 
     // **The vote is kept**, because the term did not move and B really did vote
     // in term 1. A restart must still find it, or B votes twice in one term.
-    assert_eq!(lb.load().unwrap(), Persisted { current_term: 1, voted_for: Some(1) });
+    assert_eq!(lb.load().unwrap(), Persisted { current_term: 1, voted_for: Some(Id(1)) });
     assert_eq!(
         b.request_vote(from(C), 1, 0, 0).await.unwrap(),
         Ballot::Refused(1),
@@ -360,9 +360,9 @@ async fn a_candidate_yields_to_the_winner_of_its_own_term() {
 #[tokio::test]
 async fn a_leader_is_not_deposed_by_its_own_term() {
     let la = MemoryLog::new();
-    let a = peer(0, &la);
+    let a = peer(Id(0),&la);
     assert_eq!(a.stand_for_election().unwrap(), 1);
-    assert!(a.count_ballot(1, 1, Ballot::Granted(1)).unwrap());
+    assert!(a.count_ballot(Id(1),1, Ballot::Granted(1)).unwrap());
 
     let seen = a.heartbeat(from(B), 1, 0).await.unwrap();
     assert_eq!(seen, Standing { term: 1, leading: true }, "still the leader of term 1");
@@ -414,7 +414,7 @@ impl Durable for InstallsThenFails {
 #[tokio::test]
 async fn a_persist_that_failed_after_installing_is_not_ignored() {
     let store = InstallsThenFails::new();
-    let a = Peer::new(roster(), 0, Arc::new(store.clone()), Arc::new(MemoryLogStore::new()))
+    let a = Peer::new(roster(), Id(0),Arc::new(store.clone()), Arc::new(MemoryLogStore::new()))
         .expect("on the roster");
 
     store.fail_next.store(true, Ordering::SeqCst);
@@ -430,7 +430,7 @@ async fn a_persist_that_failed_after_installing_is_not_ignored() {
     );
     assert_eq!(
         store.load().unwrap(),
-        Persisted { current_term: 1, voted_for: Some(0) },
+        Persisted { current_term: 1, voted_for: Some(Id(0)) },
         "the write landed; only the sync failed"
     );
 

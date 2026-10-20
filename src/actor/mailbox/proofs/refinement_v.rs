@@ -37,7 +37,7 @@ use vstd::prelude::*;
 use crate::actor::mailbox::exec::*;
 use crate::actor::mailbox::model::*;
 use crate::actor::model::Envelope;
-use crate::host::HostId;
+use crate::id::Id;
 
 verus! {
 
@@ -83,7 +83,7 @@ pub proof fn theorem_enqueue_refines<T>(
     c2: MailboxCore<T>,
     m: Mailbox,
     item: T,
-    sender: HostId,
+    sender: Id,
     body: nat,
 )
     requires

@@ -68,7 +68,7 @@ default = ["service", "crush"]
 # prints a `Memory` for people.
 service = ["dep:jetstream", "dep:tokio", "dep:rand", "dep:humansize"]
 # Placement by CRUSH. A feature of its own because it is a dependency of its own
-# (`mycrush`), and because it needs nothing of Jetstream: it places on `HostId`s.
+# (`mycrush`), and because it needs nothing of Jetstream: it places on `Id`s.
 crush = ["dep:mycrush"]
 
 [dependencies]

@@ -43,7 +43,7 @@ use vstd::prelude::*;
 use crate::actor::mailbox::model::*;
 use crate::actor::mailbox::proofs::invariant::*;
 use crate::actor::model::Envelope;
-use crate::host::HostId;
+use crate::id::Id;
 use crate::temporal::*;
 
 verus! {
@@ -260,7 +260,7 @@ proof fn lemma_concat_contains_left(a: Seq<Envelope>, b: Seq<Envelope>, m: Envel
 
 /// A sender about to enqueue is not mid-operation on the message it is about to
 /// number.
-proof fn lemma_enqueue_fresh(s: Mailbox, sender: HostId, body: nat)
+proof fn lemma_enqueue_fresh(s: Mailbox, sender: Id, body: nat)
     requires
         mb_inv(s),
     ensures

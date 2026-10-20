@@ -108,13 +108,14 @@ events, and liveness of any kind. This model proves safety only, and says so.
 
 ```rust
 pub type ActorId = nat;
-// HostId is `crate::host::HostId`, a `u128`; a model names a host by it directly.
+// Id is `crate::id::Id`, a newtype around a `u128` (a UUID or a ULID converts to one);
+// a model names a host by it directly.
 pub type Epoch   = nat;
 
 pub enum OwnershipState {
-    Owned        { owner: HostId, epoch: Epoch },
-    Transferring { from: HostId, to: HostId, old_epoch: Epoch, new_epoch: Epoch },
-    Unowned      { epoch: Epoch, intended_owner: HostId },
+    Owned        { owner: Id, epoch: Epoch },
+    Transferring { from: Id, to: Id, old_epoch: Epoch, new_epoch: Epoch },
+    Unowned      { epoch: Epoch, intended_owner: Id },
 }
 ```
 
@@ -145,7 +146,7 @@ Two deliberate design points:
 
 ```rust
 // Who may perform an authoritative mutation.
-spec fn may_mutate(s: OwnershipState, node: HostId, epoch: Epoch) -> bool {
+spec fn may_mutate(s: OwnershipState, node: Id, epoch: Epoch) -> bool {
     match s {
         Owned { owner, epoch: e } => node == owner && epoch == e,
         Transferring { .. }       => false,
@@ -256,7 +257,7 @@ verifying, the build fails.
 | C7 | **Terms never decrease, and votes are never retracted.** The Raft counterparts of epoch monotonicity (claim 5) and token permanence (P1) — and a vote is physical in the same sense a token is, which is exactly why a returning server must not vote again in a term it has already voted in | `raft::proofs::election::theorem_term_monotone_step`, `theorem_votes_monotone_step` | none |
 | C8 | **The coupling guards agree with the composed model.** `PassToken` fires only once the actor is `Unowned` and the routing layer's own step fires; `SeizeToken` only from the holder, to a different node, with the actor `Unowned`; `AcquireUnderToken` only for the node holding the privilege; `Reconcile` only for a node that owes one and whose belief is stale. Each refuses exactly when the composed model's transition is not enabled | `composed::proofs::refinement::theorem_pass_token_step_refines`, `theorem_pass_token_refuses_while_the_actor_is_held`, `theorem_pass_token_refuses_when_the_routing_step_does`, `theorem_seize_step_refines`, `theorem_seize_step_refuses_exactly_when_disabled`, `theorem_acquire_under_token_step_refines`, `theorem_acquire_under_token_refuses_a_node_without_the_privilege`, `theorem_reconcile_step_refines`, `theorem_reconcile_step_refuses_exactly_when_disabled` | **every node is live** (`own.live.contains(..)`) — the service has no `Crash` step, so it refines the composed machine's crash-free executions; see below |
 | C9 | **A step a layer already proved is carried by the composed machine without a second proof.** `cs_ray` adds only that the step does not move the privilege and that its actor is live; `cs_own` adds only that the step does not create authority over this actor and does not bring back a node owing a reconciliation | `composed::proofs::refinement::theorem_a_routing_step_is_carried`, `theorem_an_ownership_step_is_carried` | the hypotheses of the carried step |
-| CX1 | **The composed steps over the layers' records are the composed model.** `composed::exec::pass_token`, `seize_token`, `acquire_under_token` and `reconcile` take the ownership record (`RegistryCore`), the routing record (`RayTable`) and the set of nodes that owe a reconciliation (`host::HostSet`), check the coupling guard, take the layers' steps and keep the debts — and each contract is `cs_pass_token`, `cs_seize_token`, `cs_acquire_under_token` or `cs_reconcile`: the privilege moves only once the actor is `Unowned`, only `to` acts on a seizure and the old holder then owes a reconciliation, the recipient of a passed privilege is discharged of its debt, a node acquires only holding the privilege. The relation (`stands_for_composed`) is the ownership relation of E8 (grants included), the routing view *being* `c.ray`, and the debts *being* `c.seized` | `composed::proofs::exec::theorem_pass_token_is_cs_pass_token`, `theorem_seize_token_is_cs_seize_token`, `theorem_acquire_under_token_is_cs_acquire_under_token`, `theorem_reconcile_is_cs_reconcile` | the nodes involved are live (`own.live`). The service's identity lookup speaks only for the *caller*; the recipient of a passed privilege and the target of a seizure are not callers, so for them this is a hypothesis nothing in the service establishes |
+| CX1 | **The composed steps over the layers' records are the composed model.** `composed::exec::pass_token`, `seize_token`, `acquire_under_token` and `reconcile` take the ownership record (`RegistryCore`), the routing record (`RayTable`) and the set of nodes that owe a reconciliation (`id::IdSet`), check the coupling guard, take the layers' steps and keep the debts — and each contract is `cs_pass_token`, `cs_seize_token`, `cs_acquire_under_token` or `cs_reconcile`: the privilege moves only once the actor is `Unowned`, only `to` acts on a seizure and the old holder then owes a reconciliation, the recipient of a passed privilege is discharged of its debt, a node acquires only holding the privilege. The relation (`stands_for_composed`) is the ownership relation of E8 (grants included), the routing view *being* `c.ray`, and the debts *being* `c.seized` | `composed::proofs::exec::theorem_pass_token_is_cs_pass_token`, `theorem_seize_token_is_cs_seize_token`, `theorem_acquire_under_token_is_cs_acquire_under_token`, `theorem_reconcile_is_cs_reconcile` | the nodes involved are live (`own.live`). The service's identity lookup speaks only for the *caller*; the recipient of a passed privilege and the target of a seizure are not callers, so for them this is a hypothesis nothing in the service establishes |
 | CX2 | **A refused composed step is one the model could not take.** A refusal changes neither layer nor the debts and carries "the actor was not released, or the layer's own step was disabled in every post-state" (`pass_token`, `seize_token`), "the node does not hold the privilege" (`acquire_under_token`), or "the node owes nothing, or is not stale" (`reconcile`). **Not claimed**: that a refusal from the ownership layer inside `acquire_under_token` (no published grant, a wrong epoch) is a step the *composed* model could not take — it is the ownership layer's own refusal, covered by E8, and the composed theorem for `acquire_under_token` is about the privilege test only | `composed::proofs::exec::theorem_refused_pass_token_is_disabled`, `theorem_refused_seize_token_is_disabled`, `theorem_acquire_without_the_privilege_is_disabled`, `theorem_refused_reconcile_is_disabled` | `stands_for_composed` |
 | C8 | **A lone self-vote is not a majority** in a cluster of more than one. The check that the `>` in the quorum threshold is load-bearing rather than decorative: with `>=` a single server could elect itself | `raft::proofs::election::theorem_a_lone_vote_is_not_a_majority` | a cluster of at least two |
 | C9 | **An election actually happens.** A concrete three-server cluster walked from initialisation through a real election, exported with every step named, so C1 is not a safety property of a protocol that never elects anybody | `raft::proofs::scenario::scenario_a_leader_is_elected` | none: the cluster is exhibited |
@@ -603,7 +604,7 @@ Routing and ownership are glued by one predicate:
 
 ```rust
 spec fn couples(r: Raymond, s: OwnershipState) -> bool {
-    forall|n: HostId, e: Epoch| may_mutate(s, n, e) ==> has_token(r, n)
+    forall|n: Id, e: Epoch| may_mutate(s, n, e) ==> has_token(r, n)
 }
 ```
 
@@ -2814,16 +2815,25 @@ discharged, not waived: a false goal fails under either.
 They are named here because "no escape hatches" should mean something precise,
 and a reader who greps for `assume` should also know what `by(...)` does.
 
-### `HostSet` rests on vstd's `HashSet` specification
+### `IdSet` rests on vstd's `HashSet` specification
 
-`host::HostSet` is a `std::collections::HashSet<HostId>` whose view is
-`Set<HostId>`; the Raft tally and the composed machine's debts are `HostSet`s.
-What it promises (`insert`, `remove`, `contains`, `len` are the set's) is proved
-from vstd's specification of `HashSet`, and that specification is trusted, not
-proved: in particular `vstd::std_specs::hash::obeys_key_model::<u128>()`, that
-the default hasher behaves as a function on keys. The axiom lives in vstd, so
-CI's grep over `src/` does not see it, and it is named here so that nobody has
-to find it. The `Vec` scans it replaced rested on `Vec`'s specification alone.
+`id::IdSet` is a `std::collections::HashSet<u128>` — the number inside each
+`Id` — whose view is `Set<Id>`, by a `lift` spec function and one lemma that an
+id is in the lifted set exactly when its number is in the stored one; the Raft
+tally and the composed machine's debts are `IdSet`s. What it promises (`insert`,
+`remove`, `contains`, `len`, `is_empty` are the set's) is proved from vstd's
+specification of `HashSet`, and that specification is trusted, not proved: in
+particular `vstd::std_specs::hash::obeys_key_model::<u128>()`, that the default
+hasher behaves as a function on keys. The axiom lives in vstd, so CI's grep over
+`src/` does not see it, and it is named here so that nobody has to find it. The
+set stores the `u128` and not the `Id` because vstd states that axiom for the
+built-in key types only; for a type of ours it could be assumed only with an
+`assume`, which CI rejects. The `Vec` scans it replaced rested on `Vec`'s
+specification alone.
+
+`Id` itself adds nothing to trust. Its `==` is defined in the language, with
+vstd's `PartialEqSpecImpl` (`obeys_eq_spec` is `true` and `eq_spec` is equality
+of the numbers), and `id::value::lemma_id_eq` says so.
 
 ### The one exception, and it is not in `src/`
 

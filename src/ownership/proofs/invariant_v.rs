@@ -12,7 +12,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
@@ -103,7 +103,7 @@ pub proof fn lemma_inv_same_epoch_unowned(
 /// This is the fact that makes token issuance unique: `Acquire` is the only
 /// transition that mints a token, and it mints it exactly at the epoch of an
 /// `Unowned` actor.
-pub proof fn lemma_no_token_at_unowned_epoch(sys: OwnershipSystem, a: ActorId, e: Epoch, n: HostId)
+pub proof fn lemma_no_token_at_unowned_epoch(sys: OwnershipSystem, a: ActorId, e: Epoch, n: Id)
     requires
         inv(sys),
         sys.actors.contains_key(a),
@@ -127,7 +127,7 @@ pub proof fn lemma_inv_acquire(
     pre: OwnershipSystem,
     post: OwnershipSystem,
     a: ActorId,
-    n: HostId,
+    n: Id,
     e: Epoch,
 )
     requires

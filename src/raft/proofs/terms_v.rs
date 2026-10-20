@@ -89,7 +89,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 use vstd::set_lib::*;
 
 use crate::raft::model::*;
@@ -295,7 +295,7 @@ pub proof fn lemma_accepting_keeps_shape(
 /// 0, which is what lets [`terms_within`]'s lower bound survive
 /// [`tr_client_request`].
 pub open spec fn inv_standing_term_positive(c: Cluster) -> bool {
-    forall|n: HostId|
+    forall|n: Id|
         #![trigger c.servers[n]]
         c.servers.contains_key(n) && (is_leader(c.servers[n]) || is_candidate(c.servers[n]))
             ==> c.servers[n].current_term > 0
@@ -303,7 +303,7 @@ pub open spec fn inv_standing_term_positive(c: Cluster) -> bool {
 
 /// **Every log's terms are sorted and bounded by their holder's own term.**
 pub open spec fn inv_log_shape(c: Cluster) -> bool {
-    forall|n: HostId|
+    forall|n: Id|
         #![trigger c.servers[n]]
         c.servers.contains_key(n) ==> terms_within(c.servers[n].log, c.servers[n].current_term)
             && terms_sorted(c.servers[n].log)
@@ -323,14 +323,14 @@ pub proof fn lemma_untouched_logs_keep_shape(pre: Cluster, post: Cluster)
     requires
         inv_log_shape(pre),
         post.servers.dom() == pre.servers.dom(),
-        forall|m: HostId|
+        forall|m: Id|
             #![trigger post.servers[m]]
             post.servers.contains_key(m) ==> post.servers[m].log == pre.servers[m].log
                 && post.servers[m].current_term >= pre.servers[m].current_term,
     ensures
         inv_log_shape(post),
 {
-    assert forall|m: HostId|
+    assert forall|m: Id|
         #![trigger post.servers[m]]
         post.servers.contains_key(m) implies terms_within(
         post.servers[m].log,
@@ -351,7 +351,7 @@ pub proof fn lemma_unchanged_standing_keeps_positive(pre: Cluster, post: Cluster
     requires
         inv_standing_term_positive(pre),
         post.servers.dom() == pre.servers.dom(),
-        forall|m: HostId|
+        forall|m: Id|
             #![trigger post.servers[m]]
             post.servers.contains_key(m) ==> post.servers[m].current_term
                 >= pre.servers[m].current_term && (is_leader(post.servers[m]) || is_candidate(
@@ -360,7 +360,7 @@ pub proof fn lemma_unchanged_standing_keeps_positive(pre: Cluster, post: Cluster
     ensures
         inv_standing_term_positive(post),
 {
-    assert forall|m: HostId|
+    assert forall|m: Id|
         #![trigger post.servers[m]]
         post.servers.contains_key(m) && (is_leader(post.servers[m]) || is_candidate(
             post.servers[m],
@@ -377,7 +377,7 @@ pub proof fn lemma_unchanged_standing_keeps_positive(pre: Cluster, post: Cluster
 /// Standing for election. The log is untouched and the term goes up by one, so
 /// the new candidate is at a term above 0 by arithmetic rather than by
 /// induction.
-pub proof fn lemma_timeout_preserves_terms(pre: Cluster, post: Cluster, n: HostId)
+pub proof fn lemma_timeout_preserves_terms(pre: Cluster, post: Cluster, n: Id)
     requires
         raft_term_inv(pre),
         tr_timeout(pre, post, n),
@@ -387,7 +387,7 @@ pub proof fn lemma_timeout_preserves_terms(pre: Cluster, post: Cluster, n: HostI
     lemma_timeout_preserves_hist(pre, post, n);
     assert(post.servers.dom() =~= pre.servers.dom());
     lemma_untouched_logs_keep_shape(pre, post);
-    assert forall|m: HostId|
+    assert forall|m: Id|
         #![trigger post.servers[m]]
         post.servers.contains_key(m) && (is_leader(post.servers[m]) || is_candidate(
             post.servers[m],
@@ -403,8 +403,8 @@ pub proof fn lemma_timeout_preserves_terms(pre: Cluster, post: Cluster, n: HostI
 pub proof fn lemma_grant_vote_preserves_terms(
     pre: Cluster,
     post: Cluster,
-    voter: HostId,
-    cand: HostId,
+    voter: Id,
+    cand: Id,
     term: Term,
     cand_last_term: Term,
     cand_last_index: nat,
@@ -426,7 +426,7 @@ pub proof fn lemma_grant_vote_preserves_terms(
     );
     assert(post.servers.dom() =~= pre.servers.dom());
     lemma_untouched_logs_keep_shape(pre, post);
-    assert forall|m: HostId|
+    assert forall|m: Id|
         #![trigger post.servers[m]]
         post.servers.contains_key(m) && (is_leader(post.servers[m]) || is_candidate(
             post.servers[m],
@@ -442,7 +442,7 @@ pub proof fn lemma_grant_vote_preserves_terms(
 pub proof fn lemma_become_leader_preserves_terms(
     pre: Cluster,
     post: Cluster,
-    n: HostId,
+    n: Id,
     term: Term,
 )
     requires
@@ -456,7 +456,7 @@ pub proof fn lemma_become_leader_preserves_terms(
     lemma_untouched_logs_keep_shape(pre, post);
     assert(is_candidate(pre.servers[n]));
     assert(pre.servers[n].current_term > 0);
-    assert forall|m: HostId|
+    assert forall|m: Id|
         #![trigger post.servers[m]]
         post.servers.contains_key(m) && (is_leader(post.servers[m]) || is_candidate(
             post.servers[m],
@@ -471,7 +471,7 @@ pub proof fn lemma_become_leader_preserves_terms(
 pub proof fn lemma_step_down_preserves_terms(
     pre: Cluster,
     post: Cluster,
-    n: HostId,
+    n: Id,
     term: Term,
 )
     requires
@@ -483,7 +483,7 @@ pub proof fn lemma_step_down_preserves_terms(
     lemma_step_down_preserves_hist(pre, post, n, term);
     assert(post.servers.dom() =~= pre.servers.dom());
     lemma_untouched_logs_keep_shape(pre, post);
-    assert forall|m: HostId|
+    assert forall|m: Id|
         #![trigger post.servers[m]]
         post.servers.contains_key(m) && (is_leader(post.servers[m]) || is_candidate(
             post.servers[m],
@@ -501,7 +501,7 @@ pub proof fn lemma_step_down_preserves_terms(
 pub proof fn lemma_client_request_preserves_terms(
     pre: Cluster,
     post: Cluster,
-    n: HostId,
+    n: Id,
     value: nat,
 )
     requires
@@ -519,7 +519,7 @@ pub proof fn lemma_client_request_preserves_terms(
     assert(t > 0);
     lemma_push_keeps_shape(pre.servers[n].log, t, value);
 
-    assert forall|m: HostId|
+    assert forall|m: Id|
         #![trigger post.servers[m]]
         post.servers.contains_key(m) implies terms_within(
         post.servers[m].log,
@@ -534,7 +534,7 @@ pub proof fn lemma_client_request_preserves_terms(
             ));
         }
     }
-    assert forall|m: HostId|
+    assert forall|m: Id|
         #![trigger post.servers[m]]
         post.servers.contains_key(m) && (is_leader(post.servers[m]) || is_candidate(
             post.servers[m],
@@ -551,8 +551,8 @@ pub proof fn lemma_client_request_preserves_terms(
 pub proof fn lemma_append_entries_preserves_terms(
     pre: Cluster,
     post: Cluster,
-    leader: HostId,
-    follower: HostId,
+    leader: Id,
+    follower: Id,
     prefix: nat,
 )
     requires
@@ -570,7 +570,7 @@ pub proof fn lemma_append_entries_preserves_terms(
     assert(terms_within(pre.servers[leader].log, t));
     lemma_accepting_keeps_shape(pre.servers[follower].log, pre.servers[leader].log, prefix, t);
 
-    assert forall|m: HostId|
+    assert forall|m: Id|
         #![trigger post.servers[m]]
         post.servers.contains_key(m) implies terms_within(
         post.servers[m].log,
@@ -587,7 +587,7 @@ pub proof fn lemma_append_entries_preserves_terms(
             ));
         }
     }
-    assert forall|m: HostId|
+    assert forall|m: Id|
         #![trigger post.servers[m]]
         post.servers.contains_key(m) && (is_leader(post.servers[m]) || is_candidate(
             post.servers[m],
@@ -602,7 +602,7 @@ pub proof fn lemma_append_entries_preserves_terms(
 pub proof fn lemma_advance_commit_preserves_terms(
     pre: Cluster,
     post: Cluster,
-    n: HostId,
+    n: Id,
     upto: nat,
 )
     requires
@@ -614,7 +614,7 @@ pub proof fn lemma_advance_commit_preserves_terms(
     lemma_advance_commit_preserves_hist(pre, post, n, upto);
     assert(post.servers.dom() =~= pre.servers.dom());
     lemma_untouched_logs_keep_shape(pre, post);
-    assert forall|m: HostId|
+    assert forall|m: Id|
         #![trigger post.servers[m]]
         post.servers.contains_key(m) && (is_leader(post.servers[m]) || is_candidate(
             post.servers[m],
@@ -707,7 +707,7 @@ pub proof fn lemma_init_term_inv(c: Cluster)
         raft_term_inv(c),
 {
     lemma_init_hist_inv(c);
-    assert forall|m: HostId|
+    assert forall|m: Id|
         #![trigger c.servers[m]]
         c.servers.contains_key(m) implies terms_within(
         c.servers[m].log,
@@ -781,8 +781,8 @@ pub proof fn theorem_reachable_term_inv(c: Cluster)
 pub proof fn theorem_a_follower_that_agrees_keeps_the_entry(
     pre: Cluster,
     post: Cluster,
-    leader: HostId,
-    follower: HostId,
+    leader: Id,
+    follower: Id,
     prefix: nat,
     i: nat,
 )
@@ -828,7 +828,7 @@ pub proof fn theorem_a_follower_that_agrees_keeps_the_entry(
 /// new transition that can shorten a log forces a decision here instead of
 /// falling silently into the "cannot touch `n`'s log" case that
 /// [`theorem_an_agreed_entry_survives_any_step`] relies on.
-pub open spec fn step_replicates_to(s: RaftStep, n: HostId) -> bool {
+pub open spec fn step_replicates_to(s: RaftStep, n: Id) -> bool {
     match s {
         RaftStep::AppendEntries { leader: _, follower, prefix: _ } => follower == n,
         _ => false,
@@ -837,10 +837,10 @@ pub open spec fn step_replicates_to(s: RaftStep, n: HostId) -> bool {
 
 /// The leader of a replication step. Meaningless, and unused, for every other
 /// step.
-pub open spec fn replicating_leader(s: RaftStep) -> HostId {
+pub open spec fn replicating_leader(s: RaftStep) -> Id {
     match s {
         RaftStep::AppendEntries { leader, follower: _, prefix: _ } => leader,
-        _ => 0,
+        _ => Id(0),
     }
 }
 
@@ -856,7 +856,7 @@ pub proof fn theorem_an_agreed_entry_survives_any_step(
     pre: Cluster,
     post: Cluster,
     s: RaftStep,
-    n: HostId,
+    n: Id,
     i: nat,
 )
     requires
@@ -962,7 +962,7 @@ pub proof fn theorem_an_agreed_entry_survives_any_step(
 /// candidate's, and both disjuncts of [`at_least_as_up_to_date`] fail.
 pub proof fn theorem_a_candidate_missing_a_term_is_refused(
     c: Cluster,
-    voter: HostId,
+    voter: Id,
     i: nat,
     cand_last_term: Term,
     cand_last_index: nat,
@@ -983,8 +983,8 @@ pub proof fn theorem_a_candidate_missing_a_term_is_refused(
 pub proof fn theorem_a_stale_candidate_cannot_collect_that_vote(
     pre: Cluster,
     post: Cluster,
-    voter: HostId,
-    cand: HostId,
+    voter: Id,
+    cand: Id,
     term: Term,
     cand_last_term: Term,
     cand_last_index: nat,
@@ -1008,8 +1008,8 @@ pub proof fn theorem_a_stale_candidate_cannot_collect_that_vote(
 /// `cand_last_term = 0` is strictly below every entry there is.
 pub proof fn theorem_an_empty_log_cannot_win_a_vote(
     c: Cluster,
-    voter: HostId,
-    cand: HostId,
+    voter: Id,
+    cand: Id,
     i: nat,
 )
     requires
@@ -1035,8 +1035,8 @@ pub proof fn theorem_an_empty_log_cannot_win_a_vote(
 pub proof fn theorem_a_stale_candidate_cannot_collect_that_vote_reachable(
     pre: Cluster,
     post: Cluster,
-    voter: HostId,
-    cand: HostId,
+    voter: Id,
+    cand: Id,
     term: Term,
     cand_last_term: Term,
     cand_last_index: nat,

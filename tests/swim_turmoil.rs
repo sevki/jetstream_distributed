@@ -15,7 +15,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, OnceLock};
 
 use jetstream::prelude::*;
-use jetstream_distributed::host::HostId;
+use jetstream_distributed::id::Id;
 use jetstream_distributed::swim::service::{
     Liveness, Membership, Node, Update,
     membership_protocol::{MembershipChannel, MembershipService},
@@ -27,17 +27,17 @@ const PORT: u16 = 9100;
 
 /// Who is which member, by address. Built inside a host or a client:
 /// `turmoil::lookup` panics outside a live simulation.
-fn roster() -> HashMap<IpAddr, HostId> {
+fn roster() -> HashMap<IpAddr, Id> {
     HashMap::from([
-        (turmoil::lookup("a"), 0u128),
-        (turmoil::lookup("b"), 1u128),
-        (turmoil::lookup("c"), 2u128),
+        (turmoil::lookup("a"), Id(0)),
+        (turmoil::lookup("b"), Id(1)),
+        (turmoil::lookup("c"), Id(2)),
     ])
 }
 
-fn u(node: HostId, incarnation: u64, status: Liveness) -> Update {
+fn u(node: u128, incarnation: u64, status: Liveness) -> Update {
     Update {
-        node,
+        node: Id(node),
         incarnation,
         status,
     }
@@ -72,7 +72,7 @@ macro_rules! serve {
             let slot = slot.clone();
             async move {
                 let node = slot
-                    .get_or_init(|| Node::new(roster(), $id).expect("on its own roster"))
+                    .get_or_init(|| Node::new(roster(), Id($id)).expect("on its own roster"))
                     .clone();
                 let listener =
                     TcpListener::bind((IpAddr::from(Ipv4Addr::UNSPECIFIED), PORT)).await?;
@@ -119,7 +119,7 @@ fn a_ping_carries_a_rumour_over_the_wire() {
     sim.run().expect("the simulation runs to completion");
     let b = b_slot.get().expect("b built its node");
     assert_eq!(
-        b.record(2),
+        b.record(Id(2)),
         Some(u(2, 0, Liveness::Suspect)),
         "and it learned the rumour"
     );
@@ -143,7 +143,7 @@ fn a_suspected_node_that_is_alive_refutes_over_the_wire() {
     let built = a_slot.clone();
     sim.client("a", async move {
         let a = built
-            .get_or_init(|| Node::new(roster(), 0).expect("on the roster"))
+            .get_or_init(|| Node::new(roster(), Id(0)).expect("on the roster"))
             .clone();
 
         turmoil::partition("a", "b");
@@ -151,8 +151,8 @@ fn a_suspected_node_that_is_alive_refutes_over_the_wire() {
             TcpStream::connect(("b", PORT)).await.is_err(),
             "the partition must actually cut b off"
         );
-        assert!(a.suspect(1, 0).unwrap(), "a probe failed, so a suspects");
-        assert_eq!(a.record(1), Some(u(1, 0, Liveness::Suspect)));
+        assert!(a.suspect(Id(1), 0).unwrap(), "a probe failed, so a suspects");
+        assert_eq!(a.record(Id(1)), Some(u(1, 0, Liveness::Suspect)));
 
         turmoil::repair("a", "b");
         connect!("b", _s, ch);
@@ -166,12 +166,12 @@ fn a_suspected_node_that_is_alive_refutes_over_the_wire() {
     let b = b_slot.get().expect("b built its node");
 
     assert_eq!(
-        b.record(1),
+        b.record(Id(1)),
         Some(u(1, 1, Liveness::Alive)),
         "b refuted its own suspicion"
     );
     assert_eq!(
-        a.record(1),
+        a.record(Id(1)),
         Some(u(1, 1, Liveness::Alive)),
         "and a read the refutation off the reply, which out-ranked its suspicion"
     );
@@ -198,7 +198,7 @@ fn a_caller_off_the_roster_is_refused_over_the_wire() {
     sim.run().expect("the simulation runs to completion");
     let b = b_slot.get().expect("b built its node");
     assert_eq!(
-        b.record(2),
+        b.record(Id(2)),
         Some(u(2, 0, Liveness::Alive)),
         "and nothing it said was applied"
     );

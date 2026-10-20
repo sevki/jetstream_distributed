@@ -57,7 +57,7 @@
 use vstd::prelude::*;
 
 use crate::actor::model::Envelope;
-use crate::host::HostId;
+use crate::id::Id;
 
 verus! {
 
@@ -96,11 +96,11 @@ pub struct Mailbox {
     /// Senders that have enqueued and have not finished, by message.
     pub ops: Map<Envelope, Stage>,
     /// Each sender's next sequence number. A sender absent from the map is at 0.
-    pub next_seq: Map<HostId, nat>,
+    pub next_seq: Map<Id, nat>,
 }
 
 /// The sequence number `sender`'s next message carries.
-pub open spec fn mb_seq(m: Mailbox, sender: HostId) -> nat {
+pub open spec fn mb_seq(m: Mailbox, sender: Id) -> nat {
     if m.next_seq.contains_key(sender) { m.next_seq[sender] } else { 0 }
 }
 
@@ -113,11 +113,11 @@ pub open spec fn mb_init(m: Mailbox) -> bool {
     &&& !m.scheduled
     &&& m.dq is Await
     &&& m.ops =~= Map::<Envelope, Stage>::empty()
-    &&& m.next_seq =~= Map::<HostId, nat>::empty()
+    &&& m.next_seq =~= Map::<Id, nat>::empty()
 }
 
 /// A sender puts a message on the queue, numbered after its last.
-pub open spec fn mb_enqueue(pre: Mailbox, post: Mailbox, sender: HostId, body: nat) -> bool {
+pub open spec fn mb_enqueue(pre: Mailbox, post: Mailbox, sender: Id, body: nat) -> bool {
     let env = Envelope { sender, seq: mb_seq(pre, sender), body };
     post == Mailbox {
         queue: pre.queue.push(env),
@@ -209,7 +209,7 @@ pub open spec fn mb_stutter(pre: Mailbox, post: Mailbox) -> bool {
 
 /// Every kind of step.
 pub enum MbStep {
-    Enqueue { sender: HostId, body: nat },
+    Enqueue { sender: Id, body: nat },
     SetState { env: Envelope },
     Schedule { env: Envelope },
     Claim,

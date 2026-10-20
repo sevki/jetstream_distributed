@@ -46,7 +46,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
@@ -88,9 +88,9 @@ pub enum Refusal {
 /// with nothing checking them.
 #[derive(Clone, Copy)]
 pub enum ExecState {
-    Unowned { epoch: u64, intended: HostId },
-    Transferring { from: HostId, to: HostId, old_epoch: u64, new_epoch: u64 },
-    Owned { owner: HostId, epoch: u64 },
+    Unowned { epoch: u64, intended: Id },
+    Transferring { from: Id, to: Id, old_epoch: u64, new_epoch: u64 },
+    Owned { owner: Id, epoch: u64 },
 }
 
 impl ExecState {
@@ -148,19 +148,19 @@ impl ExecState {
     /// Only meaningful under `is_unowned`, exactly as [`intended_owner`] is —
     /// the other cases return the same placeholder. Callers here use it on
     /// states a step function has just produced, where the case is known.
-    pub fn intended(&self) -> (r: HostId)
+    pub fn intended(&self) -> (r: Id)
         ensures
             r == intended_owner(self.view()),
     {
         match *self {
             ExecState::Unowned { epoch: _, intended } => intended,
-            _ => 0,
+            _ => Id(0),
         }
     }
 
     /// Which node a forced revoke would offer the actor to. See
     /// [`force_offers_to`].
-    pub fn offered_to_on_force(&self, next: HostId) -> (r: HostId)
+    pub fn offered_to_on_force(&self, next: Id) -> (r: Id)
         ensures
             r == force_offers_to(self.view(), next),
     {
@@ -183,7 +183,7 @@ pub enum Outcome {
 /// now offered to**, which is not always the one that was asked for: from
 /// `Transferring` the model offers it back to the node the transfer came from.
 pub enum ForceOutcome {
-    Moved(ExecState, HostId),
+    Moved(ExecState, Id),
     Refused(Refusal),
 }
 
@@ -205,7 +205,7 @@ pub enum ExecOffer {
 
 /// `tr_acquire`'s guard, as much of it as an actor's record can decide, plus
 /// the request-level epoch check. See the module docs.
-pub open spec fn acquire_fires(s: OwnershipState, n: HostId, e: Epoch, granted: bool) -> bool {
+pub open spec fn acquire_fires(s: OwnershipState, n: Id, e: Epoch, granted: bool) -> bool {
     match s {
         OwnershipState::Unowned { epoch, intended_owner } =>
             intended_owner == n && epoch == e && granted,
@@ -214,15 +214,15 @@ pub open spec fn acquire_fires(s: OwnershipState, n: HostId, e: Epoch, granted: 
 }
 
 /// Where `tr_acquire` leaves the actor.
-pub open spec fn acquire_next(s: OwnershipState, n: HostId) -> OwnershipState {
+pub open spec fn acquire_next(s: OwnershipState, n: Id) -> OwnershipState {
     OwnershipState::Owned { owner: n, epoch: current_epoch(s) }
 }
 
 /// `tr_begin_transfer`'s guard, plus exhaustion. See the module docs.
 pub open spec fn begin_transfer_fires(
     s: OwnershipState,
-    from: HostId,
-    to: HostId,
+    from: Id,
+    to: Id,
     to_is_node: bool,
 ) -> bool {
     match s {
@@ -233,7 +233,7 @@ pub open spec fn begin_transfer_fires(
 
 /// Where `tr_begin_transfer` leaves the actor: mid-handover, with the next
 /// epoch already allocated and therefore already fencing `from`.
-pub open spec fn begin_transfer_next(s: OwnershipState, to: HostId) -> OwnershipState {
+pub open spec fn begin_transfer_next(s: OwnershipState, to: Id) -> OwnershipState {
     match s {
         OwnershipState::Owned { owner, epoch } => OwnershipState::Transferring {
             from: owner,
@@ -250,7 +250,7 @@ pub open spec fn begin_transfer_next(s: OwnershipState, to: HostId) -> Ownership
 /// The epoch is carried by the request rather than read from the record, and
 /// that is the point — without it a release delayed on the wire, or replayed,
 /// would complete a *later* handover by the same node.
-pub open spec fn release_fires(s: OwnershipState, n: HostId, e: Epoch) -> bool {
+pub open spec fn release_fires(s: OwnershipState, n: Id, e: Epoch) -> bool {
     match s {
         OwnershipState::Transferring { from, to: _, old_epoch: _, new_epoch } =>
             from == n && new_epoch == e,
@@ -288,7 +288,7 @@ pub open spec fn force_fires(s: OwnershipState, next_is_node: bool) -> bool {
 /// Which node a forced revoke offers the actor to. Not always `next`: from
 /// `Transferring` the model gives the coordinator no way to redirect an
 /// interrupted handover, so the actor goes back to the node it came from.
-pub open spec fn force_offers_to(s: OwnershipState, next: HostId) -> HostId {
+pub open spec fn force_offers_to(s: OwnershipState, next: Id) -> Id {
     match s {
         OwnershipState::Transferring { from, to: _, old_epoch: _, new_epoch: _ } => from,
         _ => next,
@@ -297,7 +297,7 @@ pub open spec fn force_offers_to(s: OwnershipState, next: HostId) -> HostId {
 
 /// Where a forced revoke leaves the actor: unowned, one epoch on, offered to
 /// [`force_offers_to`].
-pub open spec fn force_next(s: OwnershipState, next: HostId) -> OwnershipState {
+pub open spec fn force_next(s: OwnershipState, next: Id) -> OwnershipState {
     OwnershipState::Unowned {
         epoch: current_epoch(s) + 1,
         intended_owner: force_offers_to(s, next),
@@ -310,10 +310,10 @@ pub open spec fn force_next(s: OwnershipState, next: HostId) -> OwnershipState {
 /// exactly as [`transferring_from`] does and for the same reason — an accessor
 /// keeps a fact about one field statable without an existential over all of
 /// them.
-pub open spec fn intended_owner(s: OwnershipState) -> HostId {
+pub open spec fn intended_owner(s: OwnershipState) -> Id {
     match s {
         OwnershipState::Unowned { epoch: _, intended_owner } => intended_owner,
-        _ => 0,
+        _ => Id(0),
     }
 }
 
@@ -323,7 +323,7 @@ pub open spec fn intended_owner(s: OwnershipState) -> HostId {
 /// epoch it carries is the machine's, with no cast in either direction. What
 /// ties it to the model is
 /// `crate::ownership::proofs::refinement::theorem_poll_step_refines_tr_issue_grant`.
-pub open spec fn poll_answer(st: ExecState, n: HostId) -> ExecOffer {
+pub open spec fn poll_answer(st: ExecState, n: Id) -> ExecOffer {
     match st {
         ExecState::Unowned { epoch, intended } => if intended == n {
             ExecOffer::Grant(epoch)
@@ -349,7 +349,7 @@ pub open spec fn poll_answer(st: ExecState, n: HostId) -> ExecOffer {
 /// epoch?". It stands for `pre.network.contains(Grant { .. })`, and a server
 /// supplies it from the set of grants it has actually published — which is the
 /// coupling the refinement theorem requires and the server maintains.
-pub fn acquire_step(st: ExecState, node: HostId, epoch: u64, granted: bool) -> (r: Outcome)
+pub fn acquire_step(st: ExecState, node: Id, epoch: u64, granted: bool) -> (r: Outcome)
     ensures
         match r {
             Outcome::Moved(next) => acquire_fires(st.view(), node, epoch as nat, granted)
@@ -376,7 +376,7 @@ pub fn acquire_step(st: ExecState, node: HostId, epoch: u64, granted: bool) -> (
 /// `to_is_node` stands for `pre.nodes.contains(to)`. The model requires the
 /// successor to exist, and a precondition enforced only by well-behaved callers
 /// is not a precondition at all.
-pub fn begin_transfer_step(st: ExecState, from: HostId, to: HostId, to_is_node: bool) -> (r: Outcome)
+pub fn begin_transfer_step(st: ExecState, from: Id, to: Id, to_is_node: bool) -> (r: Outcome)
     ensures
         match r {
             Outcome::Moved(next) => begin_transfer_fires(
@@ -433,7 +433,7 @@ pub fn begin_transfer_step(st: ExecState, from: HostId, to: HostId, to_is_node: 
 /// Two model transitions and one method, because the node's acknowledgement and
 /// the coordinator's reaction to it are the same event when the coordinator is
 /// the thing being called.
-pub fn release_step(st: ExecState, node: HostId, epoch: u64) -> (r: Outcome)
+pub fn release_step(st: ExecState, node: Id, epoch: u64) -> (r: Outcome)
     ensures
         match r {
             Outcome::Moved(next) => release_fires(st.view(), node, epoch as nat)
@@ -460,7 +460,7 @@ pub fn release_step(st: ExecState, node: HostId, epoch: u64) -> (r: Outcome)
 /// where they send the actor, and a server that had to choose between them
 /// would be re-deciding, in Rust, something the actor's record already
 /// determines.
-pub fn force_step(st: ExecState, next: HostId, next_is_node: bool) -> (r: ForceOutcome)
+pub fn force_step(st: ExecState, next: Id, next_is_node: bool) -> (r: ForceOutcome)
     ensures
         match r {
             ForceOutcome::Moved(moved, offered_to) => force_fires(st.view(), next_is_node)
@@ -490,7 +490,7 @@ pub fn force_step(st: ExecState, next: HostId, next_is_node: bool) -> (r: ForceO
 /// retransmission and is always safe because the grant names only state that is
 /// already public; the `Revoke` arm hands the outgoing owner the message
 /// `tr_begin_transfer` already put on the network.
-pub fn poll_step(st: ExecState, node: HostId) -> (r: ExecOffer)
+pub fn poll_step(st: ExecState, node: Id) -> (r: ExecOffer)
     ensures
         r == poll_answer(st, node),
 {
@@ -522,7 +522,7 @@ pub fn poll_step(st: ExecState, node: HostId) -> (r: ExecOffer)
 /// postcondition, so the `Transferring` case — the one the whole protocol turns
 /// on, because it is where the outgoing owner is fenced — is checked rather
 /// than asserted.
-pub fn may_write_step(st: ExecState, node: HostId, epoch: u64) -> (r: bool)
+pub fn may_write_step(st: ExecState, node: Id, epoch: u64) -> (r: bool)
     ensures
         r == may_mutate(st.view(), node, epoch as nat),
 {

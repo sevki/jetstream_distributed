@@ -41,7 +41,7 @@ use std::collections::VecDeque;
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 use crate::raymond::model::*;
 use crate::raymond::proofs::refinement::*;
 use crate::raymond::steps::*;
@@ -51,11 +51,11 @@ verus! {
 /// One node's routing entries.
 pub struct RayEntry {
     /// Which node.
-    pub id: HostId,
+    pub id: Id,
     /// Where the node believes the privilege is, one hop.
-    pub holder: HostId,
+    pub holder: Id,
     /// Requests waiting at the node, front first.
-    pub queue: VecDeque<HostId>,
+    pub queue: VecDeque<Id>,
     /// A request towards `holder` is outstanding.
     pub asked: bool,
     /// The node is inside its critical section.
@@ -67,29 +67,29 @@ pub struct RayTable {
     /// One entry per node.
     pub entries: Vec<RayEntry>,
     /// Every request ever sent, `(originator, destination)`. Never shrinks.
-    pub requests: Vec<(HostId, HostId)>,
+    pub requests: Vec<(Id, Id)>,
     /// Where the privilege actually is.
-    pub privilege: HostId,
+    pub privilege: Id,
 }
 
 /// Where `n` is among `ids`, if it is.
-pub open spec fn index_in(ids: Seq<HostId>, n: HostId) -> int {
+pub open spec fn index_in(ids: Seq<Id>, n: Id) -> int {
     choose|i: int| 0 <= i < ids.len() && ids[i] == n
 }
 
 /// `n` is among `ids`.
-pub open spec fn ids_has(ids: Seq<HostId>, n: HostId) -> bool {
+pub open spec fn ids_has(ids: Seq<Id>, n: Id) -> bool {
     exists|i: int| 0 <= i < ids.len() && ids[i] == n
 }
 
 /// The queue as the model sees it.
-pub open spec fn queue_view(e: RayEntry) -> Seq<HostId> {
+pub open spec fn queue_view(e: RayEntry) -> Seq<Id> {
     e.queue@
 }
 
 impl RayTable {
     /// The nodes, in entry order.
-    pub open spec fn ids(&self) -> Seq<HostId> {
+    pub open spec fn ids(&self) -> Seq<Id> {
         self.entries@.map_values(|e: RayEntry| e.id)
     }
 
@@ -102,29 +102,29 @@ impl RayTable {
     }
 
     /// `n` is a node.
-    pub open spec fn has_node(&self, n: HostId) -> bool {
+    pub open spec fn has_node(&self, n: Id) -> bool {
         ids_has(self.ids(), n)
     }
 
     /// The set of nodes.
-    pub open spec fn node_set(&self) -> Set<HostId> {
+    pub open spec fn node_set(&self) -> Set<Id> {
         self.ids().to_set()
     }
 
     /// Node `n`'s entry. Meaningful when `n` is a node.
-    pub open spec fn entry_of(&self, n: HostId) -> RayEntry {
+    pub open spec fn entry_of(&self, n: Id) -> RayEntry {
         self.entries@[index_in(self.ids(), n)]
     }
 
     /// `(a, b)` has been sent.
-    pub open spec fn has_request(&self, a: HostId, b: HostId) -> bool {
+    pub open spec fn has_request(&self, a: Id, b: Id) -> bool {
         exists|k: int|
             0 <= k < self.requests@.len() && self.requests@[k].0 == a
                 && self.requests@[k].1 == b
     }
 
     /// The set of requests sent.
-    pub open spec fn request_set(&self) -> Set<(HostId, HostId)> {
+    pub open spec fn request_set(&self) -> Set<(Id, Id)> {
         self.requests@.to_set()
     }
 }
@@ -136,10 +136,10 @@ impl View for RayTable {
     open spec fn view(&self) -> Raymond {
         Raymond {
             nodes: self.node_set(),
-            holder: Map::new(self.node_set(), |n: HostId| self.entry_of(n).holder),
-            queue: Map::new(self.node_set(), |n: HostId| queue_view(self.entry_of(n))),
-            asked: Map::new(self.node_set(), |n: HostId| self.entry_of(n).asked),
-            using: Map::new(self.node_set(), |n: HostId| self.entry_of(n).using),
+            holder: Map::new(self.node_set(), |n: Id| self.entry_of(n).holder),
+            queue: Map::new(self.node_set(), |n: Id| queue_view(self.entry_of(n))),
+            asked: Map::new(self.node_set(), |n: Id| self.entry_of(n).asked),
+            using: Map::new(self.node_set(), |n: Id| self.entry_of(n).using),
             requests: self.request_set(),
             privilege: self.privilege,
         }
@@ -147,7 +147,7 @@ impl View for RayTable {
 }
 
 /// `r` with node `id`'s entries replaced by `e`'s.
-pub open spec fn upd(r: Raymond, id: HostId, e: RayEntry) -> Raymond {
+pub open spec fn upd(r: Raymond, id: Id, e: RayEntry) -> Raymond {
     Raymond {
         nodes: r.nodes,
         holder: r.holder.insert(id, e.holder),
@@ -160,7 +160,7 @@ pub open spec fn upd(r: Raymond, id: HostId, e: RayEntry) -> Raymond {
 }
 
 /// The node set is the nodes.
-pub proof fn lemma_node_set(t: RayTable, n: HostId)
+pub proof fn lemma_node_set(t: RayTable, n: Id)
     ensures
         t.node_set().contains(n) <==> t.has_node(n),
 {
@@ -179,7 +179,7 @@ pub proof fn lemma_node_set(t: RayTable, n: HostId)
 }
 
 /// The request set is the requests.
-pub proof fn lemma_request_set(t: RayTable, a: HostId, b: HostId)
+pub proof fn lemma_request_set(t: RayTable, a: Id, b: Id)
     ensures
         t.request_set().contains((a, b)) <==> t.has_request(a, b),
 {
@@ -199,7 +199,7 @@ pub proof fn lemma_request_set(t: RayTable, a: HostId, b: HostId)
 
 /// **Sending a request that was already sent changes nothing**, which is what
 /// the model's `requests.insert` does to a set that has it.
-pub proof fn lemma_push_request_once(t0: RayTable, t1: RayTable, a: HostId, b: HostId)
+pub proof fn lemma_push_request_once(t0: RayTable, t1: RayTable, a: Id, b: Id)
     requires
         t0.well_formed(),
         t0.has_request(a, b),
@@ -256,14 +256,14 @@ pub proof fn lemma_update_entry(t0: RayTable, t1: RayTable, i: int)
     assert(t1.node_set() == t0.node_set());
     assert(t0@.nodes.contains(id));
     // The node `n` names is `id` or some other entry, which did not change.
-    assert forall|n: HostId| t0.has_node(n) && n != id implies index_in(t0.ids(), n) != i by {
+    assert forall|n: Id| t0.has_node(n) && n != id implies index_in(t0.ids(), n) != i by {
         let j = index_in(t0.ids(), n);
         assert(t0.ids()[j] == n);
         if j == i {
             assert(t0.ids()[i] == id);
         }
     }
-    assert forall|n: HostId| t0.node_set().contains(n) && n != id implies t1.entry_of(n)
+    assert forall|n: Id| t0.node_set().contains(n) && n != id implies t1.entry_of(n)
         == t0.entry_of(n) by {
         lemma_node_set(t0, n);
         let j = index_in(t0.ids(), n);
@@ -315,7 +315,7 @@ pub proof fn lemma_found(t: RayTable, i: int)
 }
 
 /// A node that is not found is not in the view.
-pub proof fn lemma_absent(t: RayTable, id: HostId)
+pub proof fn lemma_absent(t: RayTable, id: Id)
     requires
         forall|k: int| 0 <= k < t.entries@.len() ==> t.entries@[k].id != id,
     ensures
@@ -329,7 +329,7 @@ pub proof fn lemma_absent(t: RayTable, id: HostId)
 }
 
 /// **Sending a request adds it to the set sent, and nothing else changes.**
-pub proof fn lemma_push_request(t0: RayTable, t1: RayTable, a: HostId, b: HostId)
+pub proof fn lemma_push_request(t0: RayTable, t1: RayTable, a: Id, b: Id)
     requires
         t0.well_formed(),
         t1.entries@ == t0.entries@,
@@ -347,7 +347,7 @@ pub proof fn lemma_push_request(t0: RayTable, t1: RayTable, a: HostId, b: HostId
     m0.to_set_ensures();
     m1.to_set_ensures();
     assert(t1.request_set() == t0.request_set().insert((a, b))) by {
-        assert forall|p: (HostId, HostId)| t1.request_set().contains(p) == t0.request_set()
+        assert forall|p: (Id, Id)| t1.request_set().contains(p) == t0.request_set()
             .insert((a, b)).contains(p) by {
             let x = (a, b);
             assert(m1.to_set().contains(p) == m1.contains(p));
@@ -381,7 +381,7 @@ pub proof fn lemma_push_request(t0: RayTable, t1: RayTable, a: HostId, b: HostId
 
 impl RayTable {
     /// Where node `id` is, if it is.
-    pub fn find(&self, id: HostId) -> (found: Option<usize>)
+    pub fn find(&self, id: Id) -> (found: Option<usize>)
         ensures
             match found {
                 Some(i) => i < self.entries@.len() && self.entries@[i as int].id == id,
@@ -404,7 +404,7 @@ impl RayTable {
     }
 
     /// Whether `(a, b)` has been sent.
-    pub fn sent(&self, a: HostId, b: HostId) -> (r: bool)
+    pub fn sent(&self, a: Id, b: Id) -> (r: bool)
         ensures
             r == self.has_request(a, b),
     {
@@ -424,7 +424,7 @@ impl RayTable {
     }
 
     /// `RequestCs`: node `me` asks for the privilege for itself.
-    pub fn request_cs(&mut self, me: HostId) -> (r: Result<(), RayRefusal>)
+    pub fn request_cs(&mut self, me: Id) -> (r: Result<(), RayRefusal>)
         requires
             old(self).well_formed(),
         ensures
@@ -493,14 +493,14 @@ pub proof fn lemma_view_total(t: RayTable)
     ensures
         ray_maps_total(t@),
 {
-    assert forall|n: HostId| #[trigger] t@.nodes.contains(n) implies t@.holder.contains_key(n)
+    assert forall|n: Id| #[trigger] t@.nodes.contains(n) implies t@.holder.contains_key(n)
         && t@.queue.contains_key(n) && t@.asked.contains_key(n) && t@.using.contains_key(n) by {
         assert(t@.holder.dom() == t.node_set());
     }
 }
 
 /// **Moving the privilege changes the view's `privilege`, and nothing else.**
-pub proof fn lemma_set_privilege(t0: RayTable, t1: RayTable, p: HostId)
+pub proof fn lemma_set_privilege(t0: RayTable, t1: RayTable, p: Id)
     requires
         t0.well_formed(),
         t1.entries@ == t0.entries@,
@@ -525,7 +525,7 @@ impl RayTable {
     /// not a model step**: that the finished table is `ray_init` — every other
     /// node points somewhere, the pointers reach the root — is the service's
     /// check at start-up, not something proved here.
-    pub fn new(root: HostId) -> (t: RayTable)
+    pub fn new(root: Id) -> (t: RayTable)
         ensures
             t.well_formed(),
             t.privilege == root,
@@ -551,7 +551,7 @@ impl RayTable {
     /// Add node `id`, pointing at `holder`, with nothing queued. Refused if `id`
     /// is already a node. Construction, not a model step; see
     /// [`RayTable::new`].
-    pub fn add_node(&mut self, id: HostId, holder: HostId) -> (added: bool)
+    pub fn add_node(&mut self, id: Id, holder: Id) -> (added: bool)
         requires
             old(self).well_formed(),
         ensures
@@ -602,7 +602,7 @@ impl RayTable {
 
     /// `MakeRequest`: node `me` forwards a request one hop towards the privilege.
     /// Returns where it goes: the holder pointer, resolved now.
-    pub fn make_request(&mut self, me: HostId) -> (r: Result<HostId, RayRefusal>)
+    pub fn make_request(&mut self, me: Id) -> (r: Result<Id, RayRefusal>)
         requires
             old(self).well_formed(),
         ensures
@@ -684,7 +684,7 @@ impl RayTable {
     }
 
     /// `ReceiveRequest`: node `at` accepts a request from `from` that was sent.
-    pub fn receive_request(&mut self, at: HostId, from: HostId) -> (r: Result<(), RayRefusal>)
+    pub fn receive_request(&mut self, at: Id, from: Id) -> (r: Result<(), RayRefusal>)
         requires
             old(self).well_formed(),
         ensures
@@ -759,7 +759,7 @@ impl RayTable {
 
     /// `EnterCs`: node `me`, at the head of its own queue and believing it holds
     /// the privilege, enters its critical section.
-    pub fn enter_cs(&mut self, me: HostId) -> (r: Result<(), RayRefusal>)
+    pub fn enter_cs(&mut self, me: Id) -> (r: Result<(), RayRefusal>)
         requires
             old(self).well_formed(),
         ensures
@@ -790,7 +790,7 @@ impl RayTable {
         let head = if queue_len > 0 {
             self.entries[i].queue[0]
         } else {
-            0
+            Id(0)
         };
         let holder = self.entries[i].holder;
         let using = self.entries[i].using;
@@ -832,7 +832,7 @@ impl RayTable {
     }
 
     /// `ExitCs`: node `me` leaves its critical section.
-    pub fn exit_cs(&mut self, me: HostId) -> (r: Result<(), RayRefusal>)
+    pub fn exit_cs(&mut self, me: Id) -> (r: Result<(), RayRefusal>)
         requires
             old(self).well_formed(),
         ensures
@@ -893,7 +893,7 @@ impl RayTable {
 
     /// `AssignPrivilege`: node `me`, which holds the privilege and is not using
     /// it, hands it to the head of its queue. Returns the node it goes to.
-    pub fn assign_privilege(&mut self, me: HostId) -> (r: Result<HostId, RayRefusal>)
+    pub fn assign_privilege(&mut self, me: Id) -> (r: Result<Id, RayRefusal>)
         requires
             old(self).well_formed(),
         ensures
@@ -905,7 +905,7 @@ impl RayTable {
                 },
                 Err(_) => {
                     &&& final(self)@ == old(self)@
-                    &&& forall|p: Raymond, h: HostId| !ray_assign_privilege(old(self)@, p, me, h)
+                    &&& forall|p: Raymond, h: Id| !ray_assign_privilege(old(self)@, p, me, h)
                 },
             },
     {
@@ -924,7 +924,7 @@ impl RayTable {
         let head = if queue_len > 0 {
             self.entries[i].queue[0]
         } else {
-            0
+            Id(0)
         };
         let found_head = self.find(head);
         let head_is_node = found_head.is_some();
@@ -956,7 +956,7 @@ impl RayTable {
                 proof {
                     let r0 = t0@;
                     let n = me;
-                    assert forall|p: Raymond, h: HostId| !ray_assign_privilege(r0, p, n, h) by {
+                    assert forall|p: Raymond, h: Id| !ray_assign_privilege(r0, p, n, h) by {
                         if r0.queue[n].len() == 0 {
                             theorem_assign_step_refuses_an_empty_queue(r0, p, n, h);
                         } else if h == head {
@@ -1019,7 +1019,7 @@ impl RayTable {
     /// `Seize`: re-establish the privilege at `to`, which acts alone — nothing
     /// belonging to the old holder is touched. The composed coordinator, which
     /// checks the token, is the only caller.
-    pub fn seize(&mut self, to: HostId) -> (r: Result<(), RayRefusal>)
+    pub fn seize(&mut self, to: Id) -> (r: Result<(), RayRefusal>)
         requires
             old(self).well_formed(),
         ensures
@@ -1082,7 +1082,7 @@ impl RayTable {
 
     /// `Reconcile`: a stale holder — one that believes it holds the privilege and
     /// does not — learns the privilege was taken, and where it is.
-    pub fn reconcile(&mut self, node: HostId) -> (r: Result<(), RayRefusal>)
+    pub fn reconcile(&mut self, node: Id) -> (r: Result<(), RayRefusal>)
         requires
             old(self).well_formed(),
         ensures

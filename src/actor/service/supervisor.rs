@@ -76,7 +76,7 @@ use jetstream::prelude::{
 };
 
 use super::{Capacity, Delivery, Fence, Mailbox, Session, serve_fenced};
-use crate::host::HostId;
+use crate::id::Id;
 use crate::scheduling::{
     Resource,
     discovery::{Discovery, DiscoveryError},
@@ -178,13 +178,13 @@ impl Drop for Slot {
 /// Every actor on one node, in one process. The simplest thing that satisfies
 /// [`Supervisor`].
 pub struct LocalSupervisor {
-    me: HostId,
+    me: Id,
     slots: Mutex<HashMap<ActorId, Slot>>,
 }
 
 impl LocalSupervisor {
     /// A supervisor for the node `me`, with nothing hosted.
-    pub fn new(me: HostId) -> Self {
+    pub fn new(me: Id) -> Self {
         Self {
             me,
             slots: Mutex::new(HashMap::new()),
@@ -192,7 +192,7 @@ impl LocalSupervisor {
     }
 
     /// The node this supervisor runs on.
-    pub fn host(&self) -> HostId {
+    pub fn host(&self) -> Id {
         self.me
     }
 }
@@ -201,7 +201,7 @@ impl LocalSupervisor {
 /// It has no view of any other node, so an actor it does not host is `NotFound`,
 /// which is "not here" and not "nowhere".
 impl Discovery for LocalSupervisor {
-    fn discover<W: Resource>(&self, what: W) -> std::result::Result<Vec<HostId>, DiscoveryError> {
+    fn discover<W: Resource>(&self, what: W) -> std::result::Result<Vec<Id>, DiscoveryError> {
         let Some(ActorRef(id)) = (&what as &dyn Any).downcast_ref::<ActorRef>() else {
             return Err(DiscoveryError::NotFound);
         };

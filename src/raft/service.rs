@@ -99,7 +99,7 @@ use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crate::host::HostId;
+use crate::id::Id;
 use crate::raft::store::{apply_record, replay_exec, ExecEntry, ExecRecord};
 use crate::raft::exec::{Counted, ElectRefusal, ElectionCore, VoteOutcome};
 use crate::raft::steps::{is_majority, RaftRefusal};
@@ -656,7 +656,7 @@ pub struct Persisted {
     pub current_term: u64,
     /// Who this server voted for **in `current_term`**. Cleared whenever the
     /// term advances, because a vote belongs to the term it was cast in.
-    pub voted_for: Option<HostId>,
+    pub voted_for: Option<Id>,
 }
 
 /// Stable storage for [`Persisted`].
@@ -743,7 +743,7 @@ impl Durable for FileLog {
                 let current_term: u64 = parts.next().ok_or_else(bad)?.parse().map_err(|_| bad())?;
                 let voted_for = match parts.next().ok_or_else(bad)? {
                     "-" => None,
-                    other => Some(other.parse::<HostId>().map_err(|_| bad())?),
+                    other => Some(other.parse::<Id>().map_err(|_| bad())?),
                 };
                 Ok(Persisted { current_term, voted_for })
             }
@@ -783,11 +783,11 @@ pub enum Event {
     /// Stood for election in a new term, voting for itself.
     Stood { term: u64 },
     /// Granted its vote.
-    Granted { term: u64, to: HostId },
+    Granted { term: u64, to: Id },
     /// Refused one. Named by the *request's* term.
-    RefusedVote { term: u64, to: HostId },
+    RefusedVote { term: u64, to: Id },
     /// Counted a vote in its own favour.
-    Counted { term: u64, from: HostId },
+    Counted { term: u64, from: Id },
     /// Took a term, with the tally that bought it.
     Led { term: u64, votes: u64 },
     /// Learned of a higher term and stepped down into it.
@@ -820,7 +820,7 @@ struct Inner {
     /// Per-follower replication progress, kept by a leader: how many entries
     /// each is known to hold. This is what a majority is counted over when the
     /// commit point advances.
-    match_len: HashMap<HostId, u64>,
+    match_len: HashMap<Id, u64>,
     log: Vec<Event>,
 }
 
@@ -830,9 +830,9 @@ pub struct Peer {
     inner: Arc<Mutex<Inner>>,
     /// Connection address to server number. The stated assumption; see the
     /// module docs.
-    roster: Arc<HashMap<IpAddr, HostId>>,
+    roster: Arc<HashMap<IpAddr, Id>>,
     /// This server's own number.
-    me: HostId,
+    me: Id,
     store: Arc<dyn Durable>,
     /// The replicated log. A trait so that the protocol can be exercised
     /// without a disk, and so that a real one can be a real one.
@@ -847,8 +847,8 @@ impl Peer {
     /// which is the same defect the ownership registry had when `new` took its
     /// epoch from the caller, and it breaks the same guarantee.
     pub fn new(
-        roster: HashMap<IpAddr, HostId>,
-        me: HostId,
+        roster: HashMap<IpAddr, Id>,
+        me: Id,
         store: Arc<dyn Durable>,
         entries: Arc<dyn LogStore>,
     ) -> io::Result<Self> {
@@ -906,15 +906,15 @@ impl Peer {
     /// moment one server is reachable at two addresses, which is an ordinary
     /// thing for a server to be.
     fn members(&self) -> u64 {
-        self.roster.values().copied().collect::<HashSet<HostId>>().len() as u64
+        self.roster.values().copied().collect::<HashSet<Id>>().len() as u64
     }
 
-    fn is_member(&self, n: HostId) -> bool {
+    fn is_member(&self, n: Id) -> bool {
         self.roster.values().any(|&v| v == n)
     }
 
     /// Which server is calling, from the connection rather than the request.
-    fn caller(&self, ctx: &Context) -> Option<HostId> {
+    fn caller(&self, ctx: &Context) -> Option<Id> {
         match ctx.remote() {
             Some(RemoteAddr::IpAddr(addr)) => self.roster.get(addr).copied(),
             _ => None,
@@ -938,7 +938,7 @@ impl Peer {
     fn saver<'a>(
         &'a self,
         failed: &'a mut Option<io::Error>,
-    ) -> impl FnOnce(u64, Option<HostId>) -> bool + 'a {
+    ) -> impl FnOnce(u64, Option<Id>) -> bool + 'a {
         move |current_term, voted_for| {
             match self.store.save(Persisted { current_term, voted_for }) {
                 Ok(()) => true,
@@ -1050,7 +1050,7 @@ impl Peer {
     /// term rule — *"if RPC request **or response** contains term T >
     /// currentTerm"* — and is adopted here, durably, exactly as an inbound
     /// request carrying it would be.
-    pub fn count_ballot(&self, from: HostId, term: u64, ballot: Ballot) -> Result<bool> {
+    pub fn count_ballot(&self, from: Id, term: u64, ballot: Ballot) -> Result<bool> {
         if !self.is_member(from) {
             return Err(refuse_err("no such server"));
         }
@@ -1154,7 +1154,7 @@ impl Peer {
     /// leader's own term. A majority *holding* an entry is not a majority having
     /// *voted* on it, and committing on replica count alone lets a later leader
     /// overwrite the entry.
-    pub fn record_match(&self, from: HostId, len: u64) -> Result<u64> {
+    pub fn record_match(&self, from: Id, len: u64) -> Result<u64> {
         if !self.is_member(from) {
             return Err(refuse_err("no such server"));
         }
@@ -1233,7 +1233,7 @@ impl Peer {
     ///
     /// Returns `Some(commit)` when the reply advanced replication and `None`
     /// when it did not.
-    pub fn observe_appended(&self, from: HostId, reply: Appended) -> Result<Option<u64>> {
+    pub fn observe_appended(&self, from: Id, reply: Appended) -> Result<Option<u64>> {
         match reply {
             Appended::Accepted(ack) => {
                 {

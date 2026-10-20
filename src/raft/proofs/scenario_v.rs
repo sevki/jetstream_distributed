@@ -25,7 +25,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 use vstd::set_lib::*;
 
 use crate::raft::proofs::election::*;
@@ -34,8 +34,8 @@ use crate::raft::model::*;
 verus! {
 
 /// The three members of the scenario's cluster.
-pub open spec fn three() -> Set<HostId> {
-    Set::empty().insert(0).insert(1).insert(2)
+pub open spec fn three() -> Set<Id> {
+    Set::empty().insert(Id(0)).insert(Id(1)).insert(Id(2))
 }
 
 /// Everybody a follower at term 0.
@@ -43,8 +43,11 @@ pub open spec fn fresh_server() -> Server {
     Server { role: Role::Follower, current_term: 0, log: Seq::empty(), commit: 0 }
 }
 
-pub open spec fn all_followers() -> Map<HostId, Server> {
-    Map::empty().insert(0, fresh_server()).insert(1, fresh_server()).insert(2, fresh_server())
+pub open spec fn all_followers() -> Map<Id, Server> {
+    Map::empty()
+        .insert(Id(0), fresh_server())
+        .insert(Id(1), fresh_server())
+        .insert(Id(2), fresh_server())
 }
 
 /// The initial cluster.
@@ -65,9 +68,9 @@ pub open spec fn start() -> Cluster {
 pub proof fn lemma_three_members()
     ensures
         three().len() == 3,
-        three().contains(0),
-        three().contains(1),
-        three().contains(2),
+        three().contains(Id(0)),
+        three().contains(Id(1)),
+        three().contains(Id(2)),
 {
 }
 
@@ -76,15 +79,15 @@ pub proof fn lemma_start_is_init()
     ensures
         raft_init(start()),
 {
-    assert forall|n: HostId| start().members.contains(n) implies start().servers.contains_key(n)
+    assert forall|n: Id| start().members.contains(n) implies start().servers.contains_key(n)
         by {
-        assert(n == 0 || n == 1 || n == 2);
+        assert(n == Id(0) || n == Id(1) || n == Id(2));
     }
-    assert forall|n: HostId| start().servers.contains_key(n) implies is_follower(
+    assert forall|n: Id| start().servers.contains_key(n) implies is_follower(
         start().servers[n],
     ) && start().servers[n].current_term == 0 && start().servers[n].log.len() == 0
         && start().servers[n].commit == 0 by {
-        assert(n == 0 || n == 1 || n == 2);
+        assert(n == Id(0) || n == Id(1) || n == Id(2));
     }
     // Nothing has been created and nobody has led, which is what an empty
     // history means.
@@ -105,21 +108,21 @@ pub proof fn scenario_a_leader_is_elected()
             {
                 &&& #[trigger] raft_labelled_execution(tr, labels)
                 &&& labels.len() == 3
-                &&& labels[0] == (RaftStep::Timeout { server: 0 })
+                &&& labels[0] == (RaftStep::Timeout { server: Id(0) })
                 &&& labels[1] == (RaftStep::GrantVote {
-                    voter: 1,
-                    candidate: 0,
+                    voter: Id(1),
+                    candidate: Id(0),
                     term: 1,
                     cand_last_term: 0,
                     cand_last_index: 0,
                 })
-                &&& labels[2] == (RaftStep::BecomeLeader { server: 0, term: 1 })
+                &&& labels[2] == (RaftStep::BecomeLeader { server: Id(0), term: 1 })
                 // ... and at the end, server 0 leads term 1.
-                &&& tr[3].servers.contains_key(0)
-                &&& is_leader(tr[3].servers[0])
-                &&& tr[3].servers[0].current_term == 1
+                &&& tr[3].servers.contains_key(Id(0))
+                &&& is_leader(tr[3].servers[Id(0)])
+                &&& tr[3].servers[Id(0)].current_term == 1
                 // ... having been put there by a majority, not by fiat.
-                &&& won_election(tr[3], 0, 1)
+                &&& won_election(tr[3], Id(0), 1)
             },
 {
     lemma_three_members();
@@ -129,28 +132,28 @@ pub proof fn scenario_a_leader_is_elected()
 
     // Everybody starts with an empty log, so the candidate's summary is
     // `(0, 0)` and the up-to-date check is satisfied by every voter.
-    assert(c0.servers[0].log.len() == 0);
-    assert(last_term(c0.servers[0].log) == 0);
+    assert(c0.servers[Id(0)].log.len() == 0);
+    assert(last_term(c0.servers[Id(0)].log) == 0);
 
     // 0 times out into term 1 and votes for itself.
     let c1 = Cluster {
         members: c0.members,
         servers: c0.servers.insert(
-            0,
+            Id(0),
             Server {
                 role: Role::Candidate,
                 current_term: 1,
-                log: c0.servers[0].log,
-                commit: c0.servers[0].commit,
+                log: c0.servers[Id(0)].log,
+                commit: c0.servers[Id(0)].commit,
             },
         ),
-        votes: c0.votes.insert(Vote { voter: 0, term: 1, candidate: 0 }),
+        votes: c0.votes.insert(Vote { voter: Id(0), term: 1, candidate: Id(0) }),
         messages: c0.messages.insert(
             RaftMessage::RequestVote {
                 term: 1,
-                candidate: 0,
-                last_term: last_term(c0.servers[0].log),
-                last_index: c0.servers[0].log.len(),
+                candidate: Id(0),
+                last_term: last_term(c0.servers[Id(0)].log),
+                last_index: c0.servers[Id(0)].log.len(),
             },
         ),
         created: c0.created,
@@ -158,104 +161,104 @@ pub proof fn scenario_a_leader_is_elected()
         committed: c0.committed,
         voted_with: c0.voted_with.insert(
             VoteLog {
-                voter: 0,
+                voter: Id(0),
                 term: 1,
-                candidate: 0,
-                voter_log: c0.servers[0].log,
-                cand_last_term: last_term(c0.servers[0].log),
-                cand_last_index: c0.servers[0].log.len(),
+                candidate: Id(0),
+                voter_log: c0.servers[Id(0)].log,
+                cand_last_term: last_term(c0.servers[Id(0)].log),
+                cand_last_index: c0.servers[Id(0)].log.len(),
             },
         ),
     };
-    assert(c0.servers[0].current_term == 0);
-    assert(!is_leader(c0.servers[0]));
-    assert(tr_timeout(c0, c1, 0));
+    assert(c0.servers[Id(0)].current_term == 0);
+    assert(!is_leader(c0.servers[Id(0)]));
+    assert(tr_timeout(c0, c1, Id(0)));
 
     // 1 grants its vote. It has not voted in term 1 — nothing has, except 0 for
     // itself, and 0 is not 1.
     let c2 = Cluster {
         members: c1.members,
         servers: c1.servers.insert(
-            1,
+            Id(1),
             Server {
                 role: Role::Follower,
                 current_term: 1,
-                log: c1.servers[1].log,
-                commit: c1.servers[1].commit,
+                log: c1.servers[Id(1)].log,
+                commit: c1.servers[Id(1)].commit,
             },
         ),
-        votes: c1.votes.insert(Vote { voter: 1, term: 1, candidate: 0 }),
+        votes: c1.votes.insert(Vote { voter: Id(1), term: 1, candidate: Id(0) }),
         messages: c1.messages.insert(
-            RaftMessage::VoteGranted { term: 1, voter: 1, candidate: 0 },
+            RaftMessage::VoteGranted { term: 1, voter: Id(1), candidate: Id(0) },
         ),
         created: c1.created,
         led: c1.led,
         committed: c1.committed,
         voted_with: c1.voted_with.insert(
             VoteLog {
-                voter: 1,
+                voter: Id(1),
                 term: 1,
-                candidate: 0,
-                voter_log: c1.servers[1].log,
+                candidate: Id(0),
+                voter_log: c1.servers[Id(1)].log,
                 cand_last_term: 0,
                 cand_last_index: 0,
             },
         ),
     };
     assert(c1.messages.contains(
-        RaftMessage::RequestVote { term: 1, candidate: 0, last_term: 0, last_index: 0 },
+        RaftMessage::RequestVote { term: 1, candidate: Id(0), last_term: 0, last_index: 0 },
     ));
-    assert(c1.servers[1].current_term == 0);
-    assert(c1.servers[1].log.len() == 0);
-    assert(at_least_as_up_to_date(0, 0, c1.servers[1].log));
-    assert forall|cand: HostId| !c1.votes.contains(
-        Vote { voter: 1, term: 1, candidate: cand },
+    assert(c1.servers[Id(1)].current_term == 0);
+    assert(c1.servers[Id(1)].log.len() == 0);
+    assert(at_least_as_up_to_date(0, 0, c1.servers[Id(1)].log));
+    assert forall|cand: Id| !c1.votes.contains(
+        Vote { voter: Id(1), term: 1, candidate: cand },
     ) by {
-        assert(!c0.votes.contains(Vote { voter: 1, term: 1, candidate: cand }));
+        assert(!c0.votes.contains(Vote { voter: Id(1), term: 1, candidate: cand }));
     }
-    assert(!has_voted(c1, 1, 1));
-    assert(tr_grant_vote(c1, c2, 1, 0, 1, 0, 0));
+    assert(!has_voted(c1, Id(1), 1));
+    assert(tr_grant_vote(c1, c2, Id(1), Id(0), 1, 0, 0));
 
     // Two of the three have now voted for 0 in term 1, which is a majority.
-    assert(voters_for(c2, 0, 1) =~= Set::empty().insert(0).insert(1));
-    assert(voters_for(c2, 0, 1).len() == 2);
-    assert forall|n: HostId| voters_for(c2, 0, 1).contains(n) implies c2.members.contains(n) by {}
-    assert(voters_for(c2, 0, 1).subset_of(c2.members));
-    assert(won_election(c2, 0, 1));
+    assert(voters_for(c2, Id(0), 1) =~= Set::empty().insert(Id(0)).insert(Id(1)));
+    assert(voters_for(c2, Id(0), 1).len() == 2);
+    assert forall|n: Id| voters_for(c2, Id(0), 1).contains(n) implies c2.members.contains(n) by {}
+    assert(voters_for(c2, Id(0), 1).subset_of(c2.members));
+    assert(won_election(c2, Id(0), 1));
 
     // So 0 takes the term.
     let c3 = Cluster {
         members: c2.members,
         servers: c2.servers.insert(
-            0,
+            Id(0),
             Server {
                 role: Role::Leader,
                 current_term: 1,
-                log: c2.servers[0].log,
-                commit: c2.servers[0].commit,
+                log: c2.servers[Id(0)].log,
+                commit: c2.servers[Id(0)].commit,
             },
         ),
         votes: c2.votes,
-        messages: c2.messages.insert(RaftMessage::Heartbeat { term: 1, leader: 0 }),
+        messages: c2.messages.insert(RaftMessage::Heartbeat { term: 1, leader: Id(0) }),
         created: c2.created,
-        led: c2.led.insert(Led { server: 0, term: 1 }),
+        led: c2.led.insert(Led { server: Id(0), term: 1 }),
         committed: c2.committed,
         voted_with: c2.voted_with,
     };
-    assert(is_candidate(c2.servers[0]));
-    assert(tr_become_leader(c2, c3, 0, 1));
+    assert(is_candidate(c2.servers[Id(0)]));
+    assert(tr_become_leader(c2, c3, Id(0), 1));
 
     let tr = seq![c0, c1, c2, c3];
     let labels = seq![
-        RaftStep::Timeout { server: 0 },
+        RaftStep::Timeout { server: Id(0) },
         RaftStep::GrantVote {
-            voter: 1,
-            candidate: 0,
+            voter: Id(1),
+            candidate: Id(0),
             term: 1,
             cand_last_term: 0,
             cand_last_index: 0,
         },
-        RaftStep::BecomeLeader { server: 0, term: 1 },
+        RaftStep::BecomeLeader { server: Id(0), term: 1 },
     ];
 
     assert(tr.len() == 4);
@@ -276,9 +279,9 @@ pub proof fn scenario_a_leader_is_elected()
 
     // The endpoint, stated about the run rather than about `c3` alone.
     assert(tr[3] == c3);
-    assert(is_leader(c3.servers[0]));
-    lemma_quorum_survives(c2, c3, 0, 1);
-    assert(won_election(c3, 0, 1));
+    assert(is_leader(c3.servers[Id(0)]));
+    lemma_quorum_survives(c2, c3, Id(0), 1);
+    assert(won_election(c3, Id(0), 1));
 }
 
 /// The run reaches a state the safety theorem applies to, and in it the elected
@@ -287,19 +290,19 @@ pub proof fn scenario_a_leader_is_elected()
 /// This is the pairing that makes the scenario worth having: an election that
 /// happens, ending in a state where Election Safety is not vacuous because
 /// there is a leader for it to be about.
-pub proof fn scenario_the_elected_leader_is_the_only_one(c: Cluster, other: HostId)
+pub proof fn scenario_the_elected_leader_is_the_only_one(c: Cluster, other: Id)
     requires
         raft_inv(c),
-        c.servers.contains_key(0),
-        is_leader(c.servers[0]),
-        c.servers[0].current_term == 1,
+        c.servers.contains_key(Id(0)),
+        is_leader(c.servers[Id(0)]),
+        c.servers[Id(0)].current_term == 1,
         c.servers.contains_key(other),
         is_leader(c.servers[other]),
         c.servers[other].current_term == 1,
     ensures
-        other == 0,
+        other == Id(0),
 {
-    theorem_election_safety(c, 0, other);
+    theorem_election_safety(c, Id(0), other);
 }
 
 } // verus!

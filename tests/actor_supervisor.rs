@@ -13,6 +13,7 @@ use jetstream::prelude::*;
 use jetstream_distributed::actor::service::{
     ActorId, ActorRef, Capacity, Fence, LocalSupervisor, Status, Supervisor,
 };
+use jetstream_distributed::id::Id;
 use jetstream_distributed::scheduling::discovery::{Discovery, DiscoveryError};
 
 use actora_protocol::{ActorAChannel, ActorAService};
@@ -24,7 +25,7 @@ const A: ActorId = 1;
 const B: ActorId = 2;
 
 /// The node these tests' supervisor runs on.
-const ME: u128 = 7;
+const ME: Id = Id(7);
 
 #[service]
 trait ActorB {

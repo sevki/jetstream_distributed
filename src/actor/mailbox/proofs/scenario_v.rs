@@ -24,19 +24,19 @@ use crate::actor::mailbox::model::*;
 use crate::actor::mailbox::proofs::invariant::*;
 use crate::actor::mailbox::proofs::liveness::*;
 use crate::actor::model::Envelope;
-use crate::host::HostId;
+use crate::id::Id;
 use crate::temporal::*;
 
 verus! {
 
 /// Sender 1's first message.
 pub open spec fn msg_a() -> Envelope {
-    Envelope { sender: 1, seq: 0, body: 5 }
+    Envelope { sender: Id(1), seq: 0, body: 5 }
 }
 
 /// Sender 1's second message.
 pub open spec fn msg_b() -> Envelope {
-    Envelope { sender: 1, seq: 1, body: 7 }
+    Envelope { sender: Id(1), seq: 1, body: 7 }
 }
 
 pub open spec fn sc0() -> Mailbox {
@@ -57,7 +57,7 @@ pub open spec fn sc1() -> Mailbox {
     Mailbox {
         queue: sc0().queue.push(msg_a()),
         ops: sc0().ops.insert(msg_a(), Stage::Marked),
-        next_seq: sc0().next_seq.insert(1, 1),
+        next_seq: sc0().next_seq.insert(Id(1), 1),
         ..sc0()
     }
 }
@@ -100,7 +100,7 @@ pub open spec fn sc6() -> Mailbox {
     Mailbox {
         queue: sc5().queue.push(msg_b()),
         ops: sc5().ops.insert(msg_b(), Stage::Marked),
-        next_seq: sc5().next_seq.insert(1, 2),
+        next_seq: sc5().next_seq.insert(Id(1), 2),
         ..sc5()
     }
 }
@@ -205,19 +205,19 @@ proof fn lemma_flags()
         !sc12().scheduled,
         sc12().dq is Await,
 {
-    assert(sc0().next_seq =~= Map::<HostId, nat>::empty());
+    assert(sc0().next_seq =~= Map::<Id, nat>::empty());
 }
 
 /// Each step of the fair run is a step of the machine.
 proof fn lemma_fair_steps()
     ensures
         mb_init(sc0()),
-        mb_enqueue(sc0(), sc1(), 1, 5),
+        mb_enqueue(sc0(), sc1(), Id(1), 5),
         mb_set_state(sc1(), sc2(), msg_a()),
         mb_schedule(sc2(), sc3(), msg_a()),
         mb_claim(sc3(), sc4()),
         mb_drain(sc4(), sc5()),
-        mb_enqueue(sc5(), sc6(), 1, 7),
+        mb_enqueue(sc5(), sc6(), Id(1), 7),
         mb_set_state(sc6(), sc7(), msg_b()),
         mb_schedule(sc7(), sc8(), msg_b()),
         mb_finish(sc8(), sc9()),
@@ -226,8 +226,8 @@ proof fn lemma_fair_steps()
         mb_finish(sc11(), sc12()),
 {
     lemma_flags();
-    assert(mb_seq(sc0(), 1) == 0);
-    assert(mb_seq(sc5(), 1) == 1);
+    assert(mb_seq(sc0(), Id(1)) == 0);
+    assert(mb_seq(sc5(), Id(1)) == 1);
     assert(marked(sc1(), msg_a()));
     assert(is_scheduling(sc2(), msg_a()));
     assert(marked(sc6(), msg_b()));
@@ -243,7 +243,7 @@ proof fn lemma_fair_run()
     let ex = |i: nat| fair_state(i);
     assert forall|i: nat| #[trigger] mb_next(ex(i), ex(i + 1)) by {
         if i == 0 {
-            assert(mb_step(MbStep::Enqueue { sender: 1, body: 5 }, ex(0), ex(1)));
+            assert(mb_step(MbStep::Enqueue { sender: Id(1), body: 5 }, ex(0), ex(1)));
         } else if i == 1 {
             assert(mb_step(MbStep::SetState { env: msg_a() }, ex(1), ex(2)));
         } else if i == 2 {
@@ -253,7 +253,7 @@ proof fn lemma_fair_run()
         } else if i == 4 {
             assert(mb_step(MbStep::Drain, ex(4), ex(5)));
         } else if i == 5 {
-            assert(mb_step(MbStep::Enqueue { sender: 1, body: 7 }, ex(5), ex(6)));
+            assert(mb_step(MbStep::Enqueue { sender: Id(1), body: 7 }, ex(5), ex(6)));
         } else if i == 6 {
             assert(mb_step(MbStep::SetState { env: msg_b() }, ex(6), ex(7)));
         } else if i == 7 {
@@ -422,7 +422,7 @@ pub proof fn scenario_without_fairness_a_message_waits_forever()
     let ex = |i: nat| stuck_state(i);
     assert forall|i: nat| #[trigger] mb_next(ex(i), ex(i + 1)) by {
         if i == 0 {
-            assert(mb_step(MbStep::Enqueue { sender: 1, body: 5 }, ex(0), ex(1)));
+            assert(mb_step(MbStep::Enqueue { sender: Id(1), body: 5 }, ex(0), ex(1)));
         } else {
             assert(mb_step(MbStep::Stutter, ex(i), ex(i + 1)));
         }

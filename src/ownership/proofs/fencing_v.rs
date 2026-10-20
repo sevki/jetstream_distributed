@@ -4,7 +4,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
@@ -42,7 +42,7 @@ pub proof fn theorem_unique_current_epoch(s: OwnershipState)
 pub proof fn theorem_stale_epoch_cannot_mutate(
     sys: OwnershipSystem,
     a: ActorId,
-    node: HostId,
+    node: Id,
     supplied_epoch: Epoch,
 )
     requires
@@ -57,7 +57,7 @@ pub proof fn theorem_stale_epoch_cannot_mutate(
 
 /// The state-local phrasing of the same claim: advancing from epoch `n` to
 /// `n + 1` strips authority from everyone holding `n`.
-pub proof fn theorem_epoch_advance_fences_previous(s_old: OwnershipState, s_new: OwnershipState, n: HostId, e: Epoch)
+pub proof fn theorem_epoch_advance_fences_previous(s_old: OwnershipState, s_new: OwnershipState, n: Id, e: Epoch)
     requires
         current_epoch(s_old) == e,
         current_epoch(s_new) == e + 1,

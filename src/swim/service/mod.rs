@@ -68,7 +68,7 @@ mod refusal;
 pub use node::{Event, Node};
 
 use crate::{
-    host::HostId,
+    id::Id,
     swim::steps::{ExecRecord, ExecStatus},
 };
 use jetstream::prelude::*;
@@ -97,7 +97,7 @@ pub enum Liveness {
 /// content, and has to be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, JetStreamWireFormat)]
 pub struct Update {
-    pub node: HostId,
+    pub node: Id,
     pub incarnation: u64,
     pub status: Liveness,
 }
@@ -114,7 +114,7 @@ impl Update {
         }
     }
 
-    pub(super) fn of(node: HostId, r: ExecRecord) -> Update {
+    pub(super) fn of(node: Id, r: ExecRecord) -> Update {
         Update {
             node,
             incarnation: r.incarnation,

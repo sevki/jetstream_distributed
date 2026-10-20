@@ -65,7 +65,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 use vstd::set_lib::*;
 
 use crate::raft::model::*;
@@ -106,7 +106,7 @@ pub proof fn theorem_elections_do_not_touch_logs(
     pre: Cluster,
     post: Cluster,
     s: RaftStep,
-    n: HostId,
+    n: Id,
 )
     requires
         raft_step(pre, post, s),
@@ -123,9 +123,9 @@ pub proof fn theorem_elections_do_not_touch_logs(
 pub proof fn theorem_committing_does_not_touch_the_log(
     pre: Cluster,
     post: Cluster,
-    n: HostId,
+    n: Id,
     upto: nat,
-    m: HostId,
+    m: Id,
 )
     requires
         tr_advance_commit(pre, post, n, upto),
@@ -147,7 +147,7 @@ pub proof fn theorem_leader_append_only(
     pre: Cluster,
     post: Cluster,
     s: RaftStep,
-    n: HostId,
+    n: Id,
 )
     requires
         raft_step(pre, post, s),
@@ -183,7 +183,7 @@ pub proof fn theorem_leader_append_only(
 pub proof fn theorem_client_request_stamps_the_leaders_term(
     pre: Cluster,
     post: Cluster,
-    n: HostId,
+    n: Id,
     value: nat,
 )
     requires
@@ -211,8 +211,8 @@ pub proof fn theorem_client_request_stamps_the_leaders_term(
 pub proof fn theorem_a_follower_agrees_before_it_accepts(
     pre: Cluster,
     post: Cluster,
-    leader: HostId,
-    follower: HostId,
+    leader: Id,
+    follower: Id,
     prefix: nat,
 )
     requires
@@ -254,8 +254,8 @@ pub proof fn theorem_a_follower_agrees_before_it_accepts(
 pub proof fn theorem_a_follower_ends_up_with_the_leaders_entry(
     pre: Cluster,
     post: Cluster,
-    leader: HostId,
-    follower: HostId,
+    leader: Id,
+    follower: Id,
     prefix: nat,
 )
     requires
@@ -278,8 +278,8 @@ pub proof fn theorem_a_follower_ends_up_with_the_leaders_entry(
 pub proof fn theorem_replication_copies_the_leaders_entry(
     pre: Cluster,
     post: Cluster,
-    leader: HostId,
-    follower: HostId,
+    leader: Id,
+    follower: Id,
     prefix: nat,
 )
     requires
@@ -303,7 +303,7 @@ pub proof fn theorem_replication_copies_the_leaders_entry(
 pub proof fn theorem_commit_needs_a_majority_of_its_own_term(
     pre: Cluster,
     post: Cluster,
-    n: HostId,
+    n: Id,
     upto: nat,
 )
     requires
@@ -334,7 +334,7 @@ pub proof fn theorem_two_commits_share_a_holder(
         is_quorum(c, replicated_on(c, log1, n)),
         is_quorum(c, replicated_on(c, log2, n)),
     ensures
-        exists|s: HostId|
+        exists|s: Id|
             replicated_on(c, log1, n).contains(s) && replicated_on(c, log2, n).contains(s),
 {
     lemma_quorums_intersect(c, replicated_on(c, log1, n), replicated_on(c, log2, n));
@@ -343,7 +343,7 @@ pub proof fn theorem_two_commits_share_a_holder(
 /// **The leader of a term is unique, so there is one log being extended at that
 /// term.** A corollary of Election Safety, stated because it is the shape every
 /// later log argument leans on.
-pub proof fn theorem_one_log_is_extended_per_term(c: Cluster, n1: HostId, n2: HostId)
+pub proof fn theorem_one_log_is_extended_per_term(c: Cluster, n1: Id, n2: Id)
     requires
         raft_inv(c),
         c.servers.contains_key(n1),
@@ -370,8 +370,8 @@ pub proof fn theorem_one_log_is_extended_per_term(c: Cluster, n1: HostId, n2: Ho
 pub proof fn theorem_the_commit_point_never_outruns_the_log(
     pre: Cluster,
     post: Cluster,
-    leader: HostId,
-    follower: HostId,
+    leader: Id,
+    follower: Id,
     prefix: nat,
 )
     requires
@@ -392,8 +392,8 @@ pub proof fn theorem_the_commit_point_never_outruns_the_log(
 pub proof fn theorem_the_commit_point_does_not_retreat_above_a_truncation(
     pre: Cluster,
     post: Cluster,
-    leader: HostId,
-    follower: HostId,
+    leader: Id,
+    follower: Id,
     prefix: nat,
 )
     requires
@@ -430,8 +430,8 @@ pub proof fn theorem_the_commit_point_does_not_retreat_above_a_truncation(
 pub proof fn theorem_the_commit_point_retreats_only_below_a_truncation(
     pre: Cluster,
     post: Cluster,
-    leader: HostId,
-    follower: HostId,
+    leader: Id,
+    follower: Id,
     prefix: nat,
 )
     requires
@@ -456,8 +456,8 @@ pub proof fn theorem_the_commit_point_retreats_only_below_a_truncation(
 pub proof fn theorem_a_commit_retreat_means_a_committed_entry_was_deleted(
     pre: Cluster,
     post: Cluster,
-    leader: HostId,
-    follower: HostId,
+    leader: Id,
+    follower: Id,
     prefix: nat,
 )
     requires

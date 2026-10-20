@@ -53,7 +53,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
@@ -71,7 +71,7 @@ verus! {
 // satisfied by a step the server did not take.
 
 /// Where `tr_acquire` sends the system.
-pub open spec fn acquire_post(sys: OwnershipSystem, a: ActorId, n: HostId) -> OwnershipSystem {
+pub open spec fn acquire_post(sys: OwnershipSystem, a: ActorId, n: Id) -> OwnershipSystem {
     OwnershipSystem {
         actors: sys.actors.insert(a, acquire_next(sys.actors[a], n)),
         nodes: sys.nodes,
@@ -84,7 +84,7 @@ pub open spec fn acquire_post(sys: OwnershipSystem, a: ActorId, n: HostId) -> Ow
 }
 
 /// Where `tr_begin_transfer` sends the system.
-pub open spec fn begin_transfer_post(sys: OwnershipSystem, a: ActorId, from: HostId, to: HostId) -> OwnershipSystem {
+pub open spec fn begin_transfer_post(sys: OwnershipSystem, a: ActorId, from: Id, to: Id) -> OwnershipSystem {
     OwnershipSystem {
         actors: sys.actors.insert(a, begin_transfer_next(sys.actors[a], to)),
         nodes: sys.nodes,
@@ -103,7 +103,7 @@ pub open spec fn begin_transfer_post(sys: OwnershipSystem, a: ActorId, from: Hos
 
 /// Where `tr_handle_revoke` sends the system: the outgoing owner's
 /// acknowledgement, and nothing else.
-pub open spec fn released_post(sys: OwnershipSystem, a: ActorId, from: HostId, new_epoch: Epoch) -> OwnershipSystem {
+pub open spec fn released_post(sys: OwnershipSystem, a: ActorId, from: Id, new_epoch: Epoch) -> OwnershipSystem {
     OwnershipSystem {
         actors: sys.actors,
         nodes: sys.nodes,
@@ -119,8 +119,8 @@ pub open spec fn released_post(sys: OwnershipSystem, a: ActorId, from: HostId, n
 pub open spec fn release_post(
     sys: OwnershipSystem,
     a: ActorId,
-    from: HostId,
-    to: HostId,
+    from: Id,
+    to: Id,
     new_epoch: Epoch,
 ) -> OwnershipSystem {
     OwnershipSystem {
@@ -139,7 +139,7 @@ pub open spec fn release_post(
 
 /// Where a forced revoke sends the system, whichever of the three transitions
 /// it turns out to be.
-pub open spec fn force_post(sys: OwnershipSystem, a: ActorId, next: HostId) -> OwnershipSystem {
+pub open spec fn force_post(sys: OwnershipSystem, a: ActorId, next: Id) -> OwnershipSystem {
     OwnershipSystem {
         actors: sys.actors.insert(a, force_next(sys.actors[a], next)),
         nodes: sys.nodes,
@@ -157,7 +157,7 @@ pub open spec fn force_post(sys: OwnershipSystem, a: ActorId, next: HostId) -> O
 
 /// Where `tr_issue_grant` sends the system: one more copy of a grant that names
 /// only state which is already public.
-pub open spec fn issue_grant_post(sys: OwnershipSystem, a: ActorId, to: HostId, epoch: Epoch) -> OwnershipSystem {
+pub open spec fn issue_grant_post(sys: OwnershipSystem, a: ActorId, to: Id, epoch: Epoch) -> OwnershipSystem {
     OwnershipSystem {
         actors: sys.actors,
         nodes: sys.nodes,
@@ -176,7 +176,7 @@ pub open spec fn issue_grant_post(sys: OwnershipSystem, a: ActorId, to: HostId, 
 pub proof fn theorem_acquire_step_refines_tr_acquire(
     sys: OwnershipSystem,
     a: ActorId,
-    n: HostId,
+    n: Id,
     e: Epoch,
     granted: bool,
 )
@@ -202,7 +202,7 @@ pub proof fn theorem_acquire_step_refuses_exactly_when_disabled(
     sys: OwnershipSystem,
     post: OwnershipSystem,
     a: ActorId,
-    n: HostId,
+    n: Id,
     e: Epoch,
     granted: bool,
 )
@@ -220,7 +220,7 @@ pub proof fn theorem_acquire_outcome_is_the_step(
     sys: OwnershipSystem,
     post: OwnershipSystem,
     a: ActorId,
-    n: HostId,
+    n: Id,
 )
     requires
         tr_acquire(sys, post, a, n),
@@ -240,8 +240,8 @@ pub proof fn theorem_acquire_outcome_is_the_step(
 pub proof fn theorem_begin_transfer_step_refines_tr_begin_transfer(
     sys: OwnershipSystem,
     a: ActorId,
-    from: HostId,
-    to: HostId,
+    from: Id,
+    to: Id,
 )
     requires
         sys.actors.contains_key(a),
@@ -260,8 +260,8 @@ pub proof fn theorem_begin_transfer_step_refuses_exactly_when_disabled(
     sys: OwnershipSystem,
     post: OwnershipSystem,
     a: ActorId,
-    from: HostId,
-    to: HostId,
+    from: Id,
+    to: Id,
     to_is_node: bool,
 )
     requires
@@ -277,8 +277,8 @@ pub proof fn theorem_begin_transfer_outcome_is_the_step(
     sys: OwnershipSystem,
     post: OwnershipSystem,
     a: ActorId,
-    from: HostId,
-    to: HostId,
+    from: Id,
+    to: Id,
 )
     requires
         tr_begin_transfer(sys, post, a, from, to),
@@ -302,8 +302,8 @@ pub proof fn theorem_begin_transfer_outcome_is_the_step(
 pub proof fn theorem_release_step_refines_handle_revoke_then_complete_release(
     sys: OwnershipSystem,
     a: ActorId,
-    from: HostId,
-    to: HostId,
+    from: Id,
+    to: Id,
     old_epoch: Epoch,
     new_epoch: Epoch,
 )
@@ -355,7 +355,7 @@ pub proof fn theorem_refused_release_is_not_the_models_release(
     sys: OwnershipSystem,
     post: OwnershipSystem,
     a: ActorId,
-    n: HostId,
+    n: Id,
     e: Epoch,
 )
     requires
@@ -375,7 +375,7 @@ pub proof fn theorem_refused_release_is_not_the_models_release(
 // the step function is that a server does not have to choose between them.
 
 /// From `Owned`, a forced revoke is `tr_revoke_owner`.
-pub proof fn theorem_force_step_refines_tr_revoke_owner(sys: OwnershipSystem, a: ActorId, next: HostId)
+pub proof fn theorem_force_step_refines_tr_revoke_owner(sys: OwnershipSystem, a: ActorId, next: Id)
     requires
         sys.actors.contains_key(a),
         sys.nodes.contains(next),
@@ -388,7 +388,7 @@ pub proof fn theorem_force_step_refines_tr_revoke_owner(sys: OwnershipSystem, a:
 
 /// From `Unowned`, it is `tr_reassign_unowned`: the intended owner never picked
 /// the actor up, so burn the epoch and offer it to somebody else.
-pub proof fn theorem_force_step_refines_tr_reassign_unowned(sys: OwnershipSystem, a: ActorId, next: HostId)
+pub proof fn theorem_force_step_refines_tr_reassign_unowned(sys: OwnershipSystem, a: ActorId, next: Id)
     requires
         sys.actors.contains_key(a),
         sys.nodes.contains(next),
@@ -406,7 +406,7 @@ pub proof fn theorem_force_step_refines_tr_reassign_unowned(sys: OwnershipSystem
 /// offers the actor back to the node it was being taken from. A coordinator
 /// that asked for some other successor did not get it, and the step function
 /// returns the node that was actually offered rather than reporting success.
-pub proof fn theorem_force_step_refines_tr_abort_transfer(sys: OwnershipSystem, a: ActorId, next: HostId)
+pub proof fn theorem_force_step_refines_tr_abort_transfer(sys: OwnershipSystem, a: ActorId, next: Id)
     requires
         sys.actors.contains_key(a),
         is_transferring(sys.actors[a]),
@@ -431,7 +431,7 @@ pub proof fn theorem_poll_step_refines_tr_issue_grant(
     sys: OwnershipSystem,
     a: ActorId,
     st: ExecState,
-    n: HostId,
+    n: Id,
     epoch: u64,
 )
     requires
@@ -451,7 +451,7 @@ pub proof fn theorem_poll_step_refines_tr_handle_revoke(
     sys: OwnershipSystem,
     a: ActorId,
     st: ExecState,
-    n: HostId,
+    n: Id,
     epoch: u64,
     old_epoch: Epoch,
 )
@@ -487,7 +487,7 @@ pub proof fn theorem_poll_step_offers_nothing_only_when_nothing_is_owed(
     sys: OwnershipSystem,
     a: ActorId,
     st: ExecState,
-    n: HostId,
+    n: Id,
 )
     requires
         sys.actors[a] == st.view(),
@@ -525,8 +525,8 @@ pub proof fn theorem_poll_step_offers_nothing_only_when_nothing_is_owed(
 /// execution rather than three unrelated claims.
 pub proof fn scenario_a_handover_through_the_verified_steps() {
     let actor: ActorId = 0;
-    let a: HostId = 1;
-    let b: HostId = 2;
+    let a: Id = Id(1);
+    let b: Id = Id(2);
 
     let sys0 = OwnershipSystem {
         actors: Map::empty().insert(
@@ -546,10 +546,10 @@ pub proof fn scenario_a_handover_through_the_verified_steps() {
     assert(sys0.network.contains(Message::Grant { actor: actor, to: a, epoch: 41 }));
 
     // A poll would offer exactly this grant, at exactly this epoch.
-    let record = ExecState::Unowned { epoch: 41, intended: 1 };
+    let record = ExecState::Unowned { epoch: 41, intended: Id(1) };
     assert(record.view() == sys0.actors[actor]);
-    assert(poll_answer(record, 1) == ExecOffer::Grant(41));
-    theorem_poll_step_refines_tr_issue_grant(sys0, actor, record, 1, 41);
+    assert(poll_answer(record, Id(1)) == ExecOffer::Grant(41));
+    theorem_poll_step_refines_tr_issue_grant(sys0, actor, record, Id(1), 41);
 
     // `A` takes it.
     assert(acquire_fires(sys0.actors[actor], a, 41, true));
@@ -595,11 +595,11 @@ pub proof fn scenario_a_handover_through_the_verified_steps() {
     assert(sys3.actors[actor] == (OwnershipState::Unowned { epoch: 42, intended_owner: b }));
 
     // The actor is now offered to `B` at 42, and to nobody at 41.
-    let after = ExecState::Unowned { epoch: 42, intended: 2 };
+    let after = ExecState::Unowned { epoch: 42, intended: Id(2) };
     assert(after.view() == sys3.actors[actor]);
-    assert(poll_answer(after, 2) == ExecOffer::Grant(42));
-    assert(poll_answer(after, 1) == ExecOffer::Nothing);
-    theorem_poll_step_offers_nothing_only_when_nothing_is_owed(sys3, actor, after, 1);
+    assert(poll_answer(after, Id(2)) == ExecOffer::Grant(42));
+    assert(poll_answer(after, Id(1)) == ExecOffer::Nothing);
+    theorem_poll_step_offers_nothing_only_when_nothing_is_owed(sys3, actor, after, Id(1));
 }
 
 /// The refusal theorems are not vacuous either.
@@ -611,8 +611,8 @@ pub proof fn scenario_a_handover_through_the_verified_steps() {
 /// actor, cannot begin a transfer of it.
 pub proof fn scenario_the_refusals_are_refusals_of_something_real() {
     let actor: ActorId = 0;
-    let a: HostId = 1;
-    let b: HostId = 2;
+    let a: Id = Id(1);
+    let b: Id = Id(2);
 
     // The actor is held for `A` at 41 and no grant has been sent.
     let ungranted = OwnershipSystem {
@@ -665,7 +665,7 @@ pub proof fn theorem_may_write_step_is_the_system_fence(
     sys: OwnershipSystem,
     a: ActorId,
     st: ExecState,
-    n: HostId,
+    n: Id,
     e: Epoch,
 )
     requires

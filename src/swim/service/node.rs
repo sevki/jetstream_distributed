@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use super::refusal::{refuse, refuse_err, refuse_no};
 use super::{Liveness, MAX_UPDATES, Membership, Update};
-use crate::host::HostId;
+use crate::id::Id;
 use crate::swim::exec::SwimTable;
 use crate::swim::steps::{ExecRecord, ExecStatus, key_geq_exec};
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
@@ -19,7 +19,7 @@ use jetstream::prelude::*;
 pub enum Event {
     /// A message changed what this node believes about `about`.
     Learned {
-        about: HostId,
+        about: Id,
         incarnation: u64,
         status: Liveness,
     },
@@ -42,9 +42,9 @@ pub struct Node {
     inner: Arc<Mutex<Inner>>,
     /// Connection address to member number. The stated assumption; see the
     /// module docs.
-    roster: Arc<HashMap<IpAddr, HostId>>,
+    roster: Arc<HashMap<IpAddr, Id>>,
     /// This node's own number.
-    me: HostId,
+    me: Id,
 }
 
 /// `a` and `b` are the same record.
@@ -62,7 +62,7 @@ impl Node {
     ///
     /// Every member starts at its fresh record. Nothing is read from disk; see
     /// "What a node does not need to write down" in the module docs.
-    pub fn new(roster: HashMap<IpAddr, HostId>, me: HostId) -> io::Result<Self> {
+    pub fn new(roster: HashMap<IpAddr, Id>, me: Id) -> io::Result<Self> {
         if !roster.values().any(|&n| n == me) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -73,7 +73,7 @@ impl Node {
         // through `apply`, which refuses more than `MAX_UPDATES` entries. A
         // roster bigger than that could never complete its own push/pull, so it
         // is refused here rather than discovered there.
-        let members: BTreeSet<HostId> = roster.values().copied().collect();
+        let members: BTreeSet<Id> = roster.values().copied().collect();
         if members.len() > MAX_UPDATES {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -94,12 +94,12 @@ impl Node {
     }
 
     /// This node's own number.
-    pub fn id(&self) -> HostId {
+    pub fn id(&self) -> Id {
         self.me
     }
 
     /// What this node believes about `node`, or `None` for a non-member.
-    pub fn record(&self, node: HostId) -> Option<Update> {
+    pub fn record(&self, node: Id) -> Option<Update> {
         if !self.is_member(node) {
             return None;
         }
@@ -130,7 +130,7 @@ impl Node {
     /// Inherent rather than on the trait, so that nobody can make this node
     /// suspect anything: a node suspects a peer because *its own* probe timed
     /// out. Returns whether that changed what the node believes.
-    pub fn suspect(&self, node: HostId, incarnation: u64) -> Result<bool> {
+    pub fn suspect(&self, node: Id, incarnation: u64) -> Result<bool> {
         let accusation = ExecRecord {
             incarnation,
             status: ExecStatus::Suspect,
@@ -146,7 +146,7 @@ impl Node {
     /// *that* dead would kill an incarnation nobody suspected. The check is made
     /// under the same lock as the write, so an RPC cannot slip a refutation in
     /// between the two.
-    pub fn declare_dead(&self, node: HostId, incarnation: u64) -> Result<bool> {
+    pub fn declare_dead(&self, node: Id, incarnation: u64) -> Result<bool> {
         let accusation = ExecRecord {
             incarnation,
             status: ExecStatus::Dead,
@@ -182,12 +182,12 @@ impl Node {
         Ok(())
     }
 
-    fn is_member(&self, node: HostId) -> bool {
+    fn is_member(&self, node: Id) -> bool {
         self.roster.values().any(|&n| n == node)
     }
 
     /// Which member is calling, from the connection rather than the request.
-    fn caller(&self, ctx: &Context) -> Option<HostId> {
+    fn caller(&self, ctx: &Context) -> Option<Id> {
         match ctx.remote() {
             Some(RemoteAddr::IpAddr(addr)) => self.roster.get(addr).copied(),
             _ => None,
@@ -195,7 +195,7 @@ impl Node {
     }
 
     fn view_locked(&self, g: &Inner) -> Vec<Update> {
-        let members: BTreeSet<HostId> = self.roster.values().copied().collect();
+        let members: BTreeSet<Id> = self.roster.values().copied().collect();
         members
             .into_iter()
             .map(|n| Update::of(n, g.table.get(n)))
@@ -206,7 +206,7 @@ impl Node {
     /// exactly what this node holds for it.
     fn accuse(
         &self,
-        node: HostId,
+        node: Id,
         accusation: ExecRecord,
         required: Option<ExecRecord>,
     ) -> Result<bool> {

@@ -39,7 +39,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
@@ -50,7 +50,7 @@ verus! {
 /// One message. `sender` and `seq` identify it; `body` is what the actor's
 /// behaviour reads.
 pub struct Envelope {
-    pub sender: HostId,
+    pub sender: Id,
     pub seq: nat,
     pub body: nat,
 }
@@ -62,7 +62,7 @@ pub struct Envelope {
 /// no two hosts ever wrote under the same epoch.
 pub struct Entry {
     pub env: Envelope,
-    pub host: HostId,
+    pub host: Id,
     pub epoch: Epoch,
 }
 
@@ -86,7 +86,7 @@ pub open spec fn apply(state: nat, body: nat) -> nat {
 }
 
 /// The messages accepted from `sender` in `journal`.
-pub open spec fn accepted_from(journal: Seq<Entry>, sender: HostId) -> nat
+pub open spec fn accepted_from(journal: Seq<Entry>, sender: Id) -> nat
     decreases journal.len(),
 {
     if journal.len() == 0 {
@@ -120,13 +120,13 @@ pub struct ActorSystem {
     /// Every message ever sent. Never shrinks; see the module docs.
     pub sent: Set<Envelope>,
     /// Each sender's next sequence number. A sender with no entry is at zero.
-    pub next_seq: Map<HostId, nat>,
+    pub next_seq: Map<Id, nat>,
     /// The messages the actor has accepted, in order. The actor's state.
     pub journal: Seq<Entry>,
 }
 
 /// `n`'s next sequence number.
-pub open spec fn seq_of(c: ActorSystem, n: HostId) -> nat {
+pub open spec fn seq_of(c: ActorSystem, n: Id) -> nat {
     if c.next_seq.contains_key(n) {
         c.next_seq[n]
     } else {
@@ -139,7 +139,7 @@ pub open spec fn seq_of(c: ActorSystem, n: HostId) -> nat {
 /// No host is named. A sender addresses the actor, not the machine it happens to
 /// be on; which host may process the message is decided by the ownership layer
 /// when it is accepted, not when it is sent.
-pub open spec fn as_send(pre: ActorSystem, post: ActorSystem, from: HostId, body: nat) -> bool {
+pub open spec fn as_send(pre: ActorSystem, post: ActorSystem, from: Id, body: nat) -> bool {
     &&& pre.own.live.contains(from)
     &&& post.sent == pre.sent.insert(Envelope { sender: from, seq: seq_of(pre, from), body })
     &&& post.next_seq == pre.next_seq.insert(from, seq_of(pre, from) + 1)
@@ -162,7 +162,7 @@ pub open spec fn as_send(pre: ActorSystem, post: ActorSystem, from: HostId, body
 pub open spec fn as_accept(
     pre: ActorSystem,
     post: ActorSystem,
-    host: HostId,
+    host: Id,
     epoch: Epoch,
     env: Envelope,
 ) -> bool {
@@ -189,8 +189,8 @@ pub open spec fn as_own(pre: ActorSystem, post: ActorSystem, s: Step) -> bool {
 
 /// The labelled transitions of the actor system.
 pub enum ActorStep {
-    Send { from: HostId, body: nat },
-    Accept { host: HostId, epoch: Epoch, env: Envelope },
+    Send { from: Id, body: nat },
+    Accept { host: Id, epoch: Epoch, env: Envelope },
     Own { own_step: Step },
 }
 
@@ -212,7 +212,7 @@ pub open spec fn actor_init(c: ActorSystem) -> bool {
     &&& init(c.own)
     &&& c.own.actors.contains_key(c.actor)
     &&& c.sent == Set::<Envelope>::empty()
-    &&& c.next_seq == Map::<HostId, nat>::empty()
+    &&& c.next_seq == Map::<Id, nat>::empty()
     &&& c.journal == Seq::<Entry>::empty()
 }
 

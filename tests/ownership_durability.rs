@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
-use jetstream_distributed::host::HostId;
+use jetstream_distributed::id::Id;
 use jetstream_distributed::ownership::service::{
     EpochFloor, Event, FileFloor, MemoryFloor, Offer, Ownership, Registry,
 };
@@ -33,8 +33,8 @@ use jetstream_distributed::ownership::service::{
 const A: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
 const B: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
 
-fn roster() -> HashMap<IpAddr, HostId> {
-    HashMap::from([(A, 0), (B, 1)])
+fn roster() -> HashMap<IpAddr, Id> {
+    HashMap::from([(A, Id(0)), (B, Id(1))])
 }
 
 /// A caller, identified the way the service identifies one: by where the
@@ -44,7 +44,7 @@ fn from(addr: IpAddr) -> Context {
 }
 
 fn registry(floor: &MemoryFloor) -> Registry {
-    Registry::new(roster(), 0, Arc::new(floor.clone()))
+    Registry::new(roster(), Id(0),Arc::new(floor.clone()))
         .expect("the floor is readable and node 0 is on the roster")
 }
 
@@ -55,7 +55,7 @@ async fn a_hands_the_actor_to_b(reg: &Registry) {
     reg.acquire(from(A), 41).await.unwrap();
     assert_eq!(reg.write(from(A), 41).await.unwrap(), 1);
 
-    reg.begin_transfer(from(A), 1).await.unwrap();
+    reg.begin_transfer(from(A), Id(1)).await.unwrap();
     assert_eq!(reg.poll(from(A)).await.unwrap(), Offer::Revoke(42));
     reg.release(from(A), 42).await.unwrap();
 
@@ -97,7 +97,7 @@ async fn a_restarted_registry_does_not_reissue_an_epoch_it_already_used() {
         .expect_err("a write at an epoch from before the restart must be refused");
     assert_eq!(fenced.code(), Some("FENCED"), "{fenced:?}");
     assert!(
-        reg.log().contains(&Event::Fenced { node: 0, epoch: 41 }),
+        reg.log().contains(&Event::Fenced { node: Id(0), epoch: 41 }),
         "and the refusal has to be in the new registry's log, or no auditor \
          could ever see that it happened: {:?}",
         reg.log()
@@ -176,13 +176,13 @@ async fn a_failed_record_leaves_the_actor_untouched() {
         }
     }
 
-    let reg = Registry::new(roster(), 0, Arc::new(FailsAfterTheFirstEpoch)).unwrap();
+    let reg = Registry::new(roster(), Id(0),Arc::new(FailsAfterTheFirstEpoch)).unwrap();
     assert_eq!(reg.poll(from(A)).await.unwrap(), Offer::Grant(41));
     reg.acquire(from(A), 41).await.unwrap();
     assert_eq!(reg.write(from(A), 41).await.unwrap(), 1);
 
     let down = reg
-        .begin_transfer(from(A), 1)
+        .begin_transfer(from(A), Id(1))
         .await
         .expect_err("a handover whose epoch cannot be made durable must not proceed");
     assert_eq!(
@@ -227,15 +227,15 @@ async fn force_reports_where_the_actor_actually_went() {
     // From `Owned`: A holds the actor, the coordinator hands it to B.
     assert_eq!(reg.poll(from(A)).await.unwrap(), Offer::Grant(41));
     reg.acquire(from(A), 41).await.unwrap();
-    assert_eq!(reg.force(1).unwrap(), 1, "tr_revoke_owner names its successor");
+    assert_eq!(reg.force(Id(1)).unwrap(), Id(1), "tr_revoke_owner names its successor");
 
     // From `Transferring`: B has the actor and has agreed to hand it back to A.
     assert_eq!(reg.poll(from(B)).await.unwrap(), Offer::Grant(42));
     reg.acquire(from(B), 42).await.unwrap();
-    reg.begin_transfer(from(B), 0).await.unwrap();
+    reg.begin_transfer(from(B), Id(0)).await.unwrap();
     assert_eq!(
-        reg.force(0).unwrap(),
-        1,
+        reg.force(Id(0)).unwrap(),
+        Id(1),
         "the coordinator asked for node 0 and the answer is node 1: an \
          interrupted transfer goes back to the node it came from, and saying \
          `Ok(())` here would have let the caller believe otherwise"
@@ -257,7 +257,7 @@ async fn force_reports_where_the_actor_actually_went() {
 #[test]
 fn a_registry_cannot_be_started_holding_the_actor_for_a_stranger() {
     let floor = MemoryFloor::at(40);
-    assert!(Registry::new(roster(), 7, Arc::new(floor)).is_err());
+    assert!(Registry::new(roster(), Id(7),Arc::new(floor)).is_err());
 }
 
 /// A grant the registry published by *moving* the actor is a grant it has
@@ -286,7 +286,7 @@ async fn a_release_publishes_the_grant_the_model_says_it_publishes() {
 
     assert_eq!(reg.poll(from(A)).await.unwrap(), Offer::Grant(41));
     reg.acquire(from(A), 41).await.unwrap();
-    reg.begin_transfer(from(A), 1).await.unwrap();
+    reg.begin_transfer(from(A), Id(1)).await.unwrap();
     reg.release(from(A), 42).await.unwrap();
 
     // `tr_complete_release` publishes `Grant { to, new_epoch }` in the same
@@ -302,7 +302,7 @@ async fn a_release_publishes_the_grant_the_model_says_it_publishes() {
     // never offered — `Standing` and the P8 tracker both rebuild "which grants
     // were issued" from `Granted` alone.
     assert!(
-        reg.log().contains(&Event::Granted { node: 1, epoch: 42 }),
+        reg.log().contains(&Event::Granted { node: Id(1), epoch: 42 }),
         "the published grant has to be in the log, not only in the registry's \
          head: {:?}",
         reg.log()
@@ -317,7 +317,7 @@ async fn a_forced_revoke_publishes_the_grant_too() {
     assert_eq!(reg.poll(from(A)).await.unwrap(), Offer::Grant(41));
     reg.acquire(from(A), 41).await.unwrap();
 
-    assert_eq!(reg.force(1).unwrap(), 1);
+    assert_eq!(reg.force(Id(1)).unwrap(), Id(1));
     reg.acquire(from(B), 42)
         .await
         .expect("tr_revoke_owner publishes the successor's grant as it moves the actor");
@@ -337,12 +337,12 @@ async fn an_abort_does_not_need_a_successor_it_will_not_use() {
     let reg = registry(&floor);
     assert_eq!(reg.poll(from(A)).await.unwrap(), Offer::Grant(41));
     reg.acquire(from(A), 41).await.unwrap();
-    reg.begin_transfer(from(A), 1).await.unwrap();
+    reg.begin_transfer(from(A), Id(1)).await.unwrap();
 
     // Node 9 is not on the roster.
     assert_eq!(
-        reg.force(9).unwrap(),
-        0,
+        reg.force(Id(9)).unwrap(),
+        Id(0),
         "an interrupted transfer goes back to node 0, and the successor the \
          coordinator named is never consulted"
     );
@@ -352,7 +352,7 @@ async fn an_abort_does_not_need_a_successor_it_will_not_use() {
     // refused — so the change is about which transition is being taken rather
     // than about giving up on the roster.
     reg.acquire(from(A), 43).await.unwrap();
-    let refused = reg.force(9).unwrap_err();
+    let refused = reg.force(Id(9)).unwrap_err();
     assert_eq!(refused.code(), Some("ERR"), "{refused:?}");
 }
 

@@ -96,7 +96,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 use vstd::set_lib::*;
 
 use crate::raft::model::*;
@@ -158,7 +158,7 @@ pub open spec fn a_request_vote_summarises_its_sender(c: Cluster, m: RaftMessage
 /// Named rather than inlined because it appears in a `requires` and in two
 /// `assert forall` blocks, and a hypothesis written out three times is a
 /// hypothesis that can differ in one of them.
-pub open spec fn candidacy_is_not_new(pre: Cluster, post: Cluster, k: HostId) -> bool {
+pub open spec fn candidacy_is_not_new(pre: Cluster, post: Cluster, k: Id) -> bool {
     &&& pre.servers.contains_key(k)
     &&& post.servers[k].current_term >= pre.servers[k].current_term
     &&& (is_candidate(post.servers[k]) && post.servers[k].current_term
@@ -283,7 +283,7 @@ pub proof fn lemma_a_wire_that_gains_no_request_vote_keeps_the_summary(
         forall|m: RaftMessage|
             #![trigger post.messages.contains(m)]
             post.messages.contains(m) && is_request_vote(m) ==> pre.messages.contains(m),
-        forall|k: HostId|
+        forall|k: Id|
             #![trigger post.servers.contains_key(k)]
             post.servers.contains_key(k) ==> candidacy_is_not_new(pre, post, k),
     ensures
@@ -350,7 +350,7 @@ pub proof fn lemma_a_wire_that_gains_no_request_vote_keeps_the_summary(
 pub proof fn lemma_a_step_that_makes_no_candidate_keeps_the_summary(
     pre: Cluster,
     post: Cluster,
-    n: HostId,
+    n: Id,
     replacement: Server,
 )
     requires
@@ -367,7 +367,7 @@ pub proof fn lemma_a_step_that_makes_no_candidate_keeps_the_summary(
         inv_a_requestvote_is_not_ahead_of_its_sender(post),
         inv_a_requestvote_summarises_a_candidate(post),
 {
-    assert forall|k: HostId|
+    assert forall|k: Id|
         #![trigger post.servers.contains_key(k)]
         post.servers.contains_key(k) implies candidacy_is_not_new(pre, post, k) by {
         if k == n {
@@ -393,7 +393,7 @@ pub proof fn lemma_untouched_servers_keep_the_summary(pre: Cluster, post: Cluste
         inv_a_requestvote_is_not_ahead_of_its_sender(post),
         inv_a_requestvote_summarises_a_candidate(post),
 {
-    assert forall|k: HostId|
+    assert forall|k: Id|
         #![trigger post.servers.contains_key(k)]
         post.servers.contains_key(k) implies candidacy_is_not_new(pre, post, k) by {
         assert(post.servers[k] == pre.servers[k]);
@@ -410,7 +410,7 @@ pub proof fn lemma_untouched_servers_keep_the_summary(pre: Cluster, post: Cluste
 /// before the step the sender was at `term - 1` and
 /// [`inv_a_requestvote_is_not_ahead_of_its_sender`] says no message names a term
 /// its sender has not reached.
-pub proof fn lemma_timeout_preserves_the_summary(pre: Cluster, post: Cluster, n: HostId)
+pub proof fn lemma_timeout_preserves_the_summary(pre: Cluster, post: Cluster, n: Id)
     requires
         raft_summary_inv(pre),
         tr_timeout(pre, post, n),
@@ -527,8 +527,8 @@ pub proof fn lemma_timeout_preserves_the_summary(pre: Cluster, post: Cluster, n:
 pub proof fn lemma_grant_vote_preserves_the_summary(
     pre: Cluster,
     post: Cluster,
-    voter: HostId,
-    cand: HostId,
+    voter: Id,
+    cand: Id,
     term: Term,
     cand_last_term: Term,
     cand_last_index: nat,
@@ -898,10 +898,10 @@ pub proof fn theorem_a_candidates_log_is_the_latest_its_voters_saw(
 pub proof fn theorem_the_new_leaders_log_dominates_a_judged_voter(
     pre: Cluster,
     post: Cluster,
-    n: HostId,
+    n: Id,
     term: Term,
-    q: Set<HostId>,
-) -> (shared: HostId)
+    q: Set<Id>,
+) -> (shared: Id)
     requires
         raft_summary_inv(pre),
         raft_vote_inv(pre),
@@ -976,10 +976,10 @@ pub proof fn theorem_the_new_leaders_log_dominates_a_judged_voter(
 pub proof fn theorem_the_new_leaders_log_dominates_a_judged_voter_reachable(
     pre: Cluster,
     post: Cluster,
-    n: HostId,
+    n: Id,
     term: Term,
-    q: Set<HostId>,
-) -> (shared: HostId)
+    q: Set<Id>,
+) -> (shared: Id)
     requires
         raft_reachable(pre),
         tr_become_leader(pre, post, n, term),

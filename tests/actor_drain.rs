@@ -159,7 +159,7 @@ async fn a_drain_lets_the_running_handler_finish_then_fences_and_releases() {
         "and the service is still held"
     );
     assert_eq!(
-        supervisor.discover(ActorRef(B)),
+        supervisor.discover(ActorRef(B)).await,
         Err(DiscoveryError::NotFound),
         "a draining actor is not where a caller should go"
     );
@@ -242,7 +242,7 @@ async fn a_retired_actor_comes_back_and_its_old_sessions_work() {
         .await
         .expect("a retired actor can be hosted again");
     assert_eq!(supervisor.status(B), Status::Running);
-    assert_eq!(supervisor.discover(ActorRef(B)), Ok(vec![ME]));
+    assert_eq!(supervisor.discover(ActorRef(B)).await, Ok(vec![ME]));
     assert!(
         supervisor
             .spawn::<ActorBChannel, _, _>(

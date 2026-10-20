@@ -155,14 +155,14 @@ async fn the_supervisor_refuses_what_it_cannot_do() {
 async fn discovery_places_a_running_actor_on_this_node() {
     let supervisor = LocalSupervisor::new(ME);
     assert_eq!(
-        supervisor.discover(ActorRef(B)),
+        supervisor.discover(ActorRef(B)).await,
         Err(DiscoveryError::NotFound)
     );
 
     host_b(&supervisor).await.unwrap();
-    assert_eq!(supervisor.discover(ActorRef(B)), Ok(vec![ME]));
+    assert_eq!(supervisor.discover(ActorRef(B)).await, Ok(vec![ME]));
     assert_eq!(
-        supervisor.discover(ActorRef(A)),
+        supervisor.discover(ActorRef(A)).await,
         Err(DiscoveryError::NotFound),
         "only B is hosted"
     );
@@ -206,7 +206,7 @@ async fn an_actor_whose_handler_panicked_is_stopped_and_can_be_restarted() {
 
     assert_eq!(supervisor.status(B), Status::Stopped);
     assert_eq!(
-        supervisor.discover(ActorRef(B)),
+        supervisor.discover(ActorRef(B)).await,
         Err(DiscoveryError::NotFound),
         "a stopped actor is not placed here"
     );

@@ -19,7 +19,7 @@ use crate::ownership::transfer::*;
 verus! {
 
 /// **Every permitted transition preserves the invariants.**
-pub proof fn theorem_transition_preserves_invariants(pre: OwnershipSystem, post: OwnershipSystem, s: Step, a: ActorId)
+pub proof fn theorem_transition_preserves_invariants(pre: OwnershipSystem, post: OwnershipSystem, s: Step, a: Id)
     requires
         inv(pre),
         step(pre, post, s),
@@ -97,7 +97,7 @@ pub proof fn theorem_ownership_only_via_acquire(
     pre: OwnershipSystem,
     post: OwnershipSystem,
     s: Step,
-    a: ActorId,
+    a: Id,
     n: Id,
     e: Epoch,
 )

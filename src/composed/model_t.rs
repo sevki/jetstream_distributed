@@ -52,7 +52,7 @@ verus! {
 pub struct Composed {
     pub own: OwnershipSystem,
     pub ray: Raymond,
-    pub actor: ActorId,
+    pub actor: Id,
     /// Nodes whose privilege was taken by a seizure and whose belief has not yet
     /// been repaired - the nodes that **owe a reconciliation**.
     ///
@@ -80,7 +80,7 @@ pub struct Composed {
 /// `s` is an `Acquire` of actor `a`. This is the one ownership transition that
 /// can *create* mutable authority, so the composed machine routes it through
 /// [`ComposedStep::AcquireUnderToken`] instead of [`ComposedStep::Own`].
-pub open spec fn is_acquire_of(s: Step, a: ActorId) -> bool {
+pub open spec fn is_acquire_of(s: Step, a: Id) -> bool {
     match s {
         Step::Acquire { actor, node: _ } => actor == a,
         _ => false,

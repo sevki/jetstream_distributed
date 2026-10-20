@@ -175,7 +175,7 @@ pub enum Event {
 /// The registry, plus the log of what it did.
 ///
 /// `state` is the executable counterpart of the model's
-/// `actors: Map<ActorId, OwnershipState>`, narrowed to one actor and to `u64`.
+/// `actors: Map<Id, OwnershipState>`, narrowed to one actor and to `u64`.
 pub struct Coord {
     state: Owned,
     log: Vec<Event>,

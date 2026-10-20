@@ -52,7 +52,7 @@ verus! {
 ///
 /// and in the final state A still physically holds its epoch-41 token, yet has
 /// no authority whatsoever.
-pub proof fn scenario_stale_owner_returns(x: ActorId, a: Id, b: Id)
+pub proof fn scenario_stale_owner_returns(x: Id, a: Id, b: Id)
     requires
         a != b,
     ensures
@@ -117,7 +117,7 @@ pub proof fn scenario_stale_owner_returns(x: ActorId, a: Id, b: Id)
 
     // --- initial state -----------------------------------------------------
     let s0 = OwnershipSystem {
-        actors: Map::<ActorId, OwnershipState>::empty().insert(
+        actors: Map::<Id, OwnershipState>::empty().insert(
             x,
             OwnershipState::Unowned { epoch: 41, intended_owner: a },
         ),
@@ -354,7 +354,7 @@ pub proof fn scenario_stale_owner_returns(x: ActorId, a: Id, b: Id)
 pub proof fn theorem_stale_grant_cannot_be_used(
     pre: OwnershipSystem,
     post: OwnershipSystem,
-    a: ActorId,
+    a: Id,
     n: Id,
     e: Epoch,
 )
@@ -441,7 +441,7 @@ pub proof fn theorem_crash_recovery_cannot_change_ownership(pre: OwnershipSystem
 /// and exports the abort as a named step between reachable states. Without it,
 /// the step property remains provable even if `AbortTransfer` were changed to
 /// be always false - a conditional lemma about an unreachable transition.
-pub proof fn scenario_interrupted_transfer(x: ActorId, a: Id, b: Id)
+pub proof fn scenario_interrupted_transfer(x: Id, a: Id, b: Id)
     requires
         a != b,
     ensures
@@ -476,7 +476,7 @@ pub proof fn scenario_interrupted_transfer(x: ActorId, a: Id, b: Id)
     let grant_41 = Message::Grant { actor: x, to: a, epoch: 41 };
 
     let s0 = OwnershipSystem {
-        actors: Map::<ActorId, OwnershipState>::empty().insert(
+        actors: Map::<Id, OwnershipState>::empty().insert(
             x,
             OwnershipState::Unowned { epoch: 41, intended_owner: a },
         ),
@@ -605,7 +605,7 @@ pub proof fn scenario_interrupted_transfer(x: ActorId, a: Id, b: Id)
 pub proof fn theorem_interrupted_transfer_burns_the_epoch(
     pre: OwnershipSystem,
     post: OwnershipSystem,
-    x: ActorId,
+    x: Id,
     a: Id,
     b: Id,
     e: Epoch,
@@ -650,7 +650,7 @@ pub proof fn theorem_interrupted_transfer_burns_the_epoch(
 pub proof fn theorem_complete_release_needs_the_matching_released(
     pre: OwnershipSystem,
     post: OwnershipSystem,
-    a: ActorId,
+    a: Id,
 )
     requires
         step(pre, post, Step::CompleteRelease { actor: a }),
@@ -695,7 +695,7 @@ pub proof fn theorem_complete_release_needs_the_matching_released(
 pub proof fn theorem_complete_release_outcome_is_fixed_by_state(
     pre: OwnershipSystem,
     post: OwnershipSystem,
-    a: ActorId,
+    a: Id,
     from: Id,
     to: Id,
     old_epoch: Epoch,

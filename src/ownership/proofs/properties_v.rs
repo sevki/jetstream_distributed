@@ -188,7 +188,7 @@ pub proof fn theorem_actor_domain_constant(pre: OwnershipSystem, post: Ownership
     requires
         step(pre, post, s),
     ensures
-        forall|a: ActorId| #[trigger] post.actors.contains_key(a) <==> pre.actors.contains_key(a),
+        forall|a: Id| #[trigger] post.actors.contains_key(a) <==> pre.actors.contains_key(a),
 {
     match s {
         Step::Acquire { actor, node } => {
@@ -291,7 +291,7 @@ pub proof fn theorem_epoch_increases_by_at_most_one(
     pre: OwnershipSystem,
     post: OwnershipSystem,
     s: Step,
-    a: ActorId,
+    a: Id,
 )
     requires
         step(pre, post, s),
@@ -386,7 +386,7 @@ pub proof fn lemma_owned_epoch_frozen(
     pre: OwnershipSystem,
     post: OwnershipSystem,
     s: Step,
-    a: ActorId,
+    a: Id,
     n: Id,
     e: Epoch,
 )
@@ -452,7 +452,7 @@ pub proof fn theorem_ownership_at_an_epoch_is_final(
     tr: Seq<OwnershipSystem>,
     i: int,
     j: int,
-    a: ActorId,
+    a: Id,
     n: Id,
     e: Epoch,
 )
@@ -487,7 +487,7 @@ pub proof fn theorem_epoch_determines_owner(
     tr: Seq<OwnershipSystem>,
     i: int,
     j: int,
-    a: ActorId,
+    a: Id,
     n1: Id,
     n2: Id,
     e: Epoch,
@@ -508,7 +508,7 @@ pub proof fn theorem_epoch_determines_owner(
 /// **A stale epoch stays stale.** Once an actor has advanced past `e`, no later
 /// point of the execution ever accepts `e` again - staleness is permanent, so a
 /// node that was fenced out can never be fenced back in by waiting.
-pub proof fn theorem_stale_stays_stale(tr: Seq<OwnershipSystem>, i: int, j: int, a: ActorId, e: Epoch)
+pub proof fn theorem_stale_stays_stale(tr: Seq<OwnershipSystem>, i: int, j: int, a: Id, e: Epoch)
     requires
         valid_execution(tr),
         0 <= i <= j < tr.len(),
@@ -533,7 +533,7 @@ pub proof fn theorem_stale_stays_stale(tr: Seq<OwnershipSystem>, i: int, j: int,
 /// Every node that may mutate an actor holds an issued token for exactly that
 /// `(actor, epoch)`.
 pub open spec fn inv_authority_backed(sys: OwnershipSystem) -> bool {
-    forall|a: ActorId, n: Id, e: Epoch|
+    forall|a: Id, n: Id, e: Epoch|
         #[trigger] can_mutate(sys, a, n, e) ==> sys.issued.contains(
             Token { actor: a, epoch: e, holder: n },
         )
@@ -546,7 +546,7 @@ pub proof fn lemma_authority_backed_init(sys: OwnershipSystem)
     ensures
         inv_authority_backed(sys),
 {
-    assert forall|a: ActorId, n: Id, e: Epoch| can_mutate(sys, a, n, e) implies sys.issued.contains(
+    assert forall|a: Id, n: Id, e: Epoch| can_mutate(sys, a, n, e) implies sys.issued.contains(
         Token { actor: a, epoch: e, holder: n },
     ) by {
         assert(starts_unowned(sys.actors[a]));
@@ -565,7 +565,7 @@ pub proof fn lemma_authority_backed_step(pre: OwnershipSystem, post: OwnershipSy
 {
     theorem_issued_monotone(pre, post, s);
     theorem_actor_domain_constant(pre, post, s);
-    assert forall|a: ActorId, n: Id, e: Epoch| can_mutate(post, a, n, e) implies post.issued.contains(
+    assert forall|a: Id, n: Id, e: Epoch| can_mutate(post, a, n, e) implies post.issued.contains(
         Token { actor: a, epoch: e, holder: n },
     ) by {
         assert(pre.actors.contains_key(a));
@@ -611,7 +611,7 @@ pub proof fn lemma_authority_backed_execution(tr: Seq<OwnershipSystem>, i: int)
 /// may mutate an actor demonstrably holds an issued token for that exact
 /// `(actor, epoch)`. Authority cannot exist without the capability that
 /// conferred it.
-pub proof fn theorem_no_authority_without_token(sys: OwnershipSystem, a: ActorId, n: Id, e: Epoch)
+pub proof fn theorem_no_authority_without_token(sys: OwnershipSystem, a: Id, n: Id, e: Epoch)
     requires
         reachable(sys),
         can_mutate(sys, a, n, e),

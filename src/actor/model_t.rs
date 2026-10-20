@@ -116,7 +116,7 @@ pub struct ActorSystem {
     /// The ownership layer: who owns the actor, at which epoch.
     pub own: OwnershipSystem,
     /// The actor this system is about.
-    pub actor: ActorId,
+    pub actor: Id,
     /// Every message ever sent. Never shrinks; see the module docs.
     pub sent: Set<Envelope>,
     /// Each sender's next sequence number. A sender with no entry is at zero.

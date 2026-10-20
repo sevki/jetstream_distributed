@@ -28,8 +28,8 @@ verus! {
 
 // Node 1 is `A`, node 2 is `B`; `B` is also the sender. The actor is 0.
 
-pub open spec fn sc_actor() -> ActorId {
-    0
+pub open spec fn sc_actor() -> Id {
+    Id(0)
 }
 
 pub open spec fn sc_a() -> Id {
@@ -51,30 +51,30 @@ pub open spec fn sc_env1() -> Envelope {
 /// The ownership layer at each point of the run.
 pub open spec fn sc_own(k: int) -> OwnershipSystem {
     let nodes = Set::<Id>::empty().insert(Id(1)).insert(Id(2));
-    let grant_a = Message::Grant { actor: 0, to: Id(1), epoch: 41 };
-    let revoke = Message::Revoke { actor: 0, target: Id(1), old_epoch: 41, new_epoch: 42 };
-    let released = Message::Released { actor: 0, from: Id(1), new_epoch: 42 };
-    let grant_b = Message::Grant { actor: 0, to: Id(2), epoch: 42 };
-    let tok_a = Token { actor: 0, epoch: 41, holder: Id(1) };
-    let tok_b = Token { actor: 0, epoch: 42, holder: Id(2) };
-    let unowned_a = Map::<ActorId, OwnershipState>::empty().insert(
-        0,
+    let grant_a = Message::Grant { actor: Id(0), to: Id(1), epoch: 41 };
+    let revoke = Message::Revoke { actor: Id(0), target: Id(1), old_epoch: 41, new_epoch: 42 };
+    let released = Message::Released { actor: Id(0), from: Id(1), new_epoch: 42 };
+    let grant_b = Message::Grant { actor: Id(0), to: Id(2), epoch: 42 };
+    let tok_a = Token { actor: Id(0), epoch: 41, holder: Id(1) };
+    let tok_b = Token { actor: Id(0), epoch: 42, holder: Id(2) };
+    let unowned_a = Map::<Id, OwnershipState>::empty().insert(
+        Id(0),
         OwnershipState::Unowned { epoch: 41, intended_owner: Id(1) },
     );
-    let owned_a = Map::<ActorId, OwnershipState>::empty().insert(
-        0,
+    let owned_a = Map::<Id, OwnershipState>::empty().insert(
+        Id(0),
         OwnershipState::Owned { owner: Id(1), epoch: 41 },
     );
-    let moving = Map::<ActorId, OwnershipState>::empty().insert(
-        0,
+    let moving = Map::<Id, OwnershipState>::empty().insert(
+        Id(0),
         OwnershipState::Transferring { from: Id(1), to: Id(2), old_epoch: 41, new_epoch: 42 },
     );
-    let unowned_b = Map::<ActorId, OwnershipState>::empty().insert(
-        0,
+    let unowned_b = Map::<Id, OwnershipState>::empty().insert(
+        Id(0),
         OwnershipState::Unowned { epoch: 42, intended_owner: Id(2) },
     );
-    let owned_b = Map::<ActorId, OwnershipState>::empty().insert(
-        0,
+    let owned_b = Map::<Id, OwnershipState>::empty().insert(
+        Id(0),
         OwnershipState::Owned { owner: Id(2), epoch: 42 },
     );
     if k == 0 {
@@ -155,7 +155,7 @@ pub open spec fn sc_state(k: int) -> ActorSystem {
     if k <= 2 {
         ActorSystem {
             own: sc_own(k),
-            actor: 0,
+            actor: Id(0),
             sent: Set::empty(),
             next_seq: Map::empty(),
             journal: Seq::empty(),
@@ -163,47 +163,47 @@ pub open spec fn sc_state(k: int) -> ActorSystem {
     } else if k == 3 {
         ActorSystem {
             own: sc_own(2),
-            actor: 0,
+            actor: Id(0),
             sent: sent0,
             next_seq: seq1,
             journal: Seq::empty(),
         }
     } else if k == 4 {
-        ActorSystem { own: sc_own(2), actor: 0, sent: sent0, next_seq: seq1, journal: j1 }
+        ActorSystem { own: sc_own(2), actor: Id(0), sent: sent0, next_seq: seq1, journal: j1 }
     } else if k <= 8 {
-        ActorSystem { own: sc_own(k - 2), actor: 0, sent: sent0, next_seq: seq1, journal: j1 }
+        ActorSystem { own: sc_own(k - 2), actor: Id(0), sent: sent0, next_seq: seq1, journal: j1 }
     } else if k == 9 {
-        ActorSystem { own: sc_own(6), actor: 0, sent: sent1, next_seq: seq2, journal: j1 }
+        ActorSystem { own: sc_own(6), actor: Id(0), sent: sent1, next_seq: seq2, journal: j1 }
     } else {
-        ActorSystem { own: sc_own(6), actor: 0, sent: sent1, next_seq: seq2, journal: j2 }
+        ActorSystem { own: sc_own(6), actor: Id(0), sent: sent1, next_seq: seq2, journal: j2 }
     }
 }
 
 /// The label of each step of the run.
 pub open spec fn sc_label(i: int) -> ActorStep {
     if i == 0 {
-        ActorStep::Own { own_step: Step::IssueGrant { actor: 0 } }
+        ActorStep::Own { own_step: Step::IssueGrant { actor: Id(0) } }
     } else if i == 1 {
-        ActorStep::Own { own_step: Step::Acquire { actor: 0, node: Id(1) } }
+        ActorStep::Own { own_step: Step::Acquire { actor: Id(0), node: Id(1) } }
     } else if i == 2 {
         ActorStep::Send { from: Id(2), body: 7 }
     } else if i == 3 {
         ActorStep::Accept { host: Id(1), epoch: 41, env: sc_env0() }
     } else if i == 4 {
-        ActorStep::Own { own_step: Step::BeginTransfer { actor: 0, from: Id(1), to: Id(2) } }
+        ActorStep::Own { own_step: Step::BeginTransfer { actor: Id(0), from: Id(1), to: Id(2) } }
     } else if i == 5 {
         ActorStep::Own {
             own_step: Step::HandleRevoke {
-                actor: 0,
+                actor: Id(0),
                 target: Id(1),
                 old_epoch: 41,
                 new_epoch: 42,
             },
         }
     } else if i == 6 {
-        ActorStep::Own { own_step: Step::CompleteRelease { actor: 0 } }
+        ActorStep::Own { own_step: Step::CompleteRelease { actor: Id(0) } }
     } else if i == 7 {
-        ActorStep::Own { own_step: Step::Acquire { actor: 0, node: Id(2) } }
+        ActorStep::Own { own_step: Step::Acquire { actor: Id(0), node: Id(2) } }
     } else if i == 8 {
         ActorStep::Send { from: Id(2), body: 9 }
     } else {
@@ -219,48 +219,48 @@ pub proof fn lemma_sc_step(i: int)
         actor_step(sc_state(i), sc_state(i + 1), sc_label(i)),
 {
     if i == 0 {
-        assert(tr_issue_grant(sc_own(0), sc_own(1), 0));
+        assert(tr_issue_grant(sc_own(0), sc_own(1), Id(0)));
     } else if i == 1 {
-        assert(sc_own(1).network.contains(Message::Grant { actor: 0, to: Id(1), epoch: 41 }));
+        assert(sc_own(1).network.contains(Message::Grant { actor: Id(0), to: Id(1), epoch: 41 }));
         assert(sc_own(2).actors =~= sc_own(1).actors.insert(
-            0,
+            Id(0),
             OwnershipState::Owned { owner: Id(1), epoch: 41 },
         ));
-        assert(tr_acquire(sc_own(1), sc_own(2), 0, Id(1)));
+        assert(tr_acquire(sc_own(1), sc_own(2), Id(0), Id(1)));
     } else if i == 2 {
         assert(as_send(sc_state(2), sc_state(3), Id(2), 7));
     } else if i == 3 {
-        assert(can_mutate(sc_own(2), 0, Id(1), 41));
+        assert(can_mutate(sc_own(2), Id(0), Id(1), 41));
         assert(sc_state(3).sent.contains(sc_env0()));
         assert(accepted_from(Seq::<Entry>::empty(), Id(2)) == 0);
         assert(as_accept(sc_state(3), sc_state(4), Id(1), 41, sc_env0()));
     } else if i == 4 {
         assert(sc_own(3).actors =~= sc_own(2).actors.insert(
-            0,
+            Id(0),
             OwnershipState::Transferring { from: Id(1), to: Id(2), old_epoch: 41, new_epoch: 42 },
         ));
-        assert(tr_begin_transfer(sc_own(2), sc_own(3), 0, Id(1), Id(2)));
+        assert(tr_begin_transfer(sc_own(2), sc_own(3), Id(0), Id(1), Id(2)));
     } else if i == 5 {
-        assert(tr_handle_revoke(sc_own(3), sc_own(4), 0, Id(1), 41, 42));
+        assert(tr_handle_revoke(sc_own(3), sc_own(4), Id(0), Id(1), 41, 42));
     } else if i == 6 {
         assert(sc_own(5).actors =~= sc_own(4).actors.insert(
-            0,
+            Id(0),
             OwnershipState::Unowned { epoch: 42, intended_owner: Id(2) },
         ));
-        assert(tr_complete_release(sc_own(4), sc_own(5), 0));
+        assert(tr_complete_release(sc_own(4), sc_own(5), Id(0)));
     } else if i == 7 {
-        assert(sc_own(5).network.contains(Message::Grant { actor: 0, to: Id(2), epoch: 42 }));
+        assert(sc_own(5).network.contains(Message::Grant { actor: Id(0), to: Id(2), epoch: 42 }));
         assert(sc_own(6).actors =~= sc_own(5).actors.insert(
-            0,
+            Id(0),
             OwnershipState::Owned { owner: Id(2), epoch: 42 },
         ));
-        assert(tr_acquire(sc_own(5), sc_own(6), 0, Id(2)));
+        assert(tr_acquire(sc_own(5), sc_own(6), Id(0), Id(2)));
     } else if i == 8 {
         assert(seq_of(sc_state(8), Id(2)) == 1);
         assert(sc_state(9).next_seq =~= sc_state(8).next_seq.insert(Id(2), 2nat));
         assert(as_send(sc_state(8), sc_state(9), Id(2), 9));
     } else {
-        assert(can_mutate(sc_own(6), 0, Id(2), 42));
+        assert(can_mutate(sc_own(6), Id(0), Id(2), 42));
         assert(sc_state(9).sent.contains(sc_env1()));
         assert(accepted_from(Seq::<Entry>::empty(), Id(2)) == 0);
         lemma_accepted_from_push(Seq::<Entry>::empty(), sc_entry0(), Id(2));
@@ -341,7 +341,7 @@ pub proof fn scenario_the_old_host_is_refused(post: ActorSystem, env: Envelope)
     ensures
         !as_accept(sc_state(10), post, Id(1), 41, env),
 {
-    assert(sc_own(6).actors.contains_key(0));
+    assert(sc_own(6).actors.contains_key(Id(0)));
     assert(sc_state(10).own == sc_own(6));
     theorem_a_superseded_host_cannot_accept(sc_state(10), post, Id(1), 41, env);
 }

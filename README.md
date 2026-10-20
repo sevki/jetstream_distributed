@@ -22,7 +22,7 @@ across machines. Nothing here is checked at compile time for your application
 code, no lifetime crosses a network link, and no `&mut` is transported anywhere.
 
 What this is: a **runtime protocol** for moving exclusive write authority over
-an `ActorId` between nodes, together with **machine-checked proofs** that the
+an actor (named by an `Id`) between nodes, together with **machine-checked proofs** that the
 protocol's exclusivity and fencing properties hold in every reachable state,
 including under crashes, partitions, duplicated messages and interrupted
 handovers.
@@ -107,9 +107,10 @@ events, and liveness of any kind. This model proves safety only, and says so.
 ## The state machine
 
 ```rust
-pub type ActorId = nat;
 // Id is `crate::id::Id`, a newtype around a `u128` (a UUID or a ULID converts to one);
-// a model names a host by it directly.
+// a model names a host, and an actor, by it directly. (An actor was a `nat` here
+// before; the theorems now quantify over the `u128` actors a host always was, not
+// over unbounded ones. No theorem relied on there being more.)
 pub type Epoch   = nat;
 
 pub enum OwnershipState {
@@ -214,8 +215,8 @@ verifying, the build fails.
 | 4c | An interrupted handover fences both the old and the abandoned new epoch | `ownership::proofs::transfer::theorem_interrupted_transfer_fences_both` | none |
 | 4d | Ownership cannot be manufactured: the only step that can make `may_mutate` true is `Acquire`, from `Unowned` at that exact epoch with a matching grant | `ownership::proofs::transfer::theorem_ownership_only_via_acquire` | none |
 | 5 | **Epoch monotonicity** - no transition decreases an actor's epoch | `ownership::proofs::fencing::theorem_epoch_monotone_step`, `..._next`, `..._execution` | none |
-| 6 | **Token uniqueness (authority)** - at most one token confers authority per `(ActorId, Epoch)` | `ownership::proofs::tokens::theorem_valid_token_unique_per_actor_epoch` | none |
-| 6a | **Token uniqueness (physical)** - at most one token is ever *issued* per `(ActorId, Epoch)` | `ownership::proofs::tokens::theorem_issued_token_unique_per_actor_epoch` | reachability |
+| 6 | **Token uniqueness (authority)** - at most one token confers authority per `(actor, Epoch)`, an actor being an `Id` | `ownership::proofs::tokens::theorem_valid_token_unique_per_actor_epoch` | none |
+| 6a | **Token uniqueness (physical)** - at most one token is ever *issued* per `(actor, Epoch)` | `ownership::proofs::tokens::theorem_issued_token_unique_per_actor_epoch` | reachability |
 | 6b | Stale physical tokens confer no authority | `ownership::proofs::tokens::theorem_stale_token_has_no_authority` | none |
 | 6c | No token is ever minted for a future epoch | `ownership::proofs::tokens::theorem_no_future_tokens` | reachability |
 | E | The runtime `u64` check returns exactly the model's verdict **for the generation the guard records**, and rejects any epoch superseded *within that record* | `ownership::exec::FenceGuard::accepts`, `ownership::exec::FenceGuard::rejects_stale` | the guard is the node's own belief, immutable after `FenceGuard::new`. **This is node-local staleness rejection, not fencing**: a partitioned `A` still holding `FenceGuard::new(A, 41)` accepts `(A, 41)` while the system is at `Owned { B, 42 }`. A node cannot fence itself — see below |
@@ -2480,8 +2481,8 @@ CI, with no `assume`/`admit`/`external_body`/`axiom`):
 * transfer safety - the inductive invariant is preserved by every transition,
   and no stage of a handover admits two owners;
 * token uniqueness, both "at most one token confers authority per
-  `(ActorId, Epoch)`" and the stronger "at most one token is ever issued per
-  `(ActorId, Epoch)`";
+  `(actor, Epoch)`" and the stronger "at most one token is ever issued per
+  `(actor, Epoch)`";
 * stale tokens surviving crash, partition and recovery confer no authority;
 * the ownership registry's record, grants included: each of its methods takes the
   model's step and publishes the grant the model's transition publishes, and a

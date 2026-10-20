@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use jetstream::prelude::*;
 use jetstream_distributed::actor::service::{
-    ActorId, ActorRef, Capacity, Fence, LocalSupervisor, Status, Supervisor,
+    ActorRef, Capacity, Fence, LocalSupervisor, Status, Supervisor,
 };
 use jetstream_distributed::id::Id;
 use jetstream_distributed::scheduling::discovery::{Discovery, DiscoveryError};
@@ -21,8 +21,8 @@ use actorb_protocol::{ActorBChannel, ActorBService};
 
 const ROOM: Capacity = Capacity::Bounded(NonZeroU32::new(16).unwrap());
 
-const A: ActorId = 1;
-const B: ActorId = 2;
+const A: Id = Id(1);
+const B: Id = Id(2);
 
 /// The node these tests' supervisor runs on.
 const ME: Id = Id(7);
@@ -82,7 +82,7 @@ async fn host_b(supervisor: &LocalSupervisor) -> Result<()> {
 }
 
 /// A channel to the actor `id`, which speaks `B`'s protocol.
-async fn channel_to_b(supervisor: &LocalSupervisor, id: ActorId) -> Result<ActorBChannel> {
+async fn channel_to_b(supervisor: &LocalSupervisor, id: Id) -> Result<ActorBChannel> {
     let transport = supervisor
         .transport::<ActorBChannel>(id, Context::default())
         .await?;

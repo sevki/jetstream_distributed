@@ -53,7 +53,7 @@ verus! {
 
 /// After phase one: the actor has been released at epoch 42, and `A` still
 /// holds the token.
-pub open spec fn handover_released_state(c: Composed, x: ActorId, a: Id, b: Id) -> bool {
+pub open spec fn handover_released_state(c: Composed, x: Id, a: Id, b: Id) -> bool {
     &&& c.actor == x
     &&& c.own.actors[x] == (OwnershipState::Unowned { epoch: 42, intended_owner: b })
     &&& c.own.live.contains(a)
@@ -72,7 +72,7 @@ pub open spec fn handover_released_state(c: Composed, x: ActorId, a: Id, b: Id) 
 
 /// After phase two: `B`'s request has reached `A`, which now has `B` at the
 /// head of its queue. The ownership layer is untouched by the whole phase.
-pub open spec fn handover_requested_state(c: Composed, x: ActorId, a: Id, b: Id) -> bool {
+pub open spec fn handover_requested_state(c: Composed, x: Id, a: Id, b: Id) -> bool {
     &&& c.actor == x
     &&& c.own.actors[x] == (OwnershipState::Unowned { epoch: 42, intended_owner: b })
     &&& c.own.live.contains(a)
@@ -89,7 +89,7 @@ pub open spec fn handover_requested_state(c: Composed, x: ActorId, a: Id, b: Id)
 
 /// After phase three: the token is at `B`, and the actor is still unowned - the
 /// routing layer moved first and conferred nothing by moving.
-pub open spec fn handover_passed_state(c: Composed, x: ActorId, a: Id, b: Id) -> bool {
+pub open spec fn handover_passed_state(c: Composed, x: Id, a: Id, b: Id) -> bool {
     &&& c.actor == x
     &&& c.own.actors[x] == (OwnershipState::Unowned { epoch: 42, intended_owner: b })
     &&& c.own.live.contains(b)
@@ -104,7 +104,7 @@ pub open spec fn handover_passed_state(c: Composed, x: ActorId, a: Id, b: Id) ->
 /// Written out as one spec function so that the phases and the scenario agree
 /// on it by construction, and so the scenario's postcondition can say "the run
 /// is *this*" in a single clause.
-pub open spec fn handover_labels(x: ActorId, a: Id, b: Id) -> Seq<ComposedStep> {
+pub open spec fn handover_labels(x: Id, a: Id, b: Id) -> Seq<ComposedStep> {
     seq![
         ComposedStep::Own { own_step: Step::IssueGrant { actor: x } },
         ComposedStep::AcquireUnderToken { node: a },
@@ -128,7 +128,7 @@ pub open spec fn handover_labels(x: ActorId, a: Id, b: Id) -> Seq<ComposedStep> 
 /// the caller keep the literal is what keeps the proof tractable: each phase
 /// reasons about a handful of `insert`s over an opaque base instead of a dozen
 /// nested `Map`/`Set` literals, which is what exhausted the solver before.
-pub proof fn handover_phase_release(x: ActorId, a: Id, b: Id) -> (res: (
+pub proof fn handover_phase_release(x: Id, a: Id, b: Id) -> (res: (
     Composed,
     Seq<Composed>,
     Seq<ComposedStep>,
@@ -178,7 +178,7 @@ pub proof fn handover_phase_release(x: ActorId, a: Id, b: Id) -> (res: (
     let empty_q = Seq::<Id>::empty();
 
     let own0 = OwnershipSystem {
-        actors: Map::<ActorId, OwnershipState>::empty().insert(
+        actors: Map::<Id, OwnershipState>::empty().insert(
             x,
             OwnershipState::Unowned { epoch: 41, intended_owner: a },
         ),
@@ -415,7 +415,7 @@ pub proof fn handover_phase_request(
     tr: Seq<Composed>,
     labels: Seq<ComposedStep>,
     c: Composed,
-    x: ActorId,
+    x: Id,
     a: Id,
     b: Id,
 ) -> (res: (Composed, Seq<Composed>, Seq<ComposedStep>))
@@ -568,7 +568,7 @@ pub proof fn handover_phase_pass_token(
     tr: Seq<Composed>,
     labels: Seq<ComposedStep>,
     c: Composed,
-    x: ActorId,
+    x: Id,
     a: Id,
     b: Id,
 ) -> (res: (Composed, Seq<Composed>, Seq<ComposedStep>))
@@ -644,7 +644,7 @@ pub proof fn handover_phase_acquire(
     tr: Seq<Composed>,
     labels: Seq<ComposedStep>,
     c: Composed,
-    x: ActorId,
+    x: Id,
     a: Id,
     b: Id,
 ) -> (res: (Composed, Seq<Composed>, Seq<ComposedStep>))
@@ -713,7 +713,7 @@ pub proof fn handover_phase_acquire(
 /// This is the non-vacuity witness for every `composed_reachable` theorem: it
 /// exhibits a reachable composed state in which somebody actually owns the actor
 /// and actually holds the token.
-pub proof fn scenario_composed_handover(x: ActorId, a: Id, b: Id)
+pub proof fn scenario_composed_handover(x: Id, a: Id, b: Id)
     requires
         a != b,
     ensures
@@ -846,7 +846,7 @@ pub proof fn scenario_composed_handover(x: ActorId, a: Id, b: Id)
 /// on its own it does not establish that any reachable composed state has
 /// `using` set. This does: it drives `RequestCs`, `EnterCs` and `ExitCs` from
 /// `composed_init` through `lemma_composed_reachable_step`.
-pub proof fn scenario_composed_critical_section(x: ActorId, a: Id, b: Id)
+pub proof fn scenario_composed_critical_section(x: Id, a: Id, b: Id)
     requires
         a != b,
     ensures
@@ -873,7 +873,7 @@ pub proof fn scenario_composed_critical_section(x: ActorId, a: Id, b: Id)
     let empty_q = Seq::<Id>::empty();
 
     let own0 = OwnershipSystem {
-        actors: Map::<ActorId, OwnershipState>::empty().insert(
+        actors: Map::<Id, OwnershipState>::empty().insert(
             x,
             OwnershipState::Unowned { epoch: 41, intended_owner: a },
         ),
@@ -1048,7 +1048,7 @@ pub proof fn scenario_composed_critical_section(x: ActorId, a: Id, b: Id)
 ///
 /// `A`'s epoch-41 token is still in `issued` at the end, and still confers
 /// nothing.
-pub proof fn scenario_composed_crash_takeover(x: ActorId, a: Id, b: Id)
+pub proof fn scenario_composed_crash_takeover(x: Id, a: Id, b: Id)
     requires
         a != b,
     ensures
@@ -1117,7 +1117,7 @@ pub proof fn scenario_composed_crash_takeover(x: ActorId, a: Id, b: Id)
     let stale = Token { actor: x, epoch: 41, holder: a };
 
     let own0 = OwnershipSystem {
-        actors: Map::<ActorId, OwnershipState>::empty().insert(
+        actors: Map::<Id, OwnershipState>::empty().insert(
             x,
             OwnershipState::Unowned { epoch: 41, intended_owner: a },
         ),

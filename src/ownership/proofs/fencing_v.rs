@@ -41,7 +41,7 @@ pub proof fn theorem_unique_current_epoch(s: OwnershipState)
 /// ```
 pub proof fn theorem_stale_epoch_cannot_mutate(
     sys: OwnershipSystem,
-    a: ActorId,
+    a: Id,
     node: Id,
     supplied_epoch: Epoch,
 )
@@ -68,7 +68,7 @@ pub proof fn theorem_epoch_advance_fences_previous(s_old: OwnershipState, s_new:
 }
 
 /// **Epoch monotonicity.** A transition never decreases an actor's epoch.
-pub proof fn theorem_epoch_monotone_step(pre: OwnershipSystem, post: OwnershipSystem, s: Step, a: ActorId)
+pub proof fn theorem_epoch_monotone_step(pre: OwnershipSystem, post: OwnershipSystem, s: Step, a: Id)
     requires
         step(pre, post, s),
         pre.actors.contains_key(a),
@@ -80,7 +80,7 @@ pub proof fn theorem_epoch_monotone_step(pre: OwnershipSystem, post: OwnershipSy
 }
 
 /// Epoch monotonicity, lifted to `next`.
-pub proof fn theorem_epoch_monotone_next(pre: OwnershipSystem, post: OwnershipSystem, a: ActorId)
+pub proof fn theorem_epoch_monotone_next(pre: OwnershipSystem, post: OwnershipSystem, a: Id)
     requires
         next(pre, post),
         pre.actors.contains_key(a),
@@ -93,7 +93,7 @@ pub proof fn theorem_epoch_monotone_next(pre: OwnershipSystem, post: OwnershipSy
 }
 
 /// Epoch monotonicity along a whole execution.
-pub proof fn theorem_epoch_monotone_execution(tr: Seq<OwnershipSystem>, i: int, j: int, a: ActorId)
+pub proof fn theorem_epoch_monotone_execution(tr: Seq<OwnershipSystem>, i: int, j: int, a: Id)
     requires
         valid_execution(tr),
         0 <= i <= j < tr.len(),

@@ -22,7 +22,7 @@ verus! {
 /// permitted at the same (unique) epoch.
 pub proof fn theorem_exclusive_mutable_ownership(
     sys: OwnershipSystem,
-    a: ActorId,
+    a: Id,
     node_a: Id,
     epoch_a: Epoch,
     node_b: Id,

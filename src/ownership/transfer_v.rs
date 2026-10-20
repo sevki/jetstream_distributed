@@ -112,7 +112,7 @@ pub proof fn lemma_aborted_handover_fences_both(a: Id, b: Id, e: Epoch)
 }
 
 /// A single transition never decreases an actor's epoch.
-pub proof fn lemma_step_epoch_monotone(pre: OwnershipSystem, post: OwnershipSystem, s: Step, a: ActorId)
+pub proof fn lemma_step_epoch_monotone(pre: OwnershipSystem, post: OwnershipSystem, s: Step, a: Id)
     requires
         step(pre, post, s),
         pre.actors.contains_key(a),

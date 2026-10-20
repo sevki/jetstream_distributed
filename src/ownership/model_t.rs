@@ -32,9 +32,6 @@ use crate::id::Id;
 
 verus! {
 
-/// Identity of an actor. Ownership is tracked per actor.
-pub type ActorId = nat;
-
 /// A fencing epoch. Monotonically increasing per actor.
 pub type Epoch = nat;
 
@@ -60,7 +57,7 @@ pub enum OwnershipState {
 /// time. Whether a token confers *authority* is a question about the current
 /// OwnershipSystem state, see `crate::ownership::token_authorized`.
 pub struct Token {
-    pub actor: ActorId,
+    pub actor: Id,
     pub epoch: Epoch,
     pub holder: Id,
 }
@@ -70,11 +67,11 @@ pub struct Token {
 /// message can never by itself move the protocol forward.
 pub enum Message {
     /// Coordinator -> current owner: stop mutating, `new_epoch` was allocated.
-    Revoke { actor: ActorId, target: Id, old_epoch: Epoch, new_epoch: Epoch },
+    Revoke { actor: Id, target: Id, old_epoch: Epoch, new_epoch: Epoch },
     /// Owner -> coordinator: acknowledgement of a `Revoke`.
-    Released { actor: ActorId, from: Id, new_epoch: Epoch },
+    Released { actor: Id, from: Id, new_epoch: Epoch },
     /// Coordinator -> new owner: you may take ownership at `epoch`.
-    Grant { actor: ActorId, to: Id, epoch: Epoch },
+    Grant { actor: Id, to: Id, epoch: Epoch },
 }
 
 /// The whole OwnershipSystem.
@@ -95,7 +92,7 @@ pub struct OwnershipSystem {
     /// object store with compare-and-swap, which is what makes "read
     /// `Owned { A, 41 }`, write `Unowned { 42, B }`" a single step. See the
     /// failure-model table in `README.md`.
-    pub actors: Map<ActorId, OwnershipState>,
+    pub actors: Map<Id, OwnershipState>,
     /// All nodes that exist.
     pub nodes: Set<Id>,
     /// The nodes **participating in the protocol**.
@@ -135,7 +132,7 @@ pub struct OwnershipSystem {
 /// `Unowned` at exactly the epoch named by the grant, and `node` must be the
 /// intended owner. A duplicated or stale `Grant` therefore cannot fire this
 /// transition a second time, because the state is no longer `Unowned`.
-pub open spec fn tr_acquire(pre: OwnershipSystem, post: OwnershipSystem, a: ActorId, n: Id) -> bool {
+pub open spec fn tr_acquire(pre: OwnershipSystem, post: OwnershipSystem, a: Id, n: Id) -> bool {
     &&& pre.actors.contains_key(a)
     &&& pre.live.contains(n)
     &&& match pre.actors[a] {
@@ -167,7 +164,7 @@ pub open spec fn tr_acquire(pre: OwnershipSystem, post: OwnershipSystem, a: Acto
 pub open spec fn tr_begin_transfer(
     pre: OwnershipSystem,
     post: OwnershipSystem,
-    a: ActorId,
+    a: Id,
     from: Id,
     to: Id,
 ) -> bool {
@@ -222,7 +219,7 @@ pub open spec fn tr_begin_transfer(
 pub open spec fn tr_handle_revoke(
     pre: OwnershipSystem,
     post: OwnershipSystem,
-    a: ActorId,
+    a: Id,
     target: Id,
     old_epoch: Epoch,
     new_epoch: Epoch,
@@ -242,7 +239,7 @@ pub open spec fn tr_handle_revoke(
 
 /// The coordinator observed the release acknowledgement and publishes a grant
 /// for the new epoch.
-pub open spec fn tr_complete_release(pre: OwnershipSystem, post: OwnershipSystem, a: ActorId) -> bool {
+pub open spec fn tr_complete_release(pre: OwnershipSystem, post: OwnershipSystem, a: Id) -> bool {
     &&& pre.actors.contains_key(a)
     &&& match pre.actors[a] {
         OwnershipState::Transferring { from, to, old_epoch, new_epoch } =>
@@ -267,7 +264,7 @@ pub open spec fn tr_complete_release(pre: OwnershipSystem, post: OwnershipSystem
 /// Recovery burns *another* epoch, so that any `Grant` for `new_epoch` that is
 /// still in flight is already stale when it is delivered, and offers the actor
 /// back to the original owner.
-pub open spec fn tr_abort_transfer(pre: OwnershipSystem, post: OwnershipSystem, a: ActorId) -> bool {
+pub open spec fn tr_abort_transfer(pre: OwnershipSystem, post: OwnershipSystem, a: Id) -> bool {
     &&& pre.actors.contains_key(a)
     &&& match pre.actors[a] {
         OwnershipState::Transferring { from, to, old_epoch, new_epoch } =>
@@ -292,7 +289,7 @@ pub open spec fn tr_abort_transfer(pre: OwnershipSystem, post: OwnershipSystem, 
 /// crashed. Failure detectors are unreliable, and modelling the wrong-suspicion
 /// case is the whole point: safety must come from the epoch bump, not from the
 /// detector being right.
-pub open spec fn tr_revoke_owner(pre: OwnershipSystem, post: OwnershipSystem, a: ActorId, next: Id) -> bool {
+pub open spec fn tr_revoke_owner(pre: OwnershipSystem, post: OwnershipSystem, a: Id, next: Id) -> bool {
     &&& pre.actors.contains_key(a)
     &&& pre.nodes.contains(next)
     &&& match pre.actors[a] {
@@ -313,7 +310,7 @@ pub open spec fn tr_revoke_owner(pre: OwnershipSystem, post: OwnershipSystem, a:
 
 /// The intended owner never picked the actor up (it crashed, or the grant was
 /// lost). Burn the epoch and offer the actor to somebody else.
-pub open spec fn tr_reassign_unowned(pre: OwnershipSystem, post: OwnershipSystem, a: ActorId, next: Id) -> bool {
+pub open spec fn tr_reassign_unowned(pre: OwnershipSystem, post: OwnershipSystem, a: Id, next: Id) -> bool {
     &&& pre.actors.contains_key(a)
     &&& pre.nodes.contains(next)
     &&& match pre.actors[a] {
@@ -335,7 +332,7 @@ pub open spec fn tr_reassign_unowned(pre: OwnershipSystem, post: OwnershipSystem
 /// The coordinator (re)publishes the grant for an actor's current epoch to its
 /// intended owner. Retransmission is always safe: the grant only names state
 /// that is already public.
-pub open spec fn tr_issue_grant(pre: OwnershipSystem, post: OwnershipSystem, a: ActorId) -> bool {
+pub open spec fn tr_issue_grant(pre: OwnershipSystem, post: OwnershipSystem, a: Id) -> bool {
     &&& pre.actors.contains_key(a)
     &&& match pre.actors[a] {
         OwnershipState::Unowned { epoch, intended_owner } =>
@@ -395,14 +392,14 @@ pub open spec fn tr_stutter(pre: OwnershipSystem, post: OwnershipSystem) -> bool
 
 /// The labelled transitions of the OwnershipSystem.
 pub enum Step {
-    Acquire { actor: ActorId, node: Id },
-    BeginTransfer { actor: ActorId, from: Id, to: Id },
-    HandleRevoke { actor: ActorId, target: Id, old_epoch: Epoch, new_epoch: Epoch },
-    CompleteRelease { actor: ActorId },
-    AbortTransfer { actor: ActorId },
-    RevokeOwner { actor: ActorId, next: Id },
-    ReassignUnowned { actor: ActorId, next: Id },
-    IssueGrant { actor: ActorId },
+    Acquire { actor: Id, node: Id },
+    BeginTransfer { actor: Id, from: Id, to: Id },
+    HandleRevoke { actor: Id, target: Id, old_epoch: Epoch, new_epoch: Epoch },
+    CompleteRelease { actor: Id },
+    AbortTransfer { actor: Id },
+    RevokeOwner { actor: Id, next: Id },
+    ReassignUnowned { actor: Id, next: Id },
+    IssueGrant { actor: Id },
     Crash { node: Id },
     Recover { node: Id },
     Replay { msg: Message },
@@ -445,7 +442,7 @@ pub open spec fn starts_unowned(s: OwnershipState) -> bool {
 /// Initial states: no actor is owned, nothing has been issued, nothing has
 /// been sent, and every live node is a real node.
 pub open spec fn init(sys: OwnershipSystem) -> bool {
-    &&& (forall|a: ActorId| #[trigger] sys.actors.contains_key(a) ==> starts_unowned(sys.actors[a]))
+    &&& (forall|a: Id| #[trigger] sys.actors.contains_key(a) ==> starts_unowned(sys.actors[a]))
     &&& (forall|t: Token| !(#[trigger] sys.issued.contains(t)))
     &&& (forall|m: Message| !(#[trigger] sys.network.contains(m)))
     &&& sys.live.subset_of(sys.nodes)

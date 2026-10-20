@@ -85,7 +85,7 @@ pub open spec fn is_unowned(s: OwnershipState) -> bool {
 }
 
 /// Convenience: `node` may mutate `actor` in system `sys` presenting `epoch`.
-pub open spec fn can_mutate(sys: OwnershipSystem, actor: ActorId, node: Id, epoch: Epoch) -> bool {
+pub open spec fn can_mutate(sys: OwnershipSystem, actor: Id, node: Id, epoch: Epoch) -> bool {
     sys.actors.contains_key(actor) && may_mutate(sys.actors[actor], node, epoch)
 }
 

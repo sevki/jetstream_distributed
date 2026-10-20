@@ -45,7 +45,7 @@ verus! {
 
 /// The core stands for the system, as far as it keeps anything: the actor's
 /// record is its state, and its published grants are the network's.
-pub open spec fn stands_for(c: RegistryCore, sys: OwnershipSystem, a: ActorId) -> bool {
+pub open spec fn stands_for(c: RegistryCore, sys: OwnershipSystem, a: Id) -> bool {
     &&& sys.actors.contains_key(a)
     &&& sys.actors[a] == c.state.view()
     &&& forall|n: Id, e: nat|
@@ -60,7 +60,7 @@ pub proof fn theorem_poll_is_issue_grant(
     c: RegistryCore,
     c2: RegistryCore,
     sys: OwnershipSystem,
-    a: ActorId,
+    a: Id,
     node: Id,
     epoch: u64,
 )
@@ -89,7 +89,7 @@ pub proof fn theorem_poll_without_a_grant_changes_nothing(
     c: RegistryCore,
     c2: RegistryCore,
     sys: OwnershipSystem,
-    a: ActorId,
+    a: Id,
     node: Id,
 )
     requires
@@ -113,7 +113,7 @@ pub proof fn theorem_acquire_is_tr_acquire(
     c: RegistryCore,
     c2: RegistryCore,
     sys: OwnershipSystem,
-    a: ActorId,
+    a: Id,
     node: Id,
     epoch: u64,
 )
@@ -148,7 +148,7 @@ pub proof fn theorem_refused_acquire_is_disabled(
     c: RegistryCore,
     sys: OwnershipSystem,
     post: OwnershipSystem,
-    a: ActorId,
+    a: Id,
     node: Id,
     epoch: u64,
 )
@@ -176,7 +176,7 @@ pub proof fn theorem_begin_transfer_is_tr_begin_transfer(
     c: RegistryCore,
     c2: RegistryCore,
     sys: OwnershipSystem,
-    a: ActorId,
+    a: Id,
     from: Id,
     to: Id,
 )
@@ -207,7 +207,7 @@ pub proof fn theorem_refused_begin_transfer_is_disabled(
     c: RegistryCore,
     sys: OwnershipSystem,
     post: OwnershipSystem,
-    a: ActorId,
+    a: Id,
     from: Id,
     to: Id,
     to_is_node: bool,
@@ -235,7 +235,7 @@ pub proof fn theorem_release_is_handle_revoke_then_complete_release(
     c: RegistryCore,
     c2: RegistryCore,
     sys: OwnershipSystem,
-    a: ActorId,
+    a: Id,
     node: Id,
     epoch: u64,
     to: Id,
@@ -301,7 +301,7 @@ pub proof fn theorem_force_from_owned_is_tr_revoke_owner(
     c: RegistryCore,
     c2: RegistryCore,
     sys: OwnershipSystem,
-    a: ActorId,
+    a: Id,
     next: Id,
     offered: Id,
 )
@@ -325,7 +325,7 @@ pub proof fn theorem_force_from_unowned_is_tr_reassign_unowned(
     c: RegistryCore,
     c2: RegistryCore,
     sys: OwnershipSystem,
-    a: ActorId,
+    a: Id,
     next: Id,
     offered: Id,
 )
@@ -350,7 +350,7 @@ pub proof fn theorem_force_from_transferring_is_tr_abort_transfer(
     c: RegistryCore,
     c2: RegistryCore,
     sys: OwnershipSystem,
-    a: ActorId,
+    a: Id,
     next: Id,
     offered: Id,
 )
@@ -373,7 +373,7 @@ proof fn lemma_force_publishes(
     c: RegistryCore,
     c2: RegistryCore,
     sys: OwnershipSystem,
-    a: ActorId,
+    a: Id,
     next: Id,
     offered: Id,
 )
@@ -402,7 +402,7 @@ proof fn lemma_force_publishes(
 pub proof fn theorem_a_landed_write_is_can_mutate(
     c: RegistryCore,
     sys: OwnershipSystem,
-    a: ActorId,
+    a: Id,
     node: Id,
     epoch: u64,
 )

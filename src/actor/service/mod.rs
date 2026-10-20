@@ -66,7 +66,7 @@ mod session;
 mod transport;
 mod refusal;
 
-pub use supervisor::{ActorId, ActorRef, LocalSupervisor, Status, Supervisor};
+pub use supervisor::{ActorRef, LocalSupervisor, Status, Supervisor};
 pub use host::{Event, Host};
 pub use mailbox::{Capacity, Mailbox, Permit, Round, Waiter};
 pub use session::{serve, serve_fenced, Closer, Delivery, Fence, Session};

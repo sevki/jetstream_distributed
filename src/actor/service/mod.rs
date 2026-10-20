@@ -69,7 +69,7 @@ mod refusal;
 pub use supervisor::{ActorRef, LocalSupervisor, Status, Supervisor};
 pub use host::{Event, Host};
 pub use mailbox::{Capacity, Mailbox, Permit, Round, Waiter};
-pub use session::{serve, serve_fenced, Closer, Delivery, Fence, Session};
+pub use session::{refuse_all, serve, serve_fenced, serve_until, Closer, Delivery, Fence, Session};
 pub use transport::Connection;
 
 use crate::id::Id;

@@ -2015,9 +2015,18 @@ caller ── ActorBChannel ── Session ──▶ Mailbox ──▶ serve ─
   (the fence test checks only that `FENCED` comes back). Restarting a `Stopped` actor
   reuses its mailbox when the protocol is the same, so sessions obtained before the
   stop, and the requests already queued, reach the new drain; until it is restarted
-  they wait, and a new `transport` is refused. **Tested, not proved**
-  (`tests/actor_supervisor.rs`). Not here: a lane to a remote host, the retrying
-  caller, a cooperative drain, and tying the fence to a registry, host and epoch.
+  they wait, and a new `transport` is refused. **`drain(id)` is the cooperative
+  stop**: it closes the actor's fence (so it starts nothing, and what is queued is
+  answered `FENCED`), waits for a handler that is already running to *finish*, drops
+  the service, and returns; the status goes `Running`, `Draining`, `Retired`. The
+  mailbox is kept, with a small task on it that answers every request `FENCED`, so a
+  session made before the drain is told rather than left waiting, and `spawn` over a
+  `Retired` actor takes the same mailbox over. A handler that panics while the actor
+  drains makes it `Stopped`, and `drain` says so. Delivery stays at-least-once: a
+  request that ran but whose reply was lost is retried at the new owner. **Tested,
+  not proved** (`tests/actor_supervisor.rs`, `tests/actor_drain.rs`). Not here: a
+  lane to a remote host, the retrying caller, *who* decides to drain (a composition
+  with the ownership layer), and tying the fence to a registry, host and epoch.
 * **Backpressure.** A mailbox is built with a `Capacity`, which is always the
   caller's to say: `Bounded(n)` makes `poll_ready` wait for a free slot (the drain
   wakes it), `Unbounded` never does, and there is no default and no number that

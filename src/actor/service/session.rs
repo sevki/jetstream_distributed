@@ -286,18 +286,87 @@ where
     C: Protocol,
     S: Server<Request = C::Request, Response = C::Response>,
 {
+    serve_until(mailbox, service, fence, std::future::pending()).await
+}
+
+/// Answer one request `FENCED`, to the sender that sent it, without giving it to
+/// any service.
+fn refuse_fenced<P: Protocol>(delivery: Delivery<P>) {
+    let Delivery { frame, reply, .. } = delivery;
+    let msg = error_response(super::refusal::refuse(ActorRefusal::Fenced));
+    let _ = reply.send(Ok(Frame {
+        tag: frame.tag,
+        msg,
+    }));
+}
+
+/// Answer every request that comes to `mailbox` `FENCED`, for as long as the task
+/// runs.
+///
+/// This is what is left of an actor that has been drained: nothing serves the
+/// requests, but a [`Session`] made before the drain still holds the mailbox, and
+/// a request it queues would otherwise wait for good. The caller is told, as it is
+/// by any fenced host, to ask where the actor lives now.
+pub async fn refuse_all<C: Protocol>(mailbox: Mailbox<Delivery<C>>) {
     loop {
+        for delivery in mailbox.round().await {
+            refuse_fenced(delivery);
+        }
+    }
+}
+
+/// [`serve_fenced`], until `retire` completes.
+///
+/// `retire` is raced against *waiting for work* and nothing else: a request being
+/// handled when it completes is **finished**, not cancelled, which is what makes
+/// the stop cooperative. When the loop is next idle it returns, with the service
+/// not running and nothing in flight. Requests still queued stay on the mailbox;
+/// [`refuse_all`] is the way to answer them.
+///
+/// `retire` is checked between rounds as well, so a mailbox that is always ready
+/// cannot keep the loop from returning: once the signal has come, the next round
+/// that is taken is put back unserved. A request the loop is already handling is
+/// still finished, and a caller that wants a drained actor to stop taking work
+/// makes its fence false before it signals.
+pub async fn serve_until<C, S>(
+    mailbox: Mailbox<Delivery<C>>,
+    service: &mut S,
+    fence: &impl Fence,
+    retire: impl std::future::Future<Output = ()>,
+) where
+    C: Protocol,
+    S: Server<Request = C::Request, Response = C::Response>,
+{
+    use jetstream::prelude::futures::FutureExt;
+    use jetstream::prelude::futures::future::{Either, select};
+
+    let mut retire = std::pin::pin!(retire);
+    loop {
+        // Cancelling `round()` is safe: it is only ever suspended waiting for a
+        // wakeup, never between claiming the drain and returning the round.
+        let round = {
+            let waiting = std::pin::pin!(mailbox.round());
+            match select(waiting, retire.as_mut()).await {
+                Either::Left((round, _)) => round,
+                Either::Right(((), _)) => return,
+            }
+        };
+        // `select` polls the mailbox first, so with a backlog (or sessions that
+        // keep it full) a ready round would win for ever over a retire that is
+        // already ready. Look once more, between handlers: if the signal has
+        // come, put the round back (dropping it requeues what it holds) and
+        // leave the queue to `refuse_all`.
+        if retire.as_mut().now_or_never().is_some() {
+            return;
+        }
         // The round is held for the whole loop: the drain is running until it
         // is dropped, at the end of the `for`.
-        for Delivery { from, frame, reply } in mailbox.round().await {
+        for delivery in round {
             if !fence.may_serve() {
-                let msg = error_response(super::refusal::refuse(ActorRefusal::Fenced));
-                let _ = reply.send(Ok(Frame {
-                    tag: frame.tag,
-                    msg,
-                }));
+                refuse_fenced(delivery);
                 continue;
             }
+            let Delivery { from, frame, reply } = delivery;
             // From here to the answer the request is in neither the queue nor the
             // round: if this task is aborted, or the handler panics, `Unanswered`
             // is what tells the caller.

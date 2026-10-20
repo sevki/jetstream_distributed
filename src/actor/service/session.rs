@@ -323,10 +323,11 @@ pub async fn refuse_all<C: Protocol>(mailbox: Mailbox<Delivery<C>>) {
 /// not running and nothing in flight. Requests still queued stay on the mailbox;
 /// [`refuse_all`] is the way to answer them.
 ///
-/// If a request and `retire` are ready together the request is served first, so a
-/// queue is not abandoned the moment the signal arrives. Whether that request
-/// reaches the service is the fence's to say, and a caller that wants a drained
-/// actor to stop taking work makes its fence false before it signals.
+/// `retire` is checked between rounds as well, so a mailbox that is always ready
+/// cannot keep the loop from returning: once the signal has come, the next round
+/// that is taken is put back unserved. A request the loop is already handling is
+/// still finished, and a caller that wants a drained actor to stop taking work
+/// makes its fence false before it signals.
 pub async fn serve_until<C, S>(
     mailbox: Mailbox<Delivery<C>>,
     service: &mut S,
@@ -336,6 +337,7 @@ pub async fn serve_until<C, S>(
     C: Protocol,
     S: Server<Request = C::Request, Response = C::Response>,
 {
+    use jetstream::prelude::futures::FutureExt;
     use jetstream::prelude::futures::future::{Either, select};
 
     let mut retire = std::pin::pin!(retire);
@@ -349,6 +351,14 @@ pub async fn serve_until<C, S>(
                 Either::Right(((), _)) => return,
             }
         };
+        // `select` polls the mailbox first, so with a backlog (or sessions that
+        // keep it full) a ready round would win for ever over a retire that is
+        // already ready. Look once more, between handlers: if the signal has
+        // come, put the round back (dropping it requeues what it holds) and
+        // leave the queue to `refuse_all`.
+        if retire.as_mut().now_or_never().is_some() {
+            return;
+        }
         // The round is held for the whole loop: the drain is running until it
         // is dropped, at the end of the `for`.
         for delivery in round {

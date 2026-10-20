@@ -1,7 +1,7 @@
 #[cfg(feature = "service")]
 use core::fmt;
 
-use crate::host::HostId;
+use crate::id::Id;
 
 use super::Resource;
 
@@ -33,5 +33,5 @@ impl std::error::Error for DiscoveryError {}
 pub trait Discovery {
     /// Discover a resource and return the remote addresses of the nodes that
     /// host it.
-    fn discover<W: Resource>(&self, what: W) -> Result<Vec<HostId>, DiscoveryError>;
+    fn discover<W: Resource>(&self, what: W) -> Result<Vec<Id>, DiscoveryError>;
 }

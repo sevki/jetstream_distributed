@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
-use jetstream_distributed::host::HostId;
+use jetstream_distributed::id::Id;
 use jetstream_distributed::raft::service::{
     Acceptance, Appended, Ballot, Consensus, LogEntry, LogStore, MemoryLog, Peer, RecordLogStore,
 };
@@ -32,15 +32,15 @@ const A: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
 const B: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
 const C: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3));
 
-fn roster() -> HashMap<IpAddr, HostId> {
-    HashMap::from([(A, 0), (B, 1), (C, 2)])
+fn roster() -> HashMap<IpAddr, Id> {
+    HashMap::from([(A, Id(0)), (B, Id(1)), (C, Id(2))])
 }
 
 fn from(addr: IpAddr) -> Context {
     Context::new(Some(RemoteAddr::IpAddr(addr)), None)
 }
 
-fn peer_with(me: HostId, log: &RecordLogStore) -> Peer {
+fn peer_with(me: Id, log: &RecordLogStore) -> Peer {
     Peer::new(roster(), me, Arc::new(MemoryLog::new()), Arc::new(log.clone()))
         .expect("the server is on the roster")
 }
@@ -462,7 +462,7 @@ fn compaction_mid_run_does_not_change_what_recovery_reads() {
 #[tokio::test]
 async fn a_duplicate_append_entries_does_not_touch_the_device() {
     let log = RecordLogStore::new();
-    let follower = peer_with(1, &log);
+    let follower = peer_with(Id(1),&log);
 
     // Term 1, one entry at index 0.
     let first = follower.append_entries(from(A), 1, 0, 0, e(1, 42), 0).await.unwrap();
@@ -482,7 +482,7 @@ async fn a_duplicate_append_entries_does_not_touch_the_device() {
 #[tokio::test]
 async fn a_conflicting_append_entries_does_touch_the_device() {
     let log = RecordLogStore::new();
-    let follower = peer_with(1, &log);
+    let follower = peer_with(Id(1),&log);
 
     follower.append_entries(from(A), 1, 0, 0, e(1, 42), 0).await.unwrap();
     let after_first = log.device_len();
@@ -500,7 +500,7 @@ async fn a_conflicting_append_entries_does_touch_the_device() {
 #[tokio::test]
 async fn a_follower_that_restarts_keeps_everything_it_acknowledged() {
     let log = RecordLogStore::new();
-    let follower = peer_with(1, &log);
+    let follower = peer_with(Id(1),&log);
 
     follower.append_entries(from(A), 1, 0, 0, e(1, 10), 0).await.unwrap();
     follower.append_entries(from(A), 1, 1, 1, e(1, 11), 0).await.unwrap();
@@ -522,7 +522,7 @@ async fn a_follower_that_restarts_keeps_everything_it_acknowledged() {
 
     // And the restarted follower carries on: a duplicate of the last request
     // is recognised, and the next one extends.
-    let restarted = peer_with(1, &restarted_store);
+    let restarted = peer_with(Id(1),&restarted_store);
     let duplicate = restarted.append_entries(from(A), 1, 2, 1, e(1, 12), 0).await.unwrap();
     assert_eq!(duplicate, accepted(1, 3));
     assert_eq!(restarted_store.device_len(), 3, "the duplicate wrote nothing");
@@ -542,7 +542,7 @@ async fn a_follower_that_restarts_keeps_everything_it_acknowledged() {
 #[tokio::test]
 async fn a_crash_inside_a_conflicting_append_loses_only_the_new_entry() {
     let log = RecordLogStore::new();
-    let follower = peer_with(1, &log);
+    let follower = peer_with(Id(1),&log);
 
     follower.append_entries(from(A), 1, 0, 0, e(1, 10), 0).await.unwrap();
     follower.append_entries(from(A), 1, 1, 1, e(1, 11), 0).await.unwrap();
@@ -561,7 +561,7 @@ async fn a_crash_inside_a_conflicting_append_loses_only_the_new_entry() {
     assert!(!torn.entries().is_empty(), "and nothing from before the operation was lost");
 
     // The leader retries and it lands.
-    let restarted = peer_with(1, &torn);
+    let restarted = peer_with(Id(1),&torn);
     restarted.append_entries(from(A), 2, 1, 1, e(2, 99), 0).await.unwrap();
     assert_eq!(torn.entries(), log.entries());
 }
@@ -575,7 +575,7 @@ async fn a_crash_inside_a_conflicting_append_loses_only_the_new_entry() {
 #[tokio::test]
 async fn extending_the_log_costs_one_record_per_entry() {
     let log = RecordLogStore::new();
-    let follower = peer_with(1, &log);
+    let follower = peer_with(Id(1),&log);
 
     for i in 0..10u64 {
         let prev_term = if i == 0 { 0 } else { 1 };
@@ -590,9 +590,9 @@ async fn extending_the_log_costs_one_record_per_entry() {
 #[tokio::test]
 async fn the_record_store_serves_the_election_too() {
     let log = RecordLogStore::new();
-    let a = peer_with(0, &log);
+    let a = peer_with(Id(0),&log);
     let term = a.stand_for_election().expect("may stand");
-    assert!(a.count_ballot(1, term, Ballot::Granted(term)).expect("a member"), "two of three leads");
+    assert!(a.count_ballot(Id(1), term, Ballot::Granted(term)).expect("a member"), "two of three leads");
 
     let idx = a.append_command(7).expect("the leader may append");
     assert_eq!(idx, 0);

@@ -1,6 +1,6 @@
 //! **Claim 6 - Token uniqueness.**
 //!
-//! At most one valid ownership capability exists per `(ActorId, Epoch)`. Stale
+//! At most one valid ownership capability exists per `(Id, Epoch)`. Stale
 //! physical tokens may exist after crashes or partitions, but they confer no
 //! authority.
 #![allow(unused_imports)]

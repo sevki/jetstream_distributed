@@ -6,7 +6,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
@@ -22,10 +22,10 @@ verus! {
 /// permitted at the same (unique) epoch.
 pub proof fn theorem_exclusive_mutable_ownership(
     sys: OwnershipSystem,
-    a: ActorId,
-    node_a: HostId,
+    a: Id,
+    node_a: Id,
     epoch_a: Epoch,
-    node_b: HostId,
+    node_b: Id,
     epoch_b: Epoch,
 )
     requires
@@ -45,9 +45,9 @@ pub proof fn theorem_exclusive_mutable_ownership(
 /// need, not this one.
 pub proof fn theorem_exclusive_mutable_ownership_structural(
     s: OwnershipState,
-    node_a: HostId,
+    node_a: Id,
     epoch_a: Epoch,
-    node_b: HostId,
+    node_b: Id,
     epoch_b: Epoch,
 )
     requires

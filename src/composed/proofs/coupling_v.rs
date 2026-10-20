@@ -10,7 +10,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 
 use crate::composed::model::*;
 use crate::ownership::fencing::*;
@@ -36,13 +36,13 @@ pub proof fn lemma_composed_ray_preserves_inv(pre: Composed, post: Composed, s: 
 {
     lemma_ray_step_preserves_inv(pre.ray, post.ray, s);
     lemma_token_preserving_steps_keep_holder(pre.ray, post.ray, s);
-    assert forall|nd: HostId, e: Epoch|
+    assert forall|nd: Id, e: Epoch|
         may_mutate(post.own.actors[post.actor], nd, e) implies has_token(post.ray, nd) by {
         assert(has_token(pre.ray, nd));
     }
     // Belief and authority are both untouched, so the stale holders are exactly
     // the ones that were already there.
-    assert forall|m: HostId| #[trigger] is_stale_holder(post.ray, m) implies post.seized.contains(
+    assert forall|m: Id| #[trigger] is_stale_holder(post.ray, m) implies post.seized.contains(
         m,
     ) by {
         assert(believes_holds(pre.ray, m));
@@ -66,7 +66,7 @@ pub proof fn lemma_composed_own_preserves_inv(pre: Composed, post: Composed, s: 
     lemma_step_preserves_inv(pre.own, post.own, s);
     lemma_step_epoch_monotone(pre.own, post.own, s, pre.actor);
     theorem_node_domain_constant(pre.own, post.own, s);
-    assert forall|nd: HostId, e: Epoch|
+    assert forall|nd: Id, e: Epoch|
         may_mutate(post.own.actors[post.actor], nd, e) implies has_token(post.ray, nd) by {
         if !may_mutate(pre.own.actors[pre.actor], nd, e) {
             theorem_ownership_only_via_acquire(pre.own, post.own, s, pre.actor, nd, e);
@@ -83,8 +83,8 @@ pub proof fn lemma_composed_own_preserves_inv(pre: Composed, post: Composed, s: 
 pub proof fn lemma_composed_pass_token_preserves_inv(
     pre: Composed,
     post: Composed,
-    n: HostId,
-    head: HostId,
+    n: Id,
+    head: Id,
 )
     requires
         composed_inv(pre),
@@ -92,11 +92,11 @@ pub proof fn lemma_composed_pass_token_preserves_inv(
     ensures
         composed_inv(post),
         has_token(post.ray, head),
-        forall|m: HostId| #[trigger] has_token(post.ray, m) ==> m == head,
+        forall|m: Id| #[trigger] has_token(post.ray, m) ==> m == head,
 {
     lemma_assign_privilege_preserves_unique_token(pre.ray, post.ray, n, head);
     lemma_assign_holder_pointers(pre.ray, post.ray, n, head);
-    assert forall|nd: HostId, e: Epoch|
+    assert forall|nd: Id, e: Epoch|
         may_mutate(post.own.actors[post.actor], nd, e) implies has_token(post.ray, nd) by {
         assert(!is_owned(pre.own.actors[pre.actor]));
         assert(false);
@@ -104,7 +104,7 @@ pub proof fn lemma_composed_pass_token_preserves_inv(
     // A voluntary handover creates no stale holder: `head` believes and holds,
     // `n` now points at `head` so believes nothing, and every other node's
     // belief is unchanged - so it was already stale before, if at all.
-    assert forall|m: HostId| #[trigger] is_stale_holder(post.ray, m) implies post.seized.contains(
+    assert forall|m: Id| #[trigger] is_stale_holder(post.ray, m) implies post.seized.contains(
         m,
     ) by {
         // `head` holds and believes, so it is not stale - which is why the
@@ -126,8 +126,8 @@ pub proof fn lemma_composed_pass_token_preserves_inv(
 pub proof fn lemma_composed_seize_preserves_inv(
     pre: Composed,
     post: Composed,
-    from: HostId,
-    to: HostId,
+    from: Id,
+    to: Id,
 )
     requires
         composed_inv(pre),
@@ -136,18 +136,18 @@ pub proof fn lemma_composed_seize_preserves_inv(
         composed_inv(post),
         has_token(post.ray, to),
         !has_token(post.ray, from),
-        forall|m: HostId| #[trigger] has_token(post.ray, m) ==> m == to,
+        forall|m: Id| #[trigger] has_token(post.ray, m) ==> m == to,
         is_stale_holder(post.ray, from),
         post.seized.contains(from),
 {
     lemma_seize_preserves_inv(pre.ray, post.ray, from, to);
-    assert forall|nd: HostId, e: Epoch|
+    assert forall|nd: Id, e: Epoch|
         may_mutate(post.own.actors[post.actor], nd, e) implies has_token(post.ray, nd) by {
         assert(is_unowned(pre.own.actors[pre.actor]));
         assert(false);
     }
     // The only new stale holder is `from`, and it is now in `seized`.
-    assert forall|m: HostId| #[trigger] is_stale_holder(post.ray, m) implies post.seized.contains(
+    assert forall|m: Id| #[trigger] is_stale_holder(post.ray, m) implies post.seized.contains(
         m,
     ) by {
         // `to` holds the privilege now, so it is not stale - which is why
@@ -166,7 +166,7 @@ pub proof fn lemma_composed_seize_preserves_inv(
 
 /// Taking ownership requires holding the token, so the node that gains authority
 /// is the token holder by construction.
-pub proof fn lemma_composed_acquire_preserves_inv(pre: Composed, post: Composed, n: HostId)
+pub proof fn lemma_composed_acquire_preserves_inv(pre: Composed, post: Composed, n: Id)
     requires
         composed_inv(pre),
         cs_acquire_under_token(pre, post, n),
@@ -183,7 +183,7 @@ pub proof fn lemma_composed_acquire_preserves_inv(pre: Composed, post: Composed,
                 owner: n,
                 epoch: epoch,
             }));
-            assert forall|nd: HostId, e: Epoch|
+            assert forall|nd: Id, e: Epoch|
                 may_mutate(post.own.actors[post.actor], nd, e) implies has_token(post.ray, nd) by {
                 assert(nd == n);
             }
@@ -226,7 +226,7 @@ pub proof fn theorem_composed_step_preserves_inv(pre: Composed, post: Composed, 
 
 /// Reconciliation preserves the composed invariant: the repaired node is no
 /// longer stale, so dropping it from `seized` keeps the two in step.
-pub proof fn lemma_composed_reconcile_preserves_inv(pre: Composed, post: Composed, n: HostId)
+pub proof fn lemma_composed_reconcile_preserves_inv(pre: Composed, post: Composed, n: Id)
     requires
         composed_inv(pre),
         cs_reconcile(pre, post, n),
@@ -238,11 +238,11 @@ pub proof fn lemma_composed_reconcile_preserves_inv(pre: Composed, post: Compose
     lemma_reconcile_preserves_inv(pre.ray, post.ray, n);
     assert(post.ray.privilege == pre.ray.privilege);
     assert(post.ray.nodes == pre.ray.nodes);
-    assert forall|nd: HostId, e: Epoch|
+    assert forall|nd: Id, e: Epoch|
         may_mutate(post.own.actors[post.actor], nd, e) implies has_token(post.ray, nd) by {
         assert(has_token(pre.ray, nd));
     }
-    assert forall|m: HostId| #[trigger] is_stale_holder(post.ray, m) implies post.seized.contains(
+    assert forall|m: Id| #[trigger] is_stale_holder(post.ray, m) implies post.seized.contains(
         m,
     ) by {
         assert(m != n);
@@ -260,7 +260,7 @@ pub proof fn theorem_seized_node_cannot_recover(
     pre: Composed,
     post: Composed,
     s: ComposedStep,
-    n: HostId,
+    n: Id,
 )
     requires
         composed_step(pre, post, s),
@@ -309,7 +309,7 @@ pub proof fn theorem_token_movement_is_partitioned(
     pre: Composed,
     post: Composed,
     s: ComposedStep,
-    m: HostId,
+    m: Id,
 )
     requires
         composed_inv(pre),
@@ -390,9 +390,9 @@ pub proof fn lemma_composed_init_inv(c: Composed)
         composed_inv(c),
 {
     lemma_init_inv(c.own);
-    let root = choose|root: HostId| ray_init(c.ray, root);
+    let root = choose|root: Id| ray_init(c.ray, root);
     theorem_ray_init_inv(c.ray, root);
-    assert forall|nd: HostId, e: Epoch| may_mutate(c.own.actors[c.actor], nd, e)
+    assert forall|nd: Id, e: Epoch| may_mutate(c.own.actors[c.actor], nd, e)
         implies has_token(c.ray, nd) by {
         assert(starts_unowned(c.own.actors[c.actor]));
         assert(false);
@@ -588,7 +588,7 @@ pub proof fn theorem_composed_reachable_inv(c: Composed)
 /// `EnterCs` is a legal `ComposedStep::Ray` transition and preserves the
 /// composed invariant - for a node that is live, which is what `cs_ray` now
 /// requires of whichever node a Raymond step makes act.
-pub proof fn theorem_composed_admits_critical_section(pre: Composed, post: Composed, n: HostId)
+pub proof fn theorem_composed_admits_critical_section(pre: Composed, post: Composed, n: Id)
     requires
         composed_inv(pre),
         ray_enter_cs(pre.ray, post.ray, n),
@@ -608,7 +608,7 @@ pub proof fn theorem_composed_admits_critical_section(pre: Composed, post: Compo
 pub proof fn theorem_composed_admits_critical_section_exit(
     pre: Composed,
     post: Composed,
-    n: HostId,
+    n: Id,
 )
     requires
         composed_inv(pre),
@@ -634,9 +634,9 @@ pub proof fn theorem_composed_admits_critical_section_exit(
 /// been released.
 pub proof fn theorem_composed_exclusivity(
     c: Composed,
-    n1: HostId,
+    n1: Id,
     e1: Epoch,
-    n2: HostId,
+    n2: Id,
     e2: Epoch,
 )
     requires
@@ -647,12 +647,12 @@ pub proof fn theorem_composed_exclusivity(
         n1 == n2,
         e1 == e2,
         has_token(c.ray, n1),
-        forall|m: HostId| #[trigger] has_token(c.ray, m) ==> m == n1,
+        forall|m: Id| #[trigger] has_token(c.ray, m) ==> m == n1,
 {
     theorem_composed_reachable_inv(c);
     lemma_exclusive_owner(c.own.actors[c.actor], n1, e1, n2, e2);
     assert(has_token(c.ray, n1));
-    assert forall|m: HostId| #[trigger] has_token(c.ray, m) implies m == n1 by {
+    assert forall|m: Id| #[trigger] has_token(c.ray, m) implies m == n1 by {
         theorem_ray_at_most_one_token(c.ray, m, n1);
     }
 }

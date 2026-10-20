@@ -11,7 +11,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 use crate::swim::model::*;
 use crate::swim::proofs::merge::*;
 
@@ -45,9 +45,9 @@ pub proof fn lemma_merge_key_dominates_local(a: MemberRecord, b: MemberRecord)
 pub proof fn theorem_tr_gossip_never_lowers_a_record(
     pre: Cluster,
     post: Cluster,
-    node: HostId,
+    node: Id,
     incoming: MemberRecord,
-    n: HostId,
+    n: Id,
 )
     requires
         tr_gossip(pre, post, node, incoming),
@@ -75,7 +75,7 @@ pub proof fn theorem_tr_gossip_never_lowers_a_record(
 /// cannot see through the sequence indexing at the call site, so it needs
 /// binding into a plain variable first, which is exactly what a call to this
 /// lemma does on the caller's behalf.
-pub proof fn theorem_swim_next_never_lowers_a_record(pre: Cluster, post: Cluster, n: HostId)
+pub proof fn theorem_swim_next_never_lowers_a_record(pre: Cluster, post: Cluster, n: Id)
     requires
         swim_next(pre, post),
     ensures
@@ -103,7 +103,7 @@ pub proof fn theorem_a_record_key_never_falls_across_a_run(
     tr: Seq<Cluster>,
     a: int,
     b: int,
-    n: HostId,
+    n: Id,
 )
     requires
         swim_execution(tr),

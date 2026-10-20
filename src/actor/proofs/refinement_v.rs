@@ -27,7 +27,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 
 use crate::actor::model::*;
 use crate::actor::proofs::journal::*;
@@ -39,7 +39,7 @@ use crate::ownership::spec::*;
 verus! {
 
 /// Where `Send` sends the system.
-pub open spec fn send_post(c: ActorSystem, from: HostId, body: nat) -> ActorSystem {
+pub open spec fn send_post(c: ActorSystem, from: Id, body: nat) -> ActorSystem {
     ActorSystem {
         own: c.own,
         actor: c.actor,
@@ -50,7 +50,7 @@ pub open spec fn send_post(c: ActorSystem, from: HostId, body: nat) -> ActorSyst
 }
 
 /// Where `Accept` sends it.
-pub open spec fn accept_post(c: ActorSystem, host: HostId, epoch: Epoch, env: Envelope) -> ActorSystem {
+pub open spec fn accept_post(c: ActorSystem, host: Id, epoch: Epoch, env: Envelope) -> ActorSystem {
     ActorSystem {
         own: c.own,
         actor: c.actor,
@@ -68,7 +68,7 @@ pub open spec fn accept_post(c: ActorSystem, host: HostId, epoch: Epoch, env: En
 /// the coupling `next == seq_of(c, from)`, the envelope it numbers is the one
 /// [`send_post`] adds to `sent`, the counter it stores is `next + 1`, and that
 /// still fits the `u64` it is kept in because `send_fires` says `next < u64::MAX`.
-pub proof fn theorem_send_step_refines(c: ActorSystem, from: HostId, body: nat, next: u64)
+pub proof fn theorem_send_step_refines(c: ActorSystem, from: Id, body: nat, next: u64)
     requires
         c.own.live.contains(from),
         next as nat == seq_of(c, from),
@@ -92,7 +92,7 @@ pub proof fn theorem_send_step_refines(c: ActorSystem, from: HostId, body: nat, 
 /// allows, which is safe — the model's guarantees are about what *is* accepted.
 pub proof fn theorem_send_step_refuses_only_at_exhaustion(
     c: ActorSystem,
-    from: HostId,
+    from: Id,
     body: nat,
     next: u64,
 )
@@ -110,7 +110,7 @@ pub proof fn theorem_send_step_refuses_only_at_exhaustion(
 /// computed.
 pub proof fn theorem_accept_step_refines(
     c: ActorSystem,
-    host: HostId,
+    host: Id,
     epoch: Epoch,
     env: Envelope,
 )
@@ -137,7 +137,7 @@ pub proof fn theorem_accept_step_refines(
 /// the model's guarantees are about what *is* accepted.
 pub proof fn theorem_accept_step_refuses_an_enabled_append_only_at_exhaustion(
     c: ActorSystem,
-    host: HostId,
+    host: Id,
     epoch: Epoch,
     env: Envelope,
     accepted: u64,
@@ -164,7 +164,7 @@ pub proof fn theorem_accept_step_refuses_an_enabled_append_only_at_exhaustion(
 pub proof fn theorem_accept_step_refuses_exactly_when_disabled(
     c: ActorSystem,
     post: ActorSystem,
-    host: HostId,
+    host: Id,
     epoch: Epoch,
     env: Envelope,
 )
@@ -187,10 +187,10 @@ pub proof fn theorem_accept_step_refuses_exactly_when_disabled(
 pub proof fn theorem_accepting_advances_the_count_by_one(
     pre: ActorSystem,
     post: ActorSystem,
-    host: HostId,
+    host: Id,
     epoch: Epoch,
     env: Envelope,
-    s: HostId,
+    s: Id,
 )
     requires
         as_accept(pre, post, host, epoch, env),
@@ -209,7 +209,7 @@ pub proof fn theorem_accepting_advances_the_count_by_one(
 pub proof fn theorem_the_fence_answer_is_the_models_authority(
     c: ActorSystem,
     st: crate::ownership::steps::ExecState,
-    host: HostId,
+    host: Id,
     epoch: u64,
 )
     requires

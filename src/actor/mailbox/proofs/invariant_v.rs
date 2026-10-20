@@ -23,13 +23,13 @@ use vstd::prelude::*;
 
 use crate::actor::mailbox::model::*;
 use crate::actor::model::Envelope;
-use crate::host::HostId;
+use crate::id::Id;
 use crate::temporal::*;
 
 verus! {
 
 /// How many of `s` were sent by `sender`.
-pub open spec fn count_from(s: Seq<Envelope>, sender: HostId) -> nat
+pub open spec fn count_from(s: Seq<Envelope>, sender: Id) -> nat
     decreases s.len(),
 {
     if s.len() == 0 {
@@ -59,7 +59,7 @@ pub open spec fn inv_numbered(m: Mailbox) -> bool {
 }
 
 pub open spec fn inv_next_seq(m: Mailbox) -> bool {
-    forall|s: HostId| #[trigger] mb_seq(m, s) == count_from(all_of(m), s)
+    forall|s: Id| #[trigger] mb_seq(m, s) == count_from(all_of(m), s)
 }
 
 pub open spec fn inv_ops_known(m: Mailbox) -> bool {
@@ -88,7 +88,7 @@ pub open spec fn mb_inv(m: Mailbox) -> bool {
 
 /// Pushing a message adds one to its sender's count and nothing to anyone
 /// else's.
-pub proof fn lemma_count_push(s: Seq<Envelope>, e: Envelope, x: HostId)
+pub proof fn lemma_count_push(s: Seq<Envelope>, e: Envelope, x: Id)
     ensures
         count_from(s.push(e), x) == count_from(s, x) + if e.sender == x {
             1nat
@@ -100,7 +100,7 @@ pub proof fn lemma_count_push(s: Seq<Envelope>, e: Envelope, x: HostId)
 }
 
 /// A prefix has no more messages from a sender than the whole.
-pub proof fn lemma_count_prefix(a: Seq<Envelope>, j: int, x: HostId)
+pub proof fn lemma_count_prefix(a: Seq<Envelope>, j: int, x: Id)
     requires
         0 <= j <= a.len(),
     ensures
@@ -153,7 +153,7 @@ proof fn lemma_same_messages(pre: Mailbox, post: Mailbox)
         inv_next_seq(post),
         inv_ops_known(post),
 {
-    assert forall|s: HostId| #[trigger] mb_seq(post, s) == count_from(all_of(post), s) by {
+    assert forall|s: Id| #[trigger] mb_seq(post, s) == count_from(all_of(post), s) by {
         assert(mb_seq(post, s) == mb_seq(pre, s));
     }
     assert forall|e: Envelope| #[trigger] post.ops.contains_key(e) implies all_of(post).contains(e) by {
@@ -168,13 +168,13 @@ pub proof fn lemma_init_inv(m: Mailbox)
         mb_inv(m),
 {
     assert(all_of(m) =~= Seq::<Envelope>::empty());
-    assert forall|s: HostId| #[trigger] mb_seq(m, s) == count_from(all_of(m), s) by {
+    assert forall|s: Id| #[trigger] mb_seq(m, s) == count_from(all_of(m), s) by {
         assert(!m.next_seq.contains_key(s));
         assert(count_from(Seq::<Envelope>::empty(), s) == 0);
     }
 }
 
-pub proof fn lemma_enqueue_preserves_inv(pre: Mailbox, post: Mailbox, sender: HostId, body: nat)
+pub proof fn lemma_enqueue_preserves_inv(pre: Mailbox, post: Mailbox, sender: Id, body: nat)
     requires
         mb_inv(pre),
         mb_enqueue(pre, post, sender, body),
@@ -200,7 +200,7 @@ pub proof fn lemma_enqueue_preserves_inv(pre: Mailbox, post: Mailbox, sender: Ho
             assert(b.take(i) =~= a);
         }
     }
-    assert forall|s: HostId| #[trigger] mb_seq(post, s) == count_from(b, s) by {
+    assert forall|s: Id| #[trigger] mb_seq(post, s) == count_from(b, s) by {
         lemma_count_push(a, env, s);
         assert(mb_seq(pre, s) == count_from(a, s));
         if s == sender {

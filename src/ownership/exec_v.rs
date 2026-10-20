@@ -42,7 +42,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
@@ -54,7 +54,7 @@ verus! {
 /// `epoch`". This is the `Owned` case of [`OwnershipState`] narrowed to `u64`,
 /// which is the only case in which anybody may mutate anything.
 pub struct FenceGuard {
-    owner: HostId,
+    owner: Id,
     epoch: u64,
 }
 
@@ -76,7 +76,7 @@ impl FenceGuard {
     /// `Owned(A, e)` to `Owned(B, e + 1)` the way a mutable guard could, which
     /// would be the atomic ownership assignment the model exists to forbid.
     /// Observing a *new* generation means constructing a *new* guard.
-    pub fn new(owner: HostId, epoch: u64) -> (r: FenceGuard)
+    pub fn new(owner: Id, epoch: u64) -> (r: FenceGuard)
         ensures
             r.view() == (OwnershipState::Owned { owner: owner, epoch: epoch as nat }),
     {
@@ -86,7 +86,7 @@ impl FenceGuard {
     /// **The node-local staleness check.** Returns exactly the model's verdict
     /// *for the generation this guard records* — see the module docs on why
     /// that is not the same as fencing. A stale guard accepts stale requests.
-    pub fn accepts(&self, node: HostId, epoch: u64) -> (r: bool)
+    pub fn accepts(&self, node: Id, epoch: u64) -> (r: bool)
         ensures
             r == may_mutate(self.view(), node, epoch as nat),
     {
@@ -95,7 +95,7 @@ impl FenceGuard {
 
     /// A request carrying a superseded epoch is rejected. This is
     /// `theorem_stale_epoch_cannot_mutate` made executable.
-    pub fn rejects_stale(&self, node: HostId, epoch: u64) -> (r: bool)
+    pub fn rejects_stale(&self, node: Id, epoch: u64) -> (r: bool)
         requires
             (epoch as nat) < current_epoch(self.view()),
         ensures

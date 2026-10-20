@@ -17,7 +17,7 @@
 //! hands over.
 //!
 //! That is the narrowing to be honest about. The model's guards quantify over
-//! `Seq<HostId>`; these read `queue_len` and `queue_head`, and
+//! `Seq<Id>`; these read `queue_len` and `queue_head`, and
 //! [`crate::raymond::proofs::refinement`] states the correspondence as a
 //! hypothesis (`queue_head == r.queue[n][0]`) rather than assuming it.
 //!
@@ -34,7 +34,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 
 verus! {
 
@@ -72,7 +72,7 @@ pub enum RayRefusal {
 
 /// `ray_make_request`'s guard: this node is not the root, has something queued,
 /// and has not already asked.
-pub open spec fn make_request_fires(me: HostId, holder: HostId, queue_len: nat, asked: bool) -> bool {
+pub open spec fn make_request_fires(me: Id, holder: Id, queue_len: nat, asked: bool) -> bool {
     &&& holder != me
     &&& queue_len > 0
     &&& !asked
@@ -90,12 +90,12 @@ pub open spec fn receive_request_fires(sent: bool) -> bool {
 /// a service that checked only the belief would let a stale holder pass a
 /// privilege it does not have.
 pub open spec fn assign_fires(
-    me: HostId,
-    privilege: HostId,
-    holder: HostId,
+    me: Id,
+    privilege: Id,
+    holder: Id,
     using: bool,
     queue_len: nat,
-    queue_head: HostId,
+    queue_head: Id,
     head_is_node: bool,
 ) -> bool {
     &&& privilege == me
@@ -112,11 +112,11 @@ pub open spec fn assign_fires(
 /// what it knows, and a stale holder does not know it is stale. There is
 /// deliberately no `privilege` parameter here.
 pub open spec fn enter_cs_fires(
-    me: HostId,
-    holder: HostId,
+    me: Id,
+    holder: Id,
     using: bool,
     queue_len: nat,
-    queue_head: HostId,
+    queue_head: Id,
 ) -> bool {
     &&& holder == me
     &&& !using
@@ -131,8 +131,8 @@ pub open spec fn exit_cs_fires(using: bool) -> bool {
 
 /// Forward a request one hop towards the privilege. Returns where it goes: the
 /// holder pointer, resolved *now*, which is what the model records.
-pub fn make_request_step(me: HostId, holder: HostId, queue_len: u64, asked: bool) -> (r: Result<
-    HostId,
+pub fn make_request_step(me: Id, holder: Id, queue_len: u64, asked: bool) -> (r: Result<
+    Id,
     RayRefusal,
 >)
     ensures
@@ -170,14 +170,14 @@ pub fn receive_request_step(sent: bool) -> (r: Result<(), RayRefusal>)
 
 /// Hand the privilege to the head of the queue. Returns the node it goes to.
 pub fn assign_step(
-    me: HostId,
-    privilege: HostId,
-    holder: HostId,
+    me: Id,
+    privilege: Id,
+    holder: Id,
     using: bool,
     queue_len: u64,
-    queue_head: HostId,
+    queue_head: Id,
     head_is_node: bool,
-) -> (r: Result<HostId, RayRefusal>)
+) -> (r: Result<Id, RayRefusal>)
     ensures
         match r {
             Ok(head) => assign_fires(
@@ -219,7 +219,7 @@ pub fn assign_step(
 
 /// Enter the critical section: this node believes it holds the privilege and is
 /// at the head of its own queue.
-pub fn enter_cs_step(me: HostId, holder: HostId, using: bool, queue_len: u64, queue_head: HostId) -> (r:
+pub fn enter_cs_step(me: Id, holder: Id, using: bool, queue_len: u64, queue_head: Id) -> (r:
     Result<(), RayRefusal>)
     ensures
         match r {

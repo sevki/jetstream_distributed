@@ -60,7 +60,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 use vstd::set_lib::*;
 
 use crate::raft::model::*;
@@ -158,7 +158,7 @@ pub proof fn lemma_unvoting_steps_keep_the_record(pre: Cluster, post: Cluster)
 /// The record it writes is `at_least_as_up_to_date(last_term(L), L.len(), L)`,
 /// which holds by the second disjunct: equal last terms and a log at least as
 /// long as itself. Nothing is constrained, and the record is complete.
-pub proof fn lemma_timeout_preserves_votes(pre: Cluster, post: Cluster, n: HostId)
+pub proof fn lemma_timeout_preserves_votes(pre: Cluster, post: Cluster, n: Id)
     requires
         raft_vote_inv(pre),
         tr_timeout(pre, post, n),
@@ -229,8 +229,8 @@ pub proof fn lemma_timeout_preserves_votes(pre: Cluster, post: Cluster, n: HostI
 pub proof fn lemma_grant_vote_preserves_votes(
     pre: Cluster,
     post: Cluster,
-    voter: HostId,
-    cand: HostId,
+    voter: Id,
+    cand: Id,
     term: Term,
     cand_last_term: Term,
     cand_last_index: nat,
@@ -463,10 +463,10 @@ pub proof fn theorem_a_voter_saw_nothing_later_than_the_candidate(
 /// whose hypothesis only the induction discharges.
 pub proof fn theorem_a_winner_shares_a_judged_voter_with_any_quorum(
     c: Cluster,
-    n: HostId,
+    n: Id,
     t: Term,
-    q: Set<HostId>,
-) -> (shared: HostId)
+    q: Set<Id>,
+) -> (shared: Id)
     requires
         raft_vote_inv(c),
         won_election(c, n, t),
@@ -488,7 +488,7 @@ pub proof fn theorem_a_winner_shares_a_judged_voter_with_any_quorum(
             ) && at_least_as_up_to_date(ct, ci, lg),
 {
     lemma_quorums_intersect(c, voters_for(c, n, t), q);
-    let shared = choose|v: HostId| voters_for(c, n, t).contains(v) && q.contains(v);
+    let shared = choose|v: Id| voters_for(c, n, t).contains(v) && q.contains(v);
 
     // `voters_for` is a filter, so membership unfolds straight to the vote.
     assert(c.votes.contains(Vote { voter: shared, term: t, candidate: n }));
@@ -537,10 +537,10 @@ pub proof fn theorem_a_winner_shares_a_judged_voter_with_any_quorum(
 /// call does not forward its postconditions.
 pub proof fn theorem_a_winner_shares_a_judged_voter_with_any_quorum_reachable(
     c: Cluster,
-    n: HostId,
+    n: Id,
     t: Term,
-    q: Set<HostId>,
-) -> (shared: HostId)
+    q: Set<Id>,
+) -> (shared: Id)
     requires
         raft_reachable(c),
         won_election(c, n, t),

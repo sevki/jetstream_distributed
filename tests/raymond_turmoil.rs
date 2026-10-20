@@ -19,7 +19,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use jetstream_distributed::host::HostId;
+use jetstream_distributed::id::Id;
 use jetstream_distributed::raymond::service::{
     routing_protocol::{RoutingChannel, RoutingService},
     Router, Routing,
@@ -30,14 +30,14 @@ use turmoil::net::{TcpListener, TcpStream};
 
 const PORT: u16 = 9200;
 
-const A: HostId = 0;
-const B: HostId = 1;
-const C: HostId = 2;
-const D: HostId = 3;
+const A: Id = Id(0);
+const B: Id = Id(1);
+const C: Id = Id(2);
+const D: Id = Id(3);
 
 /// Who is which node, by address. Built inside a host or a client:
 /// `turmoil::lookup` panics outside a live simulation.
-fn roster() -> HashMap<IpAddr, HostId> {
+fn roster() -> HashMap<IpAddr, Id> {
     HashMap::from([
         (turmoil::lookup("a"), A),
         (turmoil::lookup("b"), B),

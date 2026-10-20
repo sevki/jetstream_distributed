@@ -44,7 +44,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::{HostId, HostSet};
+use crate::id::{Id, IdSet};
 use crate::raft::model::*;
 use crate::raft::steps::*;
 
@@ -74,9 +74,9 @@ pub struct ElectionCore {
     /// Role and term.
     pub server: ExecServer,
     /// Whom this server voted for in `server.current_term`, if anyone.
-    pub voted_for: Option<HostId>,
+    pub voted_for: Option<Id>,
     /// The votes counted for this server's own candidacy in `server.current_term`.
-    pub tally: HostSet,
+    pub tally: IdSet,
 }
 
 /// Nothing about the core changed.
@@ -90,17 +90,17 @@ pub open spec fn same_core(pre: ElectionCore, post: ElectionCore) -> bool {
 impl ElectionCore {
     /// A follower at `term` that voted for `voted_for` there — what recovery
     /// produces, since there is no durable role.
-    pub fn recovered(term: u64, voted_for: Option<HostId>) -> (c: ElectionCore)
+    pub fn recovered(term: u64, voted_for: Option<Id>) -> (c: ElectionCore)
         ensures
             c.server.role.view() == Role::Follower,
             c.server.current_term == term,
             c.voted_for == voted_for,
-            forall|n: HostId| !c.tally@.contains(n),
+            forall|n: Id| !c.tally@.contains(n),
     {
         ElectionCore {
             server: ExecServer { role: ExecRole::Follower, current_term: term },
             voted_for,
-            tally: HostSet::new(),
+            tally: IdSet::new(),
         }
     }
 
@@ -118,12 +118,12 @@ impl ElectionCore {
     /// `tr_timeout`: stand for election in the next term, voting for yourself.
     /// The term and the self-vote go to `persist` together; the server moves only
     /// if they are written down. Returns the term it stands in.
-    pub fn stand<F: FnOnce(u64, Option<HostId>) -> bool>(&mut self, me: HostId, persist: F) -> (r: Result<
+    pub fn stand<F: FnOnce(u64, Option<Id>) -> bool>(&mut self, me: Id, persist: F) -> (r: Result<
         u64,
         ElectRefusal,
     >)
         requires
-            forall|t: u64, v: Option<HostId>| call_requires(persist, (t, v)),
+            forall|t: u64, v: Option<Id>| call_requires(persist, (t, v)),
         ensures
             match r {
                 Ok(term) => {
@@ -132,7 +132,7 @@ impl ElectionCore {
                     &&& term as nat == old(self).server.current_term as nat + 1
                     &&& final(self).server.current_term == term
                     &&& final(self).voted_for == Some(me)
-                    &&& final(self).tally@ == Set::<HostId>::empty().insert(me)
+                    &&& final(self).tally@ == Set::<Id>::empty().insert(me)
                 },
                 Err(ElectRefusal::Refused(why)) => {
                     &&& (!timeout_fires(old(self).server.role.view()) || (why is Exhausted))
@@ -160,7 +160,7 @@ impl ElectionCore {
                 if persist(term, Some(me)) {
                     self.server = next;
                     self.voted_for = Some(me);
-                    let mut tally = HostSet::new();
+                    let mut tally = IdSet::new();
                     tally.insert(me);
                     self.tally = tally;
                     Ok(term)
@@ -175,10 +175,10 @@ impl ElectionCore {
     /// `tr_step_down`: adopt a strictly higher term, as a follower with no vote
     /// and no tally. Returns whether it moved; a term that is not ahead is not a
     /// refusal worth reporting.
-    pub fn step_down<F: FnOnce(u64, Option<HostId>) -> bool>(&mut self, term: u64, persist: F) -> (r:
+    pub fn step_down<F: FnOnce(u64, Option<Id>) -> bool>(&mut self, term: u64, persist: F) -> (r:
         Result<bool, ElectRefusal>)
         requires
-            forall|t: u64, v: Option<HostId>| call_requires(persist, (t, v)),
+            forall|t: u64, v: Option<Id>| call_requires(persist, (t, v)),
         ensures
             match r {
                 Ok(true) => {
@@ -186,7 +186,7 @@ impl ElectionCore {
                     &&& final(self).server.role.view() == Role::Follower
                     &&& final(self).server.current_term == term
                     &&& final(self).voted_for is None
-                    &&& forall|n: HostId| !final(self).tally@.contains(n)
+                    &&& forall|n: Id| !final(self).tally@.contains(n)
                 },
                 Ok(false) => {
                     &&& !step_down_fires(old(self).server.current_term as nat, term as nat)
@@ -209,7 +209,7 @@ impl ElectionCore {
                 if persist(term, None) {
                     self.server = next;
                     self.voted_for = None;
-                    self.tally = HostSet::new();
+                    self.tally = IdSet::new();
                     Ok(true)
                 } else {
                     Err(ElectRefusal::Down)
@@ -235,7 +235,7 @@ impl ElectionCore {
                 &&& final(self).server.role.view() == Role::Follower
                 &&& final(self).server.current_term == old(self).server.current_term
                 &&& final(self).voted_for == old(self).voted_for
-                &&& forall|n: HostId| !final(self).tally@.contains(n)
+                &&& forall|n: Id| !final(self).tally@.contains(n)
             } else {
                 &&& !follow_fires(
                     old(self).server.role.view(),
@@ -252,7 +252,7 @@ impl ElectionCore {
         match follow_step(self.server, term) {
             RaftOutcome::Moved(next) => {
                 self.server = next;
-                self.tally = HostSet::new();
+                self.tally = IdSet::new();
                 true
             },
             RaftOutcome::Refused(_) => false,
@@ -264,15 +264,15 @@ impl ElectionCore {
     /// the logs). A vote already given to the same candidate in the same term is
     /// given again — a retransmission, not a second vote — and a fresh one goes
     /// to `persist` before the record changes.
-    pub fn grant<F: FnOnce(u64, Option<HostId>) -> bool>(
+    pub fn grant<F: FnOnce(u64, Option<Id>) -> bool>(
         &mut self,
-        candidate: HostId,
+        candidate: Id,
         term: u64,
         up_to_date: bool,
         persist: F,
     ) -> (r: Result<VoteOutcome, ElectRefusal>)
         requires
-            forall|t: u64, v: Option<HostId>| call_requires(persist, (t, v)),
+            forall|t: u64, v: Option<Id>| call_requires(persist, (t, v)),
         ensures
             match r {
                 Ok(VoteOutcome::Granted) => {
@@ -296,7 +296,7 @@ impl ElectionCore {
                         // A candidacy does not outlive its term.
                         &&& (term == old(self).server.current_term ==> final(self).tally@
                             == old(self).tally@)
-                        &&& (term != old(self).server.current_term ==> forall|n: HostId|
+                        &&& (term != old(self).server.current_term ==> forall|n: Id|
                             !final(self).tally@.contains(n))
                     }
                 },
@@ -344,7 +344,7 @@ impl ElectionCore {
                     self.server = next;
                     self.voted_for = Some(candidate);
                     if moved_term {
-                        self.tally = HostSet::new();
+                        self.tally = IdSet::new();
                     }
                     Ok(VoteOutcome::Granted)
                 } else {
@@ -363,7 +363,7 @@ impl ElectionCore {
     ///
     /// `counted` says the vote was counted; `won` says it was this ballot that
     /// made the server leader.
-    pub fn count(&mut self, from: HostId, term: u64, members: u64) -> (r: Counted)
+    pub fn count(&mut self, from: Id, term: u64, members: u64) -> (r: Counted)
         requires
         ensures
             final(self).voted_for == old(self).voted_for,

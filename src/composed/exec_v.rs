@@ -12,7 +12,7 @@
 //!
 //! The two layers live behind their own locks in the service, and the coordinator
 //! takes both, in one fixed order, behind its own gate. A function over
-//! `&mut RayTable`, `&mut HostSet` and `&RegistryCore` is what it can call with
+//! `&mut RayTable`, `&mut IdSet` and `&RegistryCore` is what it can call with
 //! the guards it holds, and what the proofs can say about without a struct that
 //! owns both.
 //!
@@ -39,7 +39,7 @@ use crate::composed::model::*;
 use crate::composed::proofs::refinement::*;
 use crate::composed::steps::*;
 use crate::ownership::fencing::*;
-use crate::host::{HostId, HostSet};
+use crate::id::{Id, IdSet};
 use crate::ownership::registry::*;
 use crate::ownership::spec::*;
 use crate::ownership::steps::*;
@@ -76,8 +76,8 @@ pub fn actor_unowned(own: &RegistryCore) -> (r: bool)
 /// `cs_pass_token`: the node holding the privilege passes it to the head of its
 /// queue — but only once the actor has been released. The recipient's debt, if it
 /// had one, is discharged: receiving the privilege is learning the truth.
-pub fn pass_token(own: &RegistryCore, ray: &mut RayTable, seized: &mut HostSet, me: HostId) -> (r:
-    Result<HostId, ComposedError>)
+pub fn pass_token(own: &RegistryCore, ray: &mut RayTable, seized: &mut IdSet, me: Id) -> (r:
+    Result<Id, ComposedError>)
     requires
         old(ray).well_formed(),
     ensures
@@ -92,7 +92,7 @@ pub fn pass_token(own: &RegistryCore, ray: &mut RayTable, seized: &mut HostSet, 
             Err(_) => {
                 &&& final(ray)@ == old(ray)@
                 &&& final(seized)@ == old(seized)@
-                &&& (!is_unowned(own.state.view()) || forall|p: Raymond, h: HostId|
+                &&& (!is_unowned(own.state.view()) || forall|p: Raymond, h: Id|
                     !ray_assign_privilege(old(ray)@, p, me, h))
             },
         },
@@ -119,8 +119,8 @@ pub fn pass_token(own: &RegistryCore, ray: &mut RayTable, seized: &mut HostSet, 
 /// `cs_seize_token`: re-establish the privilege at `to`, once the actor has been
 /// released. **Only `to` acts**; the old holder now owes a reconciliation and
 /// `to` no longer does. Returns the old holder.
-pub fn seize_token(own: &RegistryCore, ray: &mut RayTable, seized: &mut HostSet, to: HostId) -> (r:
-    Result<HostId, ComposedError>)
+pub fn seize_token(own: &RegistryCore, ray: &mut RayTable, seized: &mut IdSet, to: Id) -> (r:
+    Result<Id, ComposedError>)
     requires
         old(ray).well_formed(),
     ensures
@@ -176,7 +176,7 @@ pub fn seize_token(own: &RegistryCore, ray: &mut RayTable, seized: &mut HostSet,
 
 /// `cs_acquire_under_token`: the ownership layer's acquire, for the node holding
 /// the privilege and nobody else.
-pub fn acquire_under_token(own: &mut RegistryCore, ray: &RayTable, node: HostId, epoch: u64) -> (r:
+pub fn acquire_under_token(own: &mut RegistryCore, ray: &RayTable, node: Id, epoch: u64) -> (r:
     Result<(), ComposedError>)
     requires
         ray.well_formed(),
@@ -229,7 +229,7 @@ pub fn acquire_under_token(own: &mut RegistryCore, ray: &RayTable, node: HostId,
 
 /// `cs_reconcile`: a node that owes a reconciliation, and whose belief really is
 /// stale, learns the privilege was taken.
-pub fn reconcile(ray: &mut RayTable, seized: &mut HostSet, node: HostId) -> (r: Result<
+pub fn reconcile(ray: &mut RayTable, seized: &mut IdSet, node: Id) -> (r: Result<
     (),
     ComposedError,
 >)

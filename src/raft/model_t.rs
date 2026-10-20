@@ -109,7 +109,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 
 verus! {
 
@@ -157,9 +157,9 @@ pub struct Server {
 
 /// One vote, granted once and never retracted.
 pub struct Vote {
-    pub voter: HostId,
+    pub voter: Id,
     pub term: Term,
-    pub candidate: HostId,
+    pub candidate: Id,
 }
 
 /// Protocol messages. Like `model::Message`, these are hints: every transition
@@ -173,11 +173,11 @@ pub enum RaftMessage {
     /// the candidate's *current* log in the guard instead would be a model in
     /// which a vote is decided on information that did not exist when it was
     /// asked for.
-    RequestVote { term: Term, candidate: HostId, last_term: Term, last_index: nat },
+    RequestVote { term: Term, candidate: Id, last_term: Term, last_index: nat },
     /// Voter -> candidate: you have my vote for `term`.
-    VoteGranted { term: Term, voter: HostId, candidate: HostId },
+    VoteGranted { term: Term, voter: Id, candidate: Id },
     /// Leader -> everyone: I won `term`.
-    Heartbeat { term: Term, leader: HostId },
+    Heartbeat { term: Term, leader: Id },
 }
 
 /// **Ghost.** Which `(term, index)` an entry was created at.
@@ -206,7 +206,7 @@ pub struct Creation {
 
 /// **Ghost.** A server has, at some point, been leader of a term.
 pub struct Led {
-    pub server: HostId,
+    pub server: Id,
     pub term: Term,
 }
 
@@ -225,9 +225,9 @@ pub struct Led {
 /// leave the other to be reconstructed from a state that no longer holds it —
 /// which is the problem this record exists to solve.
 pub struct VoteLog {
-    pub voter: HostId,
+    pub voter: Id,
     pub term: Term,
-    pub candidate: HostId,
+    pub candidate: Id,
     /// The voter's log at the instant of the vote.
     pub voter_log: Seq<Entry>,
     pub cand_last_term: Term,
@@ -308,9 +308,9 @@ pub struct Cluster {
     /// The servers that exist. Fixed: this model has no reconfiguration, which
     /// is a real and well-known source of Raft unsafety and is out of scope
     /// with the log.
-    pub members: Set<HostId>,
+    pub members: Set<Id>,
     /// Each member's record. The domain never changes.
-    pub servers: Map<HostId, Server>,
+    pub servers: Map<Id, Server>,
     /// Every vote ever granted. Monotonically grows.
     pub votes: Set<Vote>,
     /// Every message ever sent. Monotonically grows (see the module docs).
@@ -391,8 +391,8 @@ pub open spec fn is_candidate(s: Server) -> bool {
 ///
 /// The trigger is the `contains` of a fully-applied `Vote`, so instantiating
 /// this existential produces a term the rest of the proof already mentions.
-pub open spec fn has_voted(c: Cluster, voter: HostId, term: Term) -> bool {
-    exists|cand: HostId|
+pub open spec fn has_voted(c: Cluster, voter: Id, term: Term) -> bool {
+    exists|cand: Id|
         #[trigger] c.votes.contains(Vote { voter: voter, term: term, candidate: cand })
 }
 
@@ -404,9 +404,9 @@ pub open spec fn has_voted(c: Cluster, voter: HostId, term: Term) -> bool {
 /// [`lemma_quorums_intersect`] needs. Projecting `votes` through a map would
 /// give the same elements and no such guarantee, and the cardinality of a
 /// mapped set is a much harder thing to reason about.
-pub open spec fn voters_for(c: Cluster, cand: HostId, term: Term) -> Set<HostId> {
+pub open spec fn voters_for(c: Cluster, cand: Id, term: Term) -> Set<Id> {
     c.members.filter(
-        |n: HostId| c.votes.contains(Vote { voter: n, term: term, candidate: cand }),
+        |n: Id| c.votes.contains(Vote { voter: n, term: term, candidate: cand }),
     )
 }
 
@@ -414,13 +414,13 @@ pub open spec fn voters_for(c: Cluster, cand: HostId, term: Term) -> Set<HostId>
 ///
 /// `s.len() + s.len()` rather than `s.len() * 2`: the two are the same number
 /// and only one of them is linear arithmetic.
-pub open spec fn is_quorum(c: Cluster, s: Set<HostId>) -> bool {
+pub open spec fn is_quorum(c: Cluster, s: Set<Id>) -> bool {
     &&& s.subset_of(c.members)
     &&& s.len() + s.len() > c.members.len()
 }
 
 /// `n` won `term`.
-pub open spec fn won_election(c: Cluster, n: HostId, term: Term) -> bool {
+pub open spec fn won_election(c: Cluster, n: Id, term: Term) -> bool {
     is_quorum(c, voters_for(c, n, term))
 }
 
@@ -465,9 +465,9 @@ pub open spec fn has_prefix(s: Seq<Entry>, p: Seq<Entry>, n: nat) -> bool {
 /// A filter of the membership, for the reason [`voters_for`] is one: a filter is
 /// a subset of what it filters by construction, which is the hypothesis
 /// quorum intersection needs.
-pub open spec fn replicated_on(c: Cluster, log: Seq<Entry>, n: nat) -> Set<HostId> {
+pub open spec fn replicated_on(c: Cluster, log: Seq<Entry>, n: nat) -> Set<Id> {
     c.members.filter(
-        |s: HostId| c.servers.contains_key(s) && has_prefix(c.servers[s].log, log, n),
+        |s: Id| c.servers.contains_key(s) && has_prefix(c.servers[s].log, log, n),
     )
 }
 
@@ -578,7 +578,7 @@ pub open spec fn accepted_commit(follower_commit: nat, leader_commit: nat, new_l
 /// that did not appear in its own tally would be one vote short of the
 /// protocol's. The `RequestVote` carries the candidate's log summary as it
 /// stood *at this moment*, which is what a voter later judges.
-pub open spec fn tr_timeout(pre: Cluster, post: Cluster, n: HostId) -> bool {
+pub open spec fn tr_timeout(pre: Cluster, post: Cluster, n: Id) -> bool {
     &&& pre.members.contains(n)
     &&& pre.servers.contains_key(n)
     &&& !is_leader(pre.servers[n])
@@ -641,8 +641,8 @@ pub open spec fn tr_timeout(pre: Cluster, post: Cluster, n: HostId) -> bool {
 pub open spec fn tr_grant_vote(
     pre: Cluster,
     post: Cluster,
-    voter: HostId,
-    cand: HostId,
+    voter: Id,
+    cand: Id,
     term: Term,
     cand_last_term: Term,
     cand_last_index: nat,
@@ -696,7 +696,7 @@ pub open spec fn tr_grant_vote(
 
 /// A candidate that has collected a quorum of votes for its own term declares
 /// itself leader.
-pub open spec fn tr_become_leader(pre: Cluster, post: Cluster, n: HostId, term: Term) -> bool {
+pub open spec fn tr_become_leader(pre: Cluster, post: Cluster, n: Id, term: Term) -> bool {
     &&& pre.servers.contains_key(n)
     &&& is_candidate(pre.servers[n])
     &&& pre.servers[n].current_term == term
@@ -727,7 +727,7 @@ pub open spec fn tr_become_leader(pre: Cluster, post: Cluster, n: HostId, term: 
 ///
 /// Note what it does *not* do: touch the log. Stepping down changes who you
 /// think you are, not what you have recorded.
-pub open spec fn tr_step_down(pre: Cluster, post: Cluster, n: HostId, term: Term) -> bool {
+pub open spec fn tr_step_down(pre: Cluster, post: Cluster, n: Id, term: Term) -> bool {
     &&& pre.servers.contains_key(n)
     &&& term > pre.servers[n].current_term
     &&& carries_term(pre, term)
@@ -755,7 +755,7 @@ pub open spec fn tr_step_down(pre: Cluster, post: Cluster, n: HostId, term: Term
 /// that is the whole basis of Log Matching: an entry's `(index, term)` pair
 /// names the leader that made it, because Election Safety says there was only
 /// one leader of that term.
-pub open spec fn tr_client_request(pre: Cluster, post: Cluster, n: HostId, value: nat) -> bool {
+pub open spec fn tr_client_request(pre: Cluster, post: Cluster, n: Id, value: nat) -> bool {
     &&& pre.servers.contains_key(n)
     &&& is_leader(pre.servers[n])
     &&& post.members == pre.members
@@ -811,8 +811,8 @@ pub open spec fn tr_client_request(pre: Cluster, post: Cluster, n: HostId, value
 pub open spec fn tr_append_entries(
     pre: Cluster,
     post: Cluster,
-    leader: HostId,
-    follower: HostId,
+    leader: Id,
+    follower: Id,
     prefix: nat,
 ) -> bool {
     &&& pre.servers.contains_key(leader)
@@ -854,7 +854,7 @@ pub open spec fn tr_append_entries(
 /// overwritten by a later leader, because a majority holding an entry is not
 /// the same as a majority having *voted* on it. Counting replicas is not
 /// enough; the entry has to belong to the term doing the counting.
-pub open spec fn tr_advance_commit(pre: Cluster, post: Cluster, n: HostId, upto: nat) -> bool {
+pub open spec fn tr_advance_commit(pre: Cluster, post: Cluster, n: Id, upto: nat) -> bool {
     &&& pre.servers.contains_key(n)
     &&& is_leader(pre.servers[n])
     &&& upto > pre.servers[n].commit
@@ -885,7 +885,7 @@ pub open spec fn tr_advance_commit(pre: Cluster, post: Cluster, n: HostId, upto:
 
 /// Some message on the network names `term`.
 pub open spec fn carries_term(c: Cluster, term: Term) -> bool {
-    ||| exists|cand: HostId, lt: Term, li: nat|
+    ||| exists|cand: Id, lt: Term, li: nat|
         #[trigger] c.messages.contains(
             RaftMessage::RequestVote {
                 term: term,
@@ -894,7 +894,7 @@ pub open spec fn carries_term(c: Cluster, term: Term) -> bool {
                 last_index: li,
             },
         )
-    ||| exists|leader: HostId|
+    ||| exists|leader: Id|
         #[trigger] c.messages.contains(RaftMessage::Heartbeat { term: term, leader: leader })
 }
 
@@ -925,19 +925,19 @@ pub open spec fn tr_stutter(pre: Cluster, post: Cluster) -> bool {
 
 /// The labelled transitions.
 pub enum RaftStep {
-    Timeout { server: HostId },
+    Timeout { server: Id },
     GrantVote {
-        voter: HostId,
-        candidate: HostId,
+        voter: Id,
+        candidate: Id,
         term: Term,
         cand_last_term: Term,
         cand_last_index: nat,
     },
-    BecomeLeader { server: HostId, term: Term },
-    StepDown { server: HostId, term: Term },
-    ClientRequest { server: HostId, value: nat },
-    AppendEntries { leader: HostId, follower: HostId, prefix: nat },
-    AdvanceCommit { server: HostId, upto: nat },
+    BecomeLeader { server: Id, term: Term },
+    StepDown { server: Id, term: Term },
+    ClientRequest { server: Id, value: nat },
+    AppendEntries { leader: Id, follower: Id, prefix: nat },
+    AdvanceCommit { server: Id, upto: nat },
     Replay { msg: RaftMessage },
     Stutter,
 }
@@ -983,8 +983,8 @@ pub open spec fn raft_next(pre: Cluster, post: Cluster) -> bool {
 /// reachability theorems quantify over and not a cosmetic one. It narrows it to
 /// the states Raft actually has.
 pub open spec fn raft_init(c: Cluster) -> bool {
-    &&& (forall|n: HostId| #[trigger] c.members.contains(n) ==> c.servers.contains_key(n))
-    &&& (forall|n: HostId|
+    &&& (forall|n: Id| #[trigger] c.members.contains(n) ==> c.servers.contains_key(n))
+    &&& (forall|n: Id|
         #![trigger c.servers[n]]
         c.servers.contains_key(n) ==> is_follower(c.servers[n]) && c.servers[n].current_term == 0
             && c.servers[n].log.len() == 0 && c.servers[n].commit == 0)

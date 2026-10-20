@@ -22,6 +22,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use jetstream::prelude::*;
+use jetstream_distributed::id::Id;
 // The `#[service]` macro puts the generated client and server in a
 // `<trait>_protocol` module and leaves the trait itself at the crate root —
 // `pub mod ownership_protocol { pub struct OwnershipService<T: Ownership> { pub
@@ -91,10 +92,10 @@ fn a_handover_fences_the_outgoing_owner() {
             let served = built
                 .get_or_init(|| {
                     let roster = HashMap::from([
-                        (turmoil::lookup("a"), 0),
-                        (turmoil::lookup("b"), 1),
+                        (turmoil::lookup("a"), Id(0)),
+                        (turmoil::lookup("b"), Id(1)),
                     ]);
-                    Registry::new(roster, 0, Arc::new(seeded.clone()))
+                    Registry::new(roster, Id(0),Arc::new(seeded.clone()))
                         .expect("the floor is readable and node 0 is on the roster")
                 })
                 .clone();
@@ -127,7 +128,7 @@ fn a_handover_fences_the_outgoing_owner() {
 
         // A agrees to hand over. The epoch burns immediately — that is what
         // fences A, not the later acknowledgement.
-        ch.begin_transfer(Context::default(), 1).await.unwrap();
+        ch.begin_transfer(Context::default(), Id(1)).await.unwrap();
 
         // The refusal this whole protocol exists for. A still believes it holds
         // the actor at 41; the registry knows better.
@@ -163,7 +164,7 @@ fn a_handover_fences_the_outgoing_owner() {
             let released = watched.get().is_some_and(|r| {
                 r.log()
                     .iter()
-                    .any(|e| matches!(e, Event::Released { node: 0, new_epoch: 42 }))
+                    .any(|e| matches!(e, Event::Released { node: Id(0), new_epoch: 42 }))
             });
             if released {
                 break;
@@ -196,24 +197,24 @@ fn a_handover_fences_the_outgoing_owner() {
     // those oracles can be pointed at.
     let log = registry.log();
     assert!(
-        log.contains(&Event::Wrote { node: 0, epoch: 41, seq: 1 }),
+        log.contains(&Event::Wrote { node: Id(0), epoch: 41, seq: 1 }),
         "A's write must be recorded: {log:?}"
     );
     assert!(
-        log.contains(&Event::Fenced { node: 0, epoch: 41 }),
+        log.contains(&Event::Fenced { node: Id(0), epoch: 41 }),
         "the refusal must be recorded, or no auditor could ever see it: {log:?}"
     );
     assert!(
         log.contains(&Event::EpochBurned {
             from_epoch: 41,
             to_epoch: 42,
-            next: 1,
+            next: Id(1),
             forced: false
         }),
         "the cooperative burn must be recorded: {log:?}"
     );
     assert!(
-        log.contains(&Event::Wrote { node: 1, epoch: 42, seq: 2 }),
+        log.contains(&Event::Wrote { node: Id(1), epoch: 42, seq: 2 }),
         "B's write must be recorded: {log:?}"
     );
 }

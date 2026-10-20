@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
-use jetstream_distributed::host::HostId;
+use jetstream_distributed::id::Id;
 use jetstream_distributed::raft::service::{
     Acceptance, Appended, Ballot, Consensus, LogEntry, LogStore, MemoryLog, MemoryLogStore, Peer, Standing,
 };
@@ -28,15 +28,15 @@ const A: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
 const B: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
 const C: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3));
 
-fn roster() -> HashMap<IpAddr, HostId> {
-    HashMap::from([(A, 0), (B, 1), (C, 2)])
+fn roster() -> HashMap<IpAddr, Id> {
+    HashMap::from([(A, Id(0)), (B, Id(1)), (C, Id(2))])
 }
 
 fn from(addr: IpAddr) -> Context {
     Context::new(Some(RemoteAddr::IpAddr(addr)), None)
 }
 
-fn peer_with(me: HostId, log: &MemoryLogStore) -> Peer {
+fn peer_with(me: Id, log: &MemoryLogStore) -> Peer {
     Peer::new(roster(), me, Arc::new(MemoryLog::new()), Arc::new(log.clone()))
         .expect("the server is on the roster")
 }
@@ -54,7 +54,7 @@ fn accepted(term: u64, len: u64) -> Appended {
 fn make_leader(p: &Peer) -> u64 {
     let term = p.stand_for_election().expect("may stand");
     assert!(
-        p.count_ballot(1, term, Ballot::Granted(term)).expect("node 1 is a member"),
+        p.count_ballot(Id(1),term, Ballot::Granted(term)).expect("node 1 is a member"),
         "two of three leads"
     );
     term
@@ -64,7 +64,7 @@ fn make_leader(p: &Peer) -> u64 {
 #[tokio::test]
 async fn a_follower_takes_the_leaders_entry() {
     let (la, lb) = (MemoryLogStore::new(), MemoryLogStore::new());
-    let (a, b) = (peer_with(0, &la), peer_with(1, &lb));
+    let (a, b) = (peer_with(Id(0),&la), peer_with(Id(1),&lb));
     let term = make_leader(&a);
 
     let idx = a.append_command(42).expect("the leader may append");
@@ -87,7 +87,7 @@ async fn a_follower_takes_the_leaders_entry() {
 #[tokio::test]
 async fn a_follower_refuses_an_entry_it_cannot_place() {
     let (la, lb) = (MemoryLogStore::new(), MemoryLogStore::new());
-    let (a, b) = (peer_with(0, &la), peer_with(1, &lb));
+    let (a, b) = (peer_with(Id(0),&la), peer_with(Id(1),&lb));
     let term = make_leader(&a);
     a.append_command(1).unwrap();
     a.append_command(2).unwrap();
@@ -131,15 +131,15 @@ async fn a_follower_refuses_an_entry_it_cannot_place() {
 #[tokio::test]
 async fn an_accepted_entry_truncates_a_divergent_tail() {
     let (la, lb) = (MemoryLogStore::new(), MemoryLogStore::new());
-    let (a, b) = (peer_with(0, &la), peer_with(1, &lb));
+    let (a, b) = (peer_with(Id(0),&la), peer_with(Id(1),&lb));
 
     // A leads term 1 and appends one entry, then loses the term and wins 3.
     assert_eq!(a.stand_for_election().unwrap(), 1);
-    assert!(a.count_ballot(1, 1, Ballot::Granted(1)).unwrap());
+    assert!(a.count_ballot(Id(1),1, Ballot::Granted(1)).unwrap());
     a.append_command(1).unwrap();
     assert!(!a.observe_standing(Standing { term: 2, leading: false }).unwrap());
     assert_eq!(a.stand_for_election().unwrap(), 3);
-    assert!(a.count_ballot(1, 3, Ballot::Granted(3)).unwrap());
+    assert!(a.count_ballot(Id(1),3, Ballot::Granted(3)).unwrap());
     a.append_command(2).unwrap();
     assert_eq!(la.entries().len(), 2);
     assert_eq!(la.entries()[1].term, 3);
@@ -167,7 +167,7 @@ async fn an_accepted_entry_truncates_a_divergent_tail() {
 #[tokio::test]
 async fn a_candidate_whose_log_is_behind_is_refused() {
     let lv = MemoryLogStore::new();
-    let voter = peer_with(2, &lv);
+    let voter = peer_with(Id(2),&lv);
     lv.append(LogEntry { term: 2, value: 1 }).unwrap();
     lv.append(LogEntry { term: 2, value: 2 }).unwrap();
 
@@ -203,16 +203,16 @@ async fn an_old_entry_is_committed_only_under_one_of_the_leaders_own() {
     // An entry left over from term 1.
     la.append(LogEntry { term: 1, value: 5 }).unwrap();
 
-    let a = peer_with(0, &la);
+    let a = peer_with(Id(0),&la);
     assert_eq!(a.stand_for_election().unwrap(), 1);
     assert_eq!(a.stand_for_election().unwrap(), 2, "standing again burns a term");
-    assert!(a.count_ballot(1, 2, Ballot::Granted(2)).unwrap(), "two of three leads term 2");
+    assert!(a.count_ballot(Id(1),2, Ballot::Granted(2)).unwrap(), "two of three leads term 2");
 
     // Everyone holds the term-1 entry. That is a majority, and it is not
     // enough.
-    assert_eq!(a.record_match(1, 1).unwrap(), 0);
+    assert_eq!(a.record_match(Id(1),1).unwrap(), 0);
     assert_eq!(
-        a.record_match(2, 1).unwrap(),
+        a.record_match(Id(2),1).unwrap(),
         0,
         "a majority holding an entry from an earlier term does not commit it"
     );
@@ -220,7 +220,7 @@ async fn an_old_entry_is_committed_only_under_one_of_the_leaders_own() {
 
     // The leader appends one of its own and gets a majority for *that*.
     a.append_command(6).unwrap();
-    assert_eq!(a.record_match(1, 2).unwrap(), 2);
+    assert_eq!(a.record_match(Id(1),2).unwrap(), 2);
     assert_eq!(
         a.commit(),
         2,
@@ -234,7 +234,7 @@ async fn an_old_entry_is_committed_only_under_one_of_the_leaders_own() {
 #[tokio::test]
 async fn a_follower_commits_no_further_than_its_own_log() {
     let (la, lb) = (MemoryLogStore::new(), MemoryLogStore::new());
-    let (a, b) = (peer_with(0, &la), peer_with(1, &lb));
+    let (a, b) = (peer_with(Id(0),&la), peer_with(Id(1),&lb));
     let term = make_leader(&a);
     a.append_command(1).unwrap();
     a.append_command(2).unwrap();
@@ -264,7 +264,7 @@ async fn a_follower_commits_no_further_than_its_own_log() {
 #[tokio::test]
 async fn a_replayed_append_keeps_the_entries_after_it() {
     let store = MemoryLogStore::new();
-    let f = peer_with(1, &store);
+    let f = peer_with(Id(1),&store);
 
     let e0 = LogEntry { term: 1, value: 10 };
     let e1 = LogEntry { term: 1, value: 11 };
@@ -286,7 +286,7 @@ async fn a_replayed_append_keeps_the_entries_after_it() {
 #[tokio::test]
 async fn a_conflicting_append_still_drops_the_tail() {
     let store = MemoryLogStore::new();
-    let f = peer_with(1, &store);
+    let f = peer_with(Id(1),&store);
 
     assert_eq!(
         f.append_entries(from(A), 1, 0, 0, LogEntry { term: 1, value: 10 }, 0).await.unwrap(),
@@ -322,16 +322,16 @@ async fn a_conflicting_append_still_drops_the_tail() {
 #[tokio::test]
 async fn a_new_leadership_starts_its_replication_tally_empty() {
     let la = MemoryLogStore::new();
-    let a = peer_with(0, &la);
+    let a = peer_with(Id(0),&la);
 
     // Term 1: A leads with three entries and both peers acknowledge all three.
     assert_eq!(a.stand_for_election().unwrap(), 1);
-    assert!(a.count_ballot(1, 1, Ballot::Granted(1)).unwrap());
+    assert!(a.count_ballot(Id(1),1, Ballot::Granted(1)).unwrap());
     for v in [7u64, 8, 9] {
         a.append_command(v).unwrap();
     }
-    a.record_match(1, 3).unwrap();
-    assert_eq!(a.record_match(2, 3).unwrap(), 3);
+    a.record_match(Id(1),3).unwrap();
+    assert_eq!(a.record_match(Id(2),3).unwrap(), 3);
 
     // A is deposed by a leader of term 2, which overwrites index 0 — so A's log
     // is one entry long, and its commit point cannot still be 3.
@@ -344,11 +344,11 @@ async fn a_new_leadership_starts_its_replication_tally_empty() {
     // A wins term 3 and appends at index 1 — the index the term-1
     // acknowledgements claim both peers already hold.
     assert_eq!(a.stand_for_election().unwrap(), 3);
-    assert!(a.count_ballot(1, 3, Ballot::Granted(3)).unwrap());
+    assert!(a.count_ballot(Id(1),3, Ballot::Granted(3)).unwrap());
     assert_eq!(a.append_command(99).unwrap(), 1);
 
     // Peer 1 says, truthfully, that it holds one entry.
-    a.record_match(1, 1).unwrap();
+    a.record_match(Id(1),1).unwrap();
     assert_eq!(
         a.commit(),
         1,
@@ -371,28 +371,28 @@ async fn a_new_leadership_starts_its_replication_tally_empty() {
 #[tokio::test]
 async fn an_acknowledgement_from_an_earlier_term_is_dropped() {
     let la = MemoryLogStore::new();
-    let a = peer_with(0, &la);
+    let a = peer_with(Id(0),&la);
 
     assert_eq!(a.stand_for_election().unwrap(), 1);
-    assert!(a.count_ballot(1, 1, Ballot::Granted(1)).unwrap());
+    assert!(a.count_ballot(Id(1),1, Ballot::Granted(1)).unwrap());
     assert_eq!(a.append_command(7).unwrap(), 0);
 
     // A hears of a higher term from a reply and steps down, then wins term 3.
     assert!(!a.observe_standing(Standing { term: 2, leading: false }).unwrap());
     assert_eq!(a.stand_for_election().unwrap(), 3);
-    assert!(a.count_ballot(1, 3, Ballot::Granted(3)).unwrap());
+    assert!(a.count_ballot(Id(1),3, Ballot::Granted(3)).unwrap());
     assert_eq!(a.append_command(8).unwrap(), 1);
 
     // A reply to something sent in term 1, arriving now.
     assert_eq!(
-        a.observe_appended(1, accepted(1, 2)).unwrap(),
+        a.observe_appended(Id(1),accepted(1, 2)).unwrap(),
         None,
         "a term-1 acknowledgement says nothing about the term-3 log"
     );
     assert_eq!(a.commit(), 0);
 
     // The same reply, correctly attributed, does count.
-    assert_eq!(a.observe_appended(1, accepted(3, 2)).unwrap(), Some(2));
+    assert_eq!(a.observe_appended(Id(1),accepted(3, 2)).unwrap(), Some(2));
     assert_eq!(a.commit(), 2);
 }
 
@@ -403,7 +403,7 @@ async fn an_acknowledgement_from_an_earlier_term_is_dropped() {
 #[tokio::test]
 async fn a_heartbeat_tells_a_follower_what_is_committed() {
     let store = MemoryLogStore::new();
-    let f = peer_with(1, &store);
+    let f = peer_with(Id(1),&store);
 
     assert_eq!(
         f.append_entries(from(A), 1, 0, 0, LogEntry { term: 1, value: 7 }, 0).await.unwrap(),
@@ -419,8 +419,8 @@ async fn a_heartbeat_tells_a_follower_what_is_committed() {
 #[tokio::test]
 async fn a_cluster_of_one_elects_itself() {
     let alone = Peer::new(
-        HashMap::from([(A, 0)]),
-        0,
+        HashMap::from([(A, Id(0))]),
+        Id(0),
         Arc::new(MemoryLog::new()),
         Arc::new(MemoryLogStore::new()),
     )

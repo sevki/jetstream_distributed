@@ -20,7 +20,7 @@ use std::net::{IpAddr, Ipv4Addr};
 
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
-use jetstream_distributed::host::HostId;
+use jetstream_distributed::id::Id;
 use jetstream_distributed::swim::service::{
     Event, Liveness, MAX_UPDATES, Membership, Node, Update,
 };
@@ -30,8 +30,8 @@ const B: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
 const C: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3));
 const STRANGER: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 9, 9, 9));
 
-fn roster() -> HashMap<IpAddr, HostId> {
-    HashMap::from([(A, 0u128), (B, 1u128), (C, 2u128)])
+fn roster() -> HashMap<IpAddr, Id> {
+    HashMap::from([(A, Id(0)), (B, Id(1)), (C, Id(2))])
 }
 
 fn from(addr: IpAddr) -> Context {
@@ -39,12 +39,12 @@ fn from(addr: IpAddr) -> Context {
 }
 
 fn node(me: u128) -> Node {
-    Node::new(roster(), me).expect("on the roster")
+    Node::new(roster(), Id(me)).expect("on the roster")
 }
 
-fn u(node: HostId, incarnation: u64, status: Liveness) -> Update {
+fn u(node: u128, incarnation: u64, status: Liveness) -> Update {
     Update {
-        node,
+        node: Id(node),
         incarnation,
         status,
     }
@@ -52,7 +52,7 @@ fn u(node: HostId, incarnation: u64, status: Liveness) -> Update {
 
 #[test]
 fn a_node_off_the_roster_cannot_be_built() {
-    assert!(Node::new(roster(), 7).is_err());
+    assert!(Node::new(roster(), Id(7)).is_err());
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn a_new_node_believes_everyone_alive_at_incarnation_zero() {
             u(2, 0, Liveness::Alive)
         ]
     );
-    assert_eq!(n.record(9), None, "a non-member has no record");
+    assert_eq!(n.record(Id(9)), None, "a non-member has no record");
 }
 
 /// A failed probe suspects; a timed-out suspicion buries — and neither goes
@@ -74,22 +74,22 @@ fn a_new_node_believes_everyone_alive_at_incarnation_zero() {
 #[test]
 fn suspicion_then_death_and_neither_is_undone_by_a_weaker_report() {
     let n = node(0);
-    assert!(n.suspect(1, 0).unwrap());
-    assert_eq!(n.record(1), Some(u(1, 0, Liveness::Suspect)));
+    assert!(n.suspect(Id(1),0).unwrap());
+    assert_eq!(n.record(Id(1)), Some(u(1, 0, Liveness::Suspect)));
 
     assert!(
-        !n.suspect(1, 0).unwrap(),
+        !n.suspect(Id(1),0).unwrap(),
         "suspecting the suspect changes nothing"
     );
 
-    assert!(n.declare_dead(1, 0).unwrap());
-    assert_eq!(n.record(1), Some(u(1, 0, Liveness::Dead)));
+    assert!(n.declare_dead(Id(1),0).unwrap());
+    assert_eq!(n.record(Id(1)), Some(u(1, 0, Liveness::Dead)));
 
     // `theorem_merge_never_regresses`: a Suspect at the same incarnation does
     // not out-rank Dead, and is accepted nowhere.
     n.apply(&[u(1, 0, Liveness::Suspect)]).unwrap();
     n.apply(&[u(1, 0, Liveness::Alive)]).unwrap();
-    assert_eq!(n.record(1), Some(u(1, 0, Liveness::Dead)));
+    assert_eq!(n.record(Id(1)), Some(u(1, 0, Liveness::Dead)));
 }
 
 /// The only thing that undoes a death is the dead node saying so, at a higher
@@ -97,10 +97,10 @@ fn suspicion_then_death_and_neither_is_undone_by_a_weaker_report() {
 #[test]
 fn only_a_higher_incarnation_undoes_a_death() {
     let n = node(0);
-    n.suspect(1, 0).unwrap();
-    n.declare_dead(1, 0).unwrap();
+    n.suspect(Id(1),0).unwrap();
+    n.declare_dead(Id(1),0).unwrap();
     n.apply(&[u(1, 1, Liveness::Alive)]).unwrap();
-    assert_eq!(n.record(1), Some(u(1, 1, Liveness::Alive)));
+    assert_eq!(n.record(Id(1)), Some(u(1, 1, Liveness::Alive)));
 }
 
 /// **Accused, a node answers with an incarnation above the accusation.**
@@ -108,12 +108,12 @@ fn only_a_higher_incarnation_undoes_a_death() {
 fn an_accused_node_refutes_with_a_higher_incarnation() {
     let n = node(0);
     n.apply(&[u(0, 0, Liveness::Suspect)]).unwrap();
-    assert_eq!(n.record(0), Some(u(0, 1, Liveness::Alive)));
+    assert_eq!(n.record(Id(0)), Some(u(0, 1, Liveness::Alive)));
     assert_eq!(
         n.log(),
         vec![
             Event::Learned {
-                about: 0,
+                about: Id(0),
                 incarnation: 0,
                 status: Liveness::Suspect
             },
@@ -125,12 +125,12 @@ fn an_accused_node_refutes_with_a_higher_incarnation() {
     // the node now holds.
     n.apply(&[u(0, 0, Liveness::Suspect)]).unwrap();
     n.apply(&[u(0, 0, Liveness::Dead)]).unwrap();
-    assert_eq!(n.record(0), Some(u(0, 1, Liveness::Alive)));
+    assert_eq!(n.record(Id(0)), Some(u(0, 1, Liveness::Alive)));
     assert_eq!(n.log().len(), 2, "a replay is not a second refutation");
 
     // A fresh accusation at the new incarnation is answered with the next.
     n.apply(&[u(0, 1, Liveness::Dead)]).unwrap();
-    assert_eq!(n.record(0), Some(u(0, 2, Liveness::Alive)));
+    assert_eq!(n.record(Id(0)), Some(u(0, 2, Liveness::Alive)));
 }
 
 /// Being told you are fine is not an accusation.
@@ -145,9 +145,9 @@ fn hearing_ones_own_current_record_is_not_a_reason_to_refute() {
 #[test]
 fn a_node_does_not_suspect_itself() {
     let n = node(0);
-    assert_eq!(n.suspect(0, 0).unwrap_err().code(), Some("NO"));
-    assert_eq!(n.declare_dead(0, 0).unwrap_err().code(), Some("NO"));
-    assert_eq!(n.suspect(9, 0).unwrap_err().code(), Some("ERR"));
+    assert_eq!(n.suspect(Id(0),0).unwrap_err().code(), Some("NO"));
+    assert_eq!(n.declare_dead(Id(0),0).unwrap_err().code(), Some("NO"));
+    assert_eq!(n.suspect(Id(9),0).unwrap_err().code(), Some("ERR"));
 }
 
 /// The incarnation space is `u64`, and an accusation at the top of it has no
@@ -158,7 +158,7 @@ fn the_incarnation_space_does_not_wrap() {
     let n = node(0);
     let err = n.apply(&[u(0, u64::MAX, Liveness::Dead)]).unwrap_err();
     assert_eq!(err.code(), Some("NO"));
-    assert_eq!(n.record(0), Some(u(0, u64::MAX, Liveness::Dead)));
+    assert_eq!(n.record(Id(0)), Some(u(0, u64::MAX, Liveness::Dead)));
 }
 
 /// **A restart costs a round trip, not correctness.**
@@ -177,11 +177,11 @@ fn a_restarted_node_is_told_what_it_was_and_outranks_it() {
     peer.apply(&[u(0, 3, Liveness::Dead)]).unwrap();
 
     let after = node(0);
-    assert_eq!(after.record(0), Some(u(0, 0, Liveness::Alive)), "it forgot");
+    assert_eq!(after.record(Id(0)), Some(u(0, 0, Liveness::Alive)), "it forgot");
 
     let told = peer.view();
     after.apply(&told).unwrap();
-    assert_eq!(after.record(0), Some(u(0, 4, Liveness::Alive)));
+    assert_eq!(after.record(Id(0)), Some(u(0, 4, Liveness::Alive)));
 }
 
 /// **Every order and every duplicate, one answer.**
@@ -252,7 +252,7 @@ fn a_batch_is_applied_entirely_or_not_at_all() {
         .unwrap_err();
     assert_eq!(err.code(), Some("ERR"));
     assert_eq!(
-        n.record(1),
+        n.record(Id(1)),
         Some(u(1, 0, Liveness::Alive)),
         "the valid half was not applied"
     );
@@ -281,7 +281,7 @@ async fn a_stranger_is_refused_before_anything_is_read() {
         assert_eq!(r.unwrap_err().code(), Some("NO"));
     }
     assert_eq!(
-        n.record(1),
+        n.record(Id(1)),
         Some(u(1, 0, Liveness::Alive)),
         "and nothing was applied"
     );
@@ -292,8 +292,8 @@ async fn a_stranger_is_refused_before_anything_is_read() {
 #[tokio::test]
 async fn ping_answers_with_what_it_was_asked_about_and_sync_with_everything() {
     let b = node(1);
-    b.suspect(2, 0).unwrap();
-    b.declare_dead(2, 0).unwrap();
+    b.suspect(Id(2),0).unwrap();
+    b.declare_dead(Id(2),0).unwrap();
 
     let ack = b
         .ping(from(A), vec![u(2, 0, Liveness::Suspect)])
@@ -321,9 +321,9 @@ async fn ping_answers_with_what_it_was_asked_about_and_sync_with_everything() {
 #[tokio::test]
 async fn nodes_that_drifted_apart_converge_by_syncing() {
     let (a, b, c) = (node(0), node(1), node(2));
-    a.suspect(2, 0).unwrap();
-    b.suspect(0, 0).unwrap();
-    b.declare_dead(0, 0).unwrap();
+    a.suspect(Id(2),0).unwrap();
+    b.suspect(Id(0),0).unwrap();
+    b.declare_dead(Id(0),0).unwrap();
     c.apply(&[u(1, 5, Liveness::Alive)]).unwrap();
 
     // A round of pushes in a ring, twice, so everything has gone all the way
@@ -338,11 +338,11 @@ async fn nodes_that_drifted_apart_converge_by_syncing() {
     assert_eq!(a.view(), b.view());
     assert_eq!(b.view(), c.view());
     // Node 0 was declared dead by node 1 and has, being alive, refuted it.
-    assert_eq!(a.record(0), Some(u(0, 1, Liveness::Alive)));
-    assert_eq!(c.record(0), Some(u(0, 1, Liveness::Alive)));
+    assert_eq!(a.record(Id(0)), Some(u(0, 1, Liveness::Alive)));
+    assert_eq!(c.record(Id(0)), Some(u(0, 1, Liveness::Alive)));
     // Node 1 was told it was alive at 5 -- a record about itself that out-ranks
     // its own, which is the same situation as a restart -- and went one higher.
-    assert_eq!(c.record(1), Some(u(1, 6, Liveness::Alive)));
+    assert_eq!(c.record(Id(1)), Some(u(1, 6, Liveness::Alive)));
 }
 
 /// **A suspicion timer that outlives its suspicion does nothing.**
@@ -353,16 +353,16 @@ async fn nodes_that_drifted_apart_converge_by_syncing() {
 #[test]
 fn a_stale_suspicion_timer_cannot_kill_a_refuted_node() {
     let n = node(0);
-    assert!(n.suspect(1, 0).unwrap());
+    assert!(n.suspect(Id(1),0).unwrap());
 
     // The refutation lands while the timer is running.
     n.apply(&[u(1, 1, Liveness::Alive)]).unwrap();
 
     assert!(
-        !n.declare_dead(1, 0).unwrap(),
+        !n.declare_dead(Id(1),0).unwrap(),
         "the timer was for incarnation 0"
     );
-    assert_eq!(n.record(1), Some(u(1, 1, Liveness::Alive)));
+    assert_eq!(n.record(Id(1)), Some(u(1, 1, Liveness::Alive)));
 }
 
 /// The same race on the way in: a probe that began at incarnation 0 and failed
@@ -372,8 +372,8 @@ fn a_stale_suspicion_timer_cannot_kill_a_refuted_node() {
 fn a_stale_probe_cannot_suspect_a_refuted_node() {
     let n = node(0);
     n.apply(&[u(1, 1, Liveness::Alive)]).unwrap();
-    assert!(!n.suspect(1, 0).unwrap());
-    assert_eq!(n.record(1), Some(u(1, 1, Liveness::Alive)));
+    assert!(!n.suspect(Id(1),0).unwrap());
+    assert_eq!(n.record(Id(1)), Some(u(1, 1, Liveness::Alive)));
 }
 
 /// Death needs a suspicion first: a timer cannot declare dead a node this node
@@ -381,22 +381,22 @@ fn a_stale_probe_cannot_suspect_a_refuted_node() {
 #[test]
 fn death_needs_a_suspicion_at_that_incarnation() {
     let n = node(0);
-    assert!(!n.declare_dead(1, 0).unwrap(), "never suspected");
-    n.suspect(1, 0).unwrap();
-    assert!(!n.declare_dead(1, 7).unwrap(), "suspected at 0, not 7");
-    assert!(n.declare_dead(1, 0).unwrap());
-    assert_eq!(n.record(1), Some(u(1, 0, Liveness::Dead)));
+    assert!(!n.declare_dead(Id(1),0).unwrap(), "never suspected");
+    n.suspect(Id(1),0).unwrap();
+    assert!(!n.declare_dead(Id(1),7).unwrap(), "suspected at 0, not 7");
+    assert!(n.declare_dead(Id(1),0).unwrap());
+    assert_eq!(n.record(Id(1)), Some(u(1, 0, Liveness::Dead)));
 }
 
 /// A roster too big for one message could never complete its own push/pull: the
 /// whole-table reply would exceed what `apply` accepts.
 #[test]
 fn a_roster_too_big_for_one_message_is_refused() {
-    let big = |n: usize| -> HashMap<IpAddr, HostId> {
+    let big = |n: usize| -> HashMap<IpAddr, Id> {
         (0..n as u128)
-            .map(|i| (IpAddr::V4(Ipv4Addr::from(0x0a00_0000 + i as u32)), i))
+            .map(|i| (IpAddr::V4(Ipv4Addr::from(0x0a00_0000 + i as u32)), Id(i)))
             .collect()
     };
-    assert!(Node::new(big(MAX_UPDATES), 0).is_ok());
-    assert!(Node::new(big(MAX_UPDATES + 1), 0).is_err());
+    assert!(Node::new(big(MAX_UPDATES), Id(0)).is_ok());
+    assert!(Node::new(big(MAX_UPDATES + 1), Id(0)).is_err());
 }

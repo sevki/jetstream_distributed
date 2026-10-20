@@ -76,19 +76,15 @@ use jetstream::prelude::{
 };
 
 use super::{Capacity, Delivery, Fence, Mailbox, Session, serve_fenced};
-use crate::host::HostId;
+use crate::id::Id;
 use crate::scheduling::{
     Resource,
     discovery::{Discovery, DiscoveryError},
 };
 
-/// An actor's number. The model's `ActorId` is a `nat`; the executable steps and the
-/// wire use `u64`.
-pub type ActorId = u64;
-
 /// An actor, as a [`Resource`] to ask [`Discovery`] about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ActorRef(pub ActorId);
+pub struct ActorRef(pub Id);
 
 impl Resource for ActorRef {}
 
@@ -110,7 +106,7 @@ pub enum Status {
 /// Owns the actors that run on this node.
 pub trait Supervisor: Send + Sync {
     /// Whether `id` is running here.
-    fn status(&self, id: ActorId) -> Status;
+    fn status(&self, id: Id) -> Status;
 
     /// Host `id` here: give it a mailbox of the given capacity, and serve `service`
     /// from the other end of it, one request at a time, each one only if `fence`
@@ -126,7 +122,7 @@ pub trait Supervisor: Send + Sync {
     /// A different protocol gets a fresh mailbox, and the old one is not served.
     fn spawn<C, S, F>(
         &self,
-        id: ActorId,
+        id: Id,
         capacity: Capacity,
         service: S,
         fence: F,
@@ -143,7 +139,7 @@ pub trait Supervisor: Send + Sync {
     /// does not speak `P`.
     fn transport<P>(
         &self,
-        id: ActorId,
+        id: Id,
         from: Context,
     ) -> impl Future<Output = Result<Box<dyn ClientTransport<P>>>> + Send
     where
@@ -178,13 +174,13 @@ impl Drop for Slot {
 /// Every actor on one node, in one process. The simplest thing that satisfies
 /// [`Supervisor`].
 pub struct LocalSupervisor {
-    me: HostId,
-    slots: Mutex<HashMap<ActorId, Slot>>,
+    me: Id,
+    slots: Mutex<HashMap<Id, Slot>>,
 }
 
 impl LocalSupervisor {
     /// A supervisor for the node `me`, with nothing hosted.
-    pub fn new(me: HostId) -> Self {
+    pub fn new(me: Id) -> Self {
         Self {
             me,
             slots: Mutex::new(HashMap::new()),
@@ -192,7 +188,7 @@ impl LocalSupervisor {
     }
 
     /// The node this supervisor runs on.
-    pub fn host(&self) -> HostId {
+    pub fn host(&self) -> Id {
         self.me
     }
 }
@@ -201,7 +197,7 @@ impl LocalSupervisor {
 /// It has no view of any other node, so an actor it does not host is `NotFound`,
 /// which is "not here" and not "nowhere".
 impl Discovery for LocalSupervisor {
-    fn discover<W: Resource>(&self, what: W) -> std::result::Result<Vec<HostId>, DiscoveryError> {
+    fn discover<W: Resource>(&self, what: W) -> std::result::Result<Vec<Id>, DiscoveryError> {
         let Some(ActorRef(id)) = (&what as &dyn Any).downcast_ref::<ActorRef>() else {
             return Err(DiscoveryError::NotFound);
         };
@@ -213,7 +209,7 @@ impl Discovery for LocalSupervisor {
 }
 
 impl Supervisor for LocalSupervisor {
-    fn status(&self, id: ActorId) -> Status {
+    fn status(&self, id: Id) -> Status {
         match self.slots.lock().expect("supervisor lock").get(&id) {
             Some(slot) if slot.running() => Status::Running,
             Some(_) => Status::Stopped,
@@ -223,7 +219,7 @@ impl Supervisor for LocalSupervisor {
 
     async fn spawn<C, S, F>(
         &self,
-        id: ActorId,
+        id: Id,
         capacity: Capacity,
         mut service: S,
         fence: F,
@@ -262,7 +258,7 @@ impl Supervisor for LocalSupervisor {
         Ok(())
     }
 
-    async fn transport<P>(&self, id: ActorId, from: Context) -> Result<Box<dyn ClientTransport<P>>>
+    async fn transport<P>(&self, id: Id, from: Context) -> Result<Box<dyn ClientTransport<P>>>
     where
         P: Protocol<Error = Error> + 'static,
     {

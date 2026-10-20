@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, OnceLock};
 
-use jetstream_distributed::host::HostId;
+use jetstream_distributed::id::Id;
 use jetstream_distributed::raft::service::{
     consensus_protocol::{ConsensusChannel, ConsensusService},
     Acceptance, Appended, Ballot, Consensus, LogEntry, MemoryLog, MemoryLogStore, Peer, Standing,
@@ -34,11 +34,11 @@ const PORT: u16 = 9000;
 ///
 /// `turmoil::lookup` resolves a name only inside a live simulation and panics
 /// outside one, so every roster here is built inside a host or a client.
-fn roster() -> HashMap<IpAddr, HostId> {
+fn roster() -> HashMap<IpAddr, Id> {
     HashMap::from([
-        (turmoil::lookup("a"), 0),
-        (turmoil::lookup("b"), 1),
-        (turmoil::lookup("c"), 2),
+        (turmoil::lookup("a"), Id(0)),
+        (turmoil::lookup("b"), Id(1)),
+        (turmoil::lookup("c"), Id(2)),
     ])
 }
 
@@ -81,7 +81,7 @@ macro_rules! serve {
         $sim.host($name, move || async move {
             let peer = Peer::new(
                 roster(),
-                $id,
+                Id($id),
                 Arc::new(MemoryLog::new()),
                 Arc::new(MemoryLogStore::new()),
             )
@@ -124,7 +124,7 @@ fn a_candidate_wins_an_election_over_the_wire() {
             .get_or_init(|| {
                 Peer::new(
                     roster(),
-                    0,
+                    Id(0),
                     Arc::new(MemoryLog::new()),
                     Arc::new(MemoryLogStore::new()),
                 )
@@ -144,7 +144,7 @@ fn a_candidate_wins_an_election_over_the_wire() {
             );
         }
         let leads = me
-            .count_ballot(1, term, Ballot::Granted(term))
+            .count_ballot(Id(1), term, Ballot::Granted(term))
             .expect("node 1 is on the roster");
         assert!(leads, "two of three is a majority");
 
@@ -186,7 +186,7 @@ fn a_partitioned_minority_does_not_elect_a_leader() {
             .get_or_init(|| {
                 Peer::new(
                     roster(),
-                    0,
+                    Id(0),
                     Arc::new(MemoryLog::new()),
                     Arc::new(MemoryLogStore::new()),
                 )
@@ -241,7 +241,7 @@ fn a_leader_leads_over_the_wire() {
             .get_or_init(|| {
                 Peer::new(
                     roster(),
-                    0,
+                    Id(0),
                     Arc::new(MemoryLog::new()),
                     Arc::new(MemoryLogStore::new()),
                 )
@@ -253,7 +253,7 @@ fn a_leader_leads_over_the_wire() {
         connect!("b", _sb, chb);
         let ballot = chb.request_vote(Context::default(), term, 0, 0).await.unwrap();
         assert_eq!(ballot, Ballot::Granted(1));
-        assert!(me.count_ballot(1, term, ballot).unwrap(), "two of three is a majority");
+        assert!(me.count_ballot(Id(1), term, ballot).unwrap(), "two of three is a majority");
 
         // A heartbeat, and the reply read back. B is behind nobody, so this
         // tells the leader nothing — which is the case that has to be silent.
@@ -269,7 +269,7 @@ fn a_leader_leads_over_the_wire() {
             .unwrap();
         assert_eq!(reply, accepted(term, 1));
         assert_eq!(
-            me.observe_appended(1, reply).unwrap(),
+            me.observe_appended(Id(1), reply).unwrap(),
             Some(1),
             "the leader and one follower are a majority of three, and the entry is \
              of the leader's own term"
@@ -311,7 +311,7 @@ fn a_reply_from_the_wire_deposes_a_stale_leader() {
             .get_or_init(|| {
                 Peer::new(
                     roster(),
-                    0,
+                    Id(0),
                     Arc::new(MemoryLog::new()),
                     Arc::new(MemoryLogStore::new()),
                 )
@@ -322,7 +322,7 @@ fn a_reply_from_the_wire_deposes_a_stale_leader() {
         let term = me.stand_for_election().expect("a fresh server may stand");
         connect!("b", _sb, chb);
         let ballot = chb.request_vote(Context::default(), term, 0, 0).await.unwrap();
-        assert!(me.count_ballot(1, term, ballot).unwrap());
+        assert!(me.count_ballot(Id(1), term, ballot).unwrap());
         assert!(me.standing_now().leading);
 
         // C is moved to term 5 by a request that is not this leader's business:

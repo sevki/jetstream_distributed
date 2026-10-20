@@ -11,7 +11,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 
 use crate::actor::model::*;
 use crate::actor::proofs::invariant::*;
@@ -111,7 +111,7 @@ pub proof fn theorem_the_journal_is_append_only(tr: Seq<ActorSystem>, i: int, j:
 pub proof fn theorem_accepting_applies_the_behaviour(
     pre: ActorSystem,
     post: ActorSystem,
-    host: HostId,
+    host: Id,
     epoch: Epoch,
     env: Envelope,
 )

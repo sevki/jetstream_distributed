@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
-use jetstream_distributed::host::HostId;
+use jetstream_distributed::id::Id;
 use jetstream_distributed::actor::service::{
     Actor, Connection, Event, Host, Receipt, Record, Snapshot,
 };
@@ -34,12 +34,12 @@ const ADDR_D: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 4));
 const STRANGER: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 9, 9, 9));
 
 /// `A` and `B` can host the actor; `C` and `D` only send to it.
-const A: HostId = 1;
-const B: HostId = 2;
-const C: HostId = 3;
-const D: HostId = 4;
+const A: Id = Id(1);
+const B: Id = Id(2);
+const C: Id = Id(3);
+const D: Id = Id(4);
 
-fn roster() -> HashMap<IpAddr, HostId> {
+fn roster() -> HashMap<IpAddr, Id> {
     HashMap::from([(ADDR_A, A), (ADDR_B, B), (ADDR_C, C), (ADDR_D, D)])
 }
 
@@ -342,7 +342,7 @@ async fn a_forced_revocation_leaves_the_journal_for_the_next_host() {
 /// sequence, and that the state is the fold of whatever the journal holds.
 #[tokio::test]
 async fn delivery_order_and_redelivery_cannot_corrupt_the_journal() {
-    let msgs: [(HostId, u64, IpAddr); 4] = [
+    let msgs: [(Id, u64, IpAddr); 4] = [
         (C, 0, ADDR_C),
         (C, 1, ADDR_C),
         (D, 0, ADDR_D),

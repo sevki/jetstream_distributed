@@ -33,9 +33,10 @@
 //!
 //! # What is not here
 //!
-//! * **The ownership fence.** `serve` hands each request to the service in the
-//!   order the mailbox gives it; it does not yet check the epoch the actor is
-//!   hosted at. The fence belongs around [`Server::rpc`].
+//! * **The ownership fence, in `serve`.** `serve` hands each request to the
+//!   service in the order the mailbox gives it and checks nothing;
+//!   [`serve_fenced`] asks a [`Fence`] before each one. It is the caller's to
+//!   build the fence from the registry; nothing here ties it to one.
 //! * **Subscriptions.** Streaming methods, and cancelling them, are served by
 //!   `jetstream_rpc::server::run` on a lane, and a mailbox delivers one request
 //!   and takes one response.
@@ -53,6 +54,7 @@ use jetstream::prelude::*;
 use tokio::sync::mpsc;
 
 use super::{Mailbox, Permit, Waiter};
+use crate::actor::steps::ActorRefusal;
 
 /// One request, on its way to the actor: who sent it, what it says, and where
 /// the answer goes.
@@ -245,10 +247,57 @@ where
     C: Protocol,
     S: Server<Request = C::Request, Response = C::Response>,
 {
+    serve_fenced(mailbox, service, &|| true).await
+}
+
+/// Whether this host may still act for its actor. [`serve_fenced`] asks it before
+/// it starts each request.
+///
+/// It should be the ownership fence about the host's own claim — the registry's
+/// `may_write(host, epoch)` — so it turns false the moment the actor's epoch
+/// moves on, whether the owner handed it over (`BeginTransfer`) or had it taken
+/// (`RevokeOwner`). A closure `Fn() -> bool` is a `Fence`.
+pub trait Fence: Send + Sync {
+    /// Whether the host may start serving a request now.
+    fn may_serve(&self) -> bool;
+}
+
+impl<F: Fn() -> bool + Send + Sync> Fence for F {
+    fn may_serve(&self) -> bool {
+        self()
+    }
+}
+
+/// [`serve`], asking `fence` before each request.
+///
+/// A request the fence refuses is **not** given to the service: it is answered,
+/// to the sender that sent it, with the `FENCED` refusal the rest of the services
+/// use, and the drain goes on. Callers retry at the new owner. The fence is
+/// checked between requests, so a request already being handled when the epoch
+/// moves finishes — the handover waits for nothing, and the fence at the point
+/// where the effect lands (`Registry::write`) is what keeps that request's effect
+/// from being authoritative. What the handler does outside that fence, the fence
+/// cannot stop.
+///
+/// **Tested, not proved.** The ownership fence is proved; that this loop asks it
+/// before every request is checked by `tests/actor_fence.rs`.
+pub async fn serve_fenced<C, S>(mailbox: Mailbox<Delivery<C>>, service: &mut S, fence: &impl Fence)
+where
+    C: Protocol,
+    S: Server<Request = C::Request, Response = C::Response>,
+{
     loop {
         // The round is held for the whole loop: the drain is running until it
         // is dropped, at the end of the `for`.
         for Delivery { from, frame, reply } in mailbox.round().await {
+            if !fence.may_serve() {
+                let msg = error_response(super::refusal::refuse(ActorRefusal::Fenced));
+                let _ = reply.send(Ok(Frame {
+                    tag: frame.tag,
+                    msg,
+                }));
+                continue;
+            }
             // From here to the answer the request is in neither the queue nor the
             // round: if this task is aborted, or the handler panics, `Unanswered`
             // is what tells the caller.

@@ -40,7 +40,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 
 verus! {
 
@@ -83,9 +83,9 @@ pub open spec fn pass_token_fires(actor_unowned: bool) -> bool {
 /// that holds the privilege, which is the one fact the routing layer owns.
 pub open spec fn seize_fires(
     actor_unowned: bool,
-    from: HostId,
-    privilege: HostId,
-    to: HostId,
+    from: Id,
+    privilege: Id,
+    to: Id,
     to_is_node: bool,
 ) -> bool {
     &&& actor_unowned
@@ -96,7 +96,7 @@ pub open spec fn seize_fires(
 
 /// `cs_acquire_under_token`'s guard, beyond the ownership layer's own: the
 /// node holds the privilege.
-pub open spec fn acquire_under_token_fires(privilege: HostId, node: HostId) -> bool {
+pub open spec fn acquire_under_token_fires(privilege: Id, node: Id) -> bool {
     privilege == node
 }
 
@@ -126,9 +126,9 @@ pub fn pass_token_step(actor_unowned: bool) -> (r: Result<(), CoupledRefusal>)
 /// May the privilege be seized from `from` and re-established at `to`?
 pub fn seize_step(
     actor_unowned: bool,
-    from: HostId,
-    privilege: HostId,
-    to: HostId,
+    from: Id,
+    privilege: Id,
+    to: Id,
     to_is_node: bool,
 ) -> (r: Result<(), CoupledRefusal>)
     ensures
@@ -155,7 +155,7 @@ pub fn seize_step(
 }
 
 /// May `node` take authority over the actor?
-pub fn acquire_under_token_step(privilege: HostId, node: HostId) -> (r: Result<(), CoupledRefusal>)
+pub fn acquire_under_token_step(privilege: Id, node: Id) -> (r: Result<(), CoupledRefusal>)
     ensures
         match r {
             Ok(_) => acquire_under_token_fires(privilege, node),

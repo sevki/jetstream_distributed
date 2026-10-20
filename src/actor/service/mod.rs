@@ -59,20 +59,20 @@
 //! [`Context::remote`] against a roster fixed at construction, and an address is
 //! not a credential.
 
-mod directory;
+mod supervisor;
 mod host;
 mod mailbox;
 mod session;
 mod transport;
 mod refusal;
 
-pub use directory::{ActorId, Directory, LocalDirectory, Placement};
+pub use supervisor::{ActorRef, LocalSupervisor, Status, Supervisor};
 pub use host::{Event, Host};
 pub use mailbox::{Capacity, Mailbox, Permit, Round, Waiter};
-pub use session::{serve, Closer, Delivery, Session};
+pub use session::{serve, serve_fenced, Closer, Delivery, Fence, Session};
 pub use transport::Connection;
 
-use crate::host::HostId;
+use crate::id::Id;
 use crate::ownership::service::Offer;
 use jetstream::prelude::*;
 
@@ -100,10 +100,10 @@ pub struct Snapshot {
 /// epoch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, JetStreamWireFormat)]
 pub struct Record {
-    pub sender: HostId,
+    pub sender: Id,
     pub seq: u64,
     pub body: u64,
-    pub host: HostId,
+    pub host: Id,
     pub epoch: u64,
 }
 
@@ -113,7 +113,7 @@ pub const MAX_READ: u64 = 1024;
 /// The node-facing protocol: four ownership calls, and the actor's own.
 ///
 /// None takes the acting node's number — see the module docs.
-#[service(uses(super::{HostId, Offer, Receipt, Record, Snapshot}))]
+#[service(uses(super::{Id, Offer, Receipt, Record, Snapshot}))]
 pub trait Actor {
     // --- ownership, delegated ----------------------------------------------
 
@@ -125,7 +125,7 @@ pub trait Actor {
 
     /// The host agrees to hand the actor to `to`. Its epoch is burned from this
     /// moment, so nothing it appends afterwards is accepted.
-    async fn begin_transfer(&self, ctx: Context, to: HostId) -> Result<()>;
+    async fn begin_transfer(&self, ctx: Context, to: Id) -> Result<()>;
 
     /// The outgoing host acknowledges the revocation.
     async fn release(&self, ctx: Context, epoch: u64) -> Result<()>;
@@ -142,7 +142,7 @@ pub trait Actor {
     /// Refused unless the caller is the owner at exactly that epoch, the message
     /// was sent, and it is exactly its turn: a message already accepted and one
     /// not yet due are both refused, which is what makes redelivery harmless.
-    async fn accept(&self, ctx: Context, epoch: u64, sender: HostId, seq: u64) -> Result<Receipt>;
+    async fn accept(&self, ctx: Context, epoch: u64, sender: Id, seq: u64) -> Result<Receipt>;
 
     /// The actor's state, as of the journal's end. Any member may read.
     async fn state(&self, ctx: Context) -> Result<Snapshot>;

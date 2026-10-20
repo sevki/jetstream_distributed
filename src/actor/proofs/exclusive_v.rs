@@ -11,7 +11,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 
 use crate::actor::model::*;
 use crate::actor::proofs::invariant::*;
@@ -29,9 +29,9 @@ verus! {
 /// ownership record, and only `Owned` grants anything.
 pub proof fn theorem_at_most_one_host_can_accept(
     c: ActorSystem,
-    h1: HostId,
+    h1: Id,
     e1: Epoch,
-    h2: HostId,
+    h2: Id,
     e2: Epoch,
 )
     requires
@@ -53,7 +53,7 @@ pub proof fn theorem_at_most_one_host_can_accept(
 pub proof fn theorem_a_superseded_host_cannot_accept(
     pre: ActorSystem,
     post: ActorSystem,
-    host: HostId,
+    host: Id,
     epoch: Epoch,
     env: Envelope,
 )
@@ -71,7 +71,7 @@ pub proof fn theorem_a_superseded_host_cannot_accept(
 pub proof fn theorem_nobody_accepts_between_owners(
     pre: ActorSystem,
     post: ActorSystem,
-    host: HostId,
+    host: Id,
     epoch: Epoch,
     env: Envelope,
 )
@@ -87,7 +87,7 @@ pub proof fn theorem_nobody_accepts_between_owners(
 pub proof fn theorem_only_the_owner_accepts(
     pre: ActorSystem,
     post: ActorSystem,
-    host: HostId,
+    host: Id,
     epoch: Epoch,
     env: Envelope,
 )

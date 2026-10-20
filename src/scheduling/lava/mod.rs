@@ -10,8 +10,8 @@ use std::{
 };
 
 use crate::{
-    compute::{Cpu, Instant, Job, JobId, Memory, Resources},
-    host::HostId,
+    compute::{Cpu, Instant, Job, Memory, Resources},
+    id::Id,
 };
 
 /// Seconds in an hour: the first lifetime class's upper bound.
@@ -187,19 +187,19 @@ pub enum HostState {
 /// It is a view: only the [`Scheduler`] changes one.
 #[derive(Debug, Clone)]
 pub struct Host<F> {
-    id: HostId,
+    id: Id,
     capacity: Resources,
-    jobs: BTreeMap<JobId, Job<F>>,
+    jobs: BTreeMap<Id, Job<F>>,
     state: HostState,
     class: Option<LifetimeClass>,
     deadline: Option<Instant>,
-    residual: BTreeSet<JobId>,
+    residual: BTreeSet<Id>,
     schedulable: bool,
 }
 
 impl<F> Host<F> {
     /// The host's identifier.
-    pub fn id(&self) -> HostId {
+    pub fn id(&self) -> Id {
         self.id
     }
     /// The CPU and memory the host has in total.
@@ -228,7 +228,7 @@ impl<F> Host<F> {
     /// The jobs that were on the host at its last class change: when the host
     /// became recycling, was demoted, or was promoted (§4.3). When the last of
     /// them exits, a recycling host drops a class.
-    pub fn residual(&self) -> &BTreeSet<JobId> {
+    pub fn residual(&self) -> &BTreeSet<Id> {
         &self.residual
     }
     /// Whether new jobs may be placed on the host. It is off while the host is
@@ -283,6 +283,10 @@ impl<F> Host<F> {
         {
             self.assign_class(self.class.unwrap().higher(), now);
             self.residual = self.jobs.keys().copied().collect();
+            // A promoted host drains its residual jobs and then drops a class
+            // (§4.3). Left `Open` it would take new jobs of the higher class, and
+            // the demotion above, which needs `Recycling`, would never run.
+            self.state = HostState::Recycling;
         }
     }
 }
@@ -365,8 +369,8 @@ pub fn temporal_cost(extension: Duration) -> usize {
 ///   far it advances.
 pub struct Scheduler<F, P> {
     predictor: P,
-    hosts: BTreeMap<HostId, Host<F>>,
-    locations: BTreeMap<JobId, HostId>,
+    hosts: BTreeMap<Id, Host<F>>,
+    locations: BTreeMap<Id, Id>,
     now: Instant,
 }
 
@@ -386,16 +390,16 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
         self.hosts.values()
     }
     /// The host with this id, if there is one.
-    pub fn host(&self, id: HostId) -> Option<&Host<F>> {
+    pub fn host(&self, id: Id) -> Option<&Host<F>> {
         self.hosts.get(&id)
     }
     /// The host a job is on, if it is placed.
-    pub fn location(&self, job: JobId) -> Option<HostId> {
+    pub fn location(&self, job: Id) -> Option<Id> {
         self.locations.get(&job).copied()
     }
     /// Add an empty, schedulable host. [`Error::InvalidCapacity`] if it has no
     /// CPU or no memory, [`Error::DuplicateHost`] if the id is taken.
-    pub fn add_host(&mut self, id: HostId, capacity: Resources) -> Result<(), Error> {
+    pub fn add_host(&mut self, id: Id, capacity: Resources) -> Result<(), Error> {
         if capacity.cpu == Cpu::ZERO || capacity.memory == Memory::ZERO {
             return Err(Error::InvalidCapacity);
         }
@@ -437,7 +441,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
     /// Allow or forbid placing new jobs on a host, independently of its life cycle.
     /// [`begin_drain`](Self::begin_drain) turns it off, and maintenance may too.
     /// [`Error::UnknownHost`] if there is no such host.
-    pub fn set_schedulable(&mut self, id: HostId, value: bool) -> Result<(), Error> {
+    pub fn set_schedulable(&mut self, id: Id, value: bool) -> Result<(), Error> {
         self.hosts
             .get_mut(&id)
             .ok_or(Error::UnknownHost)?
@@ -447,7 +451,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
     /// Place a job on the best host, at `now`, and return the host's id. Every
     /// schedulable host with room is a candidate; see
     /// [`place_with`](Self::place_with) to restrict them.
-    pub fn place(&mut self, job: Job<F>, now: Instant) -> Result<HostId, Error> {
+    pub fn place(&mut self, job: Job<F>, now: Instant) -> Result<Id, Error> {
         self.place_with(job, now, |_, _| true)
     }
     /// As [`place`](Self::place), but only on hosts `eligible` accepts: a hard
@@ -466,7 +470,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
         job: Job<F>,
         now: Instant,
         eligible: impl Fn(&Host<F>, &Job<F>) -> bool,
-    ) -> Result<HostId, Error> {
+    ) -> Result<Id, Error> {
         if self.locations.contains_key(&job.id) {
             return Err(Error::DuplicateJob);
         }
@@ -488,6 +492,17 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
             .min_by_key(|h| self.score(h, &job, class, remaining, now))
             .map(|h| h.id)
             .ok_or(Error::NoCapacity)?;
+        Ok(self.seat(target, job, class, now))
+    }
+    /// Put `job` on `target`, which has been chosen and has room: give an empty
+    /// host the job's class, and make a host that is now over 90% full recycling.
+    fn seat(
+        &mut self,
+        target: Id,
+        job: Job<F>,
+        class: LifetimeClass,
+        now: Instant,
+    ) -> Id {
         let host = self.hosts.get_mut(&target).unwrap();
         if host.state == HostState::Empty {
             host.state = HostState::Open;
@@ -503,7 +518,51 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
             host.state = HostState::Recycling;
             host.residual = host.jobs.keys().copied().collect();
         }
-        Ok(target)
+        target
+    }
+    /// Move a placed job to the best other host, at `now`, and return that host's
+    /// id: [`migrate_with`](Self::migrate_with) with every host eligible.
+    pub fn migrate(&mut self, id: Id, now: Instant) -> Result<Id, Error> {
+        self.migrate_with(id, now, |_, _| true)
+    }
+    /// As [`migrate`](Self::migrate), but only to hosts `eligible` accepts.
+    ///
+    /// This is LARS's move (§4.4): the destination is chosen and has room **while
+    /// the job is still on its source**, and only then does the job leave the
+    /// source. If no other host has room the job is left exactly where it was and
+    /// [`Error::NoCapacity`] says so; the caller can try again later. The
+    /// destination is picked as for [`place`](Self::place), from the job's
+    /// predicted remaining lifetime now, and never the host the job is on.
+    ///
+    /// Unlike [`place`](Self::place) this does not fail the duplicate check,
+    /// which is what made re-placing a job after [`begin_drain`](Self::begin_drain)
+    /// impossible. [`Error::UnknownJob`] if the job is not placed,
+    /// [`Error::ClockWentBackwards`] if `now` is earlier than a time already given.
+    pub fn migrate_with(
+        &mut self,
+        id: Id,
+        now: Instant,
+        eligible: impl Fn(&Host<F>, &Job<F>) -> bool,
+    ) -> Result<Id, Error> {
+        let source = self.location(id).ok_or(Error::UnknownJob)?;
+        self.tick(now)?;
+        let job = &self.hosts[&source].jobs[&id];
+        let remaining = self
+            .predictor
+            .remaining(&job.features, now - job.started_at);
+        let class = LifetimeClass::of(remaining);
+        let target = self
+            .hosts
+            .values()
+            .filter(|h| {
+                h.id != source && h.schedulable && job.resources.fits(h.free()) && eligible(h, job)
+            })
+            .min_by_key(|h| self.score(h, job, class, remaining, now))
+            .map(|h| h.id)
+            .ok_or(Error::NoCapacity)?;
+        // The destination is settled; now the job leaves the source.
+        let job = self.remove(id, now)?;
+        Ok(self.seat(target, job, class, now))
     }
     fn score(
         &self,
@@ -512,7 +571,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
         class: LifetimeClass,
         remaining: Duration,
         now: Instant,
-    ) -> (u8, u8, usize, u128, HostId) {
+    ) -> (u8, u8, usize, u128, Id) {
         let (tier, distance) = match (host.state, host.class) {
             (HostState::Recycling, Some(c)) if c > class => (0, c.index() - class.index()),
             (HostState::Open, Some(c)) if c == class => (1, 0),
@@ -540,7 +599,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
     /// The job leaves the host's residual set before the host is refreshed, so an
     /// exit at the moment of a deadline counts as an exit and not as a timeout.
     /// [`Error::UnknownJob`] if it is not placed.
-    pub fn remove(&mut self, id: JobId, now: Instant) -> Result<Job<F>, Error> {
+    pub fn remove(&mut self, id: Id, now: Instant) -> Result<Job<F>, Error> {
         let host_id = self.location(id).ok_or(Error::UnknownJob)?;
         if now < self.now {
             return Err(Error::ClockWentBackwards);
@@ -561,18 +620,20 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
     ///
     /// The order is the paper's (§4.4): the job with the longest predicted remaining
     /// lifetime first, so shorter-lived jobs may exit while the long ones are
-    /// moving. Ties go to the lower id. Each job is then placed again with
-    /// [`place`](Self::place), the same algorithm as for a new job. The approval
+    /// moving. Ties go to the lower id. Each job is then moved with
+    /// [`migrate`](Self::migrate), which scores destinations as [`place`](Self::place)
+    /// does but keeps the job on the draining host until one is found (calling
+    /// `place` on a job that is still placed is refused as a duplicate). The approval
     /// gate is this port's, not the paper's: `approved` says whether a job may be
     /// migrated at all, and a single refusal leaves the host untouched.
     ///
     /// [`Error::UnknownHost`] if there is no such host.
     pub fn begin_drain(
         &mut self,
-        id: HostId,
+        id: Id,
         now: Instant,
         approved: impl Fn(&Job<F>) -> bool,
-    ) -> Result<Vec<JobId>, Error> {
+    ) -> Result<Vec<Id>, Error> {
         let host = self.hosts.get(&id).ok_or(Error::UnknownHost)?;
         if !host.jobs.values().all(approved) {
             return Err(Error::MigrationNotApproved);
@@ -676,9 +737,9 @@ mod tests {
             cpu: Cpu::millicores(100),
             memory: Memory::bytes(100),
         };
-        scheduler.add_host(1, capacity).unwrap();
+        scheduler.add_host(Id(1), capacity).unwrap();
         let job = Job {
-            id: 7,
+            id: Id(7),
             resources: Resources {
                 cpu: Cpu::millicores(1),
                 memory: Memory::bytes(1),
@@ -695,12 +756,12 @@ mod tests {
     #[test]
     fn a_host_in_lc_forever_never_times_out() {
         let mut scheduler = scheduler_with_one_job(hours(5000));
-        let host = scheduler.host(1).unwrap();
+        let host = scheduler.host(Id(1)).unwrap();
         assert_eq!(host.class(), Some(LcForever));
         assert_eq!(host.deadline(), Some(Instant::MAX));
 
         scheduler.tick(Instant::from_epoch(hours(1_000_000))).unwrap();
-        let host = scheduler.host(1).unwrap();
+        let host = scheduler.host(Id(1)).unwrap();
         assert_eq!(host.class(), Some(LcForever));
         assert!(
             host.residual().is_empty(),
@@ -713,19 +774,119 @@ mod tests {
     #[test]
     fn an_lc4_host_times_out_at_1100_hours_and_is_promoted() {
         let mut scheduler = scheduler_with_one_job(hours(500));
-        let host = scheduler.host(1).unwrap();
+        let host = scheduler.host(Id(1)).unwrap();
         assert_eq!(host.class(), Some(Lc4));
         assert_eq!(host.deadline(), Some(Instant::from_epoch(hours(1100))));
 
         scheduler.tick(Instant::from_epoch(hours(1099))).unwrap();
-        assert_eq!(scheduler.host(1).unwrap().class(), Some(Lc4));
-        assert!(scheduler.host(1).unwrap().residual().is_empty());
+        assert_eq!(scheduler.host(Id(1)).unwrap().class(), Some(Lc4));
+        assert!(scheduler.host(Id(1)).unwrap().residual().is_empty());
 
         scheduler.tick(Instant::from_epoch(hours(1100))).unwrap();
-        let host = scheduler.host(1).unwrap();
+        let host = scheduler.host(Id(1)).unwrap();
         assert_eq!(host.class(), Some(LcForever));
-        assert_eq!(host.residual().iter().copied().collect::<Vec<_>>(), [7]);
+        assert_eq!(host.residual().iter().copied().collect::<Vec<_>>(), [Id(7)]);
         assert_eq!(host.deadline(), Some(Instant::MAX));
+    }
+
+    /// A job with `id`, predicted to live `predicted` more, started at zero.
+    fn job(id: Id, predicted: Duration) -> Job<EmpiricalLifetime> {
+        Job {
+            id,
+            resources: Resources {
+                cpu: Cpu::millicores(1),
+                memory: Memory::bytes(1),
+            },
+            started_at: Instant::EPOCH,
+            features: EmpiricalLifetime::new(vec![predicted], hours(1)).unwrap(),
+        }
+    }
+
+    /// The instant `since_epoch` after the clock's zero.
+    fn at(since_epoch: Duration) -> Instant {
+        Instant::from_epoch(since_epoch)
+    }
+
+    /// A host big enough for any of these tests' jobs.
+    fn roomy() -> Resources {
+        Resources {
+            cpu: Cpu::millicores(100),
+            memory: Memory::bytes(100),
+        }
+    }
+
+    /// A host promoted on timeout recycles: it takes no new jobs of the higher
+    /// class, and when the residual jobs have gone it drops back a class (§4.3).
+    /// Left `Open`, the demotion, which needs `Recycling`, never ran.
+    #[test]
+    fn a_host_promoted_on_timeout_recycles_and_is_demoted_when_its_residual_exits() {
+        let mut scheduler = Scheduler::new(EmpiricalPredictor);
+        scheduler.add_host(Id(1), roomy()).unwrap();
+        scheduler
+            .place(job(Id(7), Duration::from_secs(1800)), Instant::EPOCH)
+            .unwrap();
+        assert_eq!(scheduler.host(Id(1)).unwrap().class(), Some(Lc1));
+        assert_eq!(scheduler.host(Id(1)).unwrap().state(), HostState::Open);
+
+        // Past 1.1 hours the job is still there: the host is promoted.
+        scheduler.tick(at(hours(2))).unwrap();
+        let host = scheduler.host(Id(1)).unwrap();
+        assert_eq!(host.class(), Some(Lc2));
+        assert_eq!(host.state(), HostState::Recycling);
+        assert_eq!(host.residual().iter().copied().collect::<Vec<_>>(), [Id(7)]);
+
+        // A second job joins; when the residual job exits the host drops a class.
+        scheduler.place(job(Id(8), hours(5)), at(hours(2))).unwrap();
+        scheduler.remove(Id(7), at(hours(2))).unwrap();
+        let host = scheduler.host(Id(1)).unwrap();
+        assert_eq!(host.class(), Some(Lc1));
+        assert_eq!(host.state(), HostState::Recycling);
+    }
+
+    /// A drained host's jobs can be moved: the destination is found while the job
+    /// is still on its source. Re-placing it was refused as a duplicate.
+    #[test]
+    fn a_job_on_a_draining_host_migrates_to_another_host() {
+        let mut scheduler = Scheduler::new(EmpiricalPredictor);
+        scheduler.add_host(Id(1), roomy()).unwrap();
+        scheduler.add_host(Id(2), roomy()).unwrap();
+        scheduler.place(job(Id(7), hours(2)), Instant::EPOCH).unwrap();
+        assert_eq!(scheduler.location(Id(7)), Some(Id(1)));
+
+        let order = scheduler.begin_drain(Id(1), Instant::EPOCH, |_| true).unwrap();
+        assert_eq!(order, [Id(7)]);
+        assert_eq!(
+            scheduler.place(job(Id(7), hours(2)), Instant::EPOCH),
+            Err(Error::DuplicateJob),
+            "placing a job that is still placed is a duplicate"
+        );
+
+        assert_eq!(scheduler.migrate(Id(7), Instant::EPOCH), Ok(Id(2)));
+        assert_eq!(scheduler.location(Id(7)), Some(Id(2)));
+        assert_eq!(scheduler.host(Id(1)).unwrap().state(), HostState::Empty);
+        assert_eq!(scheduler.host(Id(2)).unwrap().state(), HostState::Open);
+    }
+
+    /// A migration with nowhere to go leaves the job where it was: the source
+    /// record is not destroyed before the destination exists.
+    #[test]
+    fn a_migration_with_no_destination_keeps_the_job_on_its_source() {
+        let mut scheduler = Scheduler::new(EmpiricalPredictor);
+        scheduler.add_host(Id(1), roomy()).unwrap();
+        scheduler.place(job(Id(7), hours(2)), Instant::EPOCH).unwrap();
+        scheduler.begin_drain(Id(1), Instant::EPOCH, |_| true).unwrap();
+
+        assert_eq!(
+            scheduler.migrate(Id(7), Instant::EPOCH),
+            Err(Error::NoCapacity),
+            "the only other candidate would be the host it is on"
+        );
+        assert_eq!(scheduler.location(Id(7)), Some(Id(1)));
+        assert_eq!(scheduler.host(Id(1)).unwrap().jobs().count(), 1);
+        assert_eq!(
+            scheduler.migrate(Id(99), Instant::EPOCH),
+            Err(Error::UnknownJob)
+        );
     }
 
     /// §4.2's own example: a 70-minute extension has temporal cost 2.
@@ -744,10 +905,10 @@ mod tests {
             cpu: Cpu::millicores(100),
             memory: Memory::bytes(100),
         };
-        scheduler.add_host(1, capacity).unwrap();
+        scheduler.add_host(Id(1), capacity).unwrap();
 
         let job = Job {
-            id: 7,
+            id: Id(7),
             resources: Resources {
                 cpu: Cpu::millicores(1),
                 memory: Memory::bytes(1),
@@ -756,12 +917,12 @@ mod tests {
             // Predicted to live two more hours: LC2.
             features: EmpiricalLifetime::new(vec![hours(2)], hours(1)).unwrap(),
         };
-        assert_eq!(scheduler.place(job, Instant::EPOCH), Ok(1));
+        assert_eq!(scheduler.place(job, Instant::EPOCH), Ok(Id(1)));
 
-        let host = scheduler.host(1).unwrap();
+        let host = scheduler.host(Id(1)).unwrap();
         assert_eq!(host.state(), HostState::Open);
         assert_eq!(host.class(), Some(Lc2));
         assert_eq!(host.deadline(), Some(Instant::from_epoch(hours(11))));
-        assert_eq!(scheduler.location(7), Some(1));
+        assert_eq!(scheduler.location(Id(7)), Some(Id(1)));
     }
 }

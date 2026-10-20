@@ -25,7 +25,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 
 use crate::composed::model::*;
 use crate::composed::steps::*;
@@ -43,7 +43,7 @@ verus! {
 /// Where `PassToken` sends the composed machine: the routing layer's
 /// assignment, ownership untouched, and the recipient's debt discharged —
 /// receiving the privilege *is* learning the truth.
-pub open spec fn pass_post(c: Composed, n: HostId, head: HostId) -> Composed {
+pub open spec fn pass_post(c: Composed, n: Id, head: Id) -> Composed {
     Composed {
         own: c.own,
         ray: assign_post(c.ray, n, head),
@@ -54,7 +54,7 @@ pub open spec fn pass_post(c: Composed, n: HostId, head: HostId) -> Composed {
 
 /// Where `ray_seize` sends the routing layer. **Only `to` acts**: nothing
 /// belonging to the old holder is touched.
-pub open spec fn seize_ray_post(r: Raymond, to: HostId) -> Raymond {
+pub open spec fn seize_ray_post(r: Raymond, to: Id) -> Raymond {
     Raymond {
         nodes: r.nodes,
         holder: r.holder.insert(to, to),
@@ -68,7 +68,7 @@ pub open spec fn seize_ray_post(r: Raymond, to: HostId) -> Raymond {
 
 /// Where `SeizeToken` sends the composed machine: `from` now owes a
 /// reconciliation and `to` no longer does.
-pub open spec fn seize_post(c: Composed, from: HostId, to: HostId) -> Composed {
+pub open spec fn seize_post(c: Composed, from: Id, to: Id) -> Composed {
     Composed {
         own: c.own,
         ray: seize_ray_post(c.ray, to),
@@ -79,7 +79,7 @@ pub open spec fn seize_post(c: Composed, from: HostId, to: HostId) -> Composed {
 
 /// Where `ray_reconcile` sends the routing layer: the stale holder re-points at
 /// the real one and leaves the critical section it thought it was in.
-pub open spec fn reconcile_ray_post(r: Raymond, n: HostId) -> Raymond {
+pub open spec fn reconcile_ray_post(r: Raymond, n: Id) -> Raymond {
     Raymond {
         nodes: r.nodes,
         holder: r.holder.insert(n, r.privilege),
@@ -92,7 +92,7 @@ pub open spec fn reconcile_ray_post(r: Raymond, n: HostId) -> Raymond {
 }
 
 /// Where `Reconcile` sends the composed machine.
-pub open spec fn reconcile_post(c: Composed, n: HostId) -> Composed {
+pub open spec fn reconcile_post(c: Composed, n: Id) -> Composed {
     Composed {
         own: c.own,
         ray: reconcile_ray_post(c.ray, n),
@@ -103,7 +103,7 @@ pub open spec fn reconcile_post(c: Composed, n: HostId) -> Composed {
 
 /// Where `AcquireUnderToken` sends the composed machine: the ownership layer's
 /// acquire, routing untouched.
-pub open spec fn acquire_under_token_post(c: Composed, n: HostId) -> Composed {
+pub open spec fn acquire_under_token_post(c: Composed, n: Id) -> Composed {
     Composed {
         own: acquire_post(c.own, c.actor, n),
         ray: c.ray,
@@ -114,7 +114,7 @@ pub open spec fn acquire_under_token_post(c: Composed, n: HostId) -> Composed {
 
 /// When the routing layer's own step fires and the actor has been released, the
 /// composed machine passes the token — to exactly the state computed.
-pub proof fn theorem_pass_token_step_refines(c: Composed, n: HostId, head: HostId)
+pub proof fn theorem_pass_token_step_refines(c: Composed, n: Id, head: Id)
     requires
         c.own.actors.contains_key(c.actor),
         c.own.live.contains(n),
@@ -144,8 +144,8 @@ pub proof fn theorem_pass_token_step_refines(c: Composed, n: HostId, head: HostI
 pub proof fn theorem_pass_token_refuses_while_the_actor_is_held(
     c: Composed,
     post: Composed,
-    n: HostId,
-    head: HostId,
+    n: Id,
+    head: Id,
 )
     requires
         c.own.actors.contains_key(c.actor),
@@ -160,8 +160,8 @@ pub proof fn theorem_pass_token_refuses_while_the_actor_is_held(
 pub proof fn theorem_pass_token_refuses_when_the_routing_step_does(
     c: Composed,
     post: Composed,
-    n: HostId,
-    head: HostId,
+    n: Id,
+    head: Id,
 )
     requires
         ray_maps_total(c.ray),
@@ -184,7 +184,7 @@ pub proof fn theorem_pass_token_refuses_when_the_routing_step_does(
 }
 
 /// When the seize step fires, `cs_seize_token` fires, to exactly the state computed: only `to` acts, and `from` now owes a reconciliation.
-pub proof fn theorem_seize_step_refines(c: Composed, from: HostId, to: HostId)
+pub proof fn theorem_seize_step_refines(c: Composed, from: Id, to: Id)
     requires
         c.own.actors.contains_key(c.actor),
         c.own.live.contains(to),
@@ -207,8 +207,8 @@ pub proof fn theorem_seize_step_refines(c: Composed, from: HostId, to: HostId)
 pub proof fn theorem_seize_step_refuses_exactly_when_disabled(
     c: Composed,
     post: Composed,
-    from: HostId,
-    to: HostId,
+    from: Id,
+    to: Id,
 )
     requires
         c.own.actors.contains_key(c.actor),
@@ -228,7 +228,7 @@ pub proof fn theorem_seize_step_refuses_exactly_when_disabled(
 /// privilege, the composed machine acquires — to exactly the state computed.
 pub proof fn theorem_acquire_under_token_step_refines(
     c: Composed,
-    n: HostId,
+    n: Id,
     e: Epoch,
     granted: bool,
 )
@@ -249,7 +249,7 @@ pub proof fn theorem_acquire_under_token_step_refines(
 pub proof fn theorem_acquire_under_token_refuses_a_node_without_the_privilege(
     c: Composed,
     post: Composed,
-    n: HostId,
+    n: Id,
 )
     requires
         !acquire_under_token_fires(c.ray.privilege, n),
@@ -259,7 +259,7 @@ pub proof fn theorem_acquire_under_token_refuses_a_node_without_the_privilege(
 }
 
 /// When the reconcile step fires, `cs_reconcile` fires, to exactly the state computed.
-pub proof fn theorem_reconcile_step_refines(c: Composed, n: HostId)
+pub proof fn theorem_reconcile_step_refines(c: Composed, n: Id)
     requires
         ray_maps_total(c.ray),
         c.ray.nodes.contains(n),
@@ -273,7 +273,7 @@ pub proof fn theorem_reconcile_step_refines(c: Composed, n: HostId)
 pub proof fn theorem_reconcile_step_refuses_exactly_when_disabled(
     c: Composed,
     post: Composed,
-    n: HostId,
+    n: Id,
 )
     requires
         ray_maps_total(c.ray),

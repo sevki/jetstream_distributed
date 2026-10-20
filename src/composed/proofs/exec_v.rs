@@ -25,7 +25,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::{HostId, HostSet};
+use crate::id::{Id, IdSet};
 
 use crate::composed::exec::*;
 use crate::composed::model::*;
@@ -47,7 +47,7 @@ verus! {
 pub open spec fn stands_for_composed(
     own: RegistryCore,
     ray: RayTable,
-    seized: HostSet,
+    seized: IdSet,
     c: Composed,
 ) -> bool {
     &&& stands_for(own, c.own, c.actor)
@@ -60,11 +60,11 @@ pub proof fn theorem_pass_token_is_cs_pass_token(
     own: RegistryCore,
     ray: RayTable,
     ray2: RayTable,
-    seized: HostSet,
-    seized2: HostSet,
+    seized: IdSet,
+    seized2: IdSet,
     c: Composed,
-    me: HostId,
-    head: HostId,
+    me: Id,
+    head: Id,
 )
     requires
         stands_for_composed(own, ray, seized, c),
@@ -87,15 +87,15 @@ pub proof fn theorem_pass_token_is_cs_pass_token(
 pub proof fn theorem_refused_pass_token_is_disabled(
     own: RegistryCore,
     ray: RayTable,
-    seized: HostSet,
+    seized: IdSet,
     c: Composed,
     post: Composed,
-    me: HostId,
-    head: HostId,
+    me: Id,
+    head: Id,
 )
     requires
         stands_for_composed(own, ray, seized, c),
-        !is_unowned(own.state.view()) || forall|p: Raymond, h: HostId|
+        !is_unowned(own.state.view()) || forall|p: Raymond, h: Id|
             !ray_assign_privilege(ray@, p, me, h),
     ensures
         !cs_pass_token(c, post, me, head),
@@ -108,11 +108,11 @@ pub proof fn theorem_seize_token_is_cs_seize_token(
     own: RegistryCore,
     ray: RayTable,
     ray2: RayTable,
-    seized: HostSet,
-    seized2: HostSet,
+    seized: IdSet,
+    seized2: IdSet,
     c: Composed,
-    from: HostId,
-    to: HostId,
+    from: Id,
+    to: Id,
 )
     requires
         stands_for_composed(own, ray, seized, c),
@@ -134,10 +134,10 @@ pub proof fn theorem_seize_token_is_cs_seize_token(
 pub proof fn theorem_refused_seize_token_is_disabled(
     own: RegistryCore,
     ray: RayTable,
-    seized: HostSet,
+    seized: IdSet,
     c: Composed,
     post: Composed,
-    to: HostId,
+    to: Id,
 )
     requires
         stands_for_composed(own, ray, seized, c),
@@ -154,9 +154,9 @@ pub proof fn theorem_acquire_under_token_is_cs_acquire_under_token(
     own: RegistryCore,
     own2: RegistryCore,
     ray: RayTable,
-    seized: HostSet,
+    seized: IdSet,
     c: Composed,
-    node: HostId,
+    node: Id,
     epoch: u64,
 )
     requires
@@ -186,10 +186,10 @@ pub proof fn theorem_acquire_under_token_is_cs_acquire_under_token(
 pub proof fn theorem_acquire_without_the_privilege_is_disabled(
     own: RegistryCore,
     ray: RayTable,
-    seized: HostSet,
+    seized: IdSet,
     c: Composed,
     post: Composed,
-    node: HostId,
+    node: Id,
 )
     requires
         stands_for_composed(own, ray, seized, c),
@@ -204,10 +204,10 @@ pub proof fn theorem_reconcile_is_cs_reconcile(
     own: RegistryCore,
     ray: RayTable,
     ray2: RayTable,
-    seized: HostSet,
-    seized2: HostSet,
+    seized: IdSet,
+    seized2: IdSet,
     c: Composed,
-    node: HostId,
+    node: Id,
 )
     requires
         stands_for_composed(own, ray, seized, c),
@@ -227,10 +227,10 @@ pub proof fn theorem_reconcile_is_cs_reconcile(
 pub proof fn theorem_refused_reconcile_is_disabled(
     own: RegistryCore,
     ray: RayTable,
-    seized: HostSet,
+    seized: IdSet,
     c: Composed,
     post: Composed,
-    node: HostId,
+    node: Id,
 )
     requires
         stands_for_composed(own, ray, seized, c),

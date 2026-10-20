@@ -16,7 +16,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
@@ -52,7 +52,7 @@ verus! {
 ///
 /// and in the final state A still physically holds its epoch-41 token, yet has
 /// no authority whatsoever.
-pub proof fn scenario_stale_owner_returns(x: ActorId, a: HostId, b: HostId)
+pub proof fn scenario_stale_owner_returns(x: Id, a: Id, b: Id)
     requires
         a != b,
     ensures
@@ -111,13 +111,13 @@ pub proof fn scenario_stale_owner_returns(x: ActorId, a: HostId, b: HostId)
                 &&& tr[9].network.contains(Message::Grant { actor: x, to: a, epoch: 41 })
             },
 {
-    let nodes = Set::<HostId>::empty().insert(a).insert(b);
+    let nodes = Set::<Id>::empty().insert(a).insert(b);
     let stale = Token { actor: x, epoch: 41, holder: a };
     let grant_41 = Message::Grant { actor: x, to: a, epoch: 41 };
 
     // --- initial state -----------------------------------------------------
     let s0 = OwnershipSystem {
-        actors: Map::<ActorId, OwnershipState>::empty().insert(
+        actors: Map::<Id, OwnershipState>::empty().insert(
             x,
             OwnershipState::Unowned { epoch: 41, intended_owner: a },
         ),
@@ -354,8 +354,8 @@ pub proof fn scenario_stale_owner_returns(x: ActorId, a: HostId, b: HostId)
 pub proof fn theorem_stale_grant_cannot_be_used(
     pre: OwnershipSystem,
     post: OwnershipSystem,
-    a: ActorId,
-    n: HostId,
+    a: Id,
+    n: Id,
     e: Epoch,
 )
     requires
@@ -441,7 +441,7 @@ pub proof fn theorem_crash_recovery_cannot_change_ownership(pre: OwnershipSystem
 /// and exports the abort as a named step between reachable states. Without it,
 /// the step property remains provable even if `AbortTransfer` were changed to
 /// be always false - a conditional lemma about an unreachable transition.
-pub proof fn scenario_interrupted_transfer(x: ActorId, a: HostId, b: HostId)
+pub proof fn scenario_interrupted_transfer(x: Id, a: Id, b: Id)
     requires
         a != b,
     ensures
@@ -471,12 +471,12 @@ pub proof fn scenario_interrupted_transfer(x: ActorId, a: HostId, b: HostId)
                 &&& tr[4].issued.contains(Token { actor: x, epoch: 41, holder: a })
             },
 {
-    let nodes = Set::<HostId>::empty().insert(a).insert(b);
+    let nodes = Set::<Id>::empty().insert(a).insert(b);
     let stale = Token { actor: x, epoch: 41, holder: a };
     let grant_41 = Message::Grant { actor: x, to: a, epoch: 41 };
 
     let s0 = OwnershipSystem {
-        actors: Map::<ActorId, OwnershipState>::empty().insert(
+        actors: Map::<Id, OwnershipState>::empty().insert(
             x,
             OwnershipState::Unowned { epoch: 41, intended_owner: a },
         ),
@@ -605,9 +605,9 @@ pub proof fn scenario_interrupted_transfer(x: ActorId, a: HostId, b: HostId)
 pub proof fn theorem_interrupted_transfer_burns_the_epoch(
     pre: OwnershipSystem,
     post: OwnershipSystem,
-    x: ActorId,
-    a: HostId,
-    b: HostId,
+    x: Id,
+    a: Id,
+    b: Id,
     e: Epoch,
 )
     requires
@@ -650,7 +650,7 @@ pub proof fn theorem_interrupted_transfer_burns_the_epoch(
 pub proof fn theorem_complete_release_needs_the_matching_released(
     pre: OwnershipSystem,
     post: OwnershipSystem,
-    a: ActorId,
+    a: Id,
 )
     requires
         step(pre, post, Step::CompleteRelease { actor: a }),
@@ -695,9 +695,9 @@ pub proof fn theorem_complete_release_needs_the_matching_released(
 pub proof fn theorem_complete_release_outcome_is_fixed_by_state(
     pre: OwnershipSystem,
     post: OwnershipSystem,
-    a: ActorId,
-    from: HostId,
-    to: HostId,
+    a: Id,
+    from: Id,
+    to: Id,
     old_epoch: Epoch,
     new_epoch: Epoch,
 )
@@ -713,7 +713,7 @@ pub proof fn theorem_complete_release_outcome_is_fixed_by_state(
     ensures
         post.actors[a] == (OwnershipState::Unowned { epoch: new_epoch, intended_owner: to }),
         current_epoch(post.actors[a]) == new_epoch,
-        forall|n: HostId| !(#[trigger] may_mutate(post.actors[a], n, new_epoch)),
+        forall|n: Id| !(#[trigger] may_mutate(post.actors[a], n, new_epoch)),
 {
     assert(tr_complete_release(pre, post, a));
 }

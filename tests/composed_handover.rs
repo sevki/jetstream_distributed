@@ -17,7 +17,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
 use jetstream_distributed::composed::service::{Composed, Coordinator, Event};
-use jetstream_distributed::host::HostId;
+use jetstream_distributed::id::Id;
 use jetstream_distributed::ownership::service::{MemoryFloor, Offer};
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
@@ -27,11 +27,11 @@ const ADDR_B: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
 const ADDR_C: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3));
 const STRANGER: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 9, 9, 9));
 
-const A: HostId = 0;
-const B: HostId = 1;
-const C: HostId = 2;
+const A: Id = Id(0);
+const B: Id = Id(1);
+const C: Id = Id(2);
 
-fn roster() -> HashMap<IpAddr, HostId> {
+fn roster() -> HashMap<IpAddr, Id> {
     HashMap::from([(ADDR_A, A), (ADDR_B, B), (ADDR_C, C)])
 }
 
@@ -224,7 +224,7 @@ async fn seizure_has_its_own_refusals() {
     assert_eq!(code(c.seize_token(A).await.unwrap_err()), Some("NO".into()));
     // Not a node.
     assert_eq!(
-        code(c.seize_token(99).await.unwrap_err()),
+        code(c.seize_token(Id(99)).await.unwrap_err()),
         Some("ERR".into())
     );
     // Nobody owes anything, so nobody may reconcile.
@@ -289,9 +289,9 @@ async fn a_stranger_is_refused_by_every_door() {
 fn both_layers_are_built_from_one_roster_or_not_at_all() {
     let floor = || Arc::new(MemoryFloor::new());
     // The actor cannot be offered to a node that is not on the roster.
-    assert!(Coordinator::star(roster(), 9, floor(), A).is_err());
+    assert!(Coordinator::star(roster(), Id(9), floor(), A).is_err());
     // Nor can the privilege start at one.
-    assert!(Coordinator::star(roster(), A, floor(), 9).is_err());
+    assert!(Coordinator::star(roster(), A, floor(), Id(9)).is_err());
     // And the routing tree is checked: B and C point at each other, off to one
     // side of the root A.
     let cycle = HashMap::from([(B, C), (C, B)]);

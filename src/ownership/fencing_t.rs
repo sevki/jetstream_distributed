@@ -8,7 +8,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 
 use crate::ownership::model::*;
 
@@ -87,8 +87,8 @@ pub proof fn lemma_stale_fails_fence(s: OwnershipState, e: Epoch)
 /// Beginning a transfer strictly advances the epoch, which is what fences the
 /// outgoing owner.
 pub proof fn lemma_begin_transfer_advances_epoch(
-    from: HostId,
-    to: HostId,
+    from: Id,
+    to: Id,
     old_epoch: Epoch,
 )
     ensures

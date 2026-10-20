@@ -29,7 +29,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 use crate::swim::model::*;
 use crate::swim::proofs::refinement::*;
 use crate::swim::steps::*;
@@ -42,7 +42,7 @@ verus! {
 pub struct SwimTable {
     /// The members, each once. Private: a table built or edited from outside
     /// could have an id with no record, and every method here assumes it does not.
-    ids: Vec<HostId>,
+    ids: Vec<Id>,
     /// `records[i]` is what is believed about `ids[i]`.
     records: Vec<ExecRecord>,
 }
@@ -57,12 +57,12 @@ impl SwimTable {
     }
 
     /// Whether `n` has an entry.
-    pub closed spec fn has_entry(&self, n: HostId) -> bool {
+    pub closed spec fn has_entry(&self, n: Id) -> bool {
         exists|i: int| 0 <= i < self.ids@.len() && self.ids@[i] == n
     }
 
     /// What the table believes about `n`: its entry, or the fresh record.
-    pub closed spec fn record(&self, n: HostId) -> MemberRecord {
+    pub closed spec fn record(&self, n: Id) -> MemberRecord {
         if self.has_entry(n) {
             self.records@[choose|i: int| 0 <= i < self.ids@.len() && self.ids@[i] == n].view()
         } else {
@@ -71,7 +71,7 @@ impl SwimTable {
     }
 
     /// Where `id` is, if it is.
-    fn find(&self, id: HostId) -> (found: Option<usize>)
+    fn find(&self, id: Id) -> (found: Option<usize>)
         requires
             self.well_formed(),
         ensures
@@ -99,13 +99,13 @@ impl SwimTable {
     pub fn new() -> (t: SwimTable)
         ensures
             t.well_formed(),
-            forall|n: HostId| t.record(n) == fresh_record(),
+            forall|n: Id| t.record(n) == fresh_record(),
     {
         SwimTable { ids: Vec::new(), records: Vec::new() }
     }
 
     /// `record_of`: what the table believes about `id`.
-    pub fn get(&self, id: HostId) -> (r: ExecRecord)
+    pub fn get(&self, id: Id) -> (r: ExecRecord)
         requires
             self.well_formed(),
         ensures
@@ -126,19 +126,19 @@ impl SwimTable {
     }
 
     /// Write `rec` as the belief about `id`. Nothing else changes.
-    fn put(&mut self, id: HostId, rec: ExecRecord)
+    fn put(&mut self, id: Id, rec: ExecRecord)
         requires
             old(self).well_formed(),
         ensures
             final(self).well_formed(),
             final(self).record(id) == rec.view(),
-            forall|n: HostId| n != id ==> final(self).record(n) == old(self).record(n),
+            forall|n: Id| n != id ==> final(self).record(n) == old(self).record(n),
     {
         match self.find(id) {
             Some(i) => {
                 self.records.set(i, rec);
                 proof {
-                    assert forall|n: HostId| n != id implies self.record(n) == old(self).record(n) by {
+                    assert forall|n: Id| n != id implies self.record(n) == old(self).record(n) by {
                         if old(self).has_entry(n) {
                             let j = choose|j: int| 0 <= j < old(self).ids@.len() && old(self).ids@[j] == n;
                             assert(self.ids@[j] == n);
@@ -173,7 +173,7 @@ impl SwimTable {
                             assert(old(self).ids@[k] != id);
                         }
                     }
-                    assert forall|n: HostId| n != id implies self.record(n) == old(self).record(n) by {
+                    assert forall|n: Id| n != id implies self.record(n) == old(self).record(n) by {
                         if old(self).has_entry(n) {
                             let j = choose|j: int| 0 <= j < old(self).ids@.len() && old(self).ids@[j] == n;
                             assert(self.ids@[j] == n);
@@ -217,13 +217,13 @@ impl SwimTable {
 
     /// `tr_gossip`: adopt `incoming` about `id` if it is at least as
     /// authoritative as what is held. Returns whether the belief changed.
-    pub fn learn(&mut self, id: HostId, incoming: ExecRecord) -> (changed: bool)
+    pub fn learn(&mut self, id: Id, incoming: ExecRecord) -> (changed: bool)
         requires
             old(self).well_formed(),
         ensures
             final(self).well_formed(),
             final(self).record(id) == merge(old(self).record(id), incoming.view()),
-            forall|n: HostId| n != id ==> final(self).record(n) == old(self).record(n),
+            forall|n: Id| n != id ==> final(self).record(n) == old(self).record(n),
             changed == (final(self).record(id) != old(self).record(id)),
     {
         /* The table is a pair of vectors rather than a `HashMap` (vstd's hash-map
@@ -270,7 +270,7 @@ impl SwimTable {
     ///
     /// At the top of the incarnation space there is nothing to refute with: the
     /// first step has happened, the second has not, and it says so.
-    pub fn hear(&mut self, id: HostId, incoming: ExecRecord, me: HostId) -> (r: Result<
+    pub fn hear(&mut self, id: Id, incoming: ExecRecord, me: Id) -> (r: Result<
         Heard,
         SwimRefusal,
     >)
@@ -278,7 +278,7 @@ impl SwimTable {
             old(self).well_formed(),
         ensures
             final(self).well_formed(),
-            forall|n: HostId| n != id ==> final(self).record(n) == old(self).record(n),
+            forall|n: Id| n != id ==> final(self).record(n) == old(self).record(n),
             ({
                 let merged = merge(old(self).record(id), incoming.view());
                 let changed = merged != old(self).record(id);

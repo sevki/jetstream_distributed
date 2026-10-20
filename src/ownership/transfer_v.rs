@@ -18,7 +18,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
@@ -27,28 +27,28 @@ use crate::ownership::spec::*;
 verus! {
 
 /// Stage 1 of a handover: `a` owns the actor at `e`.
-pub open spec fn stage_owned(a: HostId, e: Epoch) -> OwnershipState {
+pub open spec fn stage_owned(a: Id, e: Epoch) -> OwnershipState {
     OwnershipState::Owned { owner: a, epoch: e }
 }
 
 /// Stage 2: authority withdrawn from `a`, epoch `e + 1` allocated for `b`.
-pub open spec fn stage_transferring(a: HostId, b: HostId, e: Epoch) -> OwnershipState {
+pub open spec fn stage_transferring(a: Id, b: Id, e: Epoch) -> OwnershipState {
     OwnershipState::Transferring { from: a, to: b, old_epoch: e, new_epoch: e + 1 }
 }
 
 /// Stage 3: nobody owns the actor; `b` is the intended owner at `e + 1`.
-pub open spec fn stage_unowned(b: HostId, e: Epoch) -> OwnershipState {
+pub open spec fn stage_unowned(b: Id, e: Epoch) -> OwnershipState {
     OwnershipState::Unowned { epoch: e + 1, intended_owner: b }
 }
 
 /// Stage 4: `b` owns the actor at `e + 1`.
-pub open spec fn stage_acquired(b: HostId, e: Epoch) -> OwnershipState {
+pub open spec fn stage_acquired(b: Id, e: Epoch) -> OwnershipState {
     OwnershipState::Owned { owner: b, epoch: e + 1 }
 }
 
 /// The epoch never goes backwards along a handover, and it strictly increases
 /// exactly once, at `BeginTransfer`.
-pub proof fn lemma_handover_epochs(a: HostId, b: HostId, e: Epoch)
+pub proof fn lemma_handover_epochs(a: Id, b: Id, e: Epoch)
     ensures
         current_epoch(stage_owned(a, e)) == e,
         current_epoch(stage_transferring(a, b, e)) == e + 1,
@@ -58,7 +58,7 @@ pub proof fn lemma_handover_epochs(a: HostId, b: HostId, e: Epoch)
 }
 
 /// Nobody at all may mutate during the two middle stages of a handover.
-pub proof fn lemma_handover_middle_has_no_owner(a: HostId, b: HostId, e: Epoch, n: HostId, x: Epoch)
+pub proof fn lemma_handover_middle_has_no_owner(a: Id, b: Id, e: Epoch, n: Id, x: Epoch)
     ensures
         !may_mutate(stage_transferring(a, b, e), n, x),
         !may_mutate(stage_unowned(b, e), n, x),
@@ -68,7 +68,7 @@ pub proof fn lemma_handover_middle_has_no_owner(a: HostId, b: HostId, e: Epoch, 
 /// The outgoing owner is fenced out from the moment the transfer starts, and
 /// stays fenced out for the rest of the handover - including after `b` has
 /// taken ownership.
-pub proof fn lemma_outgoing_owner_fenced(a: HostId, b: HostId, e: Epoch)
+pub proof fn lemma_outgoing_owner_fenced(a: Id, b: Id, e: Epoch)
     ensures
         !may_mutate(stage_transferring(a, b, e), a, e),
         !may_mutate(stage_unowned(b, e), a, e),
@@ -82,12 +82,12 @@ pub proof fn lemma_outgoing_owner_fenced(a: HostId, b: HostId, e: Epoch)
 /// At every stage of a handover at most one node has authority, and at the two
 /// middle stages that number is zero.
 pub proof fn lemma_handover_never_two_owners(
-    a: HostId,
-    b: HostId,
+    a: Id,
+    b: Id,
     e: Epoch,
-    n1: HostId,
+    n1: Id,
     e1: Epoch,
-    n2: HostId,
+    n2: Id,
     e2: Epoch,
 )
     ensures
@@ -101,7 +101,7 @@ pub proof fn lemma_handover_never_two_owners(
 
 /// An interrupted handover burns another epoch, so a `Grant` for the abandoned
 /// epoch is stale on arrival.
-pub proof fn lemma_aborted_handover_fences_both(a: HostId, b: HostId, e: Epoch)
+pub proof fn lemma_aborted_handover_fences_both(a: Id, b: Id, e: Epoch)
     ensures
         current_epoch(OwnershipState::Unowned { epoch: e + 2, intended_owner: a }) > current_epoch(
             stage_transferring(a, b, e),
@@ -112,7 +112,7 @@ pub proof fn lemma_aborted_handover_fences_both(a: HostId, b: HostId, e: Epoch)
 }
 
 /// A single transition never decreases an actor's epoch.
-pub proof fn lemma_step_epoch_monotone(pre: OwnershipSystem, post: OwnershipSystem, s: Step, a: ActorId)
+pub proof fn lemma_step_epoch_monotone(pre: OwnershipSystem, post: OwnershipSystem, s: Step, a: Id)
     requires
         step(pre, post, s),
         pre.actors.contains_key(a),

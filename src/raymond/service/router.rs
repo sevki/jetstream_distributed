@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use super::refusal::{refuse, refuse_err, refuse_no};
 use super::{Routing, Standing};
-use crate::host::HostId;
+use crate::id::Id;
 use crate::raymond::exec::RayTable;
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
@@ -17,33 +17,33 @@ use jetstream::prelude::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {
     Requested {
-        node: HostId,
+        node: Id,
     },
     Forwarded {
-        from: HostId,
-        to: HostId,
+        from: Id,
+        to: Id,
     },
     Received {
-        at: HostId,
-        from: HostId,
+        at: Id,
+        from: Id,
     },
     Passed {
-        from: HostId,
-        to: HostId,
+        from: Id,
+        to: Id,
     },
     Entered {
-        node: HostId,
+        node: Id,
     },
     Exited {
-        node: HostId,
+        node: Id,
     },
     /// The privilege was seized by the composed coordinator.
     Seized {
-        to: HostId,
+        to: Id,
     },
     /// A stale holder learned the truth.
     Reconciled {
-        node: HostId,
+        node: Id,
     },
 }
 
@@ -63,7 +63,7 @@ pub struct Router {
     inner: Arc<Mutex<Inner>>,
     /// Connection address to node number. The stated assumption; see the module
     /// docs.
-    roster: Arc<HashMap<IpAddr, HostId>>,
+    roster: Arc<HashMap<IpAddr, Id>>,
 }
 
 impl Router {
@@ -76,11 +76,11 @@ impl Router {
     /// one side of the root satisfies "exactly one root" and is not a Raymond
     /// state (`ray_acyclic`).
     pub fn new(
-        roster: HashMap<IpAddr, HostId>,
-        root: HostId,
-        parent: HashMap<HostId, HostId>,
+        roster: HashMap<IpAddr, Id>,
+        root: Id,
+        parent: HashMap<Id, Id>,
     ) -> io::Result<Self> {
-        let nodes: HashSet<HostId> = roster.values().copied().collect();
+        let nodes: HashSet<Id> = roster.values().copied().collect();
         let bad = |why: String| Err(io::Error::new(io::ErrorKind::InvalidInput, why));
         if !nodes.contains(&root) {
             return bad(format!("root {root} is not on the roster"));
@@ -130,7 +130,7 @@ impl Router {
     }
 
     /// Every node points straight at `root`.
-    pub fn star(roster: HashMap<IpAddr, HostId>, root: HostId) -> io::Result<Self> {
+    pub fn star(roster: HashMap<IpAddr, Id>, root: Id) -> io::Result<Self> {
         let parent = roster
             .values()
             .filter(|&&n| n != root)
@@ -140,7 +140,7 @@ impl Router {
     }
 
     /// Where the privilege actually is.
-    pub fn privilege(&self) -> HostId {
+    pub fn privilege(&self) -> Id {
         self.inner.lock().expect("router lock").table.privilege
     }
 
@@ -150,14 +150,14 @@ impl Router {
     }
 
     /// A node's queue, front first.
-    pub fn queue_of(&self, node: HostId) -> Option<Vec<HostId>> {
+    pub fn queue_of(&self, node: Id) -> Option<Vec<Id>> {
         let g = self.inner.lock().expect("router lock");
         let i = g.table.find(node)?;
         Some(g.table.entries[i].queue.iter().copied().collect())
     }
 
     /// A node's own entries, or `None` for a non-node.
-    pub fn standing_of(&self, node: HostId) -> Option<Standing> {
+    pub fn standing_of(&self, node: Id) -> Option<Standing> {
         let g = self.inner.lock().expect("router lock");
         Self::standing_locked(&g, node)
     }
@@ -179,7 +179,7 @@ impl Router {
     /// states malformed.
     pub fn well_formed(&self) -> bool {
         let g = self.inner.lock().expect("router lock");
-        let holder: HashMap<HostId, HostId> = g.table.entries.iter().map(|e| (e.id, e.holder)).collect();
+        let holder: HashMap<Id, Id> = g.table.entries.iter().map(|e| (e.id, e.holder)).collect();
         let n = holder.len();
         holder.get(&g.table.privilege) == Some(&g.table.privilege)
             && g.table
@@ -200,9 +200,9 @@ impl Router {
 
     /// The nodes that believe they hold the privilege and do not
     /// (`is_stale_holder`). Empty unless the privilege has been seized.
-    pub fn stale_holders(&self) -> Vec<HostId> {
+    pub fn stale_holders(&self) -> Vec<Id> {
         let g = self.inner.lock().expect("router lock");
-        let mut stale: Vec<HostId> = g
+        let mut stale: Vec<Id> = g
             .table
             .entries
             .iter()
@@ -225,7 +225,7 @@ impl Router {
         f(table, log)
     }
 
-    fn standing_locked(g: &Inner, node: HostId) -> Option<Standing> {
+    fn standing_locked(g: &Inner, node: Id) -> Option<Standing> {
         let e = &g.table.entries[g.table.find(node)?];
         Some(Standing {
             holder: e.holder,
@@ -236,7 +236,7 @@ impl Router {
         })
     }
 
-    fn caller(&self, ctx: &Context) -> Result<HostId> {
+    fn caller(&self, ctx: &Context) -> Result<Id> {
         match ctx.remote() {
             Some(RemoteAddr::IpAddr(addr)) => self
                 .roster
@@ -264,7 +264,7 @@ impl Routing for Router {
         Ok(())
     }
 
-    async fn make_request(&self, ctx: Context) -> Result<HostId> {
+    async fn make_request(&self, ctx: Context) -> Result<Id> {
         let me = self.caller(&ctx)?;
         let mut g = self.inner.lock().expect("router lock");
         let dest = g.table.make_request(me).map_err(refuse)?;
@@ -272,7 +272,7 @@ impl Routing for Router {
         Ok(dest)
     }
 
-    async fn receive_request(&self, ctx: Context, from: HostId) -> Result<()> {
+    async fn receive_request(&self, ctx: Context, from: Id) -> Result<()> {
         let at = self.caller(&ctx)?;
         let mut g = self.inner.lock().expect("router lock");
         g.table.receive_request(at, from).map_err(refuse)?;
@@ -280,7 +280,7 @@ impl Routing for Router {
         Ok(())
     }
 
-    async fn assign_privilege(&self, ctx: Context) -> Result<HostId> {
+    async fn assign_privilege(&self, ctx: Context) -> Result<Id> {
         let me = self.caller(&ctx)?;
         let mut g = self.inner.lock().expect("router lock");
         // Both nodes act, as in the model: the holder rewrites its own pointer

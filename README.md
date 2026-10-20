@@ -22,7 +22,7 @@ across machines. Nothing here is checked at compile time for your application
 code, no lifetime crosses a network link, and no `&mut` is transported anywhere.
 
 What this is: a **runtime protocol** for moving exclusive write authority over
-an `ActorId` between nodes, together with **machine-checked proofs** that the
+an actor (named by an `Id`) between nodes, together with **machine-checked proofs** that the
 protocol's exclusivity and fencing properties hold in every reachable state,
 including under crashes, partitions, duplicated messages and interrupted
 handovers.
@@ -107,14 +107,16 @@ events, and liveness of any kind. This model proves safety only, and says so.
 ## The state machine
 
 ```rust
-pub type ActorId = nat;
-// HostId is `crate::host::HostId`, a `u128`; a model names a host by it directly.
+// Id is `crate::id::Id`, a newtype around a `u128` (a UUID or a ULID converts to one);
+// a model names a host, and an actor, by it directly. (An actor was a `nat` here
+// before; the theorems now quantify over the `u128` actors a host always was, not
+// over unbounded ones. No theorem relied on there being more.)
 pub type Epoch   = nat;
 
 pub enum OwnershipState {
-    Owned        { owner: HostId, epoch: Epoch },
-    Transferring { from: HostId, to: HostId, old_epoch: Epoch, new_epoch: Epoch },
-    Unowned      { epoch: Epoch, intended_owner: HostId },
+    Owned        { owner: Id, epoch: Epoch },
+    Transferring { from: Id, to: Id, old_epoch: Epoch, new_epoch: Epoch },
+    Unowned      { epoch: Epoch, intended_owner: Id },
 }
 ```
 
@@ -145,7 +147,7 @@ Two deliberate design points:
 
 ```rust
 // Who may perform an authoritative mutation.
-spec fn may_mutate(s: OwnershipState, node: HostId, epoch: Epoch) -> bool {
+spec fn may_mutate(s: OwnershipState, node: Id, epoch: Epoch) -> bool {
     match s {
         Owned { owner, epoch: e } => node == owner && epoch == e,
         Transferring { .. }       => false,
@@ -213,8 +215,8 @@ verifying, the build fails.
 | 4c | An interrupted handover fences both the old and the abandoned new epoch | `ownership::proofs::transfer::theorem_interrupted_transfer_fences_both` | none |
 | 4d | Ownership cannot be manufactured: the only step that can make `may_mutate` true is `Acquire`, from `Unowned` at that exact epoch with a matching grant | `ownership::proofs::transfer::theorem_ownership_only_via_acquire` | none |
 | 5 | **Epoch monotonicity** - no transition decreases an actor's epoch | `ownership::proofs::fencing::theorem_epoch_monotone_step`, `..._next`, `..._execution` | none |
-| 6 | **Token uniqueness (authority)** - at most one token confers authority per `(ActorId, Epoch)` | `ownership::proofs::tokens::theorem_valid_token_unique_per_actor_epoch` | none |
-| 6a | **Token uniqueness (physical)** - at most one token is ever *issued* per `(ActorId, Epoch)` | `ownership::proofs::tokens::theorem_issued_token_unique_per_actor_epoch` | reachability |
+| 6 | **Token uniqueness (authority)** - at most one token confers authority per `(actor, Epoch)`, an actor being an `Id` | `ownership::proofs::tokens::theorem_valid_token_unique_per_actor_epoch` | none |
+| 6a | **Token uniqueness (physical)** - at most one token is ever *issued* per `(actor, Epoch)` | `ownership::proofs::tokens::theorem_issued_token_unique_per_actor_epoch` | reachability |
 | 6b | Stale physical tokens confer no authority | `ownership::proofs::tokens::theorem_stale_token_has_no_authority` | none |
 | 6c | No token is ever minted for a future epoch | `ownership::proofs::tokens::theorem_no_future_tokens` | reachability |
 | E | The runtime `u64` check returns exactly the model's verdict **for the generation the guard records**, and rejects any epoch superseded *within that record* | `ownership::exec::FenceGuard::accepts`, `ownership::exec::FenceGuard::rejects_stale` | the guard is the node's own belief, immutable after `FenceGuard::new`. **This is node-local staleness rejection, not fencing**: a partitioned `A` still holding `FenceGuard::new(A, 41)` accepts `(A, 41)` while the system is at `Owned { B, 42 }`. A node cannot fence itself — see below |
@@ -256,7 +258,7 @@ verifying, the build fails.
 | C7 | **Terms never decrease, and votes are never retracted.** The Raft counterparts of epoch monotonicity (claim 5) and token permanence (P1) — and a vote is physical in the same sense a token is, which is exactly why a returning server must not vote again in a term it has already voted in | `raft::proofs::election::theorem_term_monotone_step`, `theorem_votes_monotone_step` | none |
 | C8 | **The coupling guards agree with the composed model.** `PassToken` fires only once the actor is `Unowned` and the routing layer's own step fires; `SeizeToken` only from the holder, to a different node, with the actor `Unowned`; `AcquireUnderToken` only for the node holding the privilege; `Reconcile` only for a node that owes one and whose belief is stale. Each refuses exactly when the composed model's transition is not enabled | `composed::proofs::refinement::theorem_pass_token_step_refines`, `theorem_pass_token_refuses_while_the_actor_is_held`, `theorem_pass_token_refuses_when_the_routing_step_does`, `theorem_seize_step_refines`, `theorem_seize_step_refuses_exactly_when_disabled`, `theorem_acquire_under_token_step_refines`, `theorem_acquire_under_token_refuses_a_node_without_the_privilege`, `theorem_reconcile_step_refines`, `theorem_reconcile_step_refuses_exactly_when_disabled` | **every node is live** (`own.live.contains(..)`) — the service has no `Crash` step, so it refines the composed machine's crash-free executions; see below |
 | C9 | **A step a layer already proved is carried by the composed machine without a second proof.** `cs_ray` adds only that the step does not move the privilege and that its actor is live; `cs_own` adds only that the step does not create authority over this actor and does not bring back a node owing a reconciliation | `composed::proofs::refinement::theorem_a_routing_step_is_carried`, `theorem_an_ownership_step_is_carried` | the hypotheses of the carried step |
-| CX1 | **The composed steps over the layers' records are the composed model.** `composed::exec::pass_token`, `seize_token`, `acquire_under_token` and `reconcile` take the ownership record (`RegistryCore`), the routing record (`RayTable`) and the set of nodes that owe a reconciliation (`host::HostSet`), check the coupling guard, take the layers' steps and keep the debts — and each contract is `cs_pass_token`, `cs_seize_token`, `cs_acquire_under_token` or `cs_reconcile`: the privilege moves only once the actor is `Unowned`, only `to` acts on a seizure and the old holder then owes a reconciliation, the recipient of a passed privilege is discharged of its debt, a node acquires only holding the privilege. The relation (`stands_for_composed`) is the ownership relation of E8 (grants included), the routing view *being* `c.ray`, and the debts *being* `c.seized` | `composed::proofs::exec::theorem_pass_token_is_cs_pass_token`, `theorem_seize_token_is_cs_seize_token`, `theorem_acquire_under_token_is_cs_acquire_under_token`, `theorem_reconcile_is_cs_reconcile` | the nodes involved are live (`own.live`). The service's identity lookup speaks only for the *caller*; the recipient of a passed privilege and the target of a seizure are not callers, so for them this is a hypothesis nothing in the service establishes |
+| CX1 | **The composed steps over the layers' records are the composed model.** `composed::exec::pass_token`, `seize_token`, `acquire_under_token` and `reconcile` take the ownership record (`RegistryCore`), the routing record (`RayTable`) and the set of nodes that owe a reconciliation (`id::IdSet`), check the coupling guard, take the layers' steps and keep the debts — and each contract is `cs_pass_token`, `cs_seize_token`, `cs_acquire_under_token` or `cs_reconcile`: the privilege moves only once the actor is `Unowned`, only `to` acts on a seizure and the old holder then owes a reconciliation, the recipient of a passed privilege is discharged of its debt, a node acquires only holding the privilege. The relation (`stands_for_composed`) is the ownership relation of E8 (grants included), the routing view *being* `c.ray`, and the debts *being* `c.seized` | `composed::proofs::exec::theorem_pass_token_is_cs_pass_token`, `theorem_seize_token_is_cs_seize_token`, `theorem_acquire_under_token_is_cs_acquire_under_token`, `theorem_reconcile_is_cs_reconcile` | the nodes involved are live (`own.live`). The service's identity lookup speaks only for the *caller*; the recipient of a passed privilege and the target of a seizure are not callers, so for them this is a hypothesis nothing in the service establishes |
 | CX2 | **A refused composed step is one the model could not take.** A refusal changes neither layer nor the debts and carries "the actor was not released, or the layer's own step was disabled in every post-state" (`pass_token`, `seize_token`), "the node does not hold the privilege" (`acquire_under_token`), or "the node owes nothing, or is not stale" (`reconcile`). **Not claimed**: that a refusal from the ownership layer inside `acquire_under_token` (no published grant, a wrong epoch) is a step the *composed* model could not take — it is the ownership layer's own refusal, covered by E8, and the composed theorem for `acquire_under_token` is about the privilege test only | `composed::proofs::exec::theorem_refused_pass_token_is_disabled`, `theorem_refused_seize_token_is_disabled`, `theorem_acquire_without_the_privilege_is_disabled`, `theorem_refused_reconcile_is_disabled` | `stands_for_composed` |
 | C8 | **A lone self-vote is not a majority** in a cluster of more than one. The check that the `>` in the quorum threshold is load-bearing rather than decorative: with `>=` a single server could elect itself | `raft::proofs::election::theorem_a_lone_vote_is_not_a_majority` | a cluster of at least two |
 | C9 | **An election actually happens.** A concrete three-server cluster walked from initialisation through a real election, exported with every step named, so C1 is not a safety property of a protocol that never elects anybody | `raft::proofs::scenario::scenario_a_leader_is_elected` | none: the cluster is exhibited |
@@ -603,7 +605,7 @@ Routing and ownership are glued by one predicate:
 
 ```rust
 spec fn couples(r: Raymond, s: OwnershipState) -> bool {
-    forall|n: HostId, e: Epoch| may_mutate(s, n, e) ==> has_token(r, n)
+    forall|n: Id, e: Epoch| may_mutate(s, n, e) ==> has_token(r, n)
 }
 ```
 
@@ -1990,6 +1992,32 @@ caller ── ActorBChannel ── Session ──▶ Mailbox ──▶ serve ─
   them. Identity is read off the delivery, not the lane: a mailbox has many senders
   and one drain, and `Server::rpc` takes the `Context` per call. A request in flight
   when the drain is aborted is answered with an error, and only that one.
+* **`serve_fenced(mailbox, &mut service, &fence)`** is `serve` asking a `Fence`
+  before it starts each request. A request the fence refuses is answered `FENCED`
+  to its sender and never reaches the service; the drain goes on, so a host that
+  regains the epoch serves again. The fence is meant to be the registry's
+  `may_write(host, epoch)` about the host's own claim, so it turns false when the
+  epoch moves, whether by `BeginTransfer` or `RevokeOwner`. It is checked
+  *between* requests: a handler already running finishes, so a handover waits for
+  nothing. **Tested, not proved** (`tests/actor_fence.rs`): the ownership fence is
+  proved, that this loop asks it first is not. What a running handler does outside
+  the fence, the fence cannot stop, and a request that ran but whose reply was
+  lost will be retried at the new owner (at-least-once).
+* **`Supervisor`** owns the actors that run on a node (`LocalSupervisor` is the
+  in-process sketch): `spawn` takes a **required** `Fence` and serves through
+  `serve_fenced`, `status` says `Running`, `Stopped` (the handler panicked, so the
+  drain ended) or `Absent`, and spawning over a `Stopped` id restarts it. *Where* an
+  actor lives is the scheduler's existing `Discovery` trait asked about an
+  `ActorRef`; a supervisor answers for its own node only. Discovery may be stale and
+  nothing relies on it: a request to a host that no longer owns the actor is
+  answered `FENCED`. What the caller then does is **not implemented here**: a caller
+  is expected to ask Discovery again and retry, and no caller in this slice does
+  (the fence test checks only that `FENCED` comes back). Restarting a `Stopped` actor
+  reuses its mailbox when the protocol is the same, so sessions obtained before the
+  stop, and the requests already queued, reach the new drain; until it is restarted
+  they wait, and a new `transport` is refused. **Tested, not proved**
+  (`tests/actor_supervisor.rs`). Not here: a lane to a remote host, the retrying
+  caller, a cooperative drain, and tying the fence to a registry, host and epoch.
 * **Backpressure.** A mailbox is built with a `Capacity`, which is always the
   caller's to say: `Bounded(n)` makes `poll_ready` wait for a free slot (the drain
   wakes it), `Unbounded` never does, and there is no default and no number that
@@ -2453,8 +2481,8 @@ CI, with no `assume`/`admit`/`external_body`/`axiom`):
 * transfer safety - the inductive invariant is preserved by every transition,
   and no stage of a handover admits two owners;
 * token uniqueness, both "at most one token confers authority per
-  `(ActorId, Epoch)`" and the stronger "at most one token is ever issued per
-  `(ActorId, Epoch)`";
+  `(actor, Epoch)`" and the stronger "at most one token is ever issued per
+  `(actor, Epoch)`";
 * stale tokens surviving crash, partition and recovery confer no authority;
 * the ownership registry's record, grants included: each of its methods takes the
   model's step and publishes the grant the model's transition publishes, and a
@@ -2788,16 +2816,25 @@ discharged, not waived: a false goal fails under either.
 They are named here because "no escape hatches" should mean something precise,
 and a reader who greps for `assume` should also know what `by(...)` does.
 
-### `HostSet` rests on vstd's `HashSet` specification
+### `IdSet` rests on vstd's `HashSet` specification
 
-`host::HostSet` is a `std::collections::HashSet<HostId>` whose view is
-`Set<HostId>`; the Raft tally and the composed machine's debts are `HostSet`s.
-What it promises (`insert`, `remove`, `contains`, `len` are the set's) is proved
-from vstd's specification of `HashSet`, and that specification is trusted, not
-proved: in particular `vstd::std_specs::hash::obeys_key_model::<u128>()`, that
-the default hasher behaves as a function on keys. The axiom lives in vstd, so
-CI's grep over `src/` does not see it, and it is named here so that nobody has
-to find it. The `Vec` scans it replaced rested on `Vec`'s specification alone.
+`id::IdSet` is a `std::collections::HashSet<u128>` — the number inside each
+`Id` — whose view is `Set<Id>`, by a `lift` spec function and one lemma that an
+id is in the lifted set exactly when its number is in the stored one; the Raft
+tally and the composed machine's debts are `IdSet`s. What it promises (`insert`,
+`remove`, `contains`, `len`, `is_empty` are the set's) is proved from vstd's
+specification of `HashSet`, and that specification is trusted, not proved: in
+particular `vstd::std_specs::hash::obeys_key_model::<u128>()`, that the default
+hasher behaves as a function on keys. The axiom lives in vstd, so CI's grep over
+`src/` does not see it, and it is named here so that nobody has to find it. The
+set stores the `u128` and not the `Id` because vstd states that axiom for the
+built-in key types only; for a type of ours it could be assumed only with an
+`assume`, which CI rejects. The `Vec` scans it replaced rested on `Vec`'s
+specification alone.
+
+`Id` itself adds nothing to trust. Its `==` is defined in the language, with
+vstd's `PartialEqSpecImpl` (`obeys_eq_spec` is `true` and `eq_spec` is equality
+of the numbers), and `id::value::lemma_id_eq` says so.
 
 ### The one exception, and it is not in `src/`
 

@@ -26,7 +26,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 use vstd::set_lib::*;
 
 use crate::raft::model::*;
@@ -43,15 +43,15 @@ verus! {
 /// no coordinator: `|a| + |b| > |members|` cannot hold if `a` and `b` are
 /// disjoint subsets of `members`, because then `|a ∪ b| = |a| + |b|` would
 /// exceed a set it is contained in.
-pub proof fn lemma_quorums_intersect(c: Cluster, a: Set<HostId>, b: Set<HostId>)
+pub proof fn lemma_quorums_intersect(c: Cluster, a: Set<Id>, b: Set<Id>)
     requires
         is_quorum(c, a),
         is_quorum(c, b),
     ensures
-        exists|n: HostId| a.contains(n) && b.contains(n),
+        exists|n: Id| a.contains(n) && b.contains(n),
 {
     // `a ∪ b` is still inside the cluster, so it cannot be larger than it.
-    assert forall|n: HostId| a.union(b).contains(n) implies c.members.contains(n) by {}
+    assert forall|n: Id| a.union(b).contains(n) implies c.members.contains(n) by {}
     assert(a.union(b).subset_of(c.members));
     lemma_len_subset(a.union(b), c.members);
 
@@ -65,7 +65,7 @@ pub proof fn lemma_quorums_intersect(c: Cluster, a: Set<HostId>, b: Set<HostId>)
     // `lemma_set_empty_equivalency_len` is the one that turns a non-zero
     // cardinality into an element: `s.len() != 0 ==> exists|x| s.contains(x)`.
     lemma_set_empty_equivalency_len(a.intersect(b));
-    let n = choose|n: HostId| a.intersect(b).contains(n);
+    let n = choose|n: Id| a.intersect(b).contains(n);
     assert(a.contains(n) && b.contains(n));
 }
 
@@ -97,7 +97,7 @@ pub open spec fn inv_vote_implies_term(c: Cluster) -> bool {
 
 /// **A leader won a majority of its own term.** Sentence 1 of the argument.
 pub open spec fn inv_leader_quorum(c: Cluster) -> bool {
-    forall|n: HostId|
+    forall|n: Id|
         #![trigger c.servers[n]]
         c.servers.contains_key(n) && is_leader(c.servers[n]) ==> won_election(
             c,
@@ -123,7 +123,7 @@ pub open spec fn raft_inv(c: Cluster) -> bool {
 /// This is the counterpart of `proofs::properties::theorem_issued_monotone`:
 /// the reason a leader elected at term 7 is still, as a matter of record, the
 /// winner of term 7 no matter what happens afterwards.
-pub proof fn lemma_quorum_survives(pre: Cluster, post: Cluster, cand: HostId, term: Term)
+pub proof fn lemma_quorum_survives(pre: Cluster, post: Cluster, cand: Id, term: Term)
     requires
         post.members == pre.members,
         pre.votes.subset_of(post.votes),
@@ -131,7 +131,7 @@ pub proof fn lemma_quorum_survives(pre: Cluster, post: Cluster, cand: HostId, te
     ensures
         won_election(post, cand, term),
 {
-    assert forall|n: HostId| voters_for(pre, cand, term).contains(n) implies voters_for(
+    assert forall|n: Id| voters_for(pre, cand, term).contains(n) implies voters_for(
         post,
         cand,
         term,
@@ -141,7 +141,7 @@ pub proof fn lemma_quorum_survives(pre: Cluster, post: Cluster, cand: HostId, te
     }
     assert(voters_for(pre, cand, term).subset_of(voters_for(post, cand, term)));
     lemma_len_subset(voters_for(pre, cand, term), voters_for(post, cand, term));
-    assert forall|n: HostId| voters_for(post, cand, term).contains(n) implies post.members
+    assert forall|n: Id| voters_for(post, cand, term).contains(n) implies post.members
         .contains(n) by {}
     assert(voters_for(post, cand, term).subset_of(post.members));
 }
@@ -159,7 +159,7 @@ pub proof fn lemma_quorum_survives(pre: Cluster, post: Cluster, cand: HostId, te
 proof fn lemma_one_server_changed_keeps_quorums(
     pre: Cluster,
     post: Cluster,
-    touched: HostId,
+    touched: Id,
     fresh: Server,
 )
     requires
@@ -174,7 +174,7 @@ proof fn lemma_one_server_changed_keeps_quorums(
     ensures
         inv_leader_quorum(post),
 {
-    assert forall|m: HostId| post.servers.contains_key(m) && is_leader(post.servers[m]) implies
+    assert forall|m: Id| post.servers.contains_key(m) && is_leader(post.servers[m]) implies
     won_election(post, m, post.servers[m].current_term) by {
         if m == touched {
             assert(post.servers[m] == fresh);
@@ -192,7 +192,7 @@ proof fn lemma_one_server_changed_keeps_quorums(
 // Preservation, one transition at a time
 // ---------------------------------------------------------------------------
 
-proof fn lemma_timeout_preserves_inv(pre: Cluster, post: Cluster, n: HostId)
+proof fn lemma_timeout_preserves_inv(pre: Cluster, post: Cluster, n: Id)
     requires
         raft_inv(pre),
         tr_timeout(pre, post, n),
@@ -261,8 +261,8 @@ proof fn lemma_timeout_preserves_inv(pre: Cluster, post: Cluster, n: HostId)
 proof fn lemma_grant_vote_preserves_inv(
     pre: Cluster,
     post: Cluster,
-    voter: HostId,
-    cand: HostId,
+    voter: Id,
+    cand: Id,
     term: Term,
     cand_last_term: Term,
     cand_last_index: nat,
@@ -338,7 +338,7 @@ proof fn lemma_grant_vote_preserves_inv(
 proof fn lemma_become_leader_preserves_inv(
     pre: Cluster,
     post: Cluster,
-    n: HostId,
+    n: Id,
     term: Term,
 )
     requires
@@ -372,7 +372,7 @@ proof fn lemma_become_leader_preserves_inv(
     );
 }
 
-proof fn lemma_step_down_preserves_inv(pre: Cluster, post: Cluster, n: HostId, term: Term)
+proof fn lemma_step_down_preserves_inv(pre: Cluster, post: Cluster, n: Id, term: Term)
     requires
         raft_inv(pre),
         tr_step_down(pre, post, n, term),
@@ -416,7 +416,7 @@ proof fn lemma_step_down_preserves_inv(pre: Cluster, post: Cluster, n: HostId, t
 proof fn lemma_client_request_preserves_inv(
     pre: Cluster,
     post: Cluster,
-    n: HostId,
+    n: Id,
     value: nat,
 )
     requires
@@ -452,8 +452,8 @@ proof fn lemma_client_request_preserves_inv(
 proof fn lemma_append_entries_preserves_inv(
     pre: Cluster,
     post: Cluster,
-    leader: HostId,
-    follower: HostId,
+    leader: Id,
+    follower: Id,
     prefix: nat,
 )
     requires
@@ -492,7 +492,7 @@ proof fn lemma_append_entries_preserves_inv(
 proof fn lemma_advance_commit_preserves_inv(
     pre: Cluster,
     post: Cluster,
-    n: HostId,
+    n: Id,
     upto: nat,
 )
     requires
@@ -634,7 +634,7 @@ pub proof fn theorem_reachable_raft_inv(c: Cluster)
 // ---------------------------------------------------------------------------
 
 /// **At most one leader per term**, in any state satisfying the invariant.
-pub proof fn theorem_election_safety(c: Cluster, n1: HostId, n2: HostId)
+pub proof fn theorem_election_safety(c: Cluster, n1: Id, n2: Id)
     requires
         raft_inv(c),
         c.servers.contains_key(n1),
@@ -650,7 +650,7 @@ pub proof fn theorem_election_safety(c: Cluster, n1: HostId, n2: HostId)
     assert(won_election(c, n2, t));
 
     lemma_quorums_intersect(c, voters_for(c, n1, t), voters_for(c, n2, t));
-    let v = choose|v: HostId|
+    let v = choose|v: Id|
         voters_for(c, n1, t).contains(v) && voters_for(c, n2, t).contains(v);
 
     // `voters_for` is a filter, so membership unfolds straight to the vote.
@@ -660,7 +660,7 @@ pub proof fn theorem_election_safety(c: Cluster, n1: HostId, n2: HostId)
 
 /// **At most one leader per term, in any reachable state.** The headline, with
 /// the invariant discharged rather than assumed.
-pub proof fn theorem_election_safety_reachable(c: Cluster, n1: HostId, n2: HostId)
+pub proof fn theorem_election_safety_reachable(c: Cluster, n1: Id, n2: Id)
     requires
         raft_reachable(c),
         c.servers.contains_key(n1),
@@ -683,7 +683,7 @@ pub proof fn theorem_election_safety_reachable(c: Cluster, n1: HostId, n2: HostI
 /// `proofs::fencing::theorem_epoch_monotone_step`, and for the same reason: an
 /// argument that rests on "later means higher" is worth nothing if a
 /// participant can go back.
-pub proof fn theorem_term_monotone_step(pre: Cluster, post: Cluster, s: RaftStep, n: HostId)
+pub proof fn theorem_term_monotone_step(pre: Cluster, post: Cluster, s: RaftStep, n: Id)
     requires
         raft_step(pre, post, s),
         pre.servers.contains_key(n),
@@ -709,7 +709,7 @@ pub proof fn theorem_votes_monotone_step(pre: Cluster, post: Cluster, s: RaftSte
 /// than one.** Not deep, but it is the claim that the quorum threshold is doing
 /// work rather than being decorative — with `>=` in place of `>` in
 /// [`is_quorum`], a single server could elect itself in any cluster.
-pub proof fn theorem_a_lone_vote_is_not_a_majority(c: Cluster, n: HostId, term: Term)
+pub proof fn theorem_a_lone_vote_is_not_a_majority(c: Cluster, n: Id, term: Term)
     requires
         c.members.len() >= 2,
         voters_for(c, n, term).subset_of(Set::empty().insert(n)),
@@ -718,7 +718,7 @@ pub proof fn theorem_a_lone_vote_is_not_a_majority(c: Cluster, n: HostId, term: 
 {
     // `lemma_set_empty_len` and `lemma_set_insert_len` are both in vstd's
     // default broadcast group, so the singleton's size needs no argument.
-    let just_n = Set::<HostId>::empty().insert(n);
+    let just_n = Set::<Id>::empty().insert(n);
     assert(just_n.len() == 1);
     lemma_len_subset(voters_for(c, n, term), just_n);
 }

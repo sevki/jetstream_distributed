@@ -56,7 +56,7 @@ mod router;
 
 pub use router::{Event, Router};
 
-use crate::host::HostId;
+use crate::id::Id;
 use jetstream::prelude::*;
 
 /// What a node can see of its own routing entries.
@@ -64,7 +64,7 @@ use jetstream::prelude::*;
 pub struct Standing {
     /// The next hop towards the privilege. Equal to the caller's own number
     /// when the caller *believes* it holds it.
-    pub holder: HostId,
+    pub holder: Id,
     /// A request towards `holder` is outstanding.
     pub asked: bool,
     /// The caller is inside its critical section.
@@ -79,7 +79,7 @@ pub struct Standing {
 ///
 /// Six transitions, six methods, and none takes the acting node's number — see
 /// the module docs.
-#[service(uses(super::{HostId, Standing}))]
+#[service(uses(super::{Id, Standing}))]
 pub trait Routing {
     /// What do my own entries say?
     async fn standing(&self, ctx: Context) -> Result<Standing>;
@@ -90,16 +90,16 @@ pub trait Routing {
     /// `MakeRequest`: forward my request one hop towards the privilege.
     /// Returns where it goes — the holder pointer, resolved *now*, which is
     /// what the model records.
-    async fn make_request(&self, ctx: Context) -> Result<HostId>;
+    async fn make_request(&self, ctx: Context) -> Result<Id>;
 
     /// `ReceiveRequest`: a request `from` sent to me arrives. May be delivered
     /// more than once, in any order, and after the privilege has moved — that is
     /// the model's, and it costs fairness, not safety.
-    async fn receive_request(&self, ctx: Context, from: HostId) -> Result<()>;
+    async fn receive_request(&self, ctx: Context, from: Id) -> Result<()>;
 
     /// `AssignPrivilege`: I hold the privilege and am not using it, so I hand
     /// it to the head of my queue. Returns who got it.
-    async fn assign_privilege(&self, ctx: Context) -> Result<HostId>;
+    async fn assign_privilege(&self, ctx: Context) -> Result<Id>;
 
     /// `EnterCs`: I believe I hold the privilege and I am at the head of my own
     /// queue.

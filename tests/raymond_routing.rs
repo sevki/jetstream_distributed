@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 
-use jetstream_distributed::host::HostId;
+use jetstream_distributed::id::Id;
 use jetstream_distributed::raymond::service::{Event, Router, Routing, Standing};
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
@@ -28,12 +28,12 @@ const ADDR_C: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3));
 const ADDR_D: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 4));
 const STRANGER: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 9, 9, 9));
 
-const A: HostId = 0;
-const B: HostId = 1;
-const C: HostId = 2;
-const D: HostId = 3;
+const A: Id = Id(0);
+const B: Id = Id(1);
+const C: Id = Id(2);
+const D: Id = Id(3);
 
-fn roster() -> HashMap<IpAddr, HostId> {
+fn roster() -> HashMap<IpAddr, Id> {
     HashMap::from([(ADDR_A, A), (ADDR_B, B), (ADDR_C, C), (ADDR_D, D)])
 }
 
@@ -52,8 +52,8 @@ fn code(e: Error) -> Option<String> {
 
 #[test]
 fn a_router_must_be_a_tree_rooted_at_the_privilege() {
-    let cases: [(&str, HostId, HashMap<HostId, HostId>); 5] = [
-        ("root off the roster", 9, HashMap::new()),
+    let cases: [(&str, Id, HashMap<Id, Id>); 5] = [
+        ("root off the roster", Id(9), HashMap::new()),
         ("a node with no parent", C, HashMap::from([(A, C), (B, A)])),
         (
             "a node that is its own parent",
@@ -63,7 +63,7 @@ fn a_router_must_be_a_tree_rooted_at_the_privilege() {
         (
             "a parent off the roster",
             C,
-            HashMap::from([(A, 9), (B, A), (D, B)]),
+            HashMap::from([(A, Id(9)), (B, A), (D, B)]),
         ),
         // A and B point at each other, off to one side of the root C. There is
         // exactly one root and it is still not a tree.
@@ -208,7 +208,7 @@ async fn a_request_must_have_been_sent_to_be_received() {
     );
     // And a node that does not exist sent nothing.
     assert_eq!(
-        code(r.receive_request(from(ADDR_B), 99).await.unwrap_err()),
+        code(r.receive_request(from(ADDR_B), Id(99)).await.unwrap_err()),
         Some("ERR".into())
     );
     assert_eq!(r.queue_of(A), Some(vec![]));

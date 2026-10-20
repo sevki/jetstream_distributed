@@ -19,7 +19,7 @@
 
 use vstd::prelude::*;
 
-use crate::host::HostId;
+use crate::id::Id;
 
 use crate::actor::model::*;
 use crate::actor::proofs::journal::*;
@@ -104,7 +104,7 @@ pub proof fn lemma_init_inv(c: ActorSystem)
 
 /// **Sending preserves it.** A send touches only `sent` and `next_seq`, and `sent`
 /// only grows.
-pub proof fn lemma_send_preserves_inv(pre: ActorSystem, post: ActorSystem, from: HostId, body: nat)
+pub proof fn lemma_send_preserves_inv(pre: ActorSystem, post: ActorSystem, from: Id, body: nat)
     requires
         actor_inv(pre),
         as_send(pre, post, from, body),
@@ -167,7 +167,7 @@ pub proof fn lemma_own_preserves_inv(pre: ActorSystem, post: ActorSystem, s: Ste
 pub proof fn lemma_accept_preserves_inv(
     pre: ActorSystem,
     post: ActorSystem,
-    host: HostId,
+    host: Id,
     epoch: Epoch,
     env: Envelope,
 )

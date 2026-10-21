@@ -60,7 +60,6 @@
 //! not a credential.
 
 mod host;
-mod lane;
 mod mailbox;
 mod refusal;
 mod session;
@@ -68,7 +67,6 @@ mod supervisor;
 mod transport;
 
 pub use host::{Event, Host};
-pub use lane::{bridge, read_attach, write_attach};
 pub use mailbox::{Capacity, Mailbox, Permit, Round, Waiter};
 pub use session::{Closer, Delivery, Fence, Session, refuse_all, serve, serve_fenced, serve_until};
 pub use supervisor::{ActorRef, LocalSupervisor, Status, Supervisor};

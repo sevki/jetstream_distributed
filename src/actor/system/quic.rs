@@ -6,7 +6,7 @@ use std::time::Duration;
 use crate::actor::model::Envelope;
 use crate::actor::service::actor_protocol::ActorChannel;
 use crate::actor::service::{ActorRef, Closed, LocalSupervisor};
-use crate::compute::{Instant, Job};
+use crate::compute::{Instant, Job, Resources};
 use crate::scheduling::discovery::{Discovery, DiscoveryError};
 use crate::scheduling::lava::{LifetimePredictor, Scheduler};
 use crate::scheduling::placement::{Placement, PlacementError};
@@ -182,7 +182,17 @@ where
     }
 }
 
+/// Where actors live and where new ones go: a [`Scheduler`] that chooses a host,
+/// and the address of every host it can choose.
+///
+/// A job is an actor here, and its [`Id`] is the actor's. Placing one records the
+/// address of the host the scheduler chose, which is what [`Discovery`] then
+/// answers. That record is a cache of the placement and is not kept in step with
+/// it: an actor that has exited or moved stays where it was put until it is
+/// placed again, and a caller that goes to the old address is answered `FENCED`.
 pub struct QuicDirectory<F, P: LifetimePredictor<F>> {
+    /// How to reach each host: what [`Discovery`] returns for an actor placed on it.
+    hosts: HashMap<Id, url::Url>,
     placed_actors: HashMap<ActorRef, url::Url>,
     scheduler: Scheduler<F, P>,
 }
@@ -193,9 +203,27 @@ where
 {
     pub fn new(scheduler: Scheduler<F, P>) -> Self {
         Self {
+            hosts: HashMap::default(),
             placed_actors: HashMap::default(),
             scheduler,
         }
+    }
+
+    /// A host that jobs can be placed on, and where it is reached.
+    ///
+    /// It is both at once because a host the scheduler chooses but nobody can
+    /// reach would take a job that discovery cannot find. Refused as the
+    /// scheduler refuses a host: one with no CPU or no memory, or an id it
+    /// already has.
+    pub fn add_host(
+        &mut self,
+        id: Id,
+        capacity: Resources,
+        at: url::Url,
+    ) -> std::result::Result<(), PlacementError> {
+        self.scheduler.add_host(id, capacity)?;
+        self.hosts.insert(id, at);
+        Ok(())
     }
 }
 
@@ -228,13 +256,24 @@ where
 {
     type Resource = Job<F>;
 
+    /// The host the scheduler chose, and from then on [`Discovery`] answers its
+    /// address for the job's actor.
+    ///
+    /// [`PlacementError::UnknownHost`] if the scheduler chose a host that has no
+    /// address (one it was given before the directory was); the job is taken back
+    /// out of the scheduler, so it is not left placed where nobody can reach it.
     async fn place(
         &mut self,
         what: Self::Resource,
     ) -> std::result::Result<Vec<Id>, PlacementError> {
-        self.scheduler
-            .place(what, Instant::now())
-            .map(|id| vec![id])
+        let actor = ActorRef(what.id);
+        let host = self.scheduler.place(what, Instant::now())?;
+        let Some(at) = self.hosts.get(&host) else {
+            let _ = self.scheduler.remove(actor.0, Instant::now());
+            return Err(PlacementError::UnknownHost);
+        };
+        self.placed_actors.insert(actor, at.clone());
+        Ok(vec![host])
     }
 }
 
@@ -296,6 +335,7 @@ mod tests {
     use crate::actor::model::Envelope;
     use crate::actor::service::Closed;
     use crate::actor::service::actor_protocol::ActorChannel;
+    use crate::compute::{Cpu, Memory};
     use crate::scheduling::lava::{EmpiricalLifetime, EmpiricalPredictor};
 
     use super::*;
@@ -558,14 +598,96 @@ mod tests {
         }
     }
 
-    /// A system that has been told where `ACTOR` lives.
-    fn system_that_knows(
+    /// A job for `actor`, small enough for any host `roomy` makes.
+    fn job(actor: ActorRef) -> Job<EmpiricalLifetime> {
+        Job {
+            id: actor.0,
+            resources: Resources {
+                cpu: Cpu::cores(1),
+                memory: Memory::mib(64),
+            },
+            started_at: Instant::EPOCH,
+            features: EmpiricalLifetime::new(
+                vec![Duration::from_secs(60)],
+                Duration::from_secs(3600),
+            )
+            .unwrap(),
+        }
+    }
+
+    fn roomy() -> Resources {
+        Resources {
+            cpu: Cpu::cores(8),
+            memory: Memory::mib(1024),
+        }
+    }
+
+    /// The host `actor` is placed on in [`system_that_knows`].
+    const HOST: Id = Id(2);
+
+    /// A system that has placed `actor` on a host at `at`, the way a caller would:
+    /// by adding the host and asking the directory to place it.
+    async fn system_that_knows(
         actor: ActorRef,
         at: Url,
     ) -> QuicActorSystem<EmpiricalLifetime, EmpiricalPredictor> {
         let mut system = system();
-        system.directory.placed_actors.insert(actor, at);
+        system.directory.add_host(HOST, roomy(), at).unwrap();
+        assert_eq!(
+            system.placement().place(job(actor)).await.unwrap(),
+            vec![HOST]
+        );
         system
+    }
+
+    /// **Placing an actor is what lets discovery find it**, at the address of the
+    /// host the scheduler chose and not before.
+    #[tokio::test]
+    async fn a_placed_actor_is_found_at_its_hosts_address() {
+        let actor = ActorRef(Id::from(7));
+        let at = Url::parse("quic://host-2.example:4433").unwrap();
+        let mut system = system();
+        system
+            .directory
+            .add_host(HOST, roomy(), at.clone())
+            .unwrap();
+
+        assert_eq!(
+            system.discovery().discover(actor).await,
+            Err(DiscoveryError::NotFound),
+            "nothing is placed yet"
+        );
+        assert_eq!(
+            system.placement().place(job(actor)).await.unwrap(),
+            vec![HOST]
+        );
+        assert_eq!(system.discovery().discover(actor).await, Ok(vec![at]));
+        assert_eq!(
+            system.discovery().discover(ActorRef(Id::from(8))).await,
+            Err(DiscoveryError::NotFound),
+            "only the placed actor is found"
+        );
+    }
+
+    /// A host that is added with an address is the only kind placement may choose:
+    /// one the scheduler holds without an address is refused, and the job is not
+    /// left placed on it.
+    #[tokio::test]
+    async fn a_host_nobody_can_reach_is_not_placed_on() {
+        let actor = ActorRef(Id::from(7));
+        let mut scheduler = Scheduler::new(EmpiricalPredictor);
+        scheduler.add_host(HOST, roomy()).unwrap();
+        let mut directory = QuicDirectory::new(scheduler);
+
+        assert_eq!(
+            directory.place(job(actor)).await,
+            Err(PlacementError::UnknownHost)
+        );
+        assert_eq!(directory.scheduler.location(actor.0), None, "taken back");
+        assert_eq!(
+            directory.discover(actor).await,
+            Err(DiscoveryError::NotFound)
+        );
     }
 
     /// Every method of the protocol reaches the server with its arguments, and
@@ -576,7 +698,7 @@ mod tests {
         let addr = free_address();
         let server = serve_actor(addr);
         let actor = ActorRef(Id::from(7));
-        let mut system = system_that_knows(actor, url(addr));
+        let mut system = system_that_knows(actor, url(addr)).await;
 
         let remote = system.actor(actor, Context::default()).await.unwrap();
         let ctx = Context::default;
@@ -628,7 +750,7 @@ mod tests {
         let addr = free_address();
         let server = serve_actor(addr);
         let actor = ActorRef(Id::from(7));
-        let mut system = system_that_knows(actor, url(addr));
+        let mut system = system_that_knows(actor, url(addr)).await;
 
         let remote = system.actor(actor, Context::default()).await.unwrap();
         let why = remote

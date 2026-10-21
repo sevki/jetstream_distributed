@@ -118,14 +118,36 @@ pub fn send_step(next: u64) -> (r: Result<u64, ActorRefusal>)
 
 /// The actor's behaviour at the machine: [`apply`], in the word the state lives
 /// in.
-pub fn apply_step(state: u64, body: u64) -> (r: u64)
+pub fn apply_step(state: u64, body: &[u8]) -> (r: u64)
     ensures
-        r as nat == apply(state as nat, body as nat),
+        r as nat == apply(state as nat, body@),
 {
-    // 128 bits holds `state * 31 + body` for any two 64-bit inputs, so the
-    // reduction is exact rather than a wrap.
-    let wide = (state as u128) * 31 + (body as u128);
-    (wide % 18446744073709551616u128) as u64
+    let mut s = state;
+    let mut i: usize = 0;
+    proof {
+        assert(body@.take(0) =~= Seq::<u8>::empty());
+    }
+    while i < body.len()
+        invariant
+            i <= body.len(),
+            s as nat == apply(state as nat, body@.take(i as int)),
+        decreases body.len() - i,
+    {
+        // 128 bits holds `s * 31 + byte` for any 64-bit `s`, so the reduction is
+        // exact rather than a wrap.
+        let wide = (s as u128) * 31 + (body[i] as u128);
+        s = (wide % 18446744073709551616u128) as u64;
+        proof {
+            let next = body@.take(i as int + 1);
+            assert(next.drop_last() =~= body@.take(i as int));
+            assert(next.last() == body@[i as int]);
+        }
+        i += 1;
+    }
+    proof {
+        assert(body@.take(body.len() as int) =~= body@);
+    }
+    s
 }
 
 } // verus!

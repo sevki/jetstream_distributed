@@ -39,6 +39,11 @@
 
 use vstd::prelude::*;
 
+// Only the wire format needs Jetstream, and this module is in the verified build,
+// which has no dependencies: the derive is behind `service`.
+#[cfg(feature = "service")]
+use jetstream::prelude::*;
+
 use crate::id::Id;
 
 use crate::ownership::fencing::*;
@@ -48,11 +53,18 @@ use crate::ownership::spec::*;
 verus! {
 
 /// One message. `sender` and `seq` identify it; `body` is what the actor's
-/// behaviour reads.
+/// behaviour reads: bytes, because a call to another actor is a request encoded
+/// for that actor, and the model does not know what any particular one means.
+///
+/// This is also what goes on the wire, so the sender is a field a receiver must
+/// not believe: the host reads who is calling off the connection and refuses an
+/// envelope that names anyone else.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "service", derive(JetStreamWireFormat))]
 pub struct Envelope {
     pub sender: Id,
-    pub seq: nat,
-    pub body: nat,
+    pub seq: u64,
+    pub body: Vec<u8>,
 }
 
 /// One accepted message, with who accepted it and under which fencing epoch.
@@ -81,8 +93,19 @@ pub open spec fn word() -> nat {
 /// the model's state is a `nat`, and a behaviour that grew without bound would
 /// make the executable one narrower than the model for a reason unrelated to
 /// anything the actor guarantees.
-pub open spec fn apply(state: nat, body: nat) -> nat {
-    (state * 31 + body) % word()
+///
+/// A fold over the body's bytes, each one `state * 31 + byte` taken modulo
+/// [`word`]. An empty body leaves the state alone. It is a stand-in for what an
+/// actor really does with a request, and nothing proved depends on which function
+/// it is.
+pub open spec fn apply(state: nat, body: Seq<u8>) -> nat
+    decreases body.len(),
+{
+    if body.len() == 0 {
+        state
+    } else {
+        (apply(state, body.drop_last()) * 31 + body.last() as nat) % word()
+    }
 }
 
 /// The messages accepted from `sender` in `journal`.
@@ -107,7 +130,7 @@ pub open spec fn state_of(journal: Seq<Entry>) -> nat
     if journal.len() == 0 {
         0
     } else {
-        apply(state_of(journal.drop_last()), journal.last().env.body)
+        apply(state_of(journal.drop_last()), journal.last().env.body@)
     }
 }
 
@@ -139,9 +162,14 @@ pub open spec fn seq_of(c: ActorSystem, n: Id) -> nat {
 /// No host is named. A sender addresses the actor, not the machine it happens to
 /// be on; which host may process the message is decided by the ownership layer
 /// when it is accepted, not when it is sent.
-pub open spec fn as_send(pre: ActorSystem, post: ActorSystem, from: Id, body: nat) -> bool {
+///
+/// A message's number is a `u64` on the wire, so a sender whose count has reached
+/// `u64::MAX` cannot send another: the step is not enabled, rather than wrapping
+/// to a number it has already used.
+pub open spec fn as_send(pre: ActorSystem, post: ActorSystem, from: Id, body: Vec<u8>) -> bool {
     &&& pre.own.live.contains(from)
-    &&& post.sent == pre.sent.insert(Envelope { sender: from, seq: seq_of(pre, from), body })
+    &&& seq_of(pre, from) < u64::MAX
+    &&& post.sent == pre.sent.insert(Envelope { sender: from, seq: seq_of(pre, from) as u64, body })
     &&& post.next_seq == pre.next_seq.insert(from, seq_of(pre, from) + 1)
     &&& post.own == pre.own
     &&& post.actor == pre.actor
@@ -169,7 +197,7 @@ pub open spec fn as_accept(
     &&& pre.own.live.contains(host)
     &&& can_mutate(pre.own, pre.actor, host, epoch)
     &&& pre.sent.contains(env)
-    &&& env.seq == accepted_from(pre.journal, env.sender)
+    &&& env.seq as nat == accepted_from(pre.journal, env.sender)
     &&& post.journal == pre.journal.push(Entry { env: env, host: host, epoch: epoch })
     &&& post.own == pre.own
     &&& post.actor == pre.actor
@@ -189,7 +217,7 @@ pub open spec fn as_own(pre: ActorSystem, post: ActorSystem, s: Step) -> bool {
 
 /// The labelled transitions of the actor system.
 pub enum ActorStep {
-    Send { from: Id, body: nat },
+    Send { from: Id, body: Vec<u8> },
     Accept { host: Id, epoch: Epoch, env: Envelope },
     Own { own_step: Step },
 }

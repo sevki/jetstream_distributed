@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::id::Id;
 use super::refusal::{refuse, refuse_err, refuse_no};
-use super::{Actor, Receipt, Record, Snapshot, MAX_READ};
+use super::{Actor, Closed, Receipt, Record, Snapshot, MAX_BODY, MAX_READ};
+use crate::actor::model::Envelope;
 use crate::actor::steps::{accept_step, apply_step, send_step};
 use crate::ownership::service::{EpochFloor, Event as OwnershipEvent, Offer, Ownership, Registry};
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
@@ -32,7 +33,7 @@ pub enum Event {
 struct Inner {
     /// Every message ever sent, by `(sender, seq)`. Never shrinks, and accepting
     /// does not consume — the model's `sent`, for the model's reason.
-    sent: HashMap<(Id, u64), u64>,
+    sent: HashMap<(Id, u64), Vec<u8>>,
     /// Each sender's next sequence number.
     next_seq: HashMap<Id, u64>,
     /// The journal.
@@ -154,9 +155,10 @@ impl Actor for Host {
         self.registry.release(ctx, epoch).await
     }
 
-    async fn send(&self, ctx: Context, body: u64) -> Result<u64> {
+    async fn send(&self, ctx: Context, body: Vec<u8>) -> Result<u64> {
         let _gate = self.gate.lock().await;
         let sender = self.caller(&ctx)?;
+        too_big(&body)?;
         let mut g = self.inner.lock().expect("host lock");
         let next = g.next_seq.get(&sender).copied().unwrap_or(0);
         let seq = send_step(next).map_err(refuse)?;
@@ -166,12 +168,48 @@ impl Actor for Host {
         Ok(seq)
     }
 
+    async fn call(&self, ctx: Context, envelope: Envelope) -> Result<()> {
+        let _gate = self.gate.lock().await;
+        let sender = self.caller(&ctx)?;
+        if envelope.sender != sender {
+            return Err(refuse_no("the envelope names a different sender than the caller"));
+        }
+        too_big(&envelope.body)?;
+        let mut g = self.inner.lock().expect("host lock");
+        // A message this host already holds is not a new one: the same body is a
+        // retry, and succeeds without changing anything; a different body under
+        // the same number is two messages claiming one place, and is refused.
+        match g.sent.get(&(sender, envelope.seq)) {
+            Some(held) if *held == envelope.body => return Ok(()),
+            Some(_) => return Err(refuse_no("that number was used for a different message")),
+            None => {}
+        }
+        // Otherwise it must be exactly the caller's next, which is what the
+        // model's `Send` numbers it with. A gap is refused, not held: the caller
+        // sends its messages in order, so one ahead of its turn is a mistake.
+        let next = g.next_seq.get(&sender).copied().unwrap_or(0);
+        if envelope.seq != next {
+            return Err(refuse_no(&format!("not this caller's next number: {next}")));
+        }
+        let seq = send_step(next).map_err(refuse)?;
+        g.sent.insert((sender, seq), envelope.body);
+        g.next_seq.insert(sender, seq + 1);
+        g.log.push(Event::Sent { sender, seq });
+        Ok(())
+    }
+
+    fn replies(&self, _ctx: Context, from: u64) -> Subscription<Envelope, Closed> {
+        Subscription::producing(1, move |producer| async move {
+            producer.finish(Closed { last_seq: from }).await
+        })
+    }
+
     async fn accept(&self, ctx: Context, epoch: u64, sender: Id, seq: u64) -> Result<Receipt> {
         let _gate = self.gate.lock().await;
         let host = self.caller(&ctx)?;
         let (body, index, state) = {
             let g = self.inner.lock().expect("host lock");
-            let sent = g.sent.get(&(sender, seq)).copied();
+            let sent = g.sent.get(&(sender, seq)).cloned();
             let accepted = g.accepted.get(&sender).copied().unwrap_or(0);
             // The fence is asked first and about the registry's own record, so a
             // host that is not the owner learns nothing about the journal.
@@ -183,7 +221,8 @@ impl Actor for Host {
             )
             .map_err(refuse)?;
             let body = sent.expect("accept_step checked the message was sent");
-            (body, g.journal.len() as u64, apply_step(g.state, body))
+            let state = apply_step(g.state, &body);
+            (body, g.journal.len() as u64, state)
         };
         // The effect the fence guards. It makes the same check under the
         // registry's lock, which cannot disagree with the one above: nothing else
@@ -206,7 +245,7 @@ impl Actor for Host {
             seq,
             index,
         });
-        Ok(Receipt { index, body, state })
+        Ok(Receipt { index, state })
     }
 
     async fn state(&self, ctx: Context) -> Result<Snapshot> {
@@ -224,7 +263,16 @@ impl Actor for Host {
             .iter()
             .skip(from as usize)
             .take(limit as usize)
-            .copied()
+            .cloned()
             .collect())
     }
+}
+
+/// A body larger than [`MAX_BODY`] is refused, so a journal read of
+/// [`MAX_READ`] records stays far below a frame's size limit.
+fn too_big(body: &[u8]) -> Result<()> {
+    if body.len() as u64 > MAX_BODY {
+        return Err(refuse_no("the message body is too large"));
+    }
+    Ok(())
 }

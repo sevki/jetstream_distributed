@@ -117,12 +117,15 @@ pub open spec fn mb_init(m: Mailbox) -> bool {
 }
 
 /// A sender puts a message on the queue, numbered after its last.
-pub open spec fn mb_enqueue(pre: Mailbox, post: Mailbox, sender: Id, body: nat) -> bool {
-    let env = Envelope { sender, seq: mb_seq(pre, sender), body };
-    post == Mailbox {
+///
+/// A number is a `u64`, so a sender at `u64::MAX` cannot enqueue another.
+pub open spec fn mb_enqueue(pre: Mailbox, post: Mailbox, sender: Id, body: Vec<u8>) -> bool {
+    let env = Envelope { sender, seq: mb_seq(pre, sender) as u64, body };
+    &&& mb_seq(pre, sender) < u64::MAX
+    &&& post == Mailbox {
         queue: pre.queue.push(env),
         ops: pre.ops.insert(env, Stage::Marked),
-        next_seq: pre.next_seq.insert(sender, env.seq + 1),
+        next_seq: pre.next_seq.insert(sender, env.seq as nat + 1),
         ..pre
     }
 }
@@ -209,7 +212,7 @@ pub open spec fn mb_stutter(pre: Mailbox, post: Mailbox) -> bool {
 
 /// Every kind of step.
 pub enum MbStep {
-    Enqueue { sender: Id, body: nat },
+    Enqueue { sender: Id, body: Vec<u8> },
     SetState { env: Envelope },
     Schedule { env: Envelope },
     Claim,

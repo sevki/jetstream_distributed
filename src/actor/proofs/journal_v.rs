@@ -42,9 +42,23 @@ pub proof fn lemma_accepted_from_push(j: Seq<Entry>, e: Entry, s: Id)
 /// has been applying messages as they arrived cannot disagree.
 pub proof fn lemma_state_of_push(j: Seq<Entry>, e: Entry)
     ensures
-        state_of(j.push(e)) == apply(state_of(j), e.env.body),
+        state_of(j.push(e)) == apply(state_of(j), e.env.body@),
 {
     lemma_push_then_drop_last(j, e);
+}
+
+/// **A one-byte body is one step of the fold.** The scenarios use bodies of one
+/// byte, and this is what lets them compute.
+pub proof fn lemma_apply_one_byte(state: nat, b: u8)
+    ensures
+        apply(state, seq![b]) == (state * 31 + b as nat) % word(),
+{
+    let one = seq![b];
+    assert(one.len() == 1);
+    assert(one.drop_last() =~= Seq::<u8>::empty());
+    assert(one.last() == b);
+    assert(apply(state, Seq::<u8>::empty()) == state);
+    reveal_with_fuel(apply, 2);
 }
 
 /// The prefix one longer is the prefix pushed with the next entry.

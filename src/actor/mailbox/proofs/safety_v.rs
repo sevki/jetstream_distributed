@@ -75,7 +75,7 @@ pub proof fn lemma_step_extends(step: MbStep, pre: Mailbox, post: Mailbox)
     lemma_prefix_refl(pre.processed);
     match step {
         MbStep::Enqueue { sender, body } => {
-            let env = Envelope { sender, seq: mb_seq(pre, sender), body };
+            let env = Envelope { sender, seq: mb_seq(pre, sender) as u64, body };
             assert(all_of(post) =~= all_of(pre).push(env));
             lemma_push_extends(all_of(pre), env);
         },

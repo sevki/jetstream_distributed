@@ -260,13 +260,14 @@ proof fn lemma_concat_contains_left(a: Seq<Envelope>, b: Seq<Envelope>, m: Envel
 
 /// A sender about to enqueue is not mid-operation on the message it is about to
 /// number.
-proof fn lemma_enqueue_fresh(s: Mailbox, sender: Id, body: nat)
+proof fn lemma_enqueue_fresh(s: Mailbox, sender: Id, body: Vec<u8>)
     requires
         mb_inv(s),
+        mb_seq(s, sender) < u64::MAX,
     ensures
-        !s.ops.contains_key(Envelope { sender, seq: mb_seq(s, sender), body }),
+        !s.ops.contains_key(Envelope { sender, seq: mb_seq(s, sender) as u64, body }),
 {
-    let env = Envelope { sender, seq: mb_seq(s, sender), body };
+    let env = Envelope { sender, seq: mb_seq(s, sender) as u64, body };
     lemma_fresh(s, env);
 }
 
@@ -282,7 +283,7 @@ proof fn lemma_from_claimed(step: MbStep, s: Mailbox, t: Mailbox, m: Envelope)
 {
     match step {
         MbStep::Enqueue { sender, body } => {
-            lemma_push_contains(s.queue, Envelope { sender, seq: mb_seq(s, sender), body }, m);
+            lemma_push_contains(s.queue, Envelope { sender, seq: mb_seq(s, sender) as u64, body }, m);
         },
         MbStep::Drain => {
             lemma_concat_contains(s.processed, s.queue, m);
@@ -301,7 +302,7 @@ proof fn lemma_from_ready(step: MbStep, s: Mailbox, t: Mailbox, m: Envelope)
 {
     match step {
         MbStep::Enqueue { sender, body } => {
-            lemma_push_contains(s.queue, Envelope { sender, seq: mb_seq(s, sender), body }, m);
+            lemma_push_contains(s.queue, Envelope { sender, seq: mb_seq(s, sender) as u64, body }, m);
         },
         _ => {},
     }
@@ -317,7 +318,7 @@ proof fn lemma_from_drained(step: MbStep, s: Mailbox, t: Mailbox, m: Envelope)
 {
     match step {
         MbStep::Enqueue { sender, body } => {
-            lemma_push_contains(s.queue, Envelope { sender, seq: mb_seq(s, sender), body }, m);
+            lemma_push_contains(s.queue, Envelope { sender, seq: mb_seq(s, sender) as u64, body }, m);
         },
         _ => {},
     }
@@ -336,9 +337,9 @@ proof fn lemma_from_flag(step: MbStep, s: Mailbox, t: Mailbox, m: Envelope, e: E
 {
     match step {
         MbStep::Enqueue { sender, body } => {
-            lemma_push_contains(s.queue, Envelope { sender, seq: mb_seq(s, sender), body }, m);
+            lemma_push_contains(s.queue, Envelope { sender, seq: mb_seq(s, sender) as u64, body }, m);
             lemma_enqueue_fresh(s, sender, body);
-            assert(e != Envelope { sender, seq: mb_seq(s, sender), body });
+            assert(e != Envelope { sender, seq: mb_seq(s, sender) as u64, body });
         },
         MbStep::SetState { env } => {
             assert(e != env);
@@ -368,9 +369,9 @@ proof fn lemma_from_mark(step: MbStep, s: Mailbox, t: Mailbox, m: Envelope, e: E
 {
     match step {
         MbStep::Enqueue { sender, body } => {
-            lemma_push_contains(s.queue, Envelope { sender, seq: mb_seq(s, sender), body }, m);
+            lemma_push_contains(s.queue, Envelope { sender, seq: mb_seq(s, sender) as u64, body }, m);
             lemma_enqueue_fresh(s, sender, body);
-            assert(e != Envelope { sender, seq: mb_seq(s, sender), body });
+            assert(e != Envelope { sender, seq: mb_seq(s, sender) as u64, body });
         },
         MbStep::SetState { env } => {
             if env == e {

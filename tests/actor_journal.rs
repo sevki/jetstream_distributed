@@ -19,10 +19,11 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
-use jetstream_distributed::id::Id;
+use jetstream_distributed::actor::model::Envelope;
 use jetstream_distributed::actor::service::{
-    Actor, Connection, Event, Host, Receipt, Record, Snapshot,
+    Actor, Connection, Event, Host, Receipt, Record, Snapshot, MAX_BODY,
 };
+use jetstream_distributed::id::Id;
 use jetstream_distributed::ownership::service::{MemoryFloor, Offer};
 use jetstream::prelude::*;
 use jetstream_rpc::context::RemoteAddr;
@@ -88,27 +89,26 @@ async fn a_hosts(h: &Cluster) {
 }
 
 /// The behaviour, written out here independently of the service.
-fn apply(state: u64, body: u64) -> u64 {
-    (((state as u128) * 31 + body as u128) % (1u128 << 64)) as u64
+fn apply(state: u64, body: &[u8]) -> u64 {
+    body.iter().fold(state, |s, b| (((s as u128) * 31 + u128::from(*b)) % (1u128 << 64)) as u64)
 }
 
 fn fold(records: &[Record]) -> u64 {
-    records.iter().fold(0, |s, r| apply(s, r.body))
+    records.iter().fold(0, |s, r| apply(s, &r.body))
 }
 
 #[tokio::test]
 async fn a_host_accepts_messages_in_the_order_sent_and_the_state_is_their_fold() {
     let h = actor().await;
     a_hosts(&h).await;
-    assert_eq!(h.c.send(Context::default(), 7).await.unwrap(), 0);
-    assert_eq!(h.c.send(Context::default(), 9).await.unwrap(), 1);
+    assert_eq!(h.c.send(Context::default(), vec![7]).await.unwrap(), 0);
+    assert_eq!(h.c.send(Context::default(), vec![9]).await.unwrap(), 1);
 
     let r0 = h.a.accept(Context::default(), 1, C, 0).await.unwrap();
     assert_eq!(
         r0,
         Receipt {
             index: 0,
-            body: 7,
             state: 7
         }
     );
@@ -117,7 +117,6 @@ async fn a_host_accepts_messages_in_the_order_sent_and_the_state_is_their_fold()
         r1,
         Receipt {
             index: 1,
-            body: 9,
             state: 7 * 31 + 9
         }
     );
@@ -134,7 +133,7 @@ async fn a_host_accepts_messages_in_the_order_sent_and_the_state_is_their_fold()
 async fn a_redelivered_message_is_refused() {
     let h = actor().await;
     a_hosts(&h).await;
-    h.c.send(Context::default(), 7).await.unwrap();
+    h.c.send(Context::default(), vec![7]).await.unwrap();
     h.a.accept(Context::default(), 1, C, 0).await.unwrap();
     let before = h.snapshot().await;
 
@@ -153,8 +152,8 @@ async fn a_redelivered_message_is_refused() {
 async fn a_message_ahead_of_its_turn_is_refused_until_its_turn() {
     let h = actor().await;
     a_hosts(&h).await;
-    h.c.send(Context::default(), 1).await.unwrap();
-    h.c.send(Context::default(), 2).await.unwrap();
+    h.c.send(Context::default(), vec![1]).await.unwrap();
+    h.c.send(Context::default(), vec![2]).await.unwrap();
 
     assert_eq!(
         code(h.a.accept(Context::default(), 1, C, 1).await.unwrap_err()),
@@ -174,8 +173,8 @@ async fn a_message_ahead_of_its_turn_is_refused_until_its_turn() {
 async fn senders_are_ordered_independently() {
     let h = actor().await;
     a_hosts(&h).await;
-    h.c.send(Context::default(), 10).await.unwrap();
-    h.d.send(Context::default(), 20).await.unwrap();
+    h.c.send(Context::default(), vec![10]).await.unwrap();
+    h.d.send(Context::default(), vec![20]).await.unwrap();
     h.a.accept(Context::default(), 1, D, 0).await.unwrap();
     h.a.accept(Context::default(), 1, C, 0).await.unwrap();
     assert_eq!(
@@ -196,7 +195,7 @@ async fn a_message_nobody_sent_is_refused() {
         code(h.a.accept(Context::default(), 1, C, 0).await.unwrap_err()),
         Some("ERR".into())
     );
-    h.c.send(Context::default(), 1).await.unwrap();
+    h.c.send(Context::default(), vec![1]).await.unwrap();
     assert_eq!(
         code(h.a.accept(Context::default(), 1, D, 0).await.unwrap_err()),
         Some("ERR".into())
@@ -209,7 +208,7 @@ async fn a_message_nobody_sent_is_refused() {
 async fn only_the_owner_at_its_epoch_may_append() {
     let h = actor().await;
     a_hosts(&h).await;
-    h.c.send(Context::default(), 5).await.unwrap();
+    h.c.send(Context::default(), vec![5]).await.unwrap();
 
     // `B` does not own the actor.
     assert_eq!(
@@ -248,9 +247,9 @@ async fn the_fence_is_asked_first() {
 async fn a_handover_keeps_the_journal_and_fences_the_old_host() {
     let h = actor().await;
     a_hosts(&h).await;
-    h.c.send(Context::default(), 7).await.unwrap();
-    h.c.send(Context::default(), 9).await.unwrap();
-    h.c.send(Context::default(), 11).await.unwrap();
+    h.c.send(Context::default(), vec![7]).await.unwrap();
+    h.c.send(Context::default(), vec![9]).await.unwrap();
+    h.c.send(Context::default(), vec![11]).await.unwrap();
     h.a.accept(Context::default(), 1, C, 0).await.unwrap();
     h.a.accept(Context::default(), 1, C, 1).await.unwrap();
     let before = h.snapshot().await;
@@ -285,7 +284,7 @@ async fn a_handover_keeps_the_journal_and_fences_the_old_host() {
     // `B` continues where `A` stopped.
     let r = h.b.accept(Context::default(), 2, C, 2).await.unwrap();
     assert_eq!(r.index, 2);
-    assert_eq!(r.state, apply(before.state, 11));
+    assert_eq!(r.state, apply(before.state, &[11]));
 
     // `A`, still believing, is refused — and so is a redelivery to `B`.
     assert_eq!(
@@ -315,8 +314,8 @@ async fn a_handover_keeps_the_journal_and_fences_the_old_host() {
 async fn a_forced_revocation_leaves_the_journal_for_the_next_host() {
     let h = actor().await;
     a_hosts(&h).await;
-    h.c.send(Context::default(), 3).await.unwrap();
-    h.c.send(Context::default(), 4).await.unwrap();
+    h.c.send(Context::default(), vec![3]).await.unwrap();
+    h.c.send(Context::default(), vec![4]).await.unwrap();
     h.a.accept(Context::default(), 1, C, 0).await.unwrap();
 
     // `A` is unreachable. The coordinator burns its epoch and offers the actor to
@@ -359,7 +358,7 @@ async fn delivery_order_and_redelivery_cannot_corrupt_the_journal() {
         a_hosts(&h).await;
         for (i, (_, _, addr)) in msgs.iter().enumerate() {
             conn(&h, *addr)
-                .send(Context::default(), 100 + i as u64)
+                .send(Context::default(), vec![100 + i as u8])
                 .await
                 .unwrap();
         }
@@ -415,7 +414,7 @@ async fn the_journal_is_read_in_pages() {
     let h = actor().await;
     a_hosts(&h).await;
     for i in 0..5 {
-        h.c.send(Context::default(), i).await.unwrap();
+        h.c.send(Context::default(), vec![i as u8]).await.unwrap();
         h.a.accept(Context::default(), 1, C, i).await.unwrap();
     }
     let page = h.b.journal(Context::default(), 1, 2).await.unwrap();
@@ -444,7 +443,7 @@ async fn a_stranger_is_refused_by_every_door() {
         Some("NO".into())
     );
     assert_eq!(
-        code(h.x.send(Context::default(), 1).await.unwrap_err()),
+        code(h.x.send(Context::default(), vec![1]).await.unwrap_err()),
         Some("NO".into())
     );
     assert_eq!(
@@ -466,7 +465,7 @@ async fn a_stranger_is_refused_by_every_door() {
 async fn what_the_host_did_is_logged_in_order() {
     let h = actor().await;
     a_hosts(&h).await;
-    h.c.send(Context::default(), 1).await.unwrap();
+    h.c.send(Context::default(), vec![1]).await.unwrap();
     h.a.accept(Context::default(), 1, C, 0).await.unwrap();
     assert_eq!(
         h.host.log(),
@@ -481,4 +480,133 @@ async fn what_the_host_did_is_logged_in_order() {
             },
         ]
     );
+}
+
+// -- `call`: the caller numbers its own messages -----------------------------------
+
+fn envelope(sender: Id, seq: u64, body: &[u8]) -> Envelope {
+    Envelope {
+        sender,
+        seq,
+        body: body.to_vec(),
+    }
+}
+
+/// A message sent with `call` is accepted exactly as one sent with `send`.
+#[tokio::test]
+async fn a_called_message_is_accepted_like_a_sent_one() {
+    let h = actor().await;
+    a_hosts(&h).await;
+    h.c.call(Context::default(), envelope(C, 0, &[7])).await.unwrap();
+
+    let receipt = h.a.accept(Context::default(), 1, C, 0).await.unwrap();
+    assert_eq!(receipt, Receipt { index: 0, state: 7 });
+    assert_eq!(h.records().await[0].body, vec![7]);
+}
+
+/// **Sending the same message again is not a second message.** The reply to a
+/// call can be lost, and the caller then sends exactly what it sent: that must
+/// not put a second copy in line.
+#[tokio::test]
+async fn a_call_sent_again_is_not_a_second_message() {
+    let h = actor().await;
+    a_hosts(&h).await;
+    h.c.call(Context::default(), envelope(C, 0, &[7])).await.unwrap();
+    h.c.call(Context::default(), envelope(C, 0, &[7])).await.unwrap();
+
+    h.a.accept(Context::default(), 1, C, 0).await.unwrap();
+    assert_eq!(
+        code(h.a.accept(Context::default(), 1, C, 1).await.unwrap_err()),
+        Some("ERR".into()),
+        "there is no second message"
+    );
+    assert_eq!(
+        h.host.log().iter().filter(|e| matches!(e, Event::Sent { .. })).count(),
+        1
+    );
+}
+
+/// The same number with a different body is two messages claiming one place.
+#[tokio::test]
+async fn the_same_number_with_a_different_body_is_refused() {
+    let h = actor().await;
+    h.c.call(Context::default(), envelope(C, 0, &[7])).await.unwrap();
+
+    assert_eq!(
+        code(h.c.call(Context::default(), envelope(C, 0, &[8])).await.unwrap_err()),
+        Some("NO".into())
+    );
+}
+
+/// A number that is neither the caller's next nor one already used is refused,
+/// ahead of its turn or not.
+#[tokio::test]
+async fn a_number_out_of_turn_is_refused() {
+    let h = actor().await;
+    assert_eq!(
+        code(h.c.call(Context::default(), envelope(C, 1, &[7])).await.unwrap_err()),
+        Some("NO".into()),
+        "the first number is 0"
+    );
+    h.c.call(Context::default(), envelope(C, 0, &[7])).await.unwrap();
+    assert_eq!(
+        code(h.c.call(Context::default(), envelope(C, 2, &[7])).await.unwrap_err()),
+        Some("NO".into()),
+        "a gap is refused, not held"
+    );
+    h.c.call(Context::default(), envelope(C, 1, &[9])).await.unwrap();
+}
+
+/// `send` and `call` draw on one count, so a call can repeat a message `send`
+/// numbered and carry on from it.
+#[tokio::test]
+async fn send_and_call_share_one_count() {
+    let h = actor().await;
+    assert_eq!(h.c.send(Context::default(), vec![1]).await.unwrap(), 0);
+    h.c.call(Context::default(), envelope(C, 0, &[1])).await.unwrap();
+    h.c.call(Context::default(), envelope(C, 1, &[2])).await.unwrap();
+    assert_eq!(h.c.send(Context::default(), vec![3]).await.unwrap(), 2);
+}
+
+/// **An envelope names a sender, and the host does not believe it.** The caller
+/// is whoever the connection says; naming another node is refused, and nothing is
+/// recorded under either.
+#[tokio::test]
+async fn an_envelope_naming_someone_else_is_refused() {
+    let h = actor().await;
+    assert_eq!(
+        code(h.c.call(Context::default(), envelope(D, 0, &[7])).await.unwrap_err()),
+        Some("NO".into())
+    );
+    assert!(h.host.log().is_empty());
+    // And it did not use up either caller's number 0.
+    h.c.call(Context::default(), envelope(C, 0, &[7])).await.unwrap();
+    h.d.call(Context::default(), envelope(D, 0, &[7])).await.unwrap();
+}
+
+/// A node that is not on the roster cannot call at all.
+#[tokio::test]
+async fn a_stranger_cannot_call() {
+    let h = actor().await;
+    assert_eq!(
+        code(h.x.call(Context::default(), envelope(C, 0, &[7])).await.unwrap_err()),
+        Some("NO".into())
+    );
+    assert!(h.host.log().is_empty());
+}
+
+/// A body over the limit is refused, and one at the limit is not.
+#[tokio::test]
+async fn a_body_over_the_limit_is_refused() {
+    let h = actor().await;
+    let limit = MAX_BODY as usize;
+    assert_eq!(
+        code(
+            h.c.call(Context::default(), envelope(C, 0, &vec![0; limit + 1]))
+                .await
+                .unwrap_err()
+        ),
+        Some("NO".into())
+    );
+    h.c.call(Context::default(), envelope(C, 0, &vec![0; limit])).await.unwrap();
 }

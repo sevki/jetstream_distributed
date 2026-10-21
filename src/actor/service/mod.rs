@@ -118,9 +118,10 @@ pub struct Closed {
 /// The most records one `journal` read returns.
 pub const MAX_READ: u64 = 1024;
 
-/// The longest message body a host takes, so a journal read of [`MAX_READ`]
-/// records stays far below a frame's size limit.
-pub const MAX_BODY: u64 = 64 * 1024;
+/// The longest message body a host takes: the most a `Vec<u8>` can carry on the
+/// wire, whose length is a `u16`. A body any longer could not be sent, nor read
+/// back from the journal.
+pub const MAX_BODY: u64 = u16::MAX as u64;
 
 /// The node-facing protocol: four ownership calls, and the actor's own.
 ///

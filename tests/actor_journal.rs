@@ -596,17 +596,28 @@ async fn a_stranger_cannot_call() {
 }
 
 /// A body over the limit is refused, and one at the limit is not.
+///
+/// The limit is the most the wire carries (a `u16` length), so a body over it can
+/// only reach the host without the wire: the over-limit call is made on the host
+/// itself, as `C`, and the one at the limit goes over the wire and comes back out
+/// of the journal.
 #[tokio::test]
 async fn a_body_over_the_limit_is_refused() {
     let h = actor().await;
     let limit = MAX_BODY as usize;
+    assert_eq!(limit, usize::from(u16::MAX));
+    let as_c = Context::new(Some(RemoteAddr::IpAddr(ADDR_C)), None);
     assert_eq!(
         code(
-            h.c.call(Context::default(), envelope(C, 0, &vec![0; limit + 1]))
+            h.host
+                .call(as_c, envelope(C, 0, &vec![0; limit + 1]))
                 .await
                 .unwrap_err()
         ),
         Some("NO".into())
     );
     h.c.call(Context::default(), envelope(C, 0, &vec![0; limit])).await.unwrap();
+    a_hosts(&h).await;
+    h.a.accept(Context::default(), 1, C, 0).await.unwrap();
+    assert_eq!(h.records().await[0].body.len(), limit);
 }

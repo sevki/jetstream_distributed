@@ -268,8 +268,8 @@ impl Actor for Host {
     }
 }
 
-/// A body larger than [`MAX_BODY`] is refused, so a journal read of
-/// [`MAX_READ`] records stays far below a frame's size limit.
+/// A body larger than [`MAX_BODY`] is refused: the wire could not carry it, and
+/// the journal read that returns it would not encode.
 fn too_big(body: &[u8]) -> Result<()> {
     if body.len() as u64 > MAX_BODY {
         return Err(refuse_no("the message body is too large"));

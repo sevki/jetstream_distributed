@@ -155,20 +155,7 @@ impl Actor for Host {
         self.registry.release(ctx, epoch).await
     }
 
-    async fn send(&self, ctx: Context, body: Vec<u8>) -> Result<u64> {
-        let _gate = self.gate.lock().await;
-        let sender = self.caller(&ctx)?;
-        too_big(&body)?;
-        let mut g = self.inner.lock().expect("host lock");
-        let next = g.next_seq.get(&sender).copied().unwrap_or(0);
-        let seq = send_step(next).map_err(refuse)?;
-        g.sent.insert((sender, seq), body);
-        g.next_seq.insert(sender, seq + 1);
-        g.log.push(Event::Sent { sender, seq });
-        Ok(seq)
-    }
-
-    async fn call(&self, ctx: Context, envelope: Envelope) -> Result<()> {
+    async fn send(&self, ctx: Context, envelope: Envelope) -> Result<()> {
         let _gate = self.gate.lock().await;
         let sender = self.caller(&ctx)?;
         if envelope.sender != sender {
@@ -198,7 +185,7 @@ impl Actor for Host {
         Ok(())
     }
 
-    fn replies(&self, _ctx: Context, from: u64) -> Subscription<Envelope, Closed> {
+    fn receive(&self, _ctx: Context, from: u64) -> Subscription<Envelope, Closed> {
         Subscription::producing(1, move |producer| async move {
             producer.finish(Closed { last_seq: from }).await
         })

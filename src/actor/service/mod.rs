@@ -15,13 +15,14 @@
 //! it is built around. The registry is the same one the `Ownership` service
 //! serves, with the same epoch floor; the actor adds nothing to the ownership
 //! protocol, it *uses* it. Four of the trait's methods are the ownership calls,
-//! delegated; the other four are the actor's:
+//! delegated; the others are the actor's:
 //!
 //! | model step | method | acts at |
 //! | --- | --- | --- |
-//! | `Send { from, body }` | [`Actor::send`] | the caller |
+//! | `Send { from, body }` | [`Actor::send`], numbered by the caller | the caller |
 //! | `Accept { host, epoch, env }` | [`Actor::accept`] | the caller (`host`) |
 //! | — (a read) | [`Actor::state`], [`Actor::journal`] | — |
+//! | — (nothing yet: the model's actor has no outputs) | [`Actor::receive`] | — |
 //!
 //! **No method takes the acting node's number.** [`Actor::accept`] does take a
 //! `sender`, and that is not the same thing: it names whose message is being
@@ -143,13 +144,6 @@ pub trait Actor {
 
     // --- the actor -----------------------------------------------------------
 
-    /// `Send`: the caller sends the actor a message, numbered by the host. Returns
-    /// its sequence number, which is the caller's own count — the first is 0.
-    ///
-    /// A reply lost on the way back makes a retry a second message, which is why
-    /// [`call`](Actor::call), where the caller does the numbering, exists.
-    async fn send(&self, ctx: Context, body: Vec<u8>) -> Result<u64>;
-
     /// `Accept`: the caller, presenting `epoch`, processes the message `sender`
     /// sent as number `seq`.
     ///
@@ -166,14 +160,16 @@ pub trait Actor {
     /// the previous host's memory.
     async fn journal(&self, ctx: Context, from: u64, limit: u64) -> Result<Vec<Record>>;
 
-    /// `Send`, numbered by the caller: deliver `envelope` to the actor.
+    /// `Send`: deliver `envelope` to the actor. The caller numbers its own
+    /// messages, from 0, so a retry after a lost reply is the same message and not
+    /// a second one.
     ///
     /// `envelope.sender` must be the caller, as the connection says; an envelope
     /// naming anyone else is refused. If the host has already recorded this very
     /// message the call succeeds and changes nothing, so a caller whose reply was
     /// lost can send it again. The same number with a different body, or a number
     /// that is neither the caller's next nor one already used, is refused.
-    async fn call(&self, ctx: Context, envelope: Envelope) -> Result<()>;
+    async fn send(&self, ctx: Context, envelope: Envelope) -> Result<()>;
 
     /// The messages the actor has for the caller, from number `from`; the
     /// subscription ends with a [`Closed`] carrying the last number it sent.
@@ -181,5 +177,5 @@ pub trait Actor {
     /// Nothing is sent yet: the model's actor has no outputs, only a state, so
     /// there is no `Send` from an actor for this to carry. It ends at once.
     #[subscription]
-    fn replies(&self, ctx: Context, from: u64) -> Subscription<Envelope, Closed>;
+    fn receive(&self, ctx: Context, from: u64) -> Subscription<Envelope, Closed>;
 }

@@ -1909,7 +1909,9 @@ and **fences every append with the ownership `Registry` it is built around** —
 same registry, with the same epoch floor, that the `Ownership` service serves. The
 actor adds nothing to the ownership protocol; it *uses* it. Four of `Actor`'s
 methods are the ownership calls, delegated (`poll`, `acquire`, `begin_transfer`,
-`release`); the others are `send`, `accept`, and two reads (`state`, `journal`).
+`release`); the others are `send` (the caller numbers its own messages, so a retry
+after a lost reply is the same message), `accept`, two reads (`state`, `journal`),
+and `receive`, which ends at once because the model's actor has no outputs.
 `accept` takes the `sender` whose message is being processed, and that is not the
 same thing as naming the acting node: it is checked against the mailbox, so a
 message that was never sent is refused rather than believed.

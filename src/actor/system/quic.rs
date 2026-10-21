@@ -146,10 +146,6 @@ impl Actor for QuicActor {
         self.channel.release(ctx, epoch).await
     }
 
-    async fn send(&self, ctx: Context, body: Vec<u8>) -> Result<u64> {
-        self.channel.send(ctx, body).await
-    }
-
     async fn accept(&self, ctx: Context, epoch: u64, sender: Id, seq: u64) -> Result<Receipt> {
         self.channel.accept(ctx, epoch, sender, seq).await
     }
@@ -162,14 +158,13 @@ impl Actor for QuicActor {
         self.channel.journal(ctx, from, limit).await
     }
 
-    async fn call(&self, ctx: Context, envelope: Envelope) -> Result<()> {
-        self.channel.call(ctx, envelope).await
+    async fn send(&self, ctx: Context, envelope: Envelope) -> Result<()> {
+        self.channel.send(ctx, envelope).await
     }
 
-    fn replies(&self, ctx: Context, from: u64) -> Subscription<Envelope, Closed> {
-        self.channel.replies(ctx, from)
+    fn receive(&self, ctx: Context, from: u64) -> Subscription<Envelope, Closed> {
+        self.channel.receive(ctx, from)
     }
-
 }
 
 impl<F, P> QuicActorSystem<F, P>
@@ -529,10 +524,6 @@ mod tests {
                 .ok_or_else(|| Error::new(format!("release at {epoch}")))
         }
 
-        async fn send(&self, _ctx: Context, body: Vec<u8>) -> Result<u64> {
-            Ok(u64::from(body[0]) + 1)
-        }
-
         async fn accept(&self, _ctx: Context, epoch: u64, sender: Id, seq: u64) -> Result<Receipt> {
             Ok(Receipt {
                 index: seq,
@@ -554,13 +545,15 @@ mod tests {
             }])
         }
 
-        async fn call(&self, ctx: Context, envelope: Envelope) -> Result<()> {
-            todo!()
+        async fn send(&self, _ctx: Context, envelope: Envelope) -> Result<()> {
+            (envelope.sender == Id::from(6) && envelope.seq == 3 && envelope.body == [41, 42])
+                .then_some(())
+                .ok_or_else(|| Error::new(format!("send {envelope:?}")))
         }
 
         #[doc = " Streaming: many `Event`s share the request\'s tag, and the end"]
         #[doc = " carries a `Closed`."]
-        fn replies(&self, ctx: Context, from: u64) -> Subscription<Envelope, Closed> {
+        fn receive(&self, _ctx: Context, _from: u64) -> Subscription<Envelope, Closed> {
             todo!()
         }
     }
@@ -592,7 +585,19 @@ mod tests {
         remote.acquire(ctx(), 9).await.unwrap();
         remote.begin_transfer(ctx(), Id::from(5)).await.unwrap();
         remote.release(ctx(), 11).await.unwrap();
-        assert_eq!(remote.send(ctx(), vec![41]).await.unwrap(), 42);
+        let envelope = Envelope {
+            sender: Id::from(6),
+            seq: 3,
+            body: vec![41, 42],
+        };
+        remote.send(ctx(), envelope.clone()).await.unwrap();
+        assert!(
+            remote
+                .send(ctx(), Envelope { seq: 4, ..envelope })
+                .await
+                .is_err(),
+            "the server saw the envelope it was given, not another"
+        );
         assert_eq!(
             remote.accept(ctx(), 4, Id::from(6), 8).await.unwrap(),
             Receipt {

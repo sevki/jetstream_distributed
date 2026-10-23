@@ -1,0 +1,1296 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>jetstream_distributed</title>
+        <meta name="robots" content="noindex">
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="How the protocols in jetstream_distributed relate: what each one buys, what it assumes, and what is proved, tested or only intended.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex-faae4165.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-3647fa7e.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">jetstream_distributed</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/sevki/jetstream_distributed" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="introduction"><a class="header" href="#introduction">Introduction</a></h1>
+<p><code>jetstream_distributed</code> is a set of distributed protocols written in
+<a href="https://github.com/verus-lang/verus">Verus</a>, plus the
+<a href="https://github.com/sevki/jetstream">Jetstream</a> services that speak them. The
+protocols are <strong>exclusive mutable ownership</strong> of an actor across machines,
+Raymond’s routing layer, Raft, SWIM gossip membership, and a distributed actor with
+a mailbox in front of it.</p>
+<pre><code class="language-text">Rust:
+    at most one mutable reference
+
+Distributed ownership:
+    at most one authoritative mutable owner
+</code></pre>
+<p>This is not Rust’s borrow checker extended across a network. It is a runtime
+protocol, and the proofs are about a <em>model</em> of it. The
+<a href="https://github.com/sevki/jetstream_distributed/blob/main/README.md">README</a> says
+exactly what is claimed and what is not.</p>
+<h2 id="what-this-book-is-for"><a class="header" href="#what-this-book-is-for">What this book is for</a></h2>
+<p>The README is the map of claims: every theorem, with the name of the proof and what
+it assumes. It is long, because each algorithm is described in detail. This book
+answers a different question: <strong>how do the algorithms relate to each other?</strong>
+Which one assumes what the others provide, which two are glued together and how,
+which are independent, and where a relationship is intended but not built yet.</p>
+<p>It does not repeat the claims tables. Where a chapter makes a claim it gives the
+README’s row number (<code>A14</code>, <code>MB10</code>, <code>C54</code>) and links to the table, so the
+statement of what is proved lives in one place.</p>
+<h2 id="how-to-read-it"><a class="header" href="#how-to-read-it">How to read it</a></h2>
+<p>Start with <a href="#how-the-algorithms-relate">How the algorithms relate</a>. It is one page, and
+every later chapter is a closer look at one box in its picture. Then read
+<a href="#evidence-proved-tested-assumed">Evidence</a> before trusting any sentence in this book that contains
+the word “guarantee”: it explains the three tiers (proved, tested, assumed) and
+the file naming that tells them apart.</p>
+<p>The protocol chapters are in the order the dependencies run, so each one can lean
+on the ones before it:</p>
+<ol>
+<li><a href="#ownership-epochs-and-fencing">Ownership</a>, the base everything else uses or assumes.</li>
+<li><a href="#raymond-routing-the-privilege">Raymond</a> and <a href="#composed-the-two-as-one-machine">Composed</a>, which route the privilege
+and tie the routing to ownership.</li>
+<li><a href="#raft-buying-the-atomic-registry">Raft</a>, which is how the base’s strongest assumption could be bought.</li>
+<li><a href="#swim-membership-by-merge">SWIM</a>, which agrees on nothing and promises only that views converge.</li>
+<li><a href="#the-actor-a-journal-fenced-by-ownership">The actor</a> and <a href="#the-mailbox-getting-messages-to-the-actor">the mailbox</a>, which sit on ownership.</li>
+</ol>
+<p>The last three chapters are about running these: the services, placement and
+discovery, and the actor system over QUIC.</p>
+<h2 id="what-this-book-will-not-do"><a class="header" href="#what-this-book-will-not-do">What this book will not do</a></h2>
+<p>It will not say a thing is proved when it is only tested. Where the code and the
+README disagree, the code wins and the README is the thing to fix. Where a chapter
+describes a design that is not built, it says “not built” in the same sentence.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="how-the-algorithms-relate"><a class="header" href="#how-the-algorithms-relate">How the algorithms relate</a></h1>
+<p>One page. Every later chapter is a closer look at one box.</p>
+<h2 id="the-picture"><a class="header" href="#the-picture">The picture</a></h2>
+<pre><code class="language-text">   Raft                                   SWIM
+   consensus                              membership by merge
+   · · · · · · · · ·                      · · · · · · · · · ·
+   :  could buy    :                      :  a hint to      :
+   :  the atomic   :                      :  placement      :
+   :  registry     :                      :  (QUIC system)  :
+   ▼ · · · · · · · ·                      ▼ · · · · · · · · ·
+ ┌───────────────────────┐   couples   ┌───────────────────┐
+ │ Ownership             │◄────────────│ Raymond           │
+ │ epochs, fencing       │             │ routes the        │
+ │ "who may mutate"      │             │ privilege         │
+ └───────────────────────┘             └───────────────────┘
+      ▲            ▲                           ▲
+      │ fences     └────────────┬──────────────┘
+      │ the journal             │ guards tie the two
+      │                    ┌────┴─────────────────┐
+ ┌────┴─────────────┐      │ Composed             │
+ │ Actor            │      │ one machine, both    │
+ │ a journal, and   │      │ layers               │
+ │ the state it     │      └──────────────────────┘
+ │ folds to         │
+ └────▲─────────────┘
+      │ delivers to
+ ┌────┴─────────────┐
+ │ Mailbox          │
+ │ the queue in     │
+ │ front of it      │
+ └──────────────────┘
+</code></pre>
+<p>Solid lines are relationships the code builds: one module imports or enforces the
+other. Dotted lines are relationships that are <em>intended</em> or are a hint only. The
+difference matters, and the rest of this page is mostly about it.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Relationship</th><th>Built?</th></tr>
+</thead>
+<tbody>
+<tr><td>Raymond is tied to ownership by <code>couples</code>, and the two are one machine in Composed</td><td>Yes. <code>composed</code> imports both, and the coupling is a guard, not an assumption</td></tr>
+<tr><td>The actor’s journal is fenced by ownership</td><td>Yes. <code>as_accept</code> requires the ownership layer’s <code>can_mutate</code> at the epoch the host presents</td></tr>
+<tr><td>The mailbox sits in front of the actor</td><td>In the model, yes. <code>Host</code>, the journal service, is not behind it yet; see <a href="#the-mailbox-getting-messages-to-the-actor">the mailbox</a></td></tr>
+<tr><td>Raft buys the atomic registry</td><td><strong>No.</strong> Nothing outside <code>src/raft/</code> imports Raft. The registry is a process-local record</td></tr>
+<tr><td>SWIM drives placement</td><td>A hint only, and only in the QUIC system. Nothing in the protocols depends on it</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="three-ways-of-getting-one-answer"><a class="header" href="#three-ways-of-getting-one-answer">Three ways of getting one answer</a></h2>
+<p>The protocols do not agree on how to get a single authoritative answer in a system
+where nobody can see everything. They buy it three different ways, and the
+difference is the reason they are all here.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>What it promises</th><th>How it is bought</th><th>What it assumes</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Ownership</strong></td><td>at most one authoritative owner per epoch</td><td><strong>structurally</strong>: <code>may_mutate</code> is true in exactly one shape, so two owners is not a representable state</td><td>the owner record is updated <em>atomically</em></td></tr>
+<tr><td><strong>Raft</strong></td><td>at most one leader per term</td><td><strong>by counting</strong>: any two quorums share a voter, and a voter votes once per term</td><td>nothing, for safety. Progress needs a reachable majority and is not claimed</td></tr>
+<tr><td><strong>SWIM</strong></td><td>views converge and never get less accurate</td><td><strong>by merge</strong>: an idempotent, commutative, associative rule, so order and duplication do not matter</td><td>nothing about timing or arrival; it does not claim gossip arrives</td></tr>
+</tbody>
+</table>
+</div>
+<p>Ownership is the one that depends on the others. Its strongest assumption is a
+single atomic, durable registry. Raft is the standard way to make a record like
+that fault-tolerant, which is why it is in the repository, and SWIM is the standard
+way to <em>notice</em> that a node has gone, which ownership treats as unreliable by
+construction (below).</p>
+<h2 id="the-relationships-one-by-one"><a class="header" href="#the-relationships-one-by-one">The relationships, one by one</a></h2>
+<h3 id="ownership--raymond-routing-never-grants-authority"><a class="header" href="#ownership--raymond-routing-never-grants-authority">Ownership ← Raymond: routing never grants authority</a></h3>
+<p>Raymond routes a single <em>privilege</em> between peers. The ownership model says who may
+mutate. The glue is one predicate:</p>
+<pre><code class="language-text">couples(r, s) = every node that may mutate in s holds the privilege in r
+</code></pre>
+<p>The direction is the point. Routing only <em>constrains</em> who could have authority; it
+never creates it. So a duplicated or reordered request cannot manufacture an owner.
+That is <a href="#raymond-routing-the-privilege">Raymond</a>’s chapter.</p>
+<h3 id="composed-the-guards-are-the-relationship"><a class="header" href="#composed-the-guards-are-the-relationship">Composed: the guards are the relationship</a></h3>
+<p>On its own <code>couples</code> is only a predicate, and nothing stops a token moving out from
+under an owner. <a href="#composed-the-two-as-one-machine">Composed</a> defines one state machine over both layers
+and turns the synchronisation into <strong>guards</strong>: the privilege may pass only once the
+actor is <code>Unowned</code>, and a node may acquire only if it holds the privilege. Crash
+takeover is a separate step (<code>SeizeToken</code>), so the safety claim is not restricted
+to executions where the privilege always moves voluntarily.</p>
+<h3 id="ownership--actor-the-journal-write-is-the-fenced-mutation"><a class="header" href="#ownership--actor-the-journal-write-is-the-fenced-mutation">Ownership ← Actor: the journal write <em>is</em> the fenced mutation</a></h3>
+<p>An actor’s state is not held by its host. It is a <em>journal</em> of accepted messages,
+and the state is a fold over it. Appending is the one thing a host does that
+matters, and the ownership layer fences it. So the actor’s exclusivity theorems are
+the ownership layer’s, used as they are, and a handover moves no state: the new
+owner reads the same journal and recomputes. See <a href="#the-actor-a-journal-fenced-by-ownership">the actor</a>.</p>
+<h3 id="actor--mailbox-refusing-out-of-order-needs-something-that-retries-in-order"><a class="header" href="#actor--mailbox-refusing-out-of-order-needs-something-that-retries-in-order">Actor ← Mailbox: refusing out of order needs something that retries in order</a></h3>
+<p>The actor refuses a message that arrives ahead of its turn rather than buffering it.
+That is safe and also useless on its own, because nothing makes a refused message
+arrive again. The mailbox is the queue that does, and it is where the first liveness
+theorem lives, under a stated fairness assumption. See <a href="#the-mailbox-getting-messages-to-the-actor">the mailbox</a>.</p>
+<h3 id="ownership--raft-the-strongest-assumption-and-the-one-unbuilt-edge"><a class="header" href="#ownership--raft-the-strongest-assumption-and-the-one-unbuilt-edge">Ownership ⇢ Raft: the strongest assumption, and the one unbuilt edge</a></h3>
+<p>Ownership’s first assumption is that the owner record is updated atomically, which
+in a real deployment must be bought from consensus. Today the ownership service
+buys <em>atomicity</em> from a process-local lock and <em>survival</em> from a durable, monotone
+epoch floor, so a restarted registry cannot move epochs backwards. It does <strong>not</strong>
+replicate. Raft proves Election Safety, Log Matching and State Machine Safety (with
+one stated hypothesis), but nothing connects it to the registry. <a href="#raft-buying-the-atomic-registry">Raft</a>
+says where the missing connection would go.</p>
+<h3 id="swim--everything-else-an-unreliable-detector-by-design"><a class="header" href="#swim--everything-else-an-unreliable-detector-by-design">SWIM ⇢ everything else: an unreliable detector, by design</a></h3>
+<p>Ownership does not trust failure detection. Its model lets the coordinator revoke a
+perfectly healthy node, and safety has to survive that: it comes from the epoch bump,
+not from the detector being right. SWIM’s <code>Suspect</code> and <code>Dead</code> are exactly that kind
+of signal, which is why using them as a <strong>hint</strong> is consistent with the proofs. In
+the QUIC system a suspect host is not placed on and a dead one is not found, and
+nothing moves an actor. See <a href="#swim-membership-by-merge">SWIM</a> and
+<a href="#the-actor-system-over-quic">the actor system</a>.</p>
+<h2 id="a-pattern-that-repeats-belief-versus-authority"><a class="header" href="#a-pattern-that-repeats-belief-versus-authority">A pattern that repeats: belief versus authority</a></h2>
+<p>Three layers separate what a node <em>believes</em> from what is <em>so</em>, and the same
+discipline keeps each safe:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Layer</th><th>Belief</th><th>Authority</th><th>What stands between them</th></tr>
+</thead>
+<tbody>
+<tr><td>Ownership</td><td>a node’s own view of its epoch</td><td>the registry’s record</td><td>the fence is checked <strong>where the effect lands</strong>, not by the node about itself</td></tr>
+<tr><td>Raymond</td><td><code>believes_holds</code></td><td><code>has_token</code></td><td><code>is_stale_holder</code> is the gap, and seizure needs no cooperation from the stale holder</td></tr>
+<tr><td>SWIM</td><td>a node’s view of the others</td><td>what is actually up</td><td>views are only ever merged upward, and never trusted to decide ownership</td></tr>
+</tbody>
+</table>
+</div>
+<p>A node cannot fence itself. A partitioned owner accepts its own stale epoch, and the
+rejection that matters happens at the resource. Every chapter that follows leans on
+this.</p>
+<h2 id="what-is-not-related-yet"><a class="header" href="#what-is-not-related-yet">What is not related yet</a></h2>
+<p>Said plainly, because a map that implies edges that do not exist is worse than none:</p>
+<ul>
+<li><strong>Raft and ownership are not connected.</strong> Nothing runs the registry on a replicated log.</li>
+<li><strong>Raymond and the composed services keep the global record in one process.</strong> They
+check the rules; they do not distribute them.</li>
+<li><strong><code>Host</code>, the journal service, does not sit behind the mailbox</strong>, though the mailbox
+is proved in front of the model.</li>
+<li><strong>Nothing here proves liveness of a handover.</strong> Safety survives every failure the
+model admits; progress does not.</li>
+<li><strong>No automatic failover.</strong> Membership can say a host left. Nothing yet decides to
+move its actors, and doing so from a partition starts a second copy that only the
+ownership epoch keeps harmless.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="evidence-proved-tested-assumed"><a class="header" href="#evidence-proved-tested-assumed">Evidence: proved, tested, assumed</a></h1>
+<p>Every claim in this repository is in one of three tiers, and the tiers are not
+interchangeable. A sentence in this book that says “guarantee” means the first tier
+unless it says otherwise.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Tier</th><th>What backs it</th><th>Where it lives</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Proved</strong></td><td>Verus checks a theorem about the model or about verified code</td><td><code>proofs/</code>, and the verified executable files</td></tr>
+<tr><td><strong>Tested</strong></td><td>Tests, a simulated network, and a fuzzer exercise plain Rust</td><td><code>service/</code>, <code>tests/</code>, the scheduling code</td></tr>
+<tr><td><strong>Assumed</strong></td><td>The proofs rest on it and nothing checks it</td><td>the failure model, the vendored log’s assumptions, the docs that say so</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="what-proved-is-about"><a class="header" href="#what-proved-is-about">What “proved” is about</a></h2>
+<p>The core of the repository is a <em>model</em>, and the proofs are about the model. Each
+algorithm also has verified executable code (small <code>u64</code>-valued functions and the
+records they act on), each with a postcondition stated in the model’s terms and a
+theorem discharging it. That is how the gap between model and code is narrowed: the
+service calls the function the theorem is about.</p>
+<p>It is narrowed, not closed. The lock around a verified core, the roster, the network and
+the scheduler are not under proof. The README’s
+<a href="https://github.com/sevki/jetstream_distributed/blob/main/README.md#status-proven-modelled-future-work">status section</a>
+lists, by name, what is proven, what is modelled and not proven, and what is not modelled
+at all.</p>
+<h2 id="reading-the-file-names"><a class="header" href="#reading-the-file-names">Reading the file names</a></h2>
+<p>The naming follows the vendored verified-storage convention, and it tells you which tier
+a file is in before you open it:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Suffix</th><th>Meaning</th><th>Who checks it</th></tr>
+</thead>
+<tbody>
+<tr><td><code>_t.rs</code></td><td><strong>trusted</strong>: the model, the specification, the definitions a claim is stated in</td><td>a reader, because no proof checks them against anything</td></tr>
+<tr><td><code>_v.rs</code></td><td><strong>verified</strong>: executable code and proofs</td><td>Verus</td></tr>
+<tr><td>none (<code>service/</code>)</td><td>plain Rust</td><td>the tests</td></tr>
+</tbody>
+</table>
+</div>
+<p>The most important thing to audit in a proof repository is the part nothing checks, so
+the trusted files are where to start. The model never imports the specification layer,
+so a specification cannot be quietly weakened to fit the model.</p>
+<h2 id="the-rules-the-repository-holds-itself-to"><a class="header" href="#the-rules-the-repository-holds-itself-to">The rules the repository holds itself to</a></h2>
+<ul>
+<li><strong>No escape hatches.</strong> <code>assume</code>, <code>admit</code>, <code>axiom</code>, <code>external_body</code> and friends are
+rejected by CI in <code>src/</code>. The one documented exception is the vendored persistent-memory
+log, whose assumptions are listed.</li>
+<li><strong>Nothing vendored is edited.</strong> The vendored directories are verbatim copies at a pinned
+commit, and CI diffs them.</li>
+<li><strong>Say what is proved and what is merely tested.</strong> The running mailbox is a transcription
+of the mailbox model, not a refinement; only its queue-and-flags core is verified. A doc
+that blurs that is a bug.</li>
+</ul>
+<h2 id="what-ci-runs"><a class="header" href="#what-ci-runs">What CI runs</a></h2>
+<p>Every pull request runs the whole of this: both Verus entry points over the crate, the
+vendored log’s proof check, the service tests, the simulated-network scenarios, a minute of
+coverage-guided fuzzing of the protocol search, and a check that the vendored skills are
+unmodified.</p>
+<p>The simulated network is the part that reaches past the proofs. It runs the executable
+protocol under duplicated, reordered, delayed and dropped messages, with runtime oracles
+checking the same properties the theorems state, and a search over seeds with the ones that
+once broke something kept as a regression replay.</p>
+<h2 id="how-to-read-a-claim-row"><a class="header" href="#how-to-read-a-claim-row">How to read a claim row</a></h2>
+<p>Each row in the README’s claims tables has the same four parts: a number (<code>A14</code>, <code>MB10</code>,
+<code>C54</code>), what is claimed, the name of the Verus theorem, and <strong>what it assumes</strong>. The last
+column is the one to read. A theorem with <code>none</code> there holds in every state. One that says
+<code>reachability</code> or <code>an execution</code> holds in every state a run can reach. One that names a
+hypothesis holds <em>given it</em>, and the hypothesis is stated so it can be discharged.</p>
+<h2 id="what-this-book-does-not-prove"><a class="header" href="#what-this-book-does-not-prove">What this book does not prove</a></h2>
+<p>Nothing here is a proof. This book explains how the protocols fit and says which of the
+README’s claims each relationship rests on. If a sentence here and the README disagree
+about what is proved, the README and the code are right.</p>
+<h2 id="checking-it-yourself"><a class="header" href="#checking-it-yourself">Checking it yourself</a></h2>
+<pre><code class="language-text">cargo test                              # services, simulated-network tests, unit tests
+verus --crate-type=lib src/lib.rs       # the proofs (needs the pinned Verus)
+cargo verus verify --no-default-features
+mdbook build book                       # this book
+</code></pre>
+<p>Verus is pinned, with the Rust toolchain it was built against. If it is not installed,
+CI is the check.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="ownership-epochs-and-fencing"><a class="header" href="#ownership-epochs-and-fencing">Ownership: epochs and fencing</a></h1>
+<p>Ownership is the base. Everything else in this book either uses it (the actor),
+is tied to it (Raymond, through Composed), or is a way to satisfy its assumptions
+(Raft).</p>
+<h2 id="the-state-machine"><a class="header" href="#the-state-machine">The state machine</a></h2>
+<p>An actor is, at any moment, in one of three states:</p>
+<pre><code class="language-text">Owned        { owner, epoch }
+Transferring { from, to, old_epoch, new_epoch }
+Unowned      { epoch, intended_owner }
+</code></pre>
+<p>Ownership never moves atomically. A handover is four transitions:</p>
+<pre><code class="language-text">Owned(A, 41)
+      |  BeginTransfer(A -&gt; B)         epoch 42 is allocated here
+Transferring(A, B, 41, 42)
+      |  CompleteRelease
+Unowned(42, B)
+      |  Acquire(B)
+Owned(B, 42)
+</code></pre>
+<p>Two choices carry the whole design:</p>
+<ul>
+<li><strong>The epoch advances at the start of a handover, not the end.</strong> From the moment <code>A</code>
+agrees to transfer, the current epoch is 42, so <code>A</code>’s epoch-41 authority is already
+fenced out. <code>A</code> does not need to be reachable, or alive, for that to take effect.</li>
+<li><strong>Nobody has authority during the middle two stages.</strong> The design gives up
+availability during a handover so that double ownership is not representable.
+Neither node having authority is acceptable; both having it is not.</li>
+</ul>
+<h2 id="who-may-mutate"><a class="header" href="#who-may-mutate">Who may mutate</a></h2>
+<p>Authority is one predicate, true in exactly one shape:</p>
+<pre><code class="language-text">may_mutate(s, node, epoch) =
+    s is Owned { owner, epoch: e }  and  node == owner  and  epoch == e
+</code></pre>
+<p>That is why exclusivity is <strong>structural</strong> here: two owners is not a state the model
+can represent, so the work is in showing that no transition reaches a bad state.
+Compare <a href="#raft-buying-the-atomic-registry">Raft</a>, where nothing is structural and exclusivity is a counting
+argument over a set that no participant can see.</p>
+<p>A server checks an incoming request with <code>valid_fence(s, e) = e &gt;= current_epoch(s)</code>.
+While <code>Transferring</code>, the current epoch is the <em>new</em> one, which is what makes the
+outgoing owner stale immediately.</p>
+<h2 id="tokens-are-physical-authority-is-not"><a class="header" href="#tokens-are-physical-authority-is-not">Tokens are physical; authority is not</a></h2>
+<p>A <code>Token { actor, epoch, holder }</code> can be copied, survives a crash, and can be held by
+a node that was partitioned away for an hour. The model says so: the set of issued
+tokens only grows. Whether a token confers authority is a separate question, answered
+by the actor’s <em>current</em> state. Stale tokens exist and are inert.</p>
+<h2 id="what-the-proofs-assume"><a class="header" href="#what-the-proofs-assume">What the proofs assume</a></h2>
+<p>The failure model is part of the system, not a side condition. The ones that matter
+for how the layers fit together:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Assumption</th><th>Why it matters elsewhere</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>The owner record is updated atomically.</strong> The strongest assumption in the model</td><td>This is the edge <a href="#raft-buying-the-atomic-registry">Raft</a> could satisfy, and does not yet</td></tr>
+<tr><td>The network may duplicate, reorder, delay and lose messages</td><td>No later layer needs to add anything for these; the actor’s delivery claims are quantified over them</td></tr>
+<tr><td>Failure detection is unreliable</td><td>A revoke may fire at a healthy node. Safety comes from the epoch bump. This is why <a href="#swim-membership-by-merge">SWIM</a> can only be a hint</td></tr>
+<tr><td>A handover may be interrupted at any point</td><td>An abort burns another epoch, so a grant for the abandoned epoch is already stale on arrival</td></tr>
+<tr><td>Nodes are not Byzantine</td><td>No transition mints a token or forges a state</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Not claimed: liveness.</strong> Nothing says a transfer completes or that an actor ever
+becomes owned again. Safety survives every case in the table; progress does not.</p>
+<p>The full table, and every theorem with the name of its proof and what it assumes, is
+in the README: <a href="https://github.com/sevki/jetstream_distributed/blob/main/README.md#failure-model">failure model</a>
+and <a href="https://github.com/sevki/jetstream_distributed/blob/main/README.md#claimed-invariants-and-the-proofs-that-establish-them">claimed invariants</a>.</p>
+<h2 id="prior-art-chubby"><a class="header" href="#prior-art-chubby">Prior art: Chubby</a></h2>
+<p>The fencing mechanism is Chubby’s. A Chubby <em>sequencer</em> carries the lock name, mode
+and <strong>lock generation number</strong>, and the resource server is expected to reject a stale
+one. That is <code>Token</code> plus <code>valid_fence</code>, and the generation number is the model’s
+<code>Epoch</code>. What this repository adds is the proof, and the precision a proof forces:
+who may mutate is one predicate, and “a node cannot fence itself” cannot stay implicit.
+The README’s <a href="https://github.com/sevki/jetstream_distributed/blob/main/README.md#relation-to-chubby">Relation to Chubby</a>
+is the careful version, including the three deliberate differences (no timing,
+consensus assumed, peer-to-peer routing).</p>
+<h2 id="the-service"><a class="header" href="#the-service">The service</a></h2>
+<p>The ownership service is the model run over Jetstream. Three things about it matter
+to the other chapters:</p>
+<ul>
+<li><strong>Identity comes from the connection, never from an argument.</strong> No method takes a
+node number; the caller is the transport’s <code>Context</code>. Today that is an address
+against a roster fixed at construction, and <strong>an address is not a credential</strong>: it
+is as good as one in the simulated network and worth little on a real one.</li>
+<li><strong><code>force</code> is not on the wire.</strong> It is the coordinator’s own transition (revoking
+an owner), so a node-facing service does not offer it.</li>
+<li><strong>The registry survives restarts.</strong> A process-local lock buys atomicity and none of
+survival, and a registry that forgets can move epochs backwards, which every fencing
+theorem forbids. So the starting epoch is read from a durable, monotone <code>EpochFloor</code>,
+and every burn is written down before the state that depends on it is visible. A
+registry that dies between the two skips an epoch, which is the safe direction to fail.</li>
+</ul>
+<p>Next: <a href="#raymond-routing-the-privilege">Raymond</a>, which routes the privilege and is tied to this.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="raymond-routing-the-privilege"><a class="header" href="#raymond-routing-the-privilege">Raymond: routing the privilege</a></h1>
+<p>Raymond’s algorithm is a distributed mutual-exclusion scheme. Here it is modelled as
+a <strong>routing</strong> layer, kept strictly separate from ownership semantics: it answers
+“which way is the privilege?”, never “who may mutate?”.</p>
+<h2 id="what-each-node-keeps"><a class="header" href="#what-each-node-keeps">What each node keeps</a></h2>
+<p>Per node: a <code>holder</code> pointer, a request <code>queue</code>, an <code>asked</code> flag and a <code>using</code> flag.
+Alongside them, deliberately <em>not</em> derived from them, is <code>privilege</code>: the node that
+<strong>actually</strong> holds it.</p>
+<pre><code class="language-text">request:  D -&gt; B -&gt; A -&gt; C[token]
+token:    C -&gt; A -&gt; B -&gt; D
+</code></pre>
+<p>Requests travel hop by hop towards the token, and the token travels back along the
+reverse path.</p>
+<h2 id="belief-versus-authority"><a class="header" href="#belief-versus-authority">Belief versus authority</a></h2>
+<p>The split between <code>holder</code> and <code>privilege</code> is the routing counterpart of the issued
+tokens versus the current state in <a href="#ownership-epochs-and-fencing">ownership</a>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>believes_holds(r, n)</code></td><td>node <code>n</code> thinks it holds the privilege (belief)</td></tr>
+<tr><td><code>has_token(r, n)</code></td><td>node <code>n</code> actually holds it (authority)</td></tr>
+<tr><td><code>is_stale_holder(r, n)</code></td><td>the gap between the two</td></tr>
+</tbody>
+</table>
+</div>
+<p>The split exists so that a seizure can take the privilege from a node <strong>without
+reaching into it</strong>. No implementation can edit the state of a node that is down, and
+an earlier version of the model assumed exactly that. After a seizure both
+<code>holder[A] == A</code> and <code>holder[B] == B</code>, and that is deliberate: <code>A</code> is a stale holder
+whose belief nobody could correct. Uniqueness belongs to <code>privilege</code>, not to the
+belief graph.</p>
+<p>So the unconditional guarantee is an <strong>acyclic forest of beliefs plus one
+authoritative holder</strong>. Following the pointers to that holder needs one more
+condition, <code>ray_no_stale_holders</code>, which is what reconciliation restores.</p>
+<h2 id="requests-are-state"><a class="header" href="#requests-are-state">Requests are state</a></h2>
+<p>Requests in flight are explicit state: every request ever sent, as an
+<code>(originator, destination)</code> pair. The set only grows and delivery does not consume it,
+the same choice the ownership layer makes for its network. The destination is resolved
+at <em>send</em> time, so a request can be delivered after the token has moved. A guard
+phrased against the live pointer would drop it silently, and “arbitrary delay” would
+have been claimed but not modelled.</p>
+<h2 id="how-it-is-tied-to-ownership"><a class="header" href="#how-it-is-tied-to-ownership">How it is tied to ownership</a></h2>
+<p>One predicate:</p>
+<pre><code class="language-text">couples(r, s) = every node that may mutate in s holds the privilege in r
+</code></pre>
+<p>Routing never grants authority; it only constrains who could have it. That is why a
+routing step, including a duplicated or reordered request, cannot manufacture an
+owner: it does not change who could be the owner.</p>
+<p>On its own <code>couples</code> is only a predicate. Nothing in the routing layer sees the
+ownership state, so nothing stops the token moving out from under a node that still
+has authority. <a href="#composed-the-two-as-one-machine">Composed</a> closes that gap.</p>
+<h2 id="what-is-and-is-not-claimed"><a class="header" href="#what-is-and-is-not-claimed">What is and is not claimed</a></h2>
+<ul>
+<li>Claimed: at most one privilege holder, routing cannot manufacture ownership,
+duplicated, reordered and arbitrarily delayed requests are safe, and the executable
+routing steps agree with the model in both directions.</li>
+<li><strong>Not claimed: liveness.</strong> “Every request is eventually served” needs FIFO, reliable
+links and no crashes, and none of those are assumed.</li>
+<li><strong>No crash model of its own.</strong> The ownership layer models crash, recovery and unreliable
+detection; Raymond’s steps do not. What is modelled is the case that matters for the
+composed claim, a seizure that re-establishes the token without the holder acting.</li>
+<li><strong>The service hosts the whole record in one process.</strong> The router holds every node’s
+entries under one lock because the model’s <code>Raymond</code> is one struct. It checks the
+rules; it does not distribute them. A deployment where each node keeps only its own
+entries is a different system, and nothing here says this one refines it.</li>
+</ul>
+<p>The routing claims are the R-rows in the README’s
+<a href="https://github.com/sevki/jetstream_distributed/blob/main/README.md#the-raymond-layer">Raymond section</a>,
+including <a href="https://github.com/sevki/jetstream_distributed/blob/main/README.md#seizure-needs-no-oracle-belief-versus-authority">seizure without an oracle</a>.</p>
+<p>Next: <a href="#composed-the-two-as-one-machine">Composed</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="composed-the-two-as-one-machine"><a class="header" href="#composed-the-two-as-one-machine">Composed: the two as one machine</a></h1>
+<p><a href="#ownership-epochs-and-fencing">Ownership</a> says who may mutate. <a href="#raymond-routing-the-privilege">Raymond</a> routes a
+privilege. Composed is the only place the two meet, and it meets them with
+<strong>guards</strong>, not assumptions.</p>
+<h2 id="why-a-predicate-is-not-enough"><a class="header" href="#why-a-predicate-is-not-enough">Why a predicate is not enough</a></h2>
+<p><code>couples(r, s)</code> says every node that may mutate holds the privilege. Stated as a
+predicate it is a hypothetical: the routing layer never sees the ownership state, so
+a routing step that moves the token has no way to know a node still has authority.
+The question “does token transfer preserve ownership safety?” has no answer until
+there is one machine in which both kinds of step happen.</p>
+<h2 id="the-synchronisation-is-a-guard"><a class="header" href="#the-synchronisation-is-a-guard">The synchronisation is a guard</a></h2>
+<p>Composed defines one state machine over both layers. The steps that touch both are
+guarded:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Step</th><th>Guard</th><th>Why</th></tr>
+</thead>
+<tbody>
+<tr><td><code>PassToken</code></td><td>the actor is <code>Unowned</code></td><td>Ownership must be genuinely released before the privilege may move. <code>Transferring</code> is also “not owned”, so guarding on that weaker condition would let the token move while the outgoing owner had not acknowledged the revoke</td></tr>
+<tr><td><code>AcquireUnderToken</code></td><td>the node <em>holds</em> the token</td><td>Authority cannot be taken by a node routing has not elected</td></tr>
+<tr><td><code>SeizeToken</code></td><td>none on the holder</td><td>Re-establishes the token at another node <strong>without the holder acting</strong>: crash takeover</td></tr>
+</tbody>
+</table>
+</div>
+<p>Two carrier steps pass everything else through: <code>Ray</code> carries every Raymond step that
+does not move the token (request routing, entering and leaving the critical section),
+and <code>Own</code> carries every ownership transition that does not create authority over the
+actor.</p>
+<p><code>Ray</code> is guarded on “preserves the token”, deliberately wider than “is a routing
+step”. Had it admitted only routing, no execution could enter a critical section, every
+reachable state would keep <code>using</code> false, and the theorems would cover a degenerate
+fragment. A scenario that builds an execution from the initial state to one with a
+node inside the critical section rules that out the only way that counts: by
+exhibiting it.</p>
+<h2 id="what-is-then-provable"><a class="header" href="#what-is-then-provable">What is then provable</a></h2>
+<p><code>couples</code> becomes an <strong>invariant of the machine</strong> rather than a side condition: in
+every reachable composed state the only node that may mutate the actor is the node
+holding the token. Because the guards are what enforce it, “token transfer preserves
+ownership safety” is a claim about the system and not a hypothetical.</p>
+<p><code>SeizeToken</code> matters for the same reason. Without it the only token movement was a
+voluntary pass, so the invariant was quantified over executions where the token always
+moves politely. Crash-driven takeover, which is the case epochs exist for, was not among
+them. A scenario exhibits the crash takeover as a reachable execution.</p>
+<p>A seizure leaves the old holder believing it still holds the privilege. The composed
+steps keep <strong>reconciliation debts</strong>: the nodes that owe a reconciliation after being
+seized from. That is the executable form of “a stale holder whose belief nobody could
+correct”, and <code>reconcile</code> is what clears it.</p>
+<h2 id="the-executable-side"><a class="header" href="#the-executable-side">The executable side</a></h2>
+<p>The composed steps over both layers’ records (<code>pass_token</code>, <code>seize_token</code>,
+<code>acquire_under_token</code>, <code>reconcile</code>) are verified code whose contracts are the composed
+model’s steps. The coupling guards agree with the model in both directions, and a step
+a layer already proved is carried without a second proof.</p>
+<h2 id="what-is-not-claimed"><a class="header" href="#what-is-not-claimed">What is not claimed</a></h2>
+<ul>
+<li><strong>The composed service refines the crash-free executions only.</strong> The composed model
+guards some steps on <code>own.live</code>, which is ground truth and not something a process
+can evaluate. The service has no <code>Crash</code> or <code>Recover</code>, so liveness of a node is a
+hypothesis for the steps that name a node that is not the caller. Seizing from a holder
+that is merely unreachable is inside the fragment, because <code>SeizeToken</code> has no liveness
+guard on the node it takes the privilege from.</li>
+<li><strong>Both layers live behind one gate in one process.</strong> The <code>Coordinator</code> serialises
+them because the coupling reads both. It checks the rules; it does not distribute them.</li>
+<li><strong>The nodes involved must be live for a recipient or a seizure target.</strong> The service’s
+identity lookup speaks only for the <em>caller</em>, and a recipient of a passed privilege is
+not a caller, so nothing in the service establishes that for them.</li>
+</ul>
+<p>The rows are CX1 and CX2 and the composed rows in the README’s
+<a href="https://github.com/sevki/jetstream_distributed/blob/main/README.md#claimed-invariants-and-the-proofs-that-establish-them">claims table</a>.</p>
+<p>Next: <a href="#raft-buying-the-atomic-registry">Raft</a>, which is about the assumption this chapter, like the last one,
+leaned on.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="raft-buying-the-atomic-registry"><a class="header" href="#raft-buying-the-atomic-registry">Raft: buying the atomic registry</a></h1>
+<p><a href="#ownership-epochs-and-fencing">Ownership</a>’s strongest assumption is that the owner record is updated
+atomically, so that two coordinators cannot both read <code>Owned { A, 41 }</code> and allocate
+epoch 42 for different successors. A real deployment has to buy that from consensus,
+or from a store with compare-and-swap. Raft is the first half of buying it.</p>
+<blockquote>
+<p><strong>Status: not connected.</strong> Nothing outside <code>src/raft/</code> imports Raft. The registry
+the ownership service runs is a process-local record with a durable epoch floor.
+This chapter is about what Raft proves and where the connection would go, not about
+a connection that exists.</p>
+</blockquote>
+<h2 id="the-same-statement-bought-differently"><a class="header" href="#the-same-statement-bought-differently">The same statement, bought differently</a></h2>
+<p>Raft’s Election Safety is the exclusivity theorem with two words changed:</p>
+<pre><code class="language-text">ownership:  at most one authoritative owner per epoch, because a single
+            atomic registry hands the epoch out
+raft:       at most one leader per term, because any two quorums share a
+            voter and a voter votes once per term
+</code></pre>
+<p>The difference is why both are here. Ownership’s exclusivity is <strong>structural</strong>: two
+owners is not a state. In Raft nothing is structural. A cluster can perfectly well hold
+two servers who both believe they lead term 7. Ruling that out is a <strong>counting</strong>
+argument over a set that no single participant can see. Side by side, the two say what a
+coordinator costs.</p>
+<p>The argument is three sentences, and the interesting clause is the one not in them:
+a cast vote is never ahead of its voter’s term. Without it the induction fails at the
+most ordinary step in the protocol, a server timing out into term <code>t + 1</code> and voting for
+itself there.</p>
+<h2 id="the-log"><a class="header" href="#the-log">The log</a></h2>
+<p>The model has a log. A client request stamps an entry with its leader’s term; append
+carries one entry under the consistency check and truncates whatever diverged; commit
+advances under figure 8’s restriction; a vote carries the up-to-date comparison.</p>
+<p>What follows from a <em>single step</em> (a leader only appends, a follower agrees before it
+accepts, an entry is copied and not invented, a commit needs a majority of the
+committing leader’s own term) is the easy part. <strong>Log Matching is proved too</strong>, and it
+needed something the model did not have:</p>
+<blockquote>
+<p>Ruling out a second entry at the same <code>(index, term)</code> is a fact about the <strong>run’s
+history</strong>, not about any one state. Nothing in the <em>state</em> says no leader of that
+term ever appended at that index before.</p>
+</blockquote>
+<p>So the cluster carries <strong>ghost fields</strong>, each added because some question about the run
+has no answer in a single state: every <code>(server, term)</code> ever led; every entry any leader
+ever created, with the term of the entry before it; every entry any leader ever
+committed (the commit counter <em>retreats</em>, so a count cannot record it); and every vote
+together with the voter’s log as it stood when the vote was cast.</p>
+<h2 id="state-machine-safety-with-one-hypothesis"><a class="header" href="#state-machine-safety-with-one-hypothesis">State Machine Safety, with one hypothesis</a></h2>
+<p>State Machine Safety is proved with <strong>exactly one hypothesis</strong>: that two commits at an
+index agree on the entry’s <em>term</em>. The value half is unconditional, because one
+<code>(term, index)</code> names one act of creation by one leader. Nothing about values, quorums
+or counting is missing; what remains is the induction hypothesis over leaders of terms,
+stated as one and with its upper endpoint still owed.</p>
+<h2 id="the-durable-log"><a class="header" href="#the-durable-log">The durable log</a></h2>
+<p>The log’s storage is verified at the encoding level: recovery is exact, a crash can only
+rewind, and a byte prefix of the device parses back to a record prefix, so figure 2’s
+suffix deletion is implementable on a device that deletes nothing.</p>
+<p>It is <strong>not wired to a device</strong>, and the obstacle is a crash model, not an interface:
+the persistent-memory log’s chunk size is 8 and a write must be safe for <em>any subset</em> of
+8-byte chunks having flushed, which POSIX does not promise for a write crossing a chunk.
+Until a device supplies that, the vendored log’s two corruption assumptions are not
+assumptions of anything proved here.</p>
+<h2 id="where-the-connection-would-go"><a class="header" href="#where-the-connection-would-go">Where the connection would go</a></h2>
+<p>Said as a design direction, not a plan: the registry’s record is the state a replicated
+log would carry, and the epoch-advancing transitions are the entries. Three things stand
+between here and there, and none is built:</p>
+<ol>
+<li>A state machine on top of the log. The model’s server has a log and a commit count
+and no applied state: it proves the log, not what is applied from it.</li>
+<li>The ownership registry reading and writing through it, instead of through a lock.</li>
+<li>A device for the log, for the crash-model reason above.</li>
+</ol>
+<p>Until then, the honest statement is that ownership’s atomicity is assumed and Raft’s
+consensus is proved, and the two do not yet touch.</p>
+<p>The Raft rows (C1 onward) are in the README’s
+<a href="https://github.com/sevki/jetstream_distributed/blob/main/README.md#raft-the-same-statement-bought-by-counting">Raft section</a>.</p>
+<p>Next: <a href="#swim-membership-by-merge">SWIM</a>, which does not try to agree on anything.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="swim-membership-by-merge"><a class="header" href="#swim-membership-by-merge">SWIM: membership by merge</a></h1>
+<p><a href="#ownership-epochs-and-fencing">Ownership</a> and <a href="#raft-buying-the-atomic-registry">Raft</a> both spend a majority round trip to get
+one authoritative answer. SWIM does not try to agree on anything. Every node keeps its
+own view of who else is alive, the views disagree constantly, and the only promise is
+that disagreements <strong>resolve rather than compound</strong>.</p>
+<p>That is a different kind of promise, bought a different way: by an algebraic property
+of a merge rule, not by quorum intersection and not by structure.</p>
+<h2 id="the-record-and-the-rule"><a class="header" href="#the-record-and-the-rule">The record and the rule</a></h2>
+<p>A member record is an <strong>incarnation number</strong> and a <strong>status</strong>: <code>Alive</code>, <code>Suspect</code> or
+<code>Dead</code>. Two records are compared by a key: a higher incarnation always wins, and at
+equal incarnations the more-dead status wins. <code>merge</code> keeps whichever side has the
+larger key. That is the entire rule.</p>
+<p>A probe timeout or a self-refutation is not a different rule. Each is only a different
+choice of <em>which record arrived</em>:</p>
+<ul>
+<li>A probe that times out makes the node believe the peer <code>Suspect</code>, at the incarnation it
+had recorded <strong>when the probe began</strong>. The incarnation is an argument and is not re-read,
+because a probe is slow and a refutation can land while it is in flight. A suspicion at
+the old incarnation then loses to the refutation and changes nothing.</li>
+<li>A node that hears it is accused answers with a record <strong>one incarnation higher</strong>. Alive
+at a higher incarnation beats suspect and dead at the accusation’s.</li>
+</ul>
+<h2 id="what-is-proved"><a class="header" href="#what-is-proved">What is proved</a></h2>
+<p>The claims are S1 to S12 in the README. In words:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>claim</th></tr>
+</thead>
+<tbody>
+<tr><td>S1–S4, S6</td><td>merge is idempotent, absorbs a repeat, never accepts a record that does not out-rank the local one, and is commutative and associative</td></tr>
+<tr><td>S5</td><td>across a whole run, <strong>no node’s record about any peer ever moves backward</strong>: the actual convergence argument</td></tr>
+<tr><td>S7–S9</td><td>the executable merge is the model’s; a refutation is a gossip step and out-ranks what it answers</td></tr>
+<tr><td>S10–S12</td><td>the node’s table learns by the model’s gossip step, and never believes less than it did</td></tr>
+</tbody>
+</table>
+</div>
+<p>Idempotence and absorbing a repeat are what let gossip’s real delivery model, at least
+once and arbitrarily duplicated, survive contact with <code>merge</code> at all. Commutativity and
+associativity are what make order not matter. S5 is what those add up to once lifted
+through every step of an execution: not that gossip arrives in order, or even that it
+arrives, only that whatever arrives never makes a view <em>less accurate</em> than it was.</p>
+<h2 id="what-is-not-modelled"><a class="header" href="#what-is-not-modelled">What is not modelled</a></h2>
+<ul>
+<li><strong>No probe scheduler, no indirect-ping fallback, no dissemination budget.</strong> The model is
+the merge rule and one transition. How often to probe, and what to piggyback, is not
+modelled, so nothing here says gossip <em>eventually arrives</em>.</li>
+<li><strong>No voluntary leave.</strong> A graceful departure and a failure-detected one have different
+precedence and rejoin rules in memberlist. Here the status covers failure detection
+only, so a node that leaves on purpose is not representable, rather than
+misrepresented as a failure.</li>
+<li><strong>A node writes nothing down.</strong> Incarnations are self-correcting: a restarted node
+begins at 0, and the first peer to tell it what the cluster believes about it out-ranks
+its record and is answered with a higher incarnation. A restart costs a round trip, not
+correctness.</li>
+</ul>
+<h2 id="the-service-1"><a class="header" href="#the-service-1">The service</a></h2>
+<p><code>Node</code> is the shell around a verified table: the roster, the lock, the audit log, the
+batch limit and the order a batch is applied in are plain Rust that the tests exercise.
+Suspecting a peer, declaring it dead and refuting an accusation are <strong>not on the wire</strong>.
+They are things a node does about its own view, and putting them on the wire would let
+any caller make this node believe anything. A node suspects a peer because <em>its own</em>
+probe failed.</p>
+<h2 id="how-it-relates-to-the-rest"><a class="header" href="#how-it-relates-to-the-rest">How it relates to the rest</a></h2>
+<p>SWIM is independent of the other protocols in the proofs. It is related to them in one
+direction, and only as a <strong>hint</strong>:</p>
+<ul>
+<li>Ownership assumes failure detection is unreliable, and survives a revoke of a healthy
+node. SWIM’s <code>Suspect</code> and <code>Dead</code> are exactly that kind of signal.</li>
+<li>The <a href="#the-actor-system-over-quic">actor system</a> reads a SWIM view to decide where <em>not</em> to place
+new work and which addresses to stop returning. It never uses it to decide an actor has
+moved. That is the ownership epoch’s job.</li>
+</ul>
+<p>The SWIM rows are in the README’s
+<a href="https://github.com/sevki/jetstream_distributed/blob/main/README.md#swim-gossip-membership-bought-by-merge-rather-than-majority">SWIM section</a>.</p>
+<p>Next: <a href="#the-actor-a-journal-fenced-by-ownership">the actor</a>, which sits on ownership.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="the-actor-a-journal-fenced-by-ownership"><a class="header" href="#the-actor-a-journal-fenced-by-ownership">The actor: a journal fenced by ownership</a></h1>
+<p>A single-process actor is single-threaded by construction, so it never has to say what
+it guarantees. Spread over machines it does. The guarantees are the ones a single
+process gets for free: <strong>one thing at a time</strong>, <strong>each message once</strong>, <strong>in the order
+sent</strong>, and <strong>state that survives</strong> moving.</p>
+<h2 id="one-decision"><a class="header" href="#one-decision">One decision</a></h2>
+<p>The actor’s state is <strong>not held by its host</strong>. It is a <em>journal</em>, the ordered sequence of
+messages the actor has accepted, and the state is a fold over it. Appending to the
+journal is the one thing a host does that matters, and it is fenced by
+<a href="#ownership-epochs-and-fencing">ownership</a>:</p>
+<pre><code class="language-text">as_accept(host, epoch, message) requires  can_mutate(ownership, host, epoch)
+</code></pre>
+<p><code>can_mutate</code> is <code>Owned { host, epoch }</code> and nothing else. A host that is not the owner,
+or owns a superseded generation, cannot append. The actor needs no second fence of its
+own: the journal write <em>is</em> the mutation the ownership protocol fences.</p>
+<p>This is the actor’s relationship to ownership in one line, and it is why the actor’s
+exclusivity theorems are ownership’s, used as they are.</p>
+<h2 id="everything-else-follows-from-three-facts"><a class="header" href="#everything-else-follows-from-three-facts">Everything else follows from three facts</a></h2>
+<ol>
+<li>Only the owner at the current epoch can append (ownership’s exclusivity and
+fencing).</li>
+<li>An append is accepted only if the message’s sequence number is <strong>exactly</strong> the number
+already accepted from its sender. A duplicate and a message ahead of its turn are the
+same refusal.</li>
+<li>The journal is only ever extended.</li>
+</ol>
+<p>The network may delay, duplicate and reorder. The set of sent messages never shrinks, so
+a message can be offered to the host any number of times in any order. That is not a
+separate failure mode: it is what the accept guard is already quantified over.</p>
+<h2 id="what-a-handover-does-to-the-actor"><a class="header" href="#what-a-handover-does-to-the-actor">What a handover does to the actor</a></h2>
+<p>Nothing, to the state. The new owner does not receive the state from the old one. It
+reads the same journal and recomputes. The journal records which host accepted each entry
+and under which epoch, but neither is needed to <em>compute</em> the state.</p>
+<p>That is why the claims split cleanly:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Group</th><th>Says</th><th>Rows</th></tr>
+</thead>
+<tbody>
+<tr><td>Exclusive</td><td>at most one host can accept at any instant; a superseded host cannot; nobody accepts between owners; nothing is written under an epoch the actor has left</td><td>A1–A7</td></tr>
+<tr><td>Delivery</td><td>nothing is invented; the <em>n</em>th message from a sender is numbered <em>n</em>; a message is accepted at most once; a redelivery and an early arrival are both refused</td><td>A8–A11</td></tr>
+<tr><td>State</td><td>the journal is append-only; the state is a fold and survives a handover</td><td>A12–A13</td></tr>
+<tr><td>Executable</td><td>the steps agree with the model in both directions</td><td>A14</td></tr>
+<tr><td>Not vacuous</td><td>one concrete run through a whole handover, ending with two hosts in one journal</td><td>A15</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="the-message"><a class="header" href="#the-message">The message</a></h2>
+<p>A message is an envelope: who sent it, the sender’s number for it, and a body of bytes.
+The actor’s behaviour folds over the body’s bytes, because a call to another actor is a
+request encoded for it. The sender’s counter is a <code>u64</code>, so <code>Send</code> is enabled only while
+it is below <code>u64::MAX</code>: the model’s numbers are the machine’s, and a sender that has used
+them all is refused rather than wrapped, because a wrapped counter would repeat a number
+and the accept guard would take the repeat for a duplicate.</p>
+<p><strong>The caller numbers its own messages.</strong> A retry after a lost reply is therefore the
+same <code>(sender, seq)</code> and not a second message. The host refuses an envelope naming anyone
+but the connection’s caller, a reused number with a different body, a number out of turn,
+and a body over the wire’s limit.</p>
+<blockquote>
+<p><strong>Direction, not built.</strong> The settled direction is that an envelope carries the
+<strong>receiver’s</strong> id as well as the sender’s, so that one connection can carry several
+actors. Today the envelope has no receiver, and the other calls (<code>poll</code>, <code>acquire</code>,
+<code>accept</code>, <code>state</code>, <code>journal</code>) name no actor either. Numbering would then be per
+(sender, receiver) pair. See <a href="#the-actor-system-over-quic">the actor system</a>.</p>
+</blockquote>
+<h2 id="what-is-not-claimed-1"><a class="header" href="#what-is-not-claimed-1">What is not claimed</a></h2>
+<ul>
+<li><strong>Safety only.</strong> Nothing says a message is ever delivered, or that a sender retries. An
+out-of-order arrival is <em>refused</em>, not buffered, so something must retry in order for
+anything to progress. That something is <a href="#the-mailbox-getting-messages-to-the-actor">the mailbox</a>.</li>
+<li><strong>The journal is assumed durable and linear.</strong> The model has no crash that loses an
+accepted entry, and the service’s journal is in memory: the guarantees hold for the life
+of the process and not across its death.</li>
+<li><strong>The service refines crash-free executions only</strong>, for the reason the composed service
+does.</li>
+<li><strong>The behaviour is a pure fold.</strong> What a message <em>does</em> beyond changing the state, an
+effect or a reply, is not modelled, and neither is what an effect does if its host is
+fenced halfway through.</li>
+</ul>
+<p>The proof files are <code>exclusive</code>, <code>delivery</code>, <code>state</code>, <code>refinement</code> and <code>scenario</code> under
+<code>src/actor/proofs/</code>, all resting on one inductive invariant of six clauses. The rows are
+in the README’s
+<a href="https://github.com/sevki/jetstream_distributed/blob/main/README.md#actor-a-journal-fenced-by-ownership">actor section</a>.</p>
+<p>Next: <a href="#the-mailbox-getting-messages-to-the-actor">the mailbox</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="the-mailbox-getting-messages-to-the-actor"><a class="header" href="#the-mailbox-getting-messages-to-the-actor">The mailbox: getting messages to the actor</a></h1>
+<p><a href="#the-actor-a-journal-fenced-by-ownership">The actor</a> proves nothing about a message ever being <em>offered</em> to its host.
+The mailbox is the queue that would offer it, and it is where the <strong>lost-wakeup
+problem</strong> lives.</p>
+<h2 id="the-problem"><a class="header" href="#the-problem">The problem</a></h2>
+<p>A drain that is scheduled rather than polling must be woken by the sender that finds it
+asleep. Every sender checks, then acts, with other senders and the drain acting in
+between. Get the interleaving wrong and a message sits in the queue with nobody coming to
+take it.</p>
+<h2 id="the-machine"><a class="header" href="#the-machine">The machine</a></h2>
+<p>The protocol is the one in Apple’s swift-distributed-actors mailbox, which keeps it as a
+PlusCal/TLA+ model, with the same three flags (<code>has</code>, <code>processing</code>, <code>scheduled</code>) and the
+same step boundaries:</p>
+<ul>
+<li>A <strong>sender</strong> takes three steps: enqueue; read-and-set <code>has</code>; schedule, if <code>has</code> was
+clear and the drain is not running.</li>
+<li>The <strong>drain</strong> takes three: claim (clear <code>has</code>, mark running); take the queue; finish
+(stay scheduled exactly when <code>has</code> was set meanwhile).</li>
+</ul>
+<p>The TLA+ model fixes two senders, five messages each, and a drain that stops after ten,
+so a model checker can exhaust it. Here a sender is an <em>operation</em> tracked in the
+mailbox’s state rather than a process, so any number of senders each sending any number
+of messages are covered at once. The bound is what the proof removes.</p>
+<h2 id="two-kinds-of-claim"><a class="header" href="#two-kinds-of-claim">Two kinds of claim</a></h2>
+<p><strong>Safety</strong> is a corollary of one invariant: nothing is lost or reordered, each message is
+taken in once, one sender’s messages keep their order with no gaps, and the drain never
+presents a message ahead of its turn (MB1–MB5).</p>
+<p>The last of those is the link to the actor. The <em>i</em>th message processed is numbered the
+count of its sender’s messages among the <em>i</em> before it, <strong>word for word the guard of the
+actor’s accept</strong>. So a host accepting in this order is never refused for being early. The
+mailbox hands the actor an <em>ordered</em> stream, and the ownership fence that decides whether
+the actor may append it is <a href="#the-actor-a-journal-fenced-by-ownership">the actor’s</a>, unchanged.</p>
+<p><strong>Liveness</strong> is a different kind of claim, and the proof says so. It is a statement about
+the infinite run, it is false of the bare machine (a run in which the drain is never given
+a turn processes nothing), and so it is stated under a fairness assumption written down
+as a definition, not left implicit:</p>
+<blockquote>
+<p>In every run in which the drain’s three steps and each sender’s two remaining ones are
+not starved, a message on the queue is later processed. (MB6)</p>
+</blockquote>
+<p>Senders are not required to send. The fairness is <em>weak</em> fairness and nothing stronger,
+and it is an assumption about the scheduler that the protocol cannot enforce. Two runs
+keep the theorem honest: a fair run that does work and satisfies the theorem (MB8), and
+an unfair run in which a message is enqueued and never processed (MB9), which shows the
+assumption is necessary.</p>
+<p>The temporal logic the liveness proof is stated in (leads-to, weak fairness, the WF1
+rule) is rebuilt in the crate, not depended on, because the verified build links <code>vstd</code>
+and nothing else. Every rule is proved, not assumed (MB7).</p>
+<h2 id="what-runs"><a class="header" href="#what-runs">What runs</a></h2>
+<p>The queue and flags the runtime keeps behind its lock are a verified core
+(<code>MailboxCore</code>), with one method per step and each method’s contract the model’s step
+(MB10, MB11). Everything around it is plain Rust that the tests exercise:</p>
+<ul>
+<li>the lock, the capacity and permits, the wakers and the notification;</li>
+<li><code>requeue</code>, which puts back what a dropped round never handed out, and is not a model
+step;</li>
+<li>the claim that callers follow the sender’s three steps, which MB10 takes as a
+hypothesis and nothing checks.</li>
+</ul>
+<h2 id="where-it-is-and-is-not-in-front-of-an-actor"><a class="header" href="#where-it-is-and-is-not-in-front-of-an-actor">Where it is, and is not, in front of an actor</a></h2>
+<p>The mailbox is proved in front of the <em>model</em>. In the running system:</p>
+<ul>
+<li><code>Host</code>, the journal service, is <strong>not</strong> behind it. The owning node calls <code>accept</code>.</li>
+<li>A hosted service <strong>is</strong>: the supervisor puts a mailbox in front of any service it runs
+and serves it one request at a time, in each sender’s order. That is
+<a href="#services-over-jetstream">the services chapter</a>.</li>
+<li>Subscriptions are not served through the mailbox, and the reply path is not bounded.</li>
+</ul>
+<p>Next: <a href="#services-over-jetstream">Services over Jetstream</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="services-over-jetstream"><a class="header" href="#services-over-jetstream">Services over Jetstream</a></h1>
+<p>Each protocol also has a <strong>service</strong> that runs it over Jetstream RPC. The service calls
+the verified step functions; it does not re-derive them. This chapter is about what a
+service adds around a protocol, and the pieces that let several of them share a node.</p>
+<h2 id="the-shape-every-service-has"><a class="header" href="#the-shape-every-service-has">The shape every service has</a></h2>
+<ul>
+<li><strong>The decision is a verified function; the service is the part around it.</strong> Who is
+calling, what a message carries, the lock, the audit log, the batch limit. The
+steps (<code>steps_v.rs</code>, <code>exec_v.rs</code>) are verified; the service files are plain Rust that
+Verus never sees, and the tests exercise them.</li>
+<li><strong>Identity comes from the connection, never from an argument.</strong> No method takes the
+acting node’s number. The caller is the transport’s <code>Context</code>. This turns a whole
+class of “the message lied about who sent it” from a guarded-against bug into an
+unrepresentable one.</li>
+<li><strong>Today that identity is an address against a fixed roster</strong>, and an address is not a
+credential. The shape survives replacing it with a TLS or key identity.</li>
+<li><strong>One gate across a decision.</strong> A decision that reads the registry and then writes
+the journal holds one lock across both. Two locks taken one after the other would leave
+the gap that fencing exists to close.</li>
+</ul>
+<h2 id="fencing-a-running-actor"><a class="header" href="#fencing-a-running-actor">Fencing a running actor</a></h2>
+<p>The actor’s journal write is fenced by <a href="#ownership-epochs-and-fencing">ownership</a>. A <em>running service</em>
+needs the same fence at the other end: a host that has lost the actor must stop acting
+for it.</p>
+<p><code>Fence</code> is the question “may this host still act for its actor?”. The intended answer is
+the ownership registry’s own <code>may_write(host, epoch)</code>, which turns false the moment the
+epoch moves on, whether the owner handed the actor over or had it taken. Any
+<code>Fn() -&gt; bool</code> is a fence.</p>
+<p><code>serve_fenced</code> asks it <strong>before each request</strong>:</p>
+<ul>
+<li>A request the fence refuses is answered <code>FENCED</code> and is never handled.</li>
+<li>A handler that is already running is <strong>finished</strong>, not cancelled.</li>
+<li>Delivery is <strong>at least once</strong>. A caller that gets <code>FENCED</code> may have had an earlier
+request run.</li>
+</ul>
+<p>This is <strong>tested, not proved.</strong> The fence itself, the ownership check, is the proved part.
+What is checked here is that the loop around it does what its documentation says.</p>
+<h2 id="the-supervisor"><a class="header" href="#the-supervisor">The supervisor</a></h2>
+<p>A <code>Supervisor</code> owns what runs <strong>on this node</strong>. <code>LocalSupervisor</code> hosts any number of
+actors, each as a service behind its own <a href="#the-mailbox-getting-messages-to-the-actor">mailbox</a>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Status</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Running</code></td><td>serving requests; the only status that is handed out a new session</td></tr>
+<tr><td><code>Draining</code></td><td>a drain was asked for; the running handler is finishing</td></tr>
+<tr><td><code>Retired</code></td><td>drained: the service is dropped, the mailbox remains and answers <code>FENCED</code></td></tr>
+<tr><td><code>Stopped</code></td><td>the handler panicked; the drain task is gone</td></tr>
+<tr><td><code>Absent</code></td><td>never hosted here</td></tr>
+</tbody>
+</table>
+</div>
+<p>Three properties worth knowing:</p>
+<ul>
+<li><strong><code>spawn</code> requires a fence.</strong> An actor with no way to be told it has lost the actor
+is not something this node will host.</li>
+<li><strong>A restart over <code>Stopped</code> or <code>Retired</code> reuses the same mailbox</strong> when the protocol
+matches. A session obtained before still works, and queued requests are not stranded.</li>
+<li><strong><code>transport</code> returns a session onto the mailbox</strong>, a <code>Box&lt;dyn ClientTransport&lt;P&gt;&gt;</code>,
+so a caller builds an ordinary generated channel and cannot tell a local actor from any
+other.</li>
+</ul>
+<h2 id="draining"><a class="header" href="#draining">Draining</a></h2>
+<p><code>drain</code> is a cooperative stop. It closes the actor’s fence, waits for the running
+handler to finish, drops the service, and returns. The mailbox is kept, with a small task
+answering every request <code>FENCED</code>, so a session made before the drain is told rather than
+left waiting.</p>
+<p>Two details that came from review and are worth keeping in mind:</p>
+<ul>
+<li>Retirement is raced against <em>waiting for work</em> and nothing else, so it can never
+cancel a handler. It is also checked once more between rounds, because the mailbox is
+polled first and a backlog would otherwise starve a ready retire signal for ever.</li>
+<li>A handler that panics while the actor drains makes it <code>Stopped</code>, and <code>drain</code> reports an
+error instead of claiming a release that did not happen.</li>
+</ul>
+<h2 id="not-here"><a class="header" href="#not-here">Not here</a></h2>
+<ul>
+<li><strong>Nothing decides <em>when</em> to drain.</strong> The mechanism exists; the policy does not.</li>
+<li><strong>The retrying caller.</strong> A <code>FENCED</code> answer means “ask where the actor lives now”. No
+caller yet asks discovery again and retries.</li>
+<li><strong>Tying the fence to a registry, host and epoch.</strong> The fence is a closure the caller
+supplies; nothing here constructs it from the ownership registry.</li>
+</ul>
+<p>Next: <a href="#where-things-run-placement-and-discovery">Where things run</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="where-things-run-placement-and-discovery"><a class="header" href="#where-things-run-placement-and-discovery">Where things run: placement and discovery</a></h1>
+<p>Two questions about location, and they are different questions:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>Question</th><th>Trait</th><th>Answers with</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Discovery</strong></td><td>where does this thing live <strong>now</strong>?</td><td><code>Discovery</code></td><td>locations</td></tr>
+<tr><td><strong>Placement</strong></td><td>where should this <strong>new</strong> thing go?</td><td><code>Placement</code></td><td>hosts, in order of preference</td></tr>
+</tbody>
+</table>
+</div>
+<p>Discovery may be stale and nothing depends on its being right. A request that reaches a
+host that no longer owns the actor is answered <code>FENCED</code> by the fence in
+<a href="#services-over-jetstream">the services chapter</a>, and the ownership epoch is what makes that answer
+true. Discovery is an optimisation of where to look, not a source of safety.</p>
+<h2 id="discovery"><a class="header" href="#discovery">Discovery</a></h2>
+<p><code>Discovery</code> has an associated <code>Resource</code> (what is being asked about) and <code>Location</code>
+(what comes back), and one async method:</p>
+<pre><code class="language-text">discover(what: Resource) -&gt; Result&lt;Vec&lt;Location&gt;, DiscoveryError&gt;
+</code></pre>
+<p>Two implementations exist, and they answer at different scopes:</p>
+<ul>
+<li><code>LocalSupervisor</code> answers for <strong>its own node only</strong>. It is asked about an <code>ActorRef</code> and
+returns its own host id if the actor is <code>Running</code>. A draining, retired, stopped or absent
+actor is <code>NotFound</code>, which means “not here”, not “nowhere”.</li>
+<li><code>QuicDirectory</code> answers with a <strong>URL</strong>, from a record of which host each placed actor
+was put on. See <a href="#the-actor-system-over-quic">the actor system</a>.</li>
+</ul>
+<h2 id="placement"><a class="header" href="#placement">Placement</a></h2>
+<p><code>Placement</code> takes a resource and returns the hosts that should run it. The one scheduler
+is the LAVA scheduler:</p>
+<ul>
+<li>It is the placement, scoring and ordering of the LAVA paper: placement (§4.3), NILAS
+scoring (§4.2) and LARS ordering (§4.4).</li>
+<li>Time is <strong>caller-supplied</strong>, monotonic. Exits are explicit events. A predicted expiry
+never removes a job.</li>
+<li>It knows hosts, their capacity and whether each is schedulable. It places a job, can
+migrate one, and can begin draining a host once an approval gate covers every job on it.</li>
+<li>A host can be made <strong>unschedulable</strong> without removing it. That is what the actor system
+does for a host membership suspects.</li>
+</ul>
+<p>Around it, in the same area:</p>
+<ul>
+<li><strong>CRUSH</strong> placement, behind its own feature because it is a dependency of its own. It
+is a stub.</li>
+<li><strong>Prequal</strong> is not placement of actors; it picks which <em>replica</em> gets a <em>request</em>, by
+asking a few replicas how they are doing and sending to the one that looks best now. It
+is a pure decision: no sockets, no clock, no thread.</li>
+<li><strong>Monitoring</strong> holds the Vivaldi network coordinates and a node’s published, numbered
+resources. This book does not go into it.</li>
+</ul>
+<h2 id="evidence"><a class="header" href="#evidence">Evidence</a></h2>
+<p>All of this is <strong>plain Rust, not verified.</strong> The scheduling code is compiled into the
+dependency-free build, but none of it is under Verus; the tests are the evidence. Of this
+area, only <code>Id</code> and <code>IdSet</code> carry proofs. This chapter makes no claim of the kind the
+protocol chapters do, and the protocols do not depend on placement being correct: a
+badly placed actor is slow or unavailable, never doubly owned.</p>
+<p>Next: <a href="#the-actor-system-over-quic">the actor system</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="the-actor-system-over-quic"><a class="header" href="#the-actor-system-over-quic">The actor system over QUIC</a></h1>
+<p><code>ActorSystem</code> is what puts the previous chapters in order for a caller who wants to talk
+to an actor and does not care where it is.</p>
+<h2 id="four-things-in-one-trait"><a class="header" href="#four-things-in-one-trait">Four things in one trait</a></h2>
+<p>An actor system has:</p>
+<ul>
+<li>a <strong>supervisor</strong>, which says what runs <em>here</em> and hands out a transport onto a local
+actor’s mailbox;</li>
+<li>a <strong>discovery</strong>, which says where an actor <em>lives</em>, as locations;</li>
+<li>a <strong>placement</strong>, which decides which host should run something <em>new</em>;</li>
+<li>a <strong>dial</strong>, which opens a transport to a location. This is the one part that is specific
+to a transport.</li>
+</ul>
+<p><code>connect</code> is the one thing the trait adds, and the <strong>order</strong> it asks in is not the
+implementer’s to re-decide:</p>
+<ol>
+<li>If the supervisor says the actor is <code>Running</code> here, hand out a session onto its mailbox.
+A local actor needs no network and no lookup.</li>
+<li>Otherwise ask discovery, take the first location, and dial it.</li>
+</ol>
+<p>What comes back is a <code>Box&lt;dyn ClientTransport&lt;P&gt;&gt;</code>, the same thing the supervisor returns,
+so the caller builds an ordinary generated channel on it and cannot tell a local actor
+from a remote one.</p>
+<h2 id="the-quic-system"><a class="header" href="#the-quic-system">The QUIC system</a></h2>
+<p><code>QuicActorSystem</code> dials over QUIC:</p>
+<ul>
+<li>one connection per location, opened on first use and reused while it is alive; a closed
+one is dropped and replaced;</li>
+<li>each <code>dial</code> opens a <strong>bidirectional stream</strong> on that connection, which is the lane;</li>
+<li>a name can resolve to several addresses, so each is tried in order and the last failure
+reported;</li>
+<li>a handshake timeout, because QUIC is over UDP and an address nobody listens on is not
+refused.</li>
+</ul>
+<p><code>QuicActor</code> is a handle that forwards the actor protocol over whichever transport
+<code>connect</code> found. It is tested over a real QUIC handshake on loopback.</p>
+<h2 id="placement-feeds-discovery"><a class="header" href="#placement-feeds-discovery">Placement feeds discovery</a></h2>
+<p><code>QuicDirectory</code> is both the placement and the discovery. It holds three things: each
+host’s address, the host each placed actor was put on, and the scheduler.</p>
+<ul>
+<li><code>add_host(id, capacity, url)</code> registers a host with the scheduler and its address
+<strong>together</strong>, so a host that can be chosen can be reached.</li>
+<li><code>place</code> asks the scheduler, then records the chosen host for the job’s actor. A job’s id
+is the actor’s. If the scheduler chose a host with no address, the job is taken back out
+and the placement is refused.</li>
+<li><code>discover</code> answers from that record, looking the address up by host.</li>
+</ul>
+<p>The record is a <strong>cache of the placement</strong> and is not kept in step with it. An actor that
+has exited or moved stays where it was put until placed again, and a caller that goes to
+the old address is answered <code>FENCED</code>.</p>
+<h2 id="membership-as-a-hint"><a class="header" href="#membership-as-a-hint">Membership as a hint</a></h2>
+<p><a href="#swim-membership-by-merge">SWIM</a> tells the directory which hosts look gone:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Membership says</th><th>The directory</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Suspect</code></td><td>places nothing new on the host; what is already there is still found, because a suspect host may be fine</td></tr>
+<tr><td><code>Dead</code></td><td>no longer places on the host, no longer finds what was placed on it, and <strong>returns its jobs</strong> to the caller</td></tr>
+<tr><td><code>Alive</code> again</td><td>places on it again, empty</td></tr>
+</tbody>
+</table>
+</div>
+<p>A host is made placeable again only if the directory is what made it unplaceable, so a
+host drained for a migration is not switched back on by a rumour that it is alive. Each
+step is idempotent, so reading the same view twice changes nothing the second time.</p>
+<p><strong>Nothing moves an actor.</strong> The jobs of a host that left come back for the caller to place
+again or not. Placing them again starts a second copy if the host was only partitioned.
+What keeps that from corrupting anything is the ownership epoch, which only one of the two
+copies holds. That is <a href="#ownership-epochs-and-fencing">ownership</a>, not this.</p>
+<h2 id="what-is-not-here"><a class="header" href="#what-is-not-here">What is not here</a></h2>
+<ul>
+<li><strong>One actor service per host.</strong> A dial reaches the actor service a host serves. Nothing
+on the lane says <em>which</em> actor. The settled direction is that an envelope carries the
+receiver’s id as well as the sender’s, so one connection can carry several actors; the
+other calls (<code>poll</code>, <code>acquire</code>, <code>accept</code>, <code>state</code>, <code>journal</code>) name no actor yet either.
+That is not built.</li>
+<li><strong>Nobody drives the membership view on a timer</strong>, and the SWIM node has no change
+notification, so the view is polled.</li>
+<li><strong>SWIM’s roster is keyed by address</strong>, so mapping a SWIM node to a host here relies on
+both using the same <code>Id</code> for a host.</li>
+<li><strong>The Iroh system is entirely commented out.</strong></li>
+<li><strong>No automatic failover</strong>, and no retrying caller that re-asks discovery on <code>FENCED</code>.</li>
+</ul>
+<h2 id="evidence-1"><a class="header" href="#evidence-1">Evidence</a></h2>
+<p>Plain Rust, tested, not proved. The tests include a real QUIC handshake, the placement
+path, every membership step including that a drained host stays drained, and one run
+against a real SWIM node that follows it from suspect to dead to refuted.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-09f2665d.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-609e4cb8.js"></script>
+
+        <!-- Custom JS scripts -->
+
+        <script>
+        window.addEventListener('load', function() {
+            window.setTimeout(window.print, 100);
+        });
+        </script>
+
+
+    </div>
+    </body>
+</html>

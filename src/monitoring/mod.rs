@@ -1,7 +1,7 @@
 #[cfg(feature = "service")]
-mod service;
+pub mod service;
 
 use std::time::Duration;
 
-mod coordinate;
+pub mod coordinate;
 pub mod resources;

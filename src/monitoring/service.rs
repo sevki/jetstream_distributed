@@ -70,13 +70,13 @@ impl NodeMonitor {
     /// Must be called inside a tokio runtime.
     ///
     /// [`publish`]: NodeMonitor::publish
-    fn new(resources_every: Duration) -> Self {
+    pub fn new(resources_every: Duration) -> Self {
         Self::with_room(resources_every, BEHIND)
     }
 
     /// As [`new`](NodeMonitor::new), with room for `behind` events in the channel
     /// subscribers read from.
-    fn with_room(resources_every: Duration, behind: usize) -> Self {
+    pub fn with_room(resources_every: Duration, behind: usize) -> Self {
         let (events, _) = broadcast::channel(behind);
         let (inbox, mut waiting) = mpsc::channel(WAITING);
         let (cancel_tx, mut cancel_rx) = broadcast::channel(1);
@@ -118,7 +118,7 @@ impl NodeMonitor {
     /// Hand `event` to the loop, which numbers it and sends it to every subscriber.
     ///
     /// It waits if the loop is behind. If the loop has stopped the event comes back.
-    async fn publish(&self, event: Event) -> std::result::Result<(), Event> {
+    pub async fn publish(&self, event: Event) -> std::result::Result<(), Event> {
         self.inbox.send(event).await.map_err(|rejected| rejected.0)
     }
 }
@@ -131,6 +131,9 @@ impl Default for NodeMonitor {
 
 impl Drop for NodeMonitor {
     fn drop(&mut self) {
+        if self.monitor_loop.is_finished() {
+            return;
+        }
         self.cancel.send(()).ok();
     }
 }

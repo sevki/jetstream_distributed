@@ -1,6 +1,6 @@
 #![cfg(all(feature = "service", feature = "quic"))]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use crate::actor::model::Envelope;
@@ -10,6 +10,7 @@ use crate::compute::{Instant, Job, Resources};
 use crate::scheduling::discovery::{Discovery, DiscoveryError};
 use crate::scheduling::lava::{LifetimePredictor, Scheduler};
 use crate::scheduling::placement::{Placement, PlacementError};
+use crate::swim::service::{Liveness, Node, Update};
 use crate::{
     actor::{
         service::{Actor, Receipt, Record, Snapshot},
@@ -55,6 +56,14 @@ where
             connections: HashMap::new(),
             connect_timeout: CONNECT_TIMEOUT,
         }
+    }
+
+    /// Bring placement and discovery up to date with what `node` believes about
+    /// its members, and give back the jobs of the hosts that left, as
+    /// [`QuicDirectory::observe`] does. Call it as often as membership should
+    /// be looked at; looking twice at the same view does nothing the second time.
+    pub(crate) fn watch(&mut self, node: &Node) -> Vec<Job<F>> {
+        self.directory.observe(node.view())
     }
 
     /// Give each address `timeout` to complete the handshake instead of the
@@ -193,8 +202,14 @@ where
 pub struct QuicDirectory<F, P: LifetimePredictor<F>> {
     /// How to reach each host: what [`Discovery`] returns for an actor placed on it.
     hosts: HashMap<Id, url::Url>,
-    placed_actors: HashMap<ActorRef, url::Url>,
+    /// The host each placed actor was put on. The address is looked up in
+    /// `hosts` when asked for, so a host's address is kept in one place.
+    placed_actors: HashMap<ActorRef, Id>,
     scheduler: Scheduler<F, P>,
+    /// The hosts this directory made unschedulable, and so the only ones it
+    /// makes schedulable again: a host that was unschedulable already (drained
+    /// for a migration) is not switched back on by a rumour that it is alive.
+    held_back: HashSet<Id>,
 }
 
 impl<F, P> QuicDirectory<F, P>
@@ -206,6 +221,7 @@ where
             hosts: HashMap::default(),
             placed_actors: HashMap::default(),
             scheduler,
+            held_back: HashSet::default(),
         }
     }
 
@@ -225,6 +241,92 @@ where
         self.hosts.insert(id, at);
         Ok(())
     }
+
+    /// Nothing new should go to `id`: membership suspects it.
+    ///
+    /// Jobs already there stay, and are still found: a suspect host may be fine.
+    /// Only a host that was schedulable is made unschedulable, and it is
+    /// remembered, so that [`host_back`](Self::host_back) undoes exactly this.
+    /// [`PlacementError::UnknownHost`] if the scheduler has no such host.
+    pub fn host_suspected(&mut self, id: Id) -> std::result::Result<(), PlacementError> {
+        let host = self.scheduler.host(id).ok_or(PlacementError::UnknownHost)?;
+        if host.schedulable() {
+            self.scheduler.set_schedulable(id, false)?;
+            self.held_back.insert(id);
+        }
+        Ok(())
+    }
+
+    /// `id` is alive again: it may be placed on, if it was this directory that
+    /// stopped that. A host drained for a migration stays drained.
+    /// [`PlacementError::UnknownHost`] if the scheduler has no such host.
+    pub fn host_back(&mut self, id: Id) -> std::result::Result<(), PlacementError> {
+        self.scheduler.host(id).ok_or(PlacementError::UnknownHost)?;
+        if self.held_back.remove(&id) {
+            self.scheduler.set_schedulable(id, true)?;
+        }
+        Ok(())
+    }
+
+    /// `id` has left: it is no longer placed on, and what was placed on it is
+    /// not found any more.
+    ///
+    /// The jobs it held are taken out of the scheduler and **returned**, so that
+    /// whoever decides can place them again; nothing here moves an actor. The
+    /// host stays registered, unschedulable, so that [`host_back`](Self::host_back)
+    /// can bring it back empty.
+    ///
+    /// This is a belief and not a fact. An actor on a host that is only
+    /// partitioned is still running there, and placing it elsewhere starts a
+    /// second copy; what keeps that from corrupting anything is the ownership
+    /// epoch, which only one of them holds, not this.
+    pub fn host_left(&mut self, id: Id) -> std::result::Result<Vec<Job<F>>, PlacementError> {
+        self.host_suspected(id)?;
+        let placed: Vec<Id> = self
+            .scheduler
+            .host(id)
+            .ok_or(PlacementError::UnknownHost)?
+            .jobs()
+            .map(|job| job.id)
+            .collect();
+        let now = Instant::now();
+        let mut jobs = Vec::with_capacity(placed.len());
+        for job in placed {
+            jobs.push(self.scheduler.remove(job, now)?);
+            self.placed_actors.remove(&ActorRef(job));
+        }
+        Ok(jobs)
+    }
+
+    /// Bring this directory up to date with a membership `view`: the records
+    /// [`Node::view`] gives, or any others.
+    ///
+    /// A `Suspect` host is [held back](Self::host_suspected), a `Dead` one has
+    /// [left](Self::host_left), and an `Alive` one is [back](Self::host_back).
+    /// Each of those is idempotent, so a view that says what the last one said
+    /// does nothing: the jobs of a host that left come back once. A record about
+    /// a node that is not one of this directory's hosts is ignored; membership
+    /// can know nodes that nothing is placed on.
+    ///
+    /// Returns the jobs of the hosts that left in this view, for the caller to
+    /// place again or not.
+    pub fn observe(&mut self, view: impl IntoIterator<Item = Update>) -> Vec<Job<F>> {
+        let mut left = Vec::new();
+        for Update { node, status, .. } in view {
+            // A host in `hosts` is in the scheduler: `add_host` puts it in both,
+            // so none of the calls below can name an unknown one.
+            if !self.hosts.contains_key(&node) {
+                continue;
+            }
+            match status {
+                Liveness::Alive => self.host_back(node),
+                Liveness::Suspect => self.host_suspected(node),
+                Liveness::Dead => self.host_left(node).map(|jobs| left.extend(jobs)),
+            }
+            .expect("a host in `hosts` is in the scheduler");
+        }
+        left
+    }
 }
 
 #[async_trait]
@@ -242,6 +344,7 @@ where
     ) -> std::result::Result<Vec<Self::Location>, DiscoveryError> {
         self.placed_actors
             .get(&what)
+            .and_then(|host| self.hosts.get(host))
             .cloned()
             .ok_or(DiscoveryError::NotFound)
             .map(|url| vec![url])
@@ -268,11 +371,11 @@ where
     ) -> std::result::Result<Vec<Id>, PlacementError> {
         let actor = ActorRef(what.id);
         let host = self.scheduler.place(what, Instant::now())?;
-        let Some(at) = self.hosts.get(&host) else {
+        if !self.hosts.contains_key(&host) {
             let _ = self.scheduler.remove(actor.0, Instant::now());
             return Err(PlacementError::UnknownHost);
-        };
-        self.placed_actors.insert(actor, at.clone());
+        }
+        self.placed_actors.insert(actor, host);
         Ok(vec![host])
     }
 }
@@ -688,6 +791,196 @@ mod tests {
             directory.discover(actor).await,
             Err(DiscoveryError::NotFound)
         );
+    }
+
+    const OTHER: Id = Id(3);
+
+    fn url_of(host: &str) -> Url {
+        Url::parse(&format!("quic://{host}.example:4433")).unwrap()
+    }
+
+    /// A directory with `HOST` and, if asked, `OTHER`, at addresses of their own.
+    fn directory(with_other: bool) -> QuicDirectory<EmpiricalLifetime, EmpiricalPredictor> {
+        let mut directory = QuicDirectory::new(Scheduler::new(EmpiricalPredictor));
+        directory.add_host(HOST, roomy(), url_of("host")).unwrap();
+        if with_other {
+            directory.add_host(OTHER, roomy(), url_of("other")).unwrap();
+        }
+        directory
+    }
+
+    fn say(node: Id, status: Liveness) -> Update {
+        Update {
+            node,
+            incarnation: 0,
+            status,
+        }
+    }
+
+    fn is_schedulable(
+        directory: &QuicDirectory<EmpiricalLifetime, EmpiricalPredictor>,
+        host: Id,
+    ) -> bool {
+        directory.scheduler.host(host).unwrap().schedulable()
+    }
+
+    /// **A suspect host gets nothing new and keeps what it has.** A suspect host
+    /// may be fine, so what is on it is still found; it is only not chosen again.
+    #[tokio::test]
+    async fn a_suspect_host_gets_nothing_new_and_keeps_what_it_has() {
+        let (a, b) = (ActorRef(Id::from(7)), ActorRef(Id::from(8)));
+        let mut directory = directory(false);
+        directory.place(job(a)).await.unwrap();
+        directory.add_host(OTHER, roomy(), url_of("other")).unwrap();
+
+        directory.host_suspected(HOST).unwrap();
+        assert!(!is_schedulable(&directory, HOST));
+        assert_eq!(directory.place(job(b)).await.unwrap(), vec![OTHER]);
+        assert_eq!(directory.discover(a).await, Ok(vec![url_of("host")]));
+        assert_eq!(directory.discover(b).await, Ok(vec![url_of("other")]));
+    }
+
+    /// **A host that left gives back its jobs, and what was on it is not found.**
+    /// Placing one again goes elsewhere, and discovery follows.
+    #[tokio::test]
+    async fn a_host_that_left_gives_back_its_jobs_and_is_not_found() {
+        let a = ActorRef(Id::from(7));
+        let mut directory = directory(false);
+        directory.place(job(a)).await.unwrap();
+
+        let jobs = directory.host_left(HOST).unwrap();
+        assert_eq!(jobs.iter().map(|j| j.id).collect::<Vec<_>>(), vec![a.0]);
+        assert_eq!(directory.discover(a).await, Err(DiscoveryError::NotFound));
+        assert_eq!(directory.scheduler.location(a.0), None);
+        assert_eq!(
+            directory.place(job(a)).await,
+            Err(PlacementError::NoCapacity),
+            "the only host left is not placed on"
+        );
+
+        directory.add_host(OTHER, roomy(), url_of("other")).unwrap();
+        assert_eq!(
+            directory
+                .place(jobs.into_iter().next().unwrap())
+                .await
+                .unwrap(),
+            vec![OTHER]
+        );
+        assert_eq!(directory.discover(a).await, Ok(vec![url_of("other")]));
+    }
+
+    /// A host that left and comes back is placed on again, empty.
+    #[tokio::test]
+    async fn a_host_that_comes_back_is_placed_on_again() {
+        let a = ActorRef(Id::from(7));
+        let mut directory = directory(false);
+        directory.host_left(HOST).unwrap();
+        assert!(!is_schedulable(&directory, HOST));
+
+        directory.host_back(HOST).unwrap();
+        assert!(is_schedulable(&directory, HOST));
+        assert_eq!(directory.place(job(a)).await.unwrap(), vec![HOST]);
+    }
+
+    /// **Membership only undoes what membership did.** A host drained for a
+    /// migration is unschedulable already; hearing that it is alive does not make
+    /// it placeable.
+    #[tokio::test]
+    async fn membership_does_not_undo_a_drain() {
+        let mut directory = directory(false);
+        directory.scheduler.set_schedulable(HOST, false).unwrap();
+
+        directory.host_suspected(HOST).unwrap();
+        directory.host_back(HOST).unwrap();
+        assert!(!is_schedulable(&directory, HOST), "still drained");
+    }
+
+    /// A host nobody added is refused by every call, and ignored by `observe`.
+    #[tokio::test]
+    async fn an_unknown_host_is_refused_and_a_stranger_is_ignored() {
+        let mut directory = directory(false);
+        assert_eq!(
+            directory.host_suspected(OTHER),
+            Err(PlacementError::UnknownHost)
+        );
+        assert_eq!(directory.host_back(OTHER), Err(PlacementError::UnknownHost));
+        assert!(matches!(
+            directory.host_left(OTHER),
+            Err(PlacementError::UnknownHost)
+        ));
+        assert!(directory.observe([say(OTHER, Liveness::Dead)]).is_empty());
+    }
+
+    /// **`observe` is idempotent.** The same view twice does
+    /// the second time nothing: the jobs of a host that left come back once.
+    #[tokio::test]
+    async fn observe_acts_on_changes_and_ignores_repeats() {
+        let a = ActorRef(Id::from(7));
+        let mut directory = directory(false);
+        directory.place(job(a)).await.unwrap();
+
+        assert!(directory.observe([say(HOST, Liveness::Alive)]).is_empty());
+        assert!(is_schedulable(&directory, HOST));
+        assert!(directory.observe([say(HOST, Liveness::Suspect)]).is_empty());
+        assert!(!is_schedulable(&directory, HOST));
+        assert_eq!(directory.discover(a).await, Ok(vec![url_of("host")]));
+
+        let left = directory.observe([say(HOST, Liveness::Dead)]);
+        assert_eq!(left.len(), 1);
+        assert!(directory.observe([say(HOST, Liveness::Dead)]).is_empty());
+        assert_eq!(directory.discover(a).await, Err(DiscoveryError::NotFound));
+
+        assert!(directory.observe([say(HOST, Liveness::Alive)]).is_empty());
+        assert!(is_schedulable(&directory, HOST));
+    }
+
+    /// The same, driven by a real SWIM node: what its probes and gossip make it
+    /// believe is what the system acts on.
+    #[tokio::test]
+    async fn watch_follows_a_swim_node() {
+        use std::net::{IpAddr, Ipv4Addr};
+
+        let me = Id::from(1);
+        let roster = HashMap::from([
+            (IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), me),
+            (IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)), HOST),
+        ]);
+        let node = Node::new(roster, me).unwrap();
+        let a = ActorRef(Id::from(7));
+        let mut system = system();
+        system
+            .directory
+            .add_host(HOST, roomy(), url_of("host"))
+            .unwrap();
+        system.placement().place(job(a)).await.unwrap();
+
+        assert!(system.watch(&node).is_empty(), "everyone starts alive");
+
+        node.suspect(HOST, 0).unwrap();
+        assert!(system.watch(&node).is_empty());
+        assert!(!is_schedulable(&system.directory, HOST));
+        assert_eq!(
+            system.discovery().discover(a).await,
+            Ok(vec![url_of("host")])
+        );
+
+        node.declare_dead(HOST, 0).unwrap();
+        let left = system.watch(&node);
+        assert_eq!(left.iter().map(|j| j.id).collect::<Vec<_>>(), vec![a.0]);
+        assert_eq!(
+            system.discovery().discover(a).await,
+            Err(DiscoveryError::NotFound)
+        );
+
+        // The host refutes, at a higher incarnation, and is placed on again.
+        node.apply(&[Update {
+            node: HOST,
+            incarnation: 1,
+            status: Liveness::Alive,
+        }])
+        .unwrap();
+        assert!(system.watch(&node).is_empty());
+        assert!(is_schedulable(&system.directory, HOST));
     }
 
     /// Every method of the protocol reaches the server with its arguments, and

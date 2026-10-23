@@ -1,0 +1,169 @@
+name: book
+
+# The book (`book/`) explains how the protocols relate. Every pull request that
+# touches it, or the README it links into, builds it and gets a preview; `main`
+# publishes the real one.
+#
+# Everything is served from the `gh-pages` branch by GitHub Pages:
+#
+#   https://<owner>.github.io/<repo>/                    the book as of main
+#   https://<owner>.github.io/<repo>/pr-preview/pr-N/    the book as of PR N
+#
+# One-time setup, which a workflow cannot do for itself: Settings -> Pages ->
+# Build and deployment -> Source: "Deploy from a branch", Branch: `gh-pages`,
+# folder `/ (root)`. Until then the previews are published to the branch and the
+# links 404.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "book/**"
+      # The book links to README headings, and the link check reads them.
+      - "README.md"
+      - ".github/workflows/book.yml"
+      - ".github/scripts/check-book.py"
+      - ".github/scripts/publish-book.sh"
+  pull_request:
+    # `closed` is how a preview is removed.
+    types: [opened, synchronize, reopened, closed]
+    paths:
+      - "book/**"
+      # The book links to README headings, and the link check reads them.
+      - "README.md"
+      - ".github/workflows/book.yml"
+      - ".github/scripts/check-book.py"
+      - ".github/scripts/publish-book.sh"
+
+permissions:
+  contents: read
+
+# A newer push to the same ref supersedes an older build of it. This does not
+# apply to publishing, which is a separate job and is made safe against another
+# publisher by the script itself.
+concurrency:
+  group: book-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned, with the checksum of the release archive, because the build runs on
+  # pull requests. Update both together.
+  MDBOOK_VERSION: 0.5.4
+  MDBOOK_SHA256: 3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7
+
+jobs:
+  build:
+    name: Build the book
+    # A closed pull request has nothing left to build.
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # The book links to the README's claims rather than repeating them, so a
+      # renamed README heading would silently break the book. This is the guard.
+      - name: Check the book's links
+        run: python3 -I .github/scripts/check-book.py
+
+      - name: Install mdBook
+        run: |
+          set -euxo pipefail
+          url="https://github.com/rust-lang/mdBook/releases/download/v${MDBOOK_VERSION}/mdbook-v${MDBOOK_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          curl --fail --location --silent --show-error -o "$RUNNER_TEMP/mdbook.tar.gz" "$url"
+          echo "${MDBOOK_SHA256}  $RUNNER_TEMP/mdbook.tar.gz" | sha256sum --check -
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf "$RUNNER_TEMP/mdbook.tar.gz" -C "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Build
+        run: mdbook build book
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: book
+          path: book/build
+          if-no-files-found: error
+          retention-days: 7
+
+  # Only for pull requests from this repository. A fork's workflow gets a
+  # read-only token, and a preview would put a fork's HTML on this site's origin.
+  preview:
+    name: Preview the pull request
+    needs: build
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: book
+          path: book/build
+
+      - name: Publish the preview
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: .github/scripts/publish-book.sh pr "$PR"
+
+      - name: Say where it is
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          repo="${GITHUB_REPOSITORY#*/}"
+          url="https://${owner}.github.io/${repo}/pr-preview/pr-${PR}/"
+          {
+            echo "### Book preview"
+            echo
+            echo "${url}"
+            echo
+            echo "Built from ${GITHUB_SHA}. It is replaced on every push and removed when this pull request closes."
+            echo "If the link is a 404, GitHub Pages is not serving the \`gh-pages\` branch yet."
+          } > "$RUNNER_TEMP/comment.md"
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" \
+            --body-file "$RUNNER_TEMP/comment.md" --edit-last --create-if-none
+
+  publish:
+    name: Publish the book
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: book
+          path: book/build
+
+      - name: Publish
+        run: .github/scripts/publish-book.sh main
+
+  cleanup:
+    name: Remove the preview
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.action == 'closed'
+      && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Remove
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: .github/scripts/publish-book.sh remove "$PR"

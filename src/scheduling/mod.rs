@@ -13,3 +13,4 @@ pub trait Resource: Any {}
 pub mod crush;
 
 pub mod lava;
+pub mod prequal;

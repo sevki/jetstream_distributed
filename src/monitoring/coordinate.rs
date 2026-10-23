@@ -24,12 +24,10 @@
 //!    class Vec1,Vec2,H1,H2,Adj1,Adj2 component
 //!    class ED,HD,ADJ,TD calculation
 //!
-
-mod service;
-
+#[cfg(feature = "service")]
+use jetstream::prelude::*;
 use std::time::Duration;
 
-use jetstream::prelude::*;
 // rand 0.10 moved `random`/`random_range` off `Rng` and onto `RngExt`, which
 // is blanket-implemented for every `Rng`. The `impl rand::Rng` bounds below
 // stay as they are; only the trait has to be in scope.
@@ -75,8 +73,9 @@ impl std::fmt::Display for CoordinateError {
 impl std::error::Error for CoordinateError {}
 
 // Constants
-const SECONDS_TO_NANOSECONDS: f64 = 1.0e9;
-const ZERO_THRESHOLD: f64 = 1.0e-6;
+pub(crate) const SECONDS_TO_NANOSECONDS: f64 = 1.0e9;
+
+pub(crate) const ZERO_THRESHOLD: f64 = 1.0e-6;
 
 /// Configuration for the Vivaldi coordinate system
 ///
@@ -152,7 +151,7 @@ impl Coordinate {
             && Self::component_is_valid(self.height)
     }
 
-    fn component_is_valid(f: f64) -> bool {
+    pub(crate) fn component_is_valid(f: f64) -> bool {
         !f.is_infinite() && !f.is_nan()
     }
 
@@ -184,7 +183,7 @@ impl Coordinate {
     }
 
     /// Calculates raw Vivaldi distance without adjustments
-    fn raw_distance_to(&self, other: &Coordinate) -> f64 {
+    pub(crate) fn raw_distance_to(&self, other: &Coordinate) -> f64 {
         let euclidean_dist = self
             .vec
             .iter()
@@ -236,7 +235,11 @@ impl Coordinate {
     /// zero means the two coordinates were too close to separate and the
     /// direction is arbitrary rather than measured, which the caller must
     /// not mistake for "no distance".
-    fn unit_vector_at(&self, other: &Coordinate, rng: &mut impl rand::Rng) -> (Vec<f64>, f64) {
+    pub(crate) fn unit_vector_at(
+        &self,
+        other: &Coordinate,
+        rng: &mut impl rand::Rng,
+    ) -> (Vec<f64>, f64) {
         let mut diff: Vec<f64> = self
             .vec
             .iter()
@@ -276,7 +279,7 @@ impl Coordinate {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::collections::HashMap;
 
     use rand::RngExt as _;

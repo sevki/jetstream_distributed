@@ -23,7 +23,7 @@
 //! protocol as a hypothesis where a step needs it:
 //!
 //! * `enqueue` needs the item to stand for the envelope the model would number
-//!   next, `abs(item) == Envelope { sender, seq: mb_seq(m, sender), body }`;
+//!   next, `abs(item) == Envelope { sender, seq: mb_seq(m, sender) as u64, body }`;
 //! * `set_state` needs the model to have an operation `Marked` for the message;
 //! * `schedule` needs one `Scheduling`, with `had` being what `set_state`
 //!   returned for it.
@@ -84,20 +84,21 @@ pub proof fn theorem_enqueue_refines<T>(
     m: Mailbox,
     item: T,
     sender: Id,
-    body: nat,
+    body: Vec<u8>,
 )
     requires
         refines(abs, c, m),
         core_enqueue(c, c2, item),
-        abs(item) == (Envelope { sender, seq: mb_seq(m, sender), body }),
+        mb_seq(m, sender) < u64::MAX,
+        abs(item) == (Envelope { sender, seq: mb_seq(m, sender) as u64, body }),
     ensures
         exists|m2: Mailbox| mb_enqueue(m, m2, sender, body) && refines(abs, c2, m2),
 {
-    let env = Envelope { sender, seq: mb_seq(m, sender), body };
+    let env = Envelope { sender, seq: mb_seq(m, sender) as u64, body };
     let m2 = Mailbox {
         queue: m.queue.push(env),
         ops: m.ops.insert(env, Stage::Marked),
-        next_seq: m.next_seq.insert(sender, env.seq + 1),
+        next_seq: m.next_seq.insert(sender, env.seq as nat + 1),
         ..m
     };
     assert(mb_enqueue(m, m2, sender, body));

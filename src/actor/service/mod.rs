@@ -15,13 +15,14 @@
 //! it is built around. The registry is the same one the `Ownership` service
 //! serves, with the same epoch floor; the actor adds nothing to the ownership
 //! protocol, it *uses* it. Four of the trait's methods are the ownership calls,
-//! delegated; the other four are the actor's:
+//! delegated; the others are the actor's:
 //!
 //! | model step | method | acts at |
 //! | --- | --- | --- |
-//! | `Send { from, body }` | [`Actor::send`] | the caller |
+//! | `Send { from, body }` | [`Actor::send`], numbered by the caller | the caller |
 //! | `Accept { host, epoch, env }` | [`Actor::accept`] | the caller (`host`) |
 //! | — (a read) | [`Actor::state`], [`Actor::journal`] | — |
+//! | — (nothing yet: the model's actor has no outputs) | [`Actor::receive`] | — |
 //!
 //! **No method takes the acting node's number.** [`Actor::accept`] does take a
 //! `sender`, and that is not the same thing: it names whose message is being
@@ -59,19 +60,20 @@
 //! [`Context::remote`] against a roster fixed at construction, and an address is
 //! not a credential.
 
-mod supervisor;
 mod host;
 mod mailbox;
-mod session;
-mod transport;
 mod refusal;
+mod session;
+mod supervisor;
+mod transport;
 
-pub use supervisor::{ActorRef, LocalSupervisor, Status, Supervisor};
 pub use host::{Event, Host};
 pub use mailbox::{Capacity, Mailbox, Permit, Round, Waiter};
-pub use session::{refuse_all, serve, serve_fenced, serve_until, Closer, Delivery, Fence, Session};
+pub use session::{Closer, Delivery, Fence, Session, refuse_all, serve, serve_fenced, serve_until};
+pub use supervisor::{ActorRef, LocalSupervisor, Status, Supervisor};
 pub use transport::Connection;
 
+use crate::actor::model::Envelope;
 use crate::id::Id;
 use crate::ownership::service::Offer;
 use jetstream::prelude::*;
@@ -81,8 +83,6 @@ use jetstream::prelude::*;
 pub struct Receipt {
     /// The message's position in the journal.
     pub index: u64,
-    /// What the message said.
-    pub body: u64,
     /// The actor's state after applying it.
     pub state: u64,
 }
@@ -98,22 +98,34 @@ pub struct Snapshot {
 
 /// One journal entry, on the wire: a message, and who accepted it under which
 /// epoch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, JetStreamWireFormat)]
+#[derive(Debug, Clone, PartialEq, Eq, JetStreamWireFormat)]
 pub struct Record {
     pub sender: Id,
     pub seq: u64,
-    pub body: u64,
+    pub body: Vec<u8>,
     pub host: Id,
     pub epoch: u64,
+}
+
+/// What the room says when a subscription ends normally. This is the
+/// value a plain `Stream` has nowhere to put.
+#[derive(Debug, Clone, JetStreamWireFormat)]
+pub struct Closed {
+    pub last_seq: u64,
 }
 
 /// The most records one `journal` read returns.
 pub const MAX_READ: u64 = 1024;
 
+/// The longest message body a host takes: the most a `Vec<u8>` can carry on the
+/// wire, whose length is a `u16`. A body any longer could not be sent, nor read
+/// back from the journal.
+pub const MAX_BODY: u64 = u16::MAX as u64;
+
 /// The node-facing protocol: four ownership calls, and the actor's own.
 ///
 /// None takes the acting node's number — see the module docs.
-#[service(uses(super::{Id, Offer, Receipt, Record, Snapshot}))]
+#[service(uses(super::{Closed, Id, Offer, Receipt, Record, Snapshot}, crate::actor::model::Envelope))]
 pub trait Actor {
     // --- ownership, delegated ----------------------------------------------
 
@@ -132,10 +144,6 @@ pub trait Actor {
 
     // --- the actor -----------------------------------------------------------
 
-    /// `Send`: the caller sends the actor a message. Returns its sequence
-    /// number, which is the caller's own count — the first is 0.
-    async fn send(&self, ctx: Context, body: u64) -> Result<u64>;
-
     /// `Accept`: the caller, presenting `epoch`, processes the message `sender`
     /// sent as number `seq`.
     ///
@@ -151,4 +159,23 @@ pub trait Actor {
     /// host that has just taken the actor catches up: the journal, not a copy of
     /// the previous host's memory.
     async fn journal(&self, ctx: Context, from: u64, limit: u64) -> Result<Vec<Record>>;
+
+    /// `Send`: deliver `envelope` to the actor. The caller numbers its own
+    /// messages, from 0, so a retry after a lost reply is the same message and not
+    /// a second one.
+    ///
+    /// `envelope.sender` must be the caller, as the connection says; an envelope
+    /// naming anyone else is refused. If the host has already recorded this very
+    /// message the call succeeds and changes nothing, so a caller whose reply was
+    /// lost can send it again. The same number with a different body, or a number
+    /// that is neither the caller's next nor one already used, is refused.
+    async fn send(&self, ctx: Context, envelope: Envelope) -> Result<()>;
+
+    /// The messages the actor has for the caller, from number `from`; the
+    /// subscription ends with a [`Closed`] carrying the last number it sent.
+    ///
+    /// Nothing is sent yet: the model's actor has no outputs, only a state, so
+    /// there is no `Send` from an actor for this to carry. It ends at once.
+    #[subscription]
+    fn receive(&self, ctx: Context, from: u64) -> Subscription<Envelope, Closed>;
 }

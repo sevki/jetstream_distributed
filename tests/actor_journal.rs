@@ -19,10 +19,11 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
-use jetstream_distributed::id::Id;
+use jetstream_distributed::actor::model::Envelope;
 use jetstream_distributed::actor::service::{
-    Actor, Connection, Event, Host, Receipt, Record, Snapshot,
+    Actor, Connection, Event, Host, Receipt, Record, Snapshot, MAX_BODY,
 };
+use jetstream_distributed::id::Id;
 use jetstream_distributed::ownership::service::{MemoryFloor, Offer};
 use jetstream::prelude::*;
 use jetstream_rpc::context::RemoteAddr;
@@ -87,28 +88,35 @@ async fn a_hosts(h: &Cluster) {
     h.a.acquire(Context::default(), 1).await.unwrap();
 }
 
+/// `sender` sends `body` to the actor as its message number `seq`: the caller
+/// numbers its own messages.
+async fn put(conn: &Connection, sender: Id, seq: u64, body: &[u8]) {
+    conn.send(Context::default(), envelope(sender, seq, body))
+        .await
+        .unwrap();
+}
+
 /// The behaviour, written out here independently of the service.
-fn apply(state: u64, body: u64) -> u64 {
-    (((state as u128) * 31 + body as u128) % (1u128 << 64)) as u64
+fn apply(state: u64, body: &[u8]) -> u64 {
+    body.iter().fold(state, |s, b| (((s as u128) * 31 + u128::from(*b)) % (1u128 << 64)) as u64)
 }
 
 fn fold(records: &[Record]) -> u64 {
-    records.iter().fold(0, |s, r| apply(s, r.body))
+    records.iter().fold(0, |s, r| apply(s, &r.body))
 }
 
 #[tokio::test]
 async fn a_host_accepts_messages_in_the_order_sent_and_the_state_is_their_fold() {
     let h = actor().await;
     a_hosts(&h).await;
-    assert_eq!(h.c.send(Context::default(), 7).await.unwrap(), 0);
-    assert_eq!(h.c.send(Context::default(), 9).await.unwrap(), 1);
+    put(&h.c, C, 0, &[7]).await;
+    put(&h.c, C, 1, &[9]).await;
 
     let r0 = h.a.accept(Context::default(), 1, C, 0).await.unwrap();
     assert_eq!(
         r0,
         Receipt {
             index: 0,
-            body: 7,
             state: 7
         }
     );
@@ -117,7 +125,6 @@ async fn a_host_accepts_messages_in_the_order_sent_and_the_state_is_their_fold()
         r1,
         Receipt {
             index: 1,
-            body: 9,
             state: 7 * 31 + 9
         }
     );
@@ -134,7 +141,7 @@ async fn a_host_accepts_messages_in_the_order_sent_and_the_state_is_their_fold()
 async fn a_redelivered_message_is_refused() {
     let h = actor().await;
     a_hosts(&h).await;
-    h.c.send(Context::default(), 7).await.unwrap();
+    put(&h.c, C, 0, &[7]).await;
     h.a.accept(Context::default(), 1, C, 0).await.unwrap();
     let before = h.snapshot().await;
 
@@ -153,8 +160,8 @@ async fn a_redelivered_message_is_refused() {
 async fn a_message_ahead_of_its_turn_is_refused_until_its_turn() {
     let h = actor().await;
     a_hosts(&h).await;
-    h.c.send(Context::default(), 1).await.unwrap();
-    h.c.send(Context::default(), 2).await.unwrap();
+    put(&h.c, C, 0, &[1]).await;
+    put(&h.c, C, 1, &[2]).await;
 
     assert_eq!(
         code(h.a.accept(Context::default(), 1, C, 1).await.unwrap_err()),
@@ -174,8 +181,8 @@ async fn a_message_ahead_of_its_turn_is_refused_until_its_turn() {
 async fn senders_are_ordered_independently() {
     let h = actor().await;
     a_hosts(&h).await;
-    h.c.send(Context::default(), 10).await.unwrap();
-    h.d.send(Context::default(), 20).await.unwrap();
+    put(&h.c, C, 0, &[10]).await;
+    put(&h.d, D, 0, &[20]).await;
     h.a.accept(Context::default(), 1, D, 0).await.unwrap();
     h.a.accept(Context::default(), 1, C, 0).await.unwrap();
     assert_eq!(
@@ -196,7 +203,7 @@ async fn a_message_nobody_sent_is_refused() {
         code(h.a.accept(Context::default(), 1, C, 0).await.unwrap_err()),
         Some("ERR".into())
     );
-    h.c.send(Context::default(), 1).await.unwrap();
+    put(&h.c, C, 0, &[1]).await;
     assert_eq!(
         code(h.a.accept(Context::default(), 1, D, 0).await.unwrap_err()),
         Some("ERR".into())
@@ -209,7 +216,7 @@ async fn a_message_nobody_sent_is_refused() {
 async fn only_the_owner_at_its_epoch_may_append() {
     let h = actor().await;
     a_hosts(&h).await;
-    h.c.send(Context::default(), 5).await.unwrap();
+    put(&h.c, C, 0, &[5]).await;
 
     // `B` does not own the actor.
     assert_eq!(
@@ -248,9 +255,9 @@ async fn the_fence_is_asked_first() {
 async fn a_handover_keeps_the_journal_and_fences_the_old_host() {
     let h = actor().await;
     a_hosts(&h).await;
-    h.c.send(Context::default(), 7).await.unwrap();
-    h.c.send(Context::default(), 9).await.unwrap();
-    h.c.send(Context::default(), 11).await.unwrap();
+    put(&h.c, C, 0, &[7]).await;
+    put(&h.c, C, 1, &[9]).await;
+    put(&h.c, C, 2, &[11]).await;
     h.a.accept(Context::default(), 1, C, 0).await.unwrap();
     h.a.accept(Context::default(), 1, C, 1).await.unwrap();
     let before = h.snapshot().await;
@@ -285,7 +292,7 @@ async fn a_handover_keeps_the_journal_and_fences_the_old_host() {
     // `B` continues where `A` stopped.
     let r = h.b.accept(Context::default(), 2, C, 2).await.unwrap();
     assert_eq!(r.index, 2);
-    assert_eq!(r.state, apply(before.state, 11));
+    assert_eq!(r.state, apply(before.state, &[11]));
 
     // `A`, still believing, is refused — and so is a redelivery to `B`.
     assert_eq!(
@@ -315,8 +322,8 @@ async fn a_handover_keeps_the_journal_and_fences_the_old_host() {
 async fn a_forced_revocation_leaves_the_journal_for_the_next_host() {
     let h = actor().await;
     a_hosts(&h).await;
-    h.c.send(Context::default(), 3).await.unwrap();
-    h.c.send(Context::default(), 4).await.unwrap();
+    put(&h.c, C, 0, &[3]).await;
+    put(&h.c, C, 1, &[4]).await;
     h.a.accept(Context::default(), 1, C, 0).await.unwrap();
 
     // `A` is unreachable. The coordinator burns its epoch and offers the actor to
@@ -357,11 +364,8 @@ async fn delivery_order_and_redelivery_cannot_corrupt_the_journal() {
     for order in orders {
         let h = actor().await;
         a_hosts(&h).await;
-        for (i, (_, _, addr)) in msgs.iter().enumerate() {
-            conn(&h, *addr)
-                .send(Context::default(), 100 + i as u64)
-                .await
-                .unwrap();
+        for (i, (sender, seq, addr)) in msgs.iter().enumerate() {
+            put(conn(&h, *addr), *sender, *seq, &[100 + i as u8]).await;
         }
         // Two passes: a message that arrives ahead of its turn is picked up the
         // second time round.
@@ -415,7 +419,7 @@ async fn the_journal_is_read_in_pages() {
     let h = actor().await;
     a_hosts(&h).await;
     for i in 0..5 {
-        h.c.send(Context::default(), i).await.unwrap();
+        put(&h.c, C, i, &[i as u8]).await;
         h.a.accept(Context::default(), 1, C, i).await.unwrap();
     }
     let page = h.b.journal(Context::default(), 1, 2).await.unwrap();
@@ -444,7 +448,11 @@ async fn a_stranger_is_refused_by_every_door() {
         Some("NO".into())
     );
     assert_eq!(
-        code(h.x.send(Context::default(), 1).await.unwrap_err()),
+        code(
+            h.x.send(Context::default(), envelope(C, 0, &[1]))
+                .await
+                .unwrap_err()
+        ),
         Some("NO".into())
     );
     assert_eq!(
@@ -466,7 +474,7 @@ async fn a_stranger_is_refused_by_every_door() {
 async fn what_the_host_did_is_logged_in_order() {
     let h = actor().await;
     a_hosts(&h).await;
-    h.c.send(Context::default(), 1).await.unwrap();
+    put(&h.c, C, 0, &[1]).await;
     h.a.accept(Context::default(), 1, C, 0).await.unwrap();
     assert_eq!(
         h.host.log(),
@@ -481,4 +489,133 @@ async fn what_the_host_did_is_logged_in_order() {
             },
         ]
     );
+}
+
+// -- `send`: the caller numbers its own messages -----------------------------------
+
+fn envelope(sender: Id, seq: u64, body: &[u8]) -> Envelope {
+    Envelope {
+        sender,
+        seq,
+        body: body.to_vec(),
+    }
+}
+
+/// A sent message's body is what the host accepts and what the journal keeps.
+#[tokio::test]
+async fn a_sent_messages_body_is_accepted_and_journalled() {
+    let h = actor().await;
+    a_hosts(&h).await;
+    h.c.send(Context::default(), envelope(C, 0, &[7])).await.unwrap();
+
+    let receipt = h.a.accept(Context::default(), 1, C, 0).await.unwrap();
+    assert_eq!(receipt, Receipt { index: 0, state: 7 });
+    assert_eq!(h.records().await[0].body, vec![7]);
+}
+
+/// **Sending the same message again is not a second message.** The reply to a
+/// send can be lost, and the caller then sends exactly what it sent: that must
+/// not put a second copy in line.
+#[tokio::test]
+async fn a_message_sent_again_is_not_a_second_message() {
+    let h = actor().await;
+    a_hosts(&h).await;
+    h.c.send(Context::default(), envelope(C, 0, &[7])).await.unwrap();
+    h.c.send(Context::default(), envelope(C, 0, &[7])).await.unwrap();
+
+    h.a.accept(Context::default(), 1, C, 0).await.unwrap();
+    assert_eq!(
+        code(h.a.accept(Context::default(), 1, C, 1).await.unwrap_err()),
+        Some("ERR".into()),
+        "there is no second message"
+    );
+    assert_eq!(
+        h.host.log().iter().filter(|e| matches!(e, Event::Sent { .. })).count(),
+        1
+    );
+}
+
+/// The same number with a different body is two messages claiming one place.
+#[tokio::test]
+async fn the_same_number_with_a_different_body_is_refused() {
+    let h = actor().await;
+    h.c.send(Context::default(), envelope(C, 0, &[7])).await.unwrap();
+
+    assert_eq!(
+        code(h.c.send(Context::default(), envelope(C, 0, &[8])).await.unwrap_err()),
+        Some("NO".into())
+    );
+}
+
+/// A number that is neither the caller's next nor one already used is refused,
+/// ahead of its turn or not.
+#[tokio::test]
+async fn a_number_out_of_turn_is_refused() {
+    let h = actor().await;
+    assert_eq!(
+        code(h.c.send(Context::default(), envelope(C, 1, &[7])).await.unwrap_err()),
+        Some("NO".into()),
+        "the first number is 0"
+    );
+    h.c.send(Context::default(), envelope(C, 0, &[7])).await.unwrap();
+    assert_eq!(
+        code(h.c.send(Context::default(), envelope(C, 2, &[7])).await.unwrap_err()),
+        Some("NO".into()),
+        "a gap is refused, not held"
+    );
+    h.c.send(Context::default(), envelope(C, 1, &[9])).await.unwrap();
+}
+
+/// **An envelope names a sender, and the host does not believe it.** The caller
+/// is whoever the connection says; naming another node is refused, and nothing is
+/// recorded under either.
+#[tokio::test]
+async fn an_envelope_naming_someone_else_is_refused() {
+    let h = actor().await;
+    assert_eq!(
+        code(h.c.send(Context::default(), envelope(D, 0, &[7])).await.unwrap_err()),
+        Some("NO".into())
+    );
+    assert!(h.host.log().is_empty());
+    // And it did not use up either caller's number 0.
+    h.c.send(Context::default(), envelope(C, 0, &[7])).await.unwrap();
+    h.d.send(Context::default(), envelope(D, 0, &[7])).await.unwrap();
+}
+
+/// A node that is not on the roster cannot send at all.
+#[tokio::test]
+async fn a_stranger_cannot_send() {
+    let h = actor().await;
+    assert_eq!(
+        code(h.x.send(Context::default(), envelope(C, 0, &[7])).await.unwrap_err()),
+        Some("NO".into())
+    );
+    assert!(h.host.log().is_empty());
+}
+
+/// A body over the limit is refused, and one at the limit is not.
+///
+/// The limit is the most the wire carries (a `u16` length), so a body over it can
+/// only reach the host without the wire: the over-limit call is made on the host
+/// itself, as `C`, and the one at the limit goes over the wire and comes back out
+/// of the journal.
+#[tokio::test]
+async fn a_body_over_the_limit_is_refused() {
+    let h = actor().await;
+    let limit = MAX_BODY as usize;
+    assert_eq!(limit, usize::from(u16::MAX));
+    let as_c = Context::new(Some(RemoteAddr::IpAddr(ADDR_C)), None);
+    assert_eq!(
+        code(
+            h.host
+                .send(as_c, envelope(C, 0, &vec![0; limit + 1]))
+                .await
+                .unwrap_err()
+        ),
+        Some("NO".into())
+    );
+    h.c.send(Context::default(), envelope(C, 0, &vec![0; limit])).await.unwrap();
+    a_hosts(&h).await;
+    h.a.accept(Context::default(), 1, C, 0).await.unwrap();
+    assert_eq!(h.records().await[0].body.len(), limit);
 }

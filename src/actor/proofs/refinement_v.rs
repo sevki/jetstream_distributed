@@ -39,11 +39,11 @@ use crate::ownership::spec::*;
 verus! {
 
 /// Where `Send` sends the system.
-pub open spec fn send_post(c: ActorSystem, from: Id, body: nat) -> ActorSystem {
+pub open spec fn send_post(c: ActorSystem, from: Id, body: Vec<u8>) -> ActorSystem {
     ActorSystem {
         own: c.own,
         actor: c.actor,
-        sent: c.sent.insert(Envelope { sender: from, seq: seq_of(c, from), body: body }),
+        sent: c.sent.insert(Envelope { sender: from, seq: seq_of(c, from) as u64, body: body }),
         next_seq: c.next_seq.insert(from, seq_of(c, from) + 1),
         journal: c.journal,
     }
@@ -68,7 +68,7 @@ pub open spec fn accept_post(c: ActorSystem, host: Id, epoch: Epoch, env: Envelo
 /// the coupling `next == seq_of(c, from)`, the envelope it numbers is the one
 /// [`send_post`] adds to `sent`, the counter it stores is `next + 1`, and that
 /// still fits the `u64` it is kept in because `send_fires` says `next < u64::MAX`.
-pub proof fn theorem_send_step_refines(c: ActorSystem, from: Id, body: nat, next: u64)
+pub proof fn theorem_send_step_refines(c: ActorSystem, from: Id, body: Vec<u8>, next: u64)
     requires
         c.own.live.contains(from),
         next as nat == seq_of(c, from),
@@ -76,24 +76,23 @@ pub proof fn theorem_send_step_refines(c: ActorSystem, from: Id, body: nat, next
     ensures
         as_send(c, send_post(c, from, body), from, body),
         send_post(c, from, body).sent.contains(
-            Envelope { sender: from, seq: next as nat, body: body },
+            Envelope { sender: from, seq: next, body: body },
         ),
         send_post(c, from, body).next_seq[from] == next as nat + 1,
         next as nat + 1 <= u64::MAX as nat,
 {
 }
 
-/// **Where the executable sender is narrower than the model, and only there.**
-/// `send_step` refuses only with the counter at `u64::MAX`, and at that point the
-/// model's `Send` is still enabled: the model's counter is a `nat`. The service
-/// refuses rather than wrapping, because a wrapped counter would repeat a number
-/// and the accept guard would take the repeat for a duplicate. So the refinement
-/// holds below the bound and at the bound the executable does less than the model
-/// allows, which is safe — the model's guarantees are about what *is* accepted.
+/// **The executable sender refuses exactly where the model's `Send` is disabled.**
+/// `send_step` refuses only with the counter at `u64::MAX`, and there the model's
+/// `Send` is not enabled either: a number is a `u64` on the wire, so a sender that
+/// has used them all cannot send another. The service refuses rather than
+/// wrapping, because a wrapped counter would repeat a number and the accept guard
+/// would take the repeat for a duplicate.
 pub proof fn theorem_send_step_refuses_only_at_exhaustion(
     c: ActorSystem,
     from: Id,
-    body: nat,
+    body: Vec<u8>,
     next: u64,
 )
     requires
@@ -102,7 +101,7 @@ pub proof fn theorem_send_step_refuses_only_at_exhaustion(
         !send_fires(next as nat),
     ensures
         next == u64::MAX,
-        as_send(c, send_post(c, from, body), from, body),
+        !as_send(c, send_post(c, from, body), from, body),
 {
 }
 
@@ -119,7 +118,7 @@ pub proof fn theorem_accept_step_refines(
         accept_fires(
             can_mutate(c.own, c.actor, host, epoch),
             c.sent.contains(env),
-            env.seq,
+            env.seq as nat,
             accepted_from(c.journal, env.sender),
         ),
     ensures
@@ -148,7 +147,7 @@ pub proof fn theorem_accept_step_refuses_an_enabled_append_only_at_exhaustion(
         accept_fires(
             can_mutate(c.own, c.actor, host, epoch),
             c.sent.contains(env),
-            env.seq,
+            env.seq as nat,
             accepted as nat,
         ),
         !accept_has_room(accepted as nat),
@@ -172,7 +171,7 @@ pub proof fn theorem_accept_step_refuses_exactly_when_disabled(
         !accept_fires(
             can_mutate(c.own, c.actor, host, epoch),
             c.sent.contains(env),
-            env.seq,
+            env.seq as nat,
             accepted_from(c.journal, env.sender),
         ),
     ensures

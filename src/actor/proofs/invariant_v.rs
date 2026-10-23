@@ -104,7 +104,7 @@ pub proof fn lemma_init_inv(c: ActorSystem)
 
 /// **Sending preserves it.** A send touches only `sent` and `next_seq`, and `sent`
 /// only grows.
-pub proof fn lemma_send_preserves_inv(pre: ActorSystem, post: ActorSystem, from: Id, body: nat)
+pub proof fn lemma_send_preserves_inv(pre: ActorSystem, post: ActorSystem, from: Id, body: Vec<u8>)
     requires
         actor_inv(pre),
         as_send(pre, post, from, body),

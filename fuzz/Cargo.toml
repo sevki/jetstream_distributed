@@ -24,7 +24,7 @@ libfuzzer-sys = "0.4"
 # `tests/scenario_body/mod.rs` is compiled into this target too and a different
 # simulator here would be a different registry.
 turmoil = "=0.7.2"
-tokio = { version = "=1.47.1", features = ["io-util", "rt", "time"] }
+tokio = { version = "=1.48", features = ["io-util", "rt", "time"] }
 jetstream_distributed = { version = "0.1.0", path = ".." }
 
 # A patch table only applies at the root of the workspace it is in, and this is its

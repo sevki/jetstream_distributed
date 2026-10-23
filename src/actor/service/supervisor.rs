@@ -279,12 +279,13 @@ impl LocalSupervisor {
 /// What this supervisor knows about where an actor is: itself, if it is running one.
 /// It has no view of any other node, so an actor it does not host is `NotFound`,
 /// which is "not here" and not "nowhere".
+#[async_trait]
 impl Discovery for LocalSupervisor {
-    fn discover<W: Resource>(&self, what: W) -> std::result::Result<Vec<Id>, DiscoveryError> {
-        let Some(ActorRef(id)) = (&what as &dyn Any).downcast_ref::<ActorRef>() else {
-            return Err(DiscoveryError::NotFound);
-        };
-        match self.status(*id) {
+    type Resource = ActorRef;
+    type Location = Id;
+
+    async fn discover(&self, what: ActorRef) -> std::result::Result<Vec<Id>, DiscoveryError> {
+        match self.status(what.0) {
             Status::Running => Ok(vec![self.me]),
             // A draining actor starts nothing, and a retired one answers `FENCED`:
             // neither is where a caller should go.

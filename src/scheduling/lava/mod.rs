@@ -12,6 +12,7 @@ use std::{
 use crate::{
     compute::{Cpu, Instant, Job, Memory, Resources},
     id::Id,
+    scheduling::placement::PlacementError,
 };
 
 /// Seconds in an hour: the first lifetime class's upper bound.
@@ -277,10 +278,7 @@ impl<F> Host<F> {
         }
         // One promotion per refresh, rather than inventing transitions through
         // unobserved intermediate epochs when the caller advances a long time.
-        if self
-            .deadline
-            .is_some_and(|d| d != Instant::MAX && now >= d)
-        {
+        if self.deadline.is_some_and(|d| d != Instant::MAX && now >= d) {
             self.assign_class(self.class.unwrap().higher(), now);
             self.residual = self.jobs.keys().copied().collect();
             // A promoted host drains its residual jobs and then drops a class
@@ -291,53 +289,7 @@ impl<F> Host<F> {
     }
 }
 
-/// Why a [`Scheduler`] or [`EmpiricalLifetime`] call was refused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Error {
-    /// Invalid capacity: a host was added with no CPU or no memory.
-    InvalidCapacity,
-    /// Invalid request: a job asked for no CPU and no memory.
-    InvalidRequest,
-    /// Invalid distribution: an [`EmpiricalLifetime`] had no samples, a zero sample, or a zero tail.
-    InvalidDistribution,
-    /// Duplicate host: a host with this id is already known.
-    DuplicateHost,
-    /// Duplicate job: a job with this id is already placed.
-    DuplicateJob,
-    /// Unknown host: no host with this id is known.
-    UnknownHost,
-    /// Unknown job: no job with this id is known.
-    UnknownJob,
-    /// Clock went backwards: the time given is earlier than one already given.
-    ClockWentBackwards,
-    /// Future job: the job is said to have started after `now`.
-    FutureJob,
-    /// No capacity: no schedulable, eligible host has room for the job.
-    NoCapacity,
-    /// Migration not approved: [`Scheduler::begin_drain`] was refused because the approval gate did not
-    /// cover every job on the host.
-    MigrationNotApproved,
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Error::InvalidCapacity => "invalid capacity",
-            Error::InvalidRequest => "invalid request",
-            Error::InvalidDistribution => "invalid distribution",
-            Error::DuplicateHost => "duplicate host",
-            Error::DuplicateJob => "duplicate job",
-            Error::UnknownHost => "unknown host",
-            Error::UnknownJob => "unknown job",
-            Error::ClockWentBackwards => "clock went backwards",
-            Error::FutureJob => "future job",
-            Error::NoCapacity => "no capacity",
-            Error::MigrationNotApproved => "migration not approved",
-        })
-    }
-}
-
-impl std::error::Error for Error {}
+type Error = PlacementError;
 
 /// Bucket indices follow §4.2's example: 70 minutes has temporal cost 2.
 /// Boundaries are lower edges, with [168h,infinity) an overflow bucket.
@@ -496,13 +448,7 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
     }
     /// Put `job` on `target`, which has been chosen and has room: give an empty
     /// host the job's class, and make a host that is now over 90% full recycling.
-    fn seat(
-        &mut self,
-        target: Id,
-        job: Job<F>,
-        class: LifetimeClass,
-        now: Instant,
-    ) -> Id {
+    fn seat(&mut self, target: Id, job: Job<F>, class: LifetimeClass, now: Instant) -> Id {
         let host = self.hosts.get_mut(&target).unwrap();
         if host.state == HostState::Empty {
             host.state = HostState::Open;
@@ -512,8 +458,10 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
         host.jobs.insert(job.id, job);
         let used = host.used();
         if host.state == HostState::Open
-            && (u128::from(used.cpu.as_millicores()) * 10 > u128::from(host.capacity.cpu.as_millicores()) * 9
-                || u128::from(used.memory.as_bytes()) * 10 > u128::from(host.capacity.memory.as_bytes()) * 9)
+            && (u128::from(used.cpu.as_millicores()) * 10
+                > u128::from(host.capacity.cpu.as_millicores()) * 9
+                || u128::from(used.memory.as_bytes()) * 10
+                    > u128::from(host.capacity.memory.as_bytes()) * 9)
         {
             host.state = HostState::Recycling;
             host.residual = host.jobs.keys().copied().collect();
@@ -587,7 +535,8 @@ impl<F, P: LifetimePredictor<F>> Scheduler<F, P> {
         let temporal = temporal_cost(remaining.saturating_sub(host_remaining));
         let free = host.free();
         // Normalized CPU+memory slack in millionths, lower is tighter packing.
-        let waste = u128::from(free.cpu.as_millicores() - job.resources.cpu.as_millicores()) * 1_000_000
+        let waste = u128::from(free.cpu.as_millicores() - job.resources.cpu.as_millicores())
+            * 1_000_000
             / u128::from(host.capacity.cpu.as_millicores())
             + u128::from(free.memory.as_bytes() - job.resources.memory.as_bytes()) * 1_000_000
                 / u128::from(host.capacity.memory.as_bytes());
@@ -760,7 +709,9 @@ mod tests {
         assert_eq!(host.class(), Some(LcForever));
         assert_eq!(host.deadline(), Some(Instant::MAX));
 
-        scheduler.tick(Instant::from_epoch(hours(1_000_000))).unwrap();
+        scheduler
+            .tick(Instant::from_epoch(hours(1_000_000)))
+            .unwrap();
         let host = scheduler.host(Id(1)).unwrap();
         assert_eq!(host.class(), Some(LcForever));
         assert!(
@@ -850,10 +801,14 @@ mod tests {
         let mut scheduler = Scheduler::new(EmpiricalPredictor);
         scheduler.add_host(Id(1), roomy()).unwrap();
         scheduler.add_host(Id(2), roomy()).unwrap();
-        scheduler.place(job(Id(7), hours(2)), Instant::EPOCH).unwrap();
+        scheduler
+            .place(job(Id(7), hours(2)), Instant::EPOCH)
+            .unwrap();
         assert_eq!(scheduler.location(Id(7)), Some(Id(1)));
 
-        let order = scheduler.begin_drain(Id(1), Instant::EPOCH, |_| true).unwrap();
+        let order = scheduler
+            .begin_drain(Id(1), Instant::EPOCH, |_| true)
+            .unwrap();
         assert_eq!(order, [Id(7)]);
         assert_eq!(
             scheduler.place(job(Id(7), hours(2)), Instant::EPOCH),
@@ -873,8 +828,12 @@ mod tests {
     fn a_migration_with_no_destination_keeps_the_job_on_its_source() {
         let mut scheduler = Scheduler::new(EmpiricalPredictor);
         scheduler.add_host(Id(1), roomy()).unwrap();
-        scheduler.place(job(Id(7), hours(2)), Instant::EPOCH).unwrap();
-        scheduler.begin_drain(Id(1), Instant::EPOCH, |_| true).unwrap();
+        scheduler
+            .place(job(Id(7), hours(2)), Instant::EPOCH)
+            .unwrap();
+        scheduler
+            .begin_drain(Id(1), Instant::EPOCH, |_| true)
+            .unwrap();
 
         assert_eq!(
             scheduler.migrate(Id(7), Instant::EPOCH),

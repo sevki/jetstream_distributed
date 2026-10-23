@@ -16,6 +16,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use jetstream_distributed::id::Id;
+use jetstream_distributed::actor::model::Envelope;
 use jetstream_distributed::actor::service::{
     actor_protocol::{ActorChannel, ActorService},
     Actor, Host, Receipt, Snapshot,
@@ -39,6 +40,15 @@ fn roster() -> HashMap<IpAddr, Id> {
         (turmoil::lookup("b"), B),
         (turmoil::lookup("c"), C),
     ])
+}
+
+/// `C`'s message number `seq`: the caller numbers its own messages.
+fn from_c(seq: u64, body: u8) -> Envelope {
+    Envelope {
+        sender: C,
+        seq,
+        body: vec![body],
+    }
 }
 
 /// Wait until `secs` of *simulated* time have passed since the simulation began.
@@ -116,12 +126,12 @@ fn an_actor_changes_hands_over_the_wire_without_losing_or_repeating_a_message() 
         at(10).await;
         {
             connect!(_s, ch);
-            assert_eq!(ch.send(Context::default(), 7).await.unwrap(), 0);
-            assert_eq!(ch.send(Context::default(), 9).await.unwrap(), 1);
+            ch.send(Context::default(), from_c(0, 7)).await.unwrap();
+            ch.send(Context::default(), from_c(1, 9)).await.unwrap();
         }
         at(35).await;
         connect!(_s, ch);
-        assert_eq!(ch.send(Context::default(), 11).await.unwrap(), 2);
+        ch.send(Context::default(), from_c(2, 11)).await.unwrap();
         Ok(())
     });
 
@@ -137,7 +147,6 @@ fn an_actor_changes_hands_over_the_wire_without_losing_or_repeating_a_message() 
                 r0,
                 Receipt {
                     index: 0,
-                    body: 7,
                     state: 7
                 }
             );
@@ -146,7 +155,6 @@ fn an_actor_changes_hands_over_the_wire_without_losing_or_repeating_a_message() 
                 r1,
                 Receipt {
                     index: 1,
-                    body: 9,
                     state: 226
                 }
             );
@@ -250,7 +258,7 @@ fn a_stranger_is_refused_over_the_wire() {
     }
     sim.client("x", async move {
         connect!(_s, ch);
-        let err = ch.send(Context::default(), 1).await.unwrap_err();
+        let err = ch.send(Context::default(), from_c(0, 1)).await.unwrap_err();
         assert_eq!(err.code(), Some("NO"));
         Ok(())
     });

@@ -37,7 +37,7 @@ pub open spec fn replay_from(state: nat, entries: Seq<Entry>) -> nat
     if entries.len() == 0 {
         state
     } else {
-        apply(replay_from(state, entries.drop_last()), entries.last().env.body)
+        apply(replay_from(state, entries.drop_last()), entries.last().env.body@)
     }
 }
 
@@ -118,7 +118,7 @@ pub proof fn theorem_accepting_applies_the_behaviour(
     requires
         as_accept(pre, post, host, epoch, env),
     ensures
-        state_of(post.journal) == apply(state_of(pre.journal), env.body),
+        state_of(post.journal) == apply(state_of(pre.journal), env.body@),
 {
     lemma_state_of_push(pre.journal, Entry { env: env, host: host, epoch: epoch });
 }

@@ -174,14 +174,14 @@ pub proof fn lemma_init_inv(m: Mailbox)
     }
 }
 
-pub proof fn lemma_enqueue_preserves_inv(pre: Mailbox, post: Mailbox, sender: Id, body: nat)
+pub proof fn lemma_enqueue_preserves_inv(pre: Mailbox, post: Mailbox, sender: Id, body: Vec<u8>)
     requires
         mb_inv(pre),
         mb_enqueue(pre, post, sender, body),
     ensures
         mb_inv(post),
 {
-    let env = Envelope { sender, seq: mb_seq(pre, sender), body };
+    let env = Envelope { sender, seq: mb_seq(pre, sender) as u64, body };
     let a = all_of(pre);
     let b = all_of(post);
     assert(b =~= a.push(env));

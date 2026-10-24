@@ -1,3 +1,6 @@
 /target
 **/*.rs.bk
 .verus-log/
+
+# The built book, which CI rebuilds from book/src
+/book/build

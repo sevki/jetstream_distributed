@@ -15,6 +15,8 @@ cargo clippy --all-targets              # must be clean
 cargo doc --no-deps --lib --examples    # must be clean
 verus --crate-type=lib src/lib.rs       # the proofs (needs the pinned Verus)
 cargo verus verify --no-default-features
+python3 -I .github/scripts/check-book.py # the book's links, including its README anchors
+mdbook build book                       # the book (mdBook 0.5.4; CI pins and checksums it)
 ```
 
 Verus is pinned (`0.2026.09.20.aef82ed`, with `rust-toolchain.toml` and
@@ -47,6 +49,12 @@ name carries the suffix. `src/**/steps_v.rs`, `exec_v.rs`, `registry_v.rs`,
   (`vendor/JETSTREAM.md`). Treat a change to it as a change to a dependency.
 * **Say what is proved and what is merely tested.** `service::Mailbox` is a
   transcription of the mailbox model, not a refinement; docs must not blur that.
+* **The book (`book/`) links to the README's claims; it does not copy them.** It
+  explains how the protocols relate and cites rows by number (`A14`, `MB10`). A
+  relationship the code does not build is described as not built. Renaming a README
+  heading the book links to fails `check-book.py`; fix the link, not the check.
+  `.github/workflows/book.yml` builds it on every pull request that touches it and
+  publishes a preview to `gh-pages` (Pages must serve that branch, see the workflow).
 * Add dependencies with `cargo add`, not by editing `Cargo.toml`.
 
 ## Reviews

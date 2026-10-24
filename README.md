@@ -5,7 +5,8 @@ Machine-checked distributed protocols, written in
 [Jetstream](https://github.com/sevki/jetstream) services that speak them: **exclusive
 mutable ownership across machines**, Raymond's routing layer, Raft, SWIM gossip, and
 a distributed actor with a mailbox in front of it. The rest of this section is about
-the first, which the others build on.
+the first, which the others build on. How the algorithms relate to each other, and
+which of those relationships are built, is the subject of the book in [`book/`](book/src/how-they-relate.md).
 
 ```text
 Rust:

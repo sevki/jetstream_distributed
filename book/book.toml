@@ -1,0 +1,16 @@
+[book]
+title = "jetstream_distributed"
+description = "How the protocols in jetstream_distributed relate: what each one buys, what it assumes, and what is proved, tested or only intended."
+authors = ["sevki"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "build"
+# The book is rebuilt from scratch every time, so a page removed from SUMMARY.md
+# cannot linger in the output.
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/sevki/jetstream_distributed"
+edit-url-template = "https://github.com/sevki/jetstream_distributed/edit/main/book/{path}"

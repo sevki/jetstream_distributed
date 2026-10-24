@@ -38,12 +38,18 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same ref supersedes an older build of it. This does not
-# apply to publishing, which is a separate job and is made safe against another
-# publisher by the script itself.
+# One group per pull request, and one for `main`. A newer event for the same pull
+# request (a push, or the close that removes its preview) supersedes an older one.
+#
+# It must not be keyed on `github.ref`. Observed on the first merge: the `closed`
+# run of the merged pull request cancelled the push-to-`main` run that began the
+# same second, which can only happen if they shared a group, so a merged pull
+# request's `closed` event evidently runs with `main` as its `github.ref`. `main`
+# never cancels itself: a publish that is running is allowed to finish, and
+# publishers are made safe against each other by the script.
 concurrency:
-  group: book-${{ github.ref }}
-  cancel-in-progress: true
+  group: book-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Pinned, with the checksum of the release archive, because the build runs on

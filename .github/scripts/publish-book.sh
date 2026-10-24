@@ -42,22 +42,49 @@ fi
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-# A clone of the branch, or an empty history to start it from.
-if git ls-remote --exit-code --heads "$remote" "$branch" >/dev/null 2>&1; then
-  git clone --quiet --branch "$branch" --single-branch "$(git remote get-url "$remote")" "$work/site"
-else
-  git init --quiet "$work/site"
-  git -C "$work/site" checkout --quiet --orphan "$branch"
-  git -C "$work/site" remote add "$remote" "$(git remote get-url "$remote")"
-fi
-site="$work/site"
 # `actions/checkout` authenticates through an `http.*.extraheader` in this
-# repository's config, which a fresh clone does not inherit. Copy it across so
-# the push is authorised without a token ever appearing in a command line.
+# repository's config, which a fresh clone does not inherit. Every git command
+# below that talks to the remote is given it, so the clone *and* the push are
+# authorised without a token ever appearing in a command line.
+#
+# The clone needs it as much as the push does: an earlier version copied the
+# header only after cloning, and so worked the first time (there was no branch to
+# clone) and failed every time after, on a repository that needs credentials.
+auth=()
 while IFS= read -r entry; do
   [[ -n "$entry" ]] || continue
-  git -C "$site" config --add "${entry%% *}" "${entry#* }"
+  auth+=(-c "${entry%% *}=${entry#* }")
 done < <(git config --local --get-regexp '^http\..*extraheader$' || true)
+
+# A clone of the branch, or an empty history to start it from. `--exit-code`
+# makes `ls-remote` return 2 for "no such branch" and something else for a real
+# failure, and only the first means there is nothing to clone: treating every
+# failure as "no branch" would start a fresh history over an authentication error.
+set +e
+git "${auth[@]}" ls-remote --exit-code --heads "$remote" "$branch" >/dev/null
+found=$?
+set -e
+case "$found" in
+  0)
+    git "${auth[@]}" clone --quiet --branch "$branch" --single-branch \
+      "$(git remote get-url "$remote")" "$work/site"
+    ;;
+  2)
+    git init --quiet "$work/site"
+    git -C "$work/site" checkout --quiet --orphan "$branch"
+    git -C "$work/site" remote add "$remote" "$(git remote get-url "$remote")"
+    ;;
+  *)
+    echo "could not read $remote (git ls-remote exited $found)" >&2
+    exit 1
+    ;;
+esac
+site="$work/site"
+# A clone made with `-c` keeps those settings, but a fresh `git init` does not,
+# and the push needs them either way.
+for ((i = 0; i < ${#auth[@]}; i += 2)); do
+  git -C "$site" config --replace-all "${auth[i + 1]%%=*}" "${auth[i + 1]#*=}"
+done
 git -C "$site" config user.name "${GIT_AUTHOR_NAME:-github-actions[bot]}"
 git -C "$site" config user.email "${GIT_AUTHOR_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}"
 

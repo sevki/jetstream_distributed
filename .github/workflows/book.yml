@@ -113,15 +113,19 @@ jobs:
           name: book
           path: book/build
 
+      # `GITHUB_SHA` on a pull request is the temporary merge commit, which is on
+      # no branch; the commit a reader can find is the pull request's head.
       - name: Publish the preview
         env:
           PR: ${{ github.event.pull_request.number }}
+          BOOK_SHA: ${{ github.event.pull_request.head.sha }}
         run: .github/scripts/publish-book.sh pr "$PR"
 
       - name: Say where it is
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
+          BOOK_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           repo="${GITHUB_REPOSITORY#*/}"
@@ -131,7 +135,7 @@ jobs:
             echo
             echo "${url}"
             echo
-            echo "Built from ${GITHUB_SHA}. It is replaced on every push and removed when this pull request closes."
+            echo "Built from ${BOOK_SHA}. It is replaced on every push and removed when this pull request closes."
             echo "If the link is a 404, GitHub Pages is not serving the \`gh-pages\` branch yet."
           } > "$RUNNER_TEMP/comment.md"
           gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" \

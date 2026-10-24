@@ -120,10 +120,13 @@ apply() {
   touch "$site/.nojekyll"
 }
 
+# BOOK_SHA is the commit the book was built from. On a pull request GITHUB_SHA is
+# the temporary merge commit, which no branch has, so the workflow passes the head.
+sha="${BOOK_SHA:-${GITHUB_SHA:-unknown}}"
 default_message() {
   case "$mode" in
-    main) echo "book: main at ${GITHUB_SHA:-unknown}" ;;
-    pr) echo "book: preview of #$pr at ${GITHUB_SHA:-unknown}" ;;
+    main) echo "book: main at $sha" ;;
+    pr) echo "book: preview of #$pr at $sha" ;;
     remove) echo "book: remove the preview of #$pr" ;;
   esac
 }

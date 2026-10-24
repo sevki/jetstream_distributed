@@ -50,29 +50,37 @@ trap 'rm -rf "$work"' EXIT
 # The clone needs it as much as the push does: an earlier version copied the
 # header only after cloning, and so worked the first time (there was no branch to
 # clone) and failed every time after, on a repository that needs credentials.
+#
+# The two commands that read the remote run from `$work`, not from the checkout.
+# The checkout already has the header in its own config, and `-c` adds to what is
+# there instead of replacing it: run from the checkout, the header went out twice
+# and GitHub answered `400 Duplicate header: "Authorization"`.
 auth=()
 while IFS= read -r entry; do
   [[ -n "$entry" ]] || continue
   auth+=(-c "${entry%% *}=${entry#* }")
 done < <(git config --local --get-regexp '^http\..*extraheader$' || true)
 
+url="$(git remote get-url "$remote")"
+# `-C` changes what a relative path means, so a remote that is a local path is made absolute.
+[[ -e "$url" ]] && url="$(cd "$url" && pwd)"
+
 # A clone of the branch, or an empty history to start it from. `--exit-code`
 # makes `ls-remote` return 2 for "no such branch" and something else for a real
 # failure, and only the first means there is nothing to clone: treating every
 # failure as "no branch" would start a fresh history over an authentication error.
 set +e
-git "${auth[@]}" ls-remote --exit-code --heads "$remote" "$branch" >/dev/null
+git -C "$work" "${auth[@]}" ls-remote --exit-code --heads "$url" "$branch" >/dev/null
 found=$?
 set -e
 case "$found" in
   0)
-    git "${auth[@]}" clone --quiet --branch "$branch" --single-branch \
-      "$(git remote get-url "$remote")" "$work/site"
+    git -C "$work" "${auth[@]}" clone --quiet --branch "$branch" --single-branch "$url" site
     ;;
   2)
     git init --quiet "$work/site"
     git -C "$work/site" checkout --quiet --orphan "$branch"
-    git -C "$work/site" remote add "$remote" "$(git remote get-url "$remote")"
+    git -C "$work/site" remote add "$remote" "$url"
     ;;
   *)
     echo "could not read $remote (git ls-remote exited $found)" >&2

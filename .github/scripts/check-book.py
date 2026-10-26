@@ -6,7 +6,10 @@ the links keep pointing at something, so this checks, without a network:
 
 * every chapter in `book/src/SUMMARY.md` exists, and every chapter is listed;
 * every relative link between chapters resolves, and so does its `#anchor`;
-* every link to `README.md#anchor` names a heading the README really has.
+* every link to `README.md#anchor` names a heading the README really has;
+* every `{{#include file}}` names a file that exists, and an included example is
+  registered in `Cargo.toml`, so that `cargo test` compiles it and CI runs it;
+* every `cargo run --example NAME` in the book names an example `Cargo.toml` has.
 
 Exits non-zero, listing each problem, if any check fails.
 """
@@ -22,6 +25,31 @@ README_URL = "https://github.com/sevki/jetstream_distributed/blob/main/README.md
 
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 LINK = re.compile(r"\]\(([^)\s]+)\)")
+INCLUDE = re.compile(r"\{\{#(?:rustdoc_)?include\s+([^\s}:]+)")
+RUN_EXAMPLE = re.compile(r"cargo run[^\n`]*--example\s+([A-Za-z0-9_-]+)")
+CARGO = ROOT / "Cargo.toml"
+
+
+def examples() -> dict[str, str]:
+    """The `[[example]]` targets in Cargo.toml, as name -> path."""
+    found: dict[str, str] = {}
+    in_example = False
+    name = None
+    for line in CARGO.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line.startswith("["):
+            # A `[[test]]` can share a name with an `[[example]]`; only the latter counts.
+            in_example = line == "[[example]]"
+            name = None
+        if not in_example:
+            continue
+        m = re.match(r'name\s*=\s*"([^"]+)"', line)
+        if m:
+            name = m.group(1)
+        m = re.match(r'path\s*=\s*"([^"]+)"', line)
+        if m and name:
+            found[name] = m.group(1)
+    return found
 
 
 def slug(text: str) -> str:
@@ -100,6 +128,23 @@ def main() -> int:
                     problems.append(f"{where}: {name} does not exist")
                 elif anchor and anchor not in anchors(dest):
                     problems.append(f"{where}: {name} has no heading #{anchor}")
+
+    registered = examples()
+    registered_paths = set(registered.values())
+    for chapter in sorted(SRC.glob("*.md")):
+        for number, line in enumerate(chapter.read_text(encoding="utf-8").splitlines(), 1):
+            where = f"{chapter.name}:{number}"
+            for m in INCLUDE.finditer(line):
+                target = (chapter.parent / m.group(1)).resolve()
+                if not target.is_file():
+                    problems.append(f"{where}: included file {m.group(1)} does not exist")
+                    continue
+                rel = target.relative_to(ROOT).as_posix()
+                if "/examples/" in rel and rel not in registered_paths:
+                    problems.append(f"{where}: {rel} is included but is not an [[example]] in Cargo.toml")
+            for m in RUN_EXAMPLE.finditer(line):
+                if m.group(1) not in registered:
+                    problems.append(f"{where}: no [[example]] named {m.group(1)} in Cargo.toml")
 
     for problem in problems:
         print(problem)

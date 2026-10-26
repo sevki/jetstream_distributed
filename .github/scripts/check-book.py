@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """Check the book's links before it is built.
 
-The book does not repeat the README's claims; it links to them. That only works if
+The book holds the documentation, and the README points at it. That only works if
 the links keep pointing at something, so this checks, without a network:
 
-* every chapter in `book/src/SUMMARY.md` exists, and every chapter is listed;
-* every relative link between chapters resolves, and so does its `#anchor`;
-* every link to `README.md#anchor` names a heading the README really has;
+* every page in `book/src/SUMMARY.md` exists, and every page is listed;
+* every relative link between pages resolves, and so does its `#anchor`;
+* no page links to the repository's README for a claim: the claims live in the
+  Reference pages, and a link to the README would be a link to a pointer;
 * every `{{#include file}}` names a file that exists, and an included example is
   registered in `Cargo.toml`, so that `cargo test` compiles it and CI runs it;
-* every `cargo run --example NAME` in the book names an example `Cargo.toml` has.
+* every `cargo run --example NAME` in the book names an example `Cargo.toml` has;
+* the README points at the book, and every relative link in the README resolves.
 
 Exits non-zero, listing each problem, if any check fails.
 """
@@ -22,6 +24,8 @@ ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "book" / "src"
 README = ROOT / "README.md"
 README_URL = "https://github.com/sevki/jetstream_distributed/blob/main/README.md"
+# What the README must link to, so that a reader who lands on it finds the book.
+BOOK_ENTRY = "book/src/introduction.md"
 
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 LINK = re.compile(r"\]\(([^)\s]+)\)")
@@ -95,35 +99,45 @@ def links(path: Path):
             yield number, m.group(1)
 
 
+def pages() -> list[Path]:
+    """Every page under `book/src`, in subdirectories too, except the table of contents."""
+    return sorted(p for p in SRC.rglob("*.md") if p.name != "SUMMARY.md")
+
+
+def name_of(page: Path) -> str:
+    return page.relative_to(SRC).as_posix()
+
+
 def main() -> int:
     problems: list[str] = []
-    readme_anchors = anchors(README)
+    all_pages = pages()
 
     summary = SRC / "SUMMARY.md"
     listed = {target for _, target in links(summary) if target.endswith(".md")}
     for target in sorted(listed):
         if not (SRC / target).is_file():
             problems.append(f"SUMMARY.md: {target} does not exist")
-    for chapter in sorted(SRC.glob("*.md")):
-        if chapter.name != "SUMMARY.md" and chapter.name not in listed:
-            problems.append(f"{chapter.name}: not listed in SUMMARY.md")
+    for page in all_pages:
+        if name_of(page) not in listed:
+            problems.append(f"{name_of(page)}: not listed in SUMMARY.md")
 
-    for chapter in sorted(SRC.glob("*.md")):
-        for number, target in links(chapter):
-            where = f"{chapter.name}:{number}"
+    for page in all_pages:
+        for number, target in links(page):
+            where = f"{name_of(page)}:{number}"
             if target.startswith(README_URL):
-                _, _, anchor = target.partition("#")
-                if anchor and anchor not in readme_anchors:
-                    problems.append(f"{where}: README has no heading #{anchor}")
+                problems.append(
+                    f"{where}: links to the README, which points at the book and holds no "
+                    f"claims; link the Reference page ({target.partition('#')[2] or 'a page'})"
+                )
             elif "://" in target or target.startswith("mailto:"):
                 continue
             else:
                 name, _, anchor = target.partition("#")
                 if not name:
-                    if anchor and anchor not in anchors(chapter):
+                    if anchor and anchor not in anchors(page):
                         problems.append(f"{where}: no heading #{anchor} in this page")
                     continue
-                dest = SRC / name
+                dest = (page.parent / name).resolve()
                 if not dest.is_file():
                     problems.append(f"{where}: {name} does not exist")
                 elif anchor and anchor not in anchors(dest):
@@ -131,11 +145,11 @@ def main() -> int:
 
     registered = examples()
     registered_paths = set(registered.values())
-    for chapter in sorted(SRC.glob("*.md")):
-        for number, line in enumerate(chapter.read_text(encoding="utf-8").splitlines(), 1):
-            where = f"{chapter.name}:{number}"
+    for page in all_pages:
+        for number, line in enumerate(page.read_text(encoding="utf-8").splitlines(), 1):
+            where = f"{name_of(page)}:{number}"
             for m in INCLUDE.finditer(line):
-                target = (chapter.parent / m.group(1)).resolve()
+                target = (page.parent / m.group(1)).resolve()
                 if not target.is_file():
                     problems.append(f"{where}: included file {m.group(1)} does not exist")
                     continue
@@ -146,13 +160,22 @@ def main() -> int:
                 if m.group(1) not in registered:
                     problems.append(f"{where}: no [[example]] named {m.group(1)} in Cargo.toml")
 
+    # The README is a pointer: it has to point at the book, and not at nothing.
+    readme_targets = list(links(README))
+    if BOOK_ENTRY not in {t.partition("#")[0] for _, t in readme_targets}:
+        problems.append(f"README.md: does not link to the book ({BOOK_ENTRY})")
+    for number, target in readme_targets:
+        if "://" in target or target.startswith(("#", "mailto:")):
+            continue
+        if not (ROOT / target.partition("#")[0]).exists():
+            problems.append(f"README.md:{number}: {target} does not exist")
+
     for problem in problems:
         print(problem)
     if problems:
         print(f"{len(problems)} problem(s)")
         return 1
-    print(f"book links ok: {len(list(SRC.glob('*.md')))} files, "
-          f"{len(readme_anchors)} README anchors known")
+    print(f"book links ok: {len(all_pages)} pages, README points at the book")
     return 0
 
 

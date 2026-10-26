@@ -80,8 +80,8 @@ has authority. [Composed](composed.md) closes that gap.
   rules; it does not distribute them. A deployment where each node keeps only its own
   entries is a different system, and nothing here says this one refines it.
 
-The routing claims are the R-rows in the README's
-[Raymond section](https://github.com/sevki/jetstream_distributed/blob/main/README.md#the-raymond-layer),
-including [seizure without an oracle](https://github.com/sevki/jetstream_distributed/blob/main/README.md#seizure-needs-no-oracle-belief-versus-authority).
+The routing claims are the R-rows in the Reference's
+[Raymond section](reference/raymond.md#the-raymond-layer),
+including [seizure without an oracle](reference/ownership.md#seizure-needs-no-oracle-belief-versus-authority).
 
 Next: [Composed](composed.md).

@@ -17,20 +17,26 @@ Distributed ownership:
 
 This is not Rust's borrow checker extended across a network. It is a runtime
 protocol, and the proofs are about a *model* of it. The
-[README](https://github.com/sevki/jetstream_distributed/blob/main/README.md) says
-exactly what is claimed and what is not.
+[Reference](reference/ownership.md) says exactly what is claimed and what is not,
+starting with [what this is, and what it is not](reference/ownership.md#what-this-is-and-what-it-is-not).
 
 ## What this book is for
 
-The README is the map of claims: every theorem, with the name of the proof and what
-it assumes. It is long, because each algorithm is described in detail. This book
-answers a different question: **how do the algorithms relate to each other?**
-Which one assumes what the others provide, which two are glued together and how,
-which are independent, and where a relationship is intended but not built yet.
+It has two parts, and they answer different questions.
 
-It does not repeat the claims tables. Where a chapter makes a claim it gives the
-README's row number (`A14`, `MB10`, `C54`) and links to the table, so the
-statement of what is proved lives in one place.
+**The chapters** answer: *how do the algorithms relate to each other?* Which one assumes
+what the others provide, which two are glued together and how, which are independent,
+and where a relationship is intended but not built yet. They are short, and they are
+written to be read in order.
+
+**The Reference** is the full record, which used to be the repository's README: every
+theorem, with the name of the proof and what it assumes, and what each result does not
+say. It is long, because each algorithm is described in detail, and it is meant to be
+looked things up in, not read through.
+
+The chapters do not repeat the Reference's claims tables. Where a chapter makes a claim
+it gives the row number (`A14`, `MB10`, `C54`) and links to the table, so the statement of
+what is proved lives in one place.
 
 ## How to read it
 
@@ -50,11 +56,12 @@ on the ones before it:
 4. [SWIM](swim.md), which agrees on nothing and promises only that views converge.
 5. [The actor](actor.md) and [the mailbox](mailbox.md), which sit on ownership.
 
-The last three chapters are about running these: the services, placement and
-discovery, and the actor system over QUIC.
+The next three chapters are about running these: the services, placement and
+discovery, and the actor system over QUIC. After them, [usage examples](examples.md) are
+runnable programs, and the Reference follows.
 
 ## What this book will not do
 
-It will not say a thing is proved when it is only tested. Where the code and the
-README disagree, the code wins and the README is the thing to fix. Where a chapter
-describes a design that is not built, it says "not built" in the same sentence.
+It will not say a thing is proved when it is only tested. Where the code and the book
+disagree, the code wins and the book is the thing to fix. Where a chapter describes a
+design that is not built, it says "not built" in the same sentence.

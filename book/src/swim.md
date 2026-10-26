@@ -27,7 +27,7 @@ choice of *which record arrived*:
 
 ## What is proved
 
-The claims are S1 to S12 in the README. In words:
+The claims are S1 to S12 in the Reference. In words:
 
 | | claim |
 | --- | --- |
@@ -76,7 +76,7 @@ direction, and only as a **hint**:
   new work and which addresses to stop returning. It never uses it to decide an actor has
   moved. That is the ownership epoch's job.
 
-The SWIM rows are in the README's
-[SWIM section](https://github.com/sevki/jetstream_distributed/blob/main/README.md#swim-gossip-membership-bought-by-merge-rather-than-majority).
+The SWIM rows are in the Reference's
+[SWIM section](reference/swim.md#swim-gossip-membership-bought-by-merge-rather-than-majority).
 
 Next: [the actor](actor.md), which sits on ownership.

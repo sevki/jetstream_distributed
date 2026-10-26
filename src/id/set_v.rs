@@ -12,7 +12,7 @@
 //! vstd's specifications of `HashSet`, and in particular
 //! `obeys_key_model::<u128>()`: that the standard library's default hasher
 //! behaves as a function on keys. That assumption is stated in vstd, not in this
-//! repository, and `README.md` names it. The `Vec` this
+//! repository, and the Reference's `status.md` names it. The `Vec` this
 //! replaces rested on nothing beyond `Vec`'s own specification.
 //!
 //! The set holds the `u128` inside each [`Id`], not the `Id`: vstd states that

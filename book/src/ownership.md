@@ -77,8 +77,8 @@ for how the layers fit together:
 becomes owned again. Safety survives every case in the table; progress does not.
 
 The full table, and every theorem with the name of its proof and what it assumes, is
-in the README: [failure model](https://github.com/sevki/jetstream_distributed/blob/main/README.md#failure-model)
-and [claimed invariants](https://github.com/sevki/jetstream_distributed/blob/main/README.md#claimed-invariants-and-the-proofs-that-establish-them).
+in the Reference: [failure model](reference/ownership.md#failure-model)
+and [claimed invariants](reference/ownership.md#claimed-invariants-and-the-proofs-that-establish-them).
 
 ## Prior art: Chubby
 
@@ -87,7 +87,7 @@ and **lock generation number**, and the resource server is expected to reject a 
 one. That is `Token` plus `valid_fence`, and the generation number is the model's
 `Epoch`. What this repository adds is the proof, and the precision a proof forces:
 who may mutate is one predicate, and "a node cannot fence itself" cannot stay implicit.
-The README's [Relation to Chubby](https://github.com/sevki/jetstream_distributed/blob/main/README.md#relation-to-chubby)
+The Reference's [Relation to Chubby](reference/ownership.md#relation-to-chubby)
 is the careful version, including the three deliberate differences (no timing,
 consensus assumed, peer-to-peer routing).
 

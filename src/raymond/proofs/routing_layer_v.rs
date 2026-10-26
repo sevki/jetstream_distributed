@@ -5,7 +5,7 @@
 //! * holder/routing changes cannot manufacture ownership;
 //! * duplicate/reordered requests cannot create a second owner.
 //!
-//! Liveness is *not* claimed. See `README.md`.
+//! Liveness is *not* claimed. See the book's Reference (`book/src/reference/raymond.md`).
 #![allow(unused_imports)]
 
 use vstd::prelude::*;

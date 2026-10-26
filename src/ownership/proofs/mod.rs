@@ -1,4 +1,4 @@
-//! The ownership theorems. Every claim in `README.md` about this protocol
+//! The ownership theorems. Every claim in the book's Reference (`book/src/reference/`) about this protocol
 //! corresponds to one of the `theorem_*` items here.
 
 #[path = "adversarial_v.rs"]

@@ -30,7 +30,7 @@
 //!
 //! Only **safety** is modelled. Raymond's liveness (every request is eventually
 //! served) requires FIFO, reliable links and no crashes, none of which this
-//! model assumes; see `README.md`.
+//! model assumes; see the book's Reference (`book/src/reference/raymond.md`).
 #![allow(unused_imports)]
 
 use vstd::prelude::*;

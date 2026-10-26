@@ -1,4 +1,4 @@
-//! The actor's theorems. Every claim in `README.md` about this protocol
+//! The actor's theorems. Every claim in the book's Reference (`book/src/reference/`) about this protocol
 //! corresponds to one of the `theorem_*` items here.
 
 #[path = "delivery_v.rs"]

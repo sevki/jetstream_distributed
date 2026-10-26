@@ -287,7 +287,7 @@ run whenever every leader replicating to its holder already agrees with it there
 and its hypothesis is a quantifier over *steps*. The induction hypothesis is a
 statement about *leaders of terms*: every leader of a term between the commit and
 the election holds the entry. Those are not the same sentence, and for two pushes
-this README bridged them with the words "C48's hypothesis is discharged only by
+this document bridged them with the words "C48's hypothesis is discharged only by
 the induction hypothesis at the intervening terms" — which is true, and is a
 claim about a translation rather than a translation.
 

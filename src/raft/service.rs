@@ -2,7 +2,7 @@
 //!
 //! [`crate::ownership::service`] serves a protocol whose exclusivity is
 //! *assumed*: the ownership model's registry is updated atomically, which rules
-//! out two coordinators by construction, and the README's failure-model table
+//! out two coordinators by construction, and the Reference's failure-model table
 //! says a real deployment has to buy that from consensus. This is the service
 //! that starts buying it.
 //!

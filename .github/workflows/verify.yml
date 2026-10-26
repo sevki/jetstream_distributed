@@ -96,7 +96,7 @@ jobs:
             exit 1
           fi
 
-      # The README claims the proofs use no escape hatches. Enforce that claim.
+      # The book claims the proofs use no escape hatches. Enforce that claim.
       # `axiom` is matched as a whole word because Verus really does have a
       # `pub broadcast axiom fn ...` declaration form, which would otherwise let
       # an undischarged assumption underpin a "verified" theorem. Whole-word
@@ -108,7 +108,7 @@ jobs:
       # about what a CRC detects, one CRC computation, and three I/O primitives
       # for the device. Every one is a boundary of the system model rather than
       # a proof obligation waved away, they are enumerated one by one in
-      # `vendor/README.md`, and the root `README.md` says what this
+      # `vendor/README.md`, and the book's Reference says what this
       # repository proves *conditional on them*. Extending the grep over
       # `vendor/` would not make them go away; it would make the vendored crate
       # unusable and leave the assumptions undocumented instead of listed.

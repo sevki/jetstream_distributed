@@ -23,7 +23,7 @@
 //!     after the protocol has advanced to epoch `n + k`;
 //!   - **loss**        - a message may simply never be delivered.
 //!
-//! See `README.md` ("Failure model") for the assumptions this encodes.
+//! See the Reference's "Failure model" (`book/src/reference/ownership.md`) for the assumptions this encodes.
 #![allow(unused_imports)]
 
 use vstd::prelude::*;
@@ -91,7 +91,7 @@ pub struct OwnershipSystem {
     /// A real deployment has to buy that atomicity somewhere: consensus, or an
     /// object store with compare-and-swap, which is what makes "read
     /// `Owned { A, 41 }`, write `Unowned { 42, B }`" a single step. See the
-    /// failure-model table in `README.md`.
+    /// failure-model table in the Reference (`book/src/reference/ownership.md`).
     pub actors: Map<Id, OwnershipState>,
     /// All nodes that exist.
     pub nodes: Set<Id>,

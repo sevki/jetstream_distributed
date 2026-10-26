@@ -88,7 +88,7 @@ and a body over the wire's limit.
 
 The proof files are `exclusive`, `delivery`, `state`, `refinement` and `scenario` under
 `src/actor/proofs/`, all resting on one inductive invariant of six clauses. The rows are
-in the README's
-[actor section](https://github.com/sevki/jetstream_distributed/blob/main/README.md#actor-a-journal-fenced-by-ownership).
+in the Reference's
+[actor section](reference/actor.md#actor-a-journal-fenced-by-ownership).
 
 Next: [the mailbox](mailbox.md).

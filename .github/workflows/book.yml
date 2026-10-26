@@ -1,7 +1,7 @@
 name: book
 
 # The book (`book/`) explains how the protocols relate. Every pull request that
-# touches it, or the README it links into, builds it and gets a preview; `main`
+# touches it, or the README that points at it, builds it and gets a preview; `main`
 # publishes the real one.
 #
 # Everything is served from the `gh-pages` branch by GitHub Pages:
@@ -19,7 +19,7 @@ on:
     branches: [main]
     paths:
       - "book/**"
-      # The book links to README headings, and the link check reads them.
+      # The link check requires the README to point at the book.
       - "README.md"
       - ".github/workflows/book.yml"
       - ".github/scripts/check-book.py"
@@ -29,7 +29,7 @@ on:
     types: [opened, synchronize, reopened, closed]
     paths:
       - "book/**"
-      # The book links to README headings, and the link check reads them.
+      # The link check requires the README to point at the book.
       - "README.md"
       - ".github/workflows/book.yml"
       - ".github/scripts/check-book.py"
@@ -67,8 +67,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The book links to the README's claims rather than repeating them, so a
-      # renamed README heading would silently break the book. This is the guard.
+      # The book links to the Reference headings rather than repeating them, so a
+      # renamed heading would silently break the book. This is the guard.
       - name: Check the book's links
         run: python3 -I .github/scripts/check-book.py
 

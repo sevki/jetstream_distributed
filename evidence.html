@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-faae4165.js";
+            window.path_to_searchindex_js = "searchindex-06e6da3b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3647fa7e.js"></script>
+        <script src="toc-07e7f656.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -203,8 +203,8 @@ records they act on), each with a postcondition stated in the model’s terms an
 theorem discharging it. That is how the gap between model and code is narrowed: the
 service calls the function the theorem is about.</p>
 <p>It is narrowed, not closed. The lock around a verified core, the roster, the network and
-the scheduler are not under proof. The README’s
-<a href="https://github.com/sevki/jetstream_distributed/blob/main/README.md#status-proven-modelled-future-work">status section</a>
+the scheduler are not under proof. The Reference’s
+<a href="reference/status.html#status-proven-modelled-future-work">status section</a>
 lists, by name, what is proven, what is modelled and not proven, and what is not modelled
 at all.</p>
 <h2 id="reading-the-file-names"><a class="header" href="#reading-the-file-names">Reading the file names</a></h2>
@@ -246,15 +246,16 @@ protocol under duplicated, reordered, delayed and dropped messages, with runtime
 checking the same properties the theorems state, and a search over seeds with the ones that
 once broke something kept as a regression replay.</p>
 <h2 id="how-to-read-a-claim-row"><a class="header" href="#how-to-read-a-claim-row">How to read a claim row</a></h2>
-<p>Each row in the README’s claims tables has the same four parts: a number (<code>A14</code>, <code>MB10</code>,
+<p>Each row in the Reference’s claims tables has the same four parts: a number (<code>A14</code>, <code>MB10</code>,
 <code>C54</code>), what is claimed, the name of the Verus theorem, and <strong>what it assumes</strong>. The last
 column is the one to read. A theorem with <code>none</code> there holds in every state. One that says
 <code>reachability</code> or <code>an execution</code> holds in every state a run can reach. One that names a
 hypothesis holds <em>given it</em>, and the hypothesis is stated so it can be discharged.</p>
 <h2 id="what-this-book-does-not-prove"><a class="header" href="#what-this-book-does-not-prove">What this book does not prove</a></h2>
-<p>Nothing here is a proof. This book explains how the protocols fit and says which of the
-README’s claims each relationship rests on. If a sentence here and the README disagree
-about what is proved, the README and the code are right.</p>
+<p>Nothing here is a proof. The chapters explain how the protocols fit and say which of the
+Reference’s claims each relationship rests on. If a chapter and the Reference disagree
+about what is proved, the Reference and the code are right, and the chapter is the thing
+to fix.</p>
 <h2 id="checking-it-yourself"><a class="header" href="#checking-it-yourself">Checking it yourself</a></h2>
 <pre><code class="language-text">cargo test                              # services, simulated-network tests, unit tests
 verus --crate-type=lib src/lib.rs       # the proofs (needs the pinned Verus)

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-faae4165.js";
+            window.path_to_searchindex_js = "searchindex-06e6da3b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3647fa7e.js"></script>
+        <script src="toc-07e7f656.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -195,17 +195,21 @@ Distributed ownership:
 </code></pre>
 <p>This is not Rust’s borrow checker extended across a network. It is a runtime
 protocol, and the proofs are about a <em>model</em> of it. The
-<a href="https://github.com/sevki/jetstream_distributed/blob/main/README.md">README</a> says
-exactly what is claimed and what is not.</p>
+<a href="reference/ownership.html">Reference</a> says exactly what is claimed and what is not,
+starting with <a href="reference/ownership.html#what-this-is-and-what-it-is-not">what this is, and what it is not</a>.</p>
 <h2 id="what-this-book-is-for"><a class="header" href="#what-this-book-is-for">What this book is for</a></h2>
-<p>The README is the map of claims: every theorem, with the name of the proof and what
-it assumes. It is long, because each algorithm is described in detail. This book
-answers a different question: <strong>how do the algorithms relate to each other?</strong>
-Which one assumes what the others provide, which two are glued together and how,
-which are independent, and where a relationship is intended but not built yet.</p>
-<p>It does not repeat the claims tables. Where a chapter makes a claim it gives the
-README’s row number (<code>A14</code>, <code>MB10</code>, <code>C54</code>) and links to the table, so the
-statement of what is proved lives in one place.</p>
+<p>It has two parts, and they answer different questions.</p>
+<p><strong>The chapters</strong> answer: <em>how do the algorithms relate to each other?</em> Which one assumes
+what the others provide, which two are glued together and how, which are independent,
+and where a relationship is intended but not built yet. They are short, and they are
+written to be read in order.</p>
+<p><strong>The Reference</strong> is the full record, which used to be the repository’s README: every
+theorem, with the name of the proof and what it assumes, and what each result does not
+say. It is long, because each algorithm is described in detail, and it is meant to be
+looked things up in, not read through.</p>
+<p>The chapters do not repeat the Reference’s claims tables. Where a chapter makes a claim
+it gives the row number (<code>A14</code>, <code>MB10</code>, <code>C54</code>) and links to the table, so the statement of
+what is proved lives in one place.</p>
 <h2 id="how-to-read-it"><a class="header" href="#how-to-read-it">How to read it</a></h2>
 <p>Start with <a href="how-they-relate.html">How the algorithms relate</a>. It is one page, and
 every later chapter is a closer look at one box in its picture. Then read
@@ -222,12 +226,13 @@ and tie the routing to ownership.</li>
 <li><a href="swim.html">SWIM</a>, which agrees on nothing and promises only that views converge.</li>
 <li><a href="actor.html">The actor</a> and <a href="mailbox.html">the mailbox</a>, which sit on ownership.</li>
 </ol>
-<p>The last three chapters are about running these: the services, placement and
-discovery, and the actor system over QUIC.</p>
+<p>The next three chapters are about running these: the services, placement and
+discovery, and the actor system over QUIC. After them, <a href="examples.html">usage examples</a> are
+runnable programs, and the Reference follows.</p>
 <h2 id="what-this-book-will-not-do"><a class="header" href="#what-this-book-will-not-do">What this book will not do</a></h2>
-<p>It will not say a thing is proved when it is only tested. Where the code and the
-README disagree, the code wins and the README is the thing to fix. Where a chapter
-describes a design that is not built, it says “not built” in the same sentence.</p>
+<p>It will not say a thing is proved when it is only tested. Where the code and the book
+disagree, the code wins and the book is the thing to fix. Where a chapter describes a
+design that is not built, it says “not built” in the same sentence.</p>
 
                     </main>
 

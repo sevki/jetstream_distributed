@@ -7,7 +7,7 @@
 //! # Why this is in the same repository as the ownership model
 //!
 //! The ownership model's strongest assumption, stated at `model::OwnershipSystem::actors`
-//! and first in the README's failure-model table, is that **ownership records
+//! and first in the Reference's failure-model table (`book/src/reference/ownership.md`), is that **ownership records
 //! are updated atomically**: every epoch-advancing transition reads
 //! `pre.actors[a]` and writes `post.actors.insert(a, ..)` in one step, which
 //! rules out two coordinators deciding concurrently *by construction* — the

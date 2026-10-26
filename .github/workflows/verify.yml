@@ -96,7 +96,7 @@ jobs:
             exit 1
           fi
 
-      # The README claims the proofs use no escape hatches. Enforce that claim.
+      # The book claims the proofs use no escape hatches. Enforce that claim.
       # `axiom` is matched as a whole word because Verus really does have a
       # `pub broadcast axiom fn ...` declaration form, which would otherwise let
       # an undischarged assumption underpin a "verified" theorem. Whole-word
@@ -108,7 +108,7 @@ jobs:
       # about what a CRC detects, one CRC computation, and three I/O primitives
       # for the device. Every one is a boundary of the system model rather than
       # a proof obligation waved away, they are enumerated one by one in
-      # `vendor/README.md`, and the root `README.md` says what this
+      # `vendor/README.md`, and the book's Reference says what this
       # repository proves *conditional on them*. Extending the grep over
       # `vendor/` would not make them go away; it would make the vendored crate
       # unusable and leave the assumptions undocumented instead of listed.
@@ -526,7 +526,13 @@ jobs:
       # transcribed from the model and not checked against it by Verus, so its
       # tests are the only check there is: the library's own (no wakeup lost,
       # each sender's order kept, one drain at a time, nothing dropped with a
-      # round) and one actor calling another through it.
+      # round) and one actor calling another through it. The supervisor stories: a
+      # fence that is asked before each request, actors hosted by id and found by
+      # discovery, a cooperative drain that finishes the handler that is running,
+      # and a system that asks its supervisor before discovery before a dial.
+      #
+      # These four were compiled by the job above (`--no-run --tests`) and never
+      # run, so a failure in any of them could not have failed a pull request.
       - name: The service stories
         run: |
           cargo +stable test --features service --locked \
@@ -545,5 +551,21 @@ jobs:
             --test actor_journal \
             --test actor_turmoil \
             --test actor_mailbox \
+            --test actor_fence \
+            --test actor_supervisor \
+            --test actor_drain \
+            --test actor_system \
             --lib \
             -- --nocapture
+
+      # The book (`book/src/examples.md`) embeds these files. Each asserts what it
+      # shows, so a non-zero exit means the page describes something that no longer
+      # happens.
+      - name: The examples the book embeds
+        run: |
+          set -euo pipefail
+          for example in ownership_handover swim_membership actor_hosting actor_basic; do
+            echo "::group::$example"
+            cargo +stable run --quiet --features service --locked --example "$example"
+            echo "::endgroup::"
+          done

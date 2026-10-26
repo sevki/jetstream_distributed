@@ -4,7 +4,7 @@
 //! the state machine has two owners, a burned epoch fences the outgoing one,
 //! and a stale token confers nothing. That is a claim about a transition
 //! relation. It says nothing about whether an implementation follows it, and
-//! `README.md` has always listed the gap as future work.
+//! the Reference has always listed the gap as future work.
 //!
 //! This closes part of that gap by simulation rather than by proof. It runs an
 //! *executable* ownership protocol — a coordinator holding the registry, nodes
@@ -444,7 +444,7 @@ impl Coord {
             // outgoing owner acknowledges and the actor becomes `Unowned` at
             // the new epoch. Folding them is a simplification of the model,
             // and it is the one place this implementation is deliberately
-            // coarser than what was proved — noted in README.
+            // coarser than what was proved — noted in the Reference.
             // The epoch is part of the acknowledgement, not inferred from
             // where the registry happens to be. `tr_complete_release` requires
             // `Message::Released { from, new_epoch }` to name the transfer's
@@ -1381,7 +1381,7 @@ pub fn check_invariants(log: &[Event]) -> Result<(), String> {
     // none could — liveness is not what they are about. This checks the
     // definition of `may_mutate` rather than a consequence of it, which is
     // weaker provenance than every row above it and is recorded as such in the
-    // README.
+    // Reference.
     //
     // Runs last so it cannot pre-empt an oracle that does come from a theorem.
     // `held` is `Some` only between an acquire and the next burn: a

@@ -47,7 +47,7 @@
 //! # The other assumption, and why it needed code rather than a caveat
 //!
 //! `OwnershipSystem::actors` — the model's registry — is read and written in a single
-//! step by every epoch-advancing transition. The README calls that the
+//! step by every epoch-advancing transition. The Reference calls that the
 //! strongest assumption in the model, and it is really two assumptions wearing
 //! one name: the record is updated **atomically**, and it **survives**. A
 //! process-local `Mutex` buys the first and none of the second.

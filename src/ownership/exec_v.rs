@@ -36,7 +36,7 @@
 //! `Owned(B, e + 1)` - precisely the atomic ownership assignment the model
 //! refuses to admit, and which `proofs::transfer::theorem_ownership_only_via_acquire`
 //! rules out for the model's own transitions. Making a guard follow the protocol
-//! needs the refinement relation listed as future work in `README.md`, so until
+//! needs the refinement relation listed as future work in the book's Reference, so until
 //! that exists this module offers queries only.
 #![allow(unused_imports)]
 

@@ -2,8 +2,9 @@
 
 Machine-checked distributed protocols in [Verus](https://github.com/verus-lang/verus)
 (ownership, Raymond, Raft, SWIM, a distributed actor and its mailbox) and the
-Jetstream services that speak them. `README.md` is the map: what is claimed, what
-is proved, and what is not.
+Jetstream services that speak them. The book (`book/`) is the map: how the protocols
+relate, and, under `book/src/reference/`, what is claimed, what is proved, and what
+is not. `README.md` is a short pointer to it.
 
 ## Build, test, verify
 
@@ -15,7 +16,7 @@ cargo clippy --all-targets              # must be clean
 cargo doc --no-deps --lib --examples    # must be clean
 verus --crate-type=lib src/lib.rs       # the proofs (needs the pinned Verus)
 cargo verus verify --no-default-features
-python3 -I .github/scripts/check-book.py # the book's links, including its README anchors
+python3 -I .github/scripts/check-book.py # the book's links and anchors, and the README's pointer
 mdbook build book                       # the book (mdBook 0.5.4; CI pins and checksums it)
 ```
 
@@ -49,10 +50,12 @@ name carries the suffix. `src/**/steps_v.rs`, `exec_v.rs`, `registry_v.rs`,
   (`vendor/JETSTREAM.md`). Treat a change to it as a change to a dependency.
 * **Say what is proved and what is merely tested.** `service::Mailbox` is a
   transcription of the mailbox model, not a refinement; docs must not blur that.
-* **The book (`book/`) links to the README's claims; it does not copy them.** It
-  explains how the protocols relate and cites rows by number (`A14`, `MB10`). A
-  relationship the code does not build is described as not built. Renaming a README
-  heading the book links to fails `check-book.py`; fix the link, not the check.
+* **The claims live in the book's Reference (`book/src/reference/`), once.** The
+  chapters explain how the protocols relate and cite rows by number (`A14`, `MB10`),
+  linking to the Reference rather than copying it. A relationship the code does not
+  build is described as not built. `README.md` stays a short pointer and must not
+  grow claims. Renaming a Reference heading a chapter links to fails `check-book.py`;
+  fix the link, not the check.
   `.github/workflows/book.yml` builds it on every pull request that touches it and
   publishes a preview to `gh-pages` (Pages must serve that branch, see the workflow).
 * Add dependencies with `cargo add`, not by editing `Cargo.toml`.
@@ -100,8 +103,8 @@ The same instructions are packaged as a custom agent in
    clause, needs a reason in the PR. Weakening a specification so a proof goes through
    is the failure it exists to catch.
 
-3. Check the claims table. A new or changed theorem should appear in `README.md`
-   with its name, what it assumes and what it does not say; a theorem that was
+3. Check the claims table. A new or changed theorem should appear in the book's
+   Reference (`book/src/reference/`) with its name, what it assumes and what it does not say; a theorem that was
    weakened should not still be described as it was.
 
 4. Run CI's escape-hatch grep over the diff by eye: no `assume`, `admit`, `axiom`,
@@ -118,7 +121,7 @@ The KVerus skills do not apply. Review for:
 * locks: a decision that reads the registry then writes the journal holds one gate
   across both;
 * a claim in a doc comment that code does not back, especially "refines",
-  "guarantees" and "proved". Cross-check it against `README.md`.
+  "guarantees" and "proved". Cross-check it against the Reference.
 
 ### Changes under `vendor/`
 

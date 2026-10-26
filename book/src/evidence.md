@@ -19,8 +19,8 @@ theorem discharging it. That is how the gap between model and code is narrowed: 
 service calls the function the theorem is about.
 
 It is narrowed, not closed. The lock around a verified core, the roster, the network and
-the scheduler are not under proof. The README's
-[status section](https://github.com/sevki/jetstream_distributed/blob/main/README.md#status-proven-modelled-future-work)
+the scheduler are not under proof. The Reference's
+[status section](reference/status.md#status-proven-modelled-future-work)
 lists, by name, what is proven, what is modelled and not proven, and what is not modelled
 at all.
 
@@ -64,7 +64,7 @@ once broke something kept as a regression replay.
 
 ## How to read a claim row
 
-Each row in the README's claims tables has the same four parts: a number (`A14`, `MB10`,
+Each row in the Reference's claims tables has the same four parts: a number (`A14`, `MB10`,
 `C54`), what is claimed, the name of the Verus theorem, and **what it assumes**. The last
 column is the one to read. A theorem with `none` there holds in every state. One that says
 `reachability` or `an execution` holds in every state a run can reach. One that names a
@@ -72,9 +72,10 @@ hypothesis holds *given it*, and the hypothesis is stated so it can be discharge
 
 ## What this book does not prove
 
-Nothing here is a proof. This book explains how the protocols fit and says which of the
-README's claims each relationship rests on. If a sentence here and the README disagree
-about what is proved, the README and the code are right.
+Nothing here is a proof. The chapters explain how the protocols fit and say which of the
+Reference's claims each relationship rests on. If a chapter and the Reference disagree
+about what is proved, the Reference and the code are right, and the chapter is the thing
+to fix.
 
 ## Checking it yourself
 

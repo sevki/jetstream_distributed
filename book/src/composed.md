@@ -73,8 +73,8 @@ a layer already proved is carried without a second proof.
   identity lookup speaks only for the *caller*, and a recipient of a passed privilege is
   not a caller, so nothing in the service establishes that for them.
 
-The rows are CX1 and CX2 and the composed rows in the README's
-[claims table](https://github.com/sevki/jetstream_distributed/blob/main/README.md#claimed-invariants-and-the-proofs-that-establish-them).
+The rows are CX1 and CX2 and the composed rows in the Reference's
+[claims table](reference/ownership.md#claimed-invariants-and-the-proofs-that-establish-them).
 
 Next: [Raft](raft.md), which is about the assumption this chapter, like the last one,
 leaned on.

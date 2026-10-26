@@ -2,7 +2,7 @@
 //! it does not.
 //!
 //! The model's registry — `OwnershipSystem::actors` — is read and written in one step by
-//! every epoch-advancing transition, and the README calls that the strongest
+//! every epoch-advancing transition, and the Reference calls that the strongest
 //! assumption it makes. It is really two assumptions under one name. The record
 //! is updated **atomically**, and it **survives**. An `Arc<Mutex<..>>` supplies
 //! the first and nothing at all of the second, and the half it leaves out is

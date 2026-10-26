@@ -40,6 +40,24 @@ name = "actor_basic"
 path = "src/actor/examples/basic.rs"
 required-features = ["service"]
 
+# The examples the book embeds (`book/src/examples.md`). Each asserts what it
+# shows, and CI runs them, so a page of the book cannot describe code that no
+# longer works.
+[[example]]
+name = "actor_hosting"
+path = "src/actor/examples/hosting.rs"
+required-features = ["service"]
+
+[[example]]
+name = "ownership_handover"
+path = "src/ownership/examples/handover.rs"
+required-features = ["service"]
+
+[[example]]
+name = "swim_membership"
+path = "src/swim/examples/membership.rs"
+required-features = ["service"]
+
 # The services live in `src/{algorithm}/service.rs`, in this crate, behind the
 # `service` feature, which is **on by default** so that depending on the crate
 # gives you the services.

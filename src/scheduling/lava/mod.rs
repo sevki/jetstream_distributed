@@ -1,7 +1,7 @@
 //! LAVA placement (§4.3), NILAS scoring (§4.2), and LARS ordering (§4.4).
 //!
 //! Time is caller-supplied, monotonic integer seconds. Exits are explicit events;
-//! a predicted expiry never removes a job. See README for paper ambiguities and
+//! a predicted expiry never removes a job. See the book's Reference (`book/src/reference/status.md`) for paper ambiguities and
 //! concrete policy choices. No model, runtime, or network service is required.
 use std::{
     collections::{BTreeMap, BTreeSet},

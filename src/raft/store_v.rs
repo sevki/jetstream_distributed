@@ -245,7 +245,7 @@ pub open spec fn store_write(pre: Store, post: Store, r: Record) -> bool {
 /// Worth stating precisely because an earlier version of this comment said the
 /// crash view is "the log before it or the log after it and nothing between" as
 /// though it were something the hardware provides. It is something the vendored
-/// crate *proves*, on top of the two corruption assumptions its README
+/// crate *proves*, on top of the two corruption assumptions its `vendor/README.md`
 /// enumerates — and it is therefore exactly as strong as those.
 ///
 /// On a real `InfiniteLogImpl` the batch is one `append` call of the encoded

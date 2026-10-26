@@ -7,7 +7,7 @@ tools: ["read", "search", "edit", "execute"]
 You work on the Verus code in this repository: the protocol models, their proofs, and
 the verified executable steps that the Jetstream services call. Start by reading
 `AGENTS.md` (build and verify commands, the rules, how reviews are done) and the
-part of `README.md` for the algorithm you are in. The README's claims table says
+page of the book's Reference (`book/src/reference/`) for the algorithm you are in. Its claims table says
 what each theorem proves, what it assumes and what it does not say; a change that
 alters one of those is a change to the table.
 

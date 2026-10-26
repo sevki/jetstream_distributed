@@ -22,3 +22,18 @@
 - [Services over Jetstream](services.md)
 - [Where things run: placement and discovery](placement.md)
 - [The actor system over QUIC](actor-system.md)
+- [Usage examples](examples.md)
+
+# Reference
+
+- [Ownership: the model and its claims](reference/ownership.md)
+- [The Raymond layer](reference/raymond.md)
+- [Raft: the same statement, bought by counting](reference/raft.md)
+- [Actor: a journal fenced by ownership](reference/actor.md)
+- [SWIM: gossip membership](reference/swim.md)
+- [The protocol as a Jetstream service](reference/services.md)
+- [Network resiliency: the model, run for real](reference/simulation.md)
+- [Status: proven, modelled, future work](reference/status.md)
+- [No escape hatches](reference/escape-hatches.md)
+- [Repository layout](reference/layout.md)
+- [Verifying locally](reference/verifying.md)

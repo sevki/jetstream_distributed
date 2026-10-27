@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-06e6da3b.js";
+            window.path_to_searchindex_js = "searchindex-354d2fb0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-07e7f656.js"></script>
@@ -203,7 +203,7 @@ the old incarnation then loses to the refutation and changes nothing.</li>
 at a higher incarnation beats suspect and dead at the accusation’s.</li>
 </ul>
 <h2 id="what-is-proved"><a class="header" href="#what-is-proved">What is proved</a></h2>
-<p>The claims are S1 to S12 in the Reference. In words:</p>
+<p>The claims are S1 to S14 in the Reference. In words:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -214,6 +214,7 @@ at a higher incarnation beats suspect and dead at the accusation’s.</li>
 <tr><td>S5</td><td>across a whole run, <strong>no node’s record about any peer ever moves backward</strong>: the actual convergence argument</td></tr>
 <tr><td>S7–S9</td><td>the executable merge is the model’s; a refutation is a gossip step and out-ranks what it answers</td></tr>
 <tr><td>S10–S12</td><td>the node’s table learns by the model’s gossip step, and never believes less than it did</td></tr>
+<tr><td>S13–S14</td><td>a departure (<code>Left</code>) cannot be undone by a late failure report, and only a higher incarnation brings it back (which, assuming no member lies, only the departed member produces)</td></tr>
 </tbody>
 </table>
 </div>
@@ -227,10 +228,13 @@ arrives, only that whatever arrives never makes a view <em>less accurate</em> th
 <li><strong>No probe scheduler, no indirect-ping fallback, no dissemination budget.</strong> The model is
 the merge rule and one transition. How often to probe, and what to piggyback, is not
 modelled, so nothing here says gossip <em>eventually arrives</em>.</li>
-<li><strong>No voluntary leave.</strong> A graceful departure and a failure-detected one have different
-precedence and rejoin rules in memberlist. Here the status covers failure detection
-only, so a node that leaves on purpose is not representable, rather than
-misrepresented as a failure.</li>
+<li><strong>No memberlist-style rejoin handshake.</strong> A graceful departure is <code>Left</code>, which out-ranks
+a failure verdict at the same incarnation. A member that comes back is an ordinary
+node that hears it is gone and refutes with a higher incarnation, exactly as after
+<code>Dead</code>. Memberlist gives a rejoin its own rules; here there are none.</li>
+<li><strong>Nothing is forgotten.</strong> A departed or dead member’s record is kept, because it is what
+stops a stale report from reviving it, and it counts against the same bound on members.
+A cluster that churns through many identities will fill it.</li>
 <li><strong>A node writes nothing down.</strong> Incarnations are self-correcting: a restarted node
 begins at 0, and the first peer to tell it what the cluster believes about it out-ranks
 its record and is answered with a higher incarnation. A restart costs a round trip, not
@@ -243,6 +247,22 @@ Suspecting a peer, declaring it dead and refuting an accusation are <strong>not 
 They are things a node does about its own view, and putting them on the wire would let
 any caller make this node believe anything. A node suspects a peer because <em>its own</em>
 probe failed.</p>
+<p><strong>Who is in the cluster is the roster, and it can be closed or grow.</strong> <code>Node::new</code> builds
+a closed cluster: the members are the ones it was given, and a batch naming anyone else is
+refused. <code>Node::admitting</code> builds one that grows, with an <em>admission policy</em>, a function
+from a caller’s address to the member number that address may be. There is no join call.
+A join is the first <code>ping</code> or <code>sync</code> from an address the policy lets in; the <code>sync</code> reply
+is the whole table, so the newcomer learns who is there; and the others hear of it by
+gossip. The member number comes from the policy and the connection, never from the
+request. To leave, a node calls <code>leave</code>, which records it as <code>Left</code> and hands back that
+record to tell the peers. A node that is stopped without doing so is, to the cluster, a
+node that died, and the two are different records.</p>
+<p>What this does not settle is <em>who</em> should be admitted. SWIM says nothing about that, and
+the example’s policy lets in every loopback address. Where a member lives is the
+deployment’s mapping from member number to address, not something SWIM gossips. A live
+member keeps one address; one that has left or died may come back from a different one,
+which replaces the old. And a cluster trusts its members: any one can fill the bound on
+members with made-up numbers.</p>
 <h2 id="how-it-relates-to-the-rest"><a class="header" href="#how-it-relates-to-the-rest">How it relates to the rest</a></h2>
 <p>SWIM is independent of the other protocols in the proofs. It is related to them in one
 direction, and only as a <strong>hint</strong>:</p>

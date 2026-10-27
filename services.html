@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-06e6da3b.js";
+            window.path_to_searchindex_js = "searchindex-354d2fb0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-07e7f656.js"></script>
@@ -194,8 +194,9 @@ Verus never sees, and the tests exercise them.</li>
 acting node’s number. The caller is the transport’s <code>Context</code>. This turns a whole
 class of “the message lied about who sent it” from a guarded-against bug into an
 unrepresentable one.</li>
-<li><strong>Today that identity is an address against a fixed roster</strong>, and an address is not a
-credential. The shape survives replacing it with a TLS or key identity.</li>
+<li><strong>Today that identity is an address against a roster</strong>, and an address is not a
+credential. The roster is fixed at construction everywhere except SWIM, whose node can
+also be built to admit new addresses by a policy (see <a href="swim.html">SWIM</a>). The shape survives replacing it with a TLS or key identity.</li>
 <li><strong>One gate across a decision.</strong> A decision that reads the registry and then writes
 the journal holds one lock across both. Two locks taken one after the other would leave
 the gap that fencing exists to close.</li>

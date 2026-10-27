@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-06e6da3b.js";
+            window.path_to_searchindex_js = "searchindex-354d2fb0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-07e7f656.js"></script>
@@ -802,7 +802,7 @@ the old incarnation then loses to the refutation and changes nothing.</li>
 at a higher incarnation beats suspect and dead at the accusation’s.</li>
 </ul>
 <h2 id="what-is-proved"><a class="header" href="#what-is-proved">What is proved</a></h2>
-<p>The claims are S1 to S12 in the Reference. In words:</p>
+<p>The claims are S1 to S14 in the Reference. In words:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -813,6 +813,7 @@ at a higher incarnation beats suspect and dead at the accusation’s.</li>
 <tr><td>S5</td><td>across a whole run, <strong>no node’s record about any peer ever moves backward</strong>: the actual convergence argument</td></tr>
 <tr><td>S7–S9</td><td>the executable merge is the model’s; a refutation is a gossip step and out-ranks what it answers</td></tr>
 <tr><td>S10–S12</td><td>the node’s table learns by the model’s gossip step, and never believes less than it did</td></tr>
+<tr><td>S13–S14</td><td>a departure (<code>Left</code>) cannot be undone by a late failure report, and only a higher incarnation brings it back (which, assuming no member lies, only the departed member produces)</td></tr>
 </tbody>
 </table>
 </div>
@@ -826,10 +827,13 @@ arrives, only that whatever arrives never makes a view <em>less accurate</em> th
 <li><strong>No probe scheduler, no indirect-ping fallback, no dissemination budget.</strong> The model is
 the merge rule and one transition. How often to probe, and what to piggyback, is not
 modelled, so nothing here says gossip <em>eventually arrives</em>.</li>
-<li><strong>No voluntary leave.</strong> A graceful departure and a failure-detected one have different
-precedence and rejoin rules in memberlist. Here the status covers failure detection
-only, so a node that leaves on purpose is not representable, rather than
-misrepresented as a failure.</li>
+<li><strong>No memberlist-style rejoin handshake.</strong> A graceful departure is <code>Left</code>, which out-ranks
+a failure verdict at the same incarnation. A member that comes back is an ordinary
+node that hears it is gone and refutes with a higher incarnation, exactly as after
+<code>Dead</code>. Memberlist gives a rejoin its own rules; here there are none.</li>
+<li><strong>Nothing is forgotten.</strong> A departed or dead member’s record is kept, because it is what
+stops a stale report from reviving it, and it counts against the same bound on members.
+A cluster that churns through many identities will fill it.</li>
 <li><strong>A node writes nothing down.</strong> Incarnations are self-correcting: a restarted node
 begins at 0, and the first peer to tell it what the cluster believes about it out-ranks
 its record and is answered with a higher incarnation. A restart costs a round trip, not
@@ -842,6 +846,22 @@ Suspecting a peer, declaring it dead and refuting an accusation are <strong>not 
 They are things a node does about its own view, and putting them on the wire would let
 any caller make this node believe anything. A node suspects a peer because <em>its own</em>
 probe failed.</p>
+<p><strong>Who is in the cluster is the roster, and it can be closed or grow.</strong> <code>Node::new</code> builds
+a closed cluster: the members are the ones it was given, and a batch naming anyone else is
+refused. <code>Node::admitting</code> builds one that grows, with an <em>admission policy</em>, a function
+from a caller’s address to the member number that address may be. There is no join call.
+A join is the first <code>ping</code> or <code>sync</code> from an address the policy lets in; the <code>sync</code> reply
+is the whole table, so the newcomer learns who is there; and the others hear of it by
+gossip. The member number comes from the policy and the connection, never from the
+request. To leave, a node calls <code>leave</code>, which records it as <code>Left</code> and hands back that
+record to tell the peers. A node that is stopped without doing so is, to the cluster, a
+node that died, and the two are different records.</p>
+<p>What this does not settle is <em>who</em> should be admitted. SWIM says nothing about that, and
+the example’s policy lets in every loopback address. Where a member lives is the
+deployment’s mapping from member number to address, not something SWIM gossips. A live
+member keeps one address; one that has left or died may come back from a different one,
+which replaces the old. And a cluster trusts its members: any one can fill the bound on
+members with made-up numbers.</p>
 <h2 id="how-it-relates-to-the-rest"><a class="header" href="#how-it-relates-to-the-rest">How it relates to the rest</a></h2>
 <p>SWIM is independent of the other protocols in the proofs. It is related to them in one
 direction, and only as a <strong>hint</strong>:</p>
@@ -1026,8 +1046,9 @@ Verus never sees, and the tests exercise them.</li>
 acting node’s number. The caller is the transport’s <code>Context</code>. This turns a whole
 class of “the message lied about who sent it” from a guarded-against bug into an
 unrepresentable one.</li>
-<li><strong>Today that identity is an address against a fixed roster</strong>, and an address is not a
-credential. The shape survives replacing it with a TLS or key identity.</li>
+<li><strong>Today that identity is an address against a roster</strong>, and an address is not a
+credential. The roster is fixed at construction everywhere except SWIM, whose node can
+also be built to admit new addresses by a policy (see <a href="#swim-membership-by-merge">SWIM</a>). The shape survives replacing it with a TLS or key identity.</li>
 <li><strong>One gate across a decision.</strong> A decision that reads the registry and then writes
 the journal holds one lock across both. Two locks taken one after the other would leave
 the gap that fencing exists to close.</li>
@@ -1219,7 +1240,7 @@ the old address is answered <code>FENCED</code>.</p>
 </thead>
 <tbody>
 <tr><td><code>Suspect</code></td><td>places nothing new on the host; what is already there is still found, because a suspect host may be fine</td></tr>
-<tr><td><code>Dead</code></td><td>no longer places on the host, no longer finds what was placed on it, and <strong>returns its jobs</strong> to the caller</td></tr>
+<tr><td><code>Dead</code> or <code>Left</code> (the host announced its departure; treated alike, since either way its actors have to go elsewhere)</td><td>no longer places on the host, no longer finds what was placed on it, and <strong>returns its jobs</strong> to the caller</td></tr>
 <tr><td><code>Alive</code> again</td><td>places on it again, empty</td></tr>
 </tbody>
 </table>
@@ -1251,11 +1272,12 @@ path, every membership step including that a drained host stays drained, and one
 against a real SWIM node that follows it from suspect to dead to refuted.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="usage-examples"><a class="header" href="#usage-examples">Usage examples</a></h1>
-<p>Four small programs, each runnable, each asserting what it shows. The code on this page
+<p>Five small programs, each runnable, each asserting what it shows. The code on this page
 is <strong>included from the files themselves</strong> when the book is built, so it cannot drift from
 what compiles: <code>cargo test</code> builds every example, and CI runs them.</p>
 <pre><code class="language-text">cargo run --example ownership_handover
 cargo run --example swim_membership
+cargo run --example swim_node
 cargo run --example actor_hosting
 cargo run --example actor_basic
 </code></pre>
@@ -1446,6 +1468,439 @@ fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
     node.apply(&amp;again)?;
     assert_eq!(node.record(PEER).unwrap().incarnation, 1);
     Ok(())
+}</code></pre>
+<h2 id="a-swim-cluster-that-members-join-and-leave"><a class="header" href="#a-swim-cluster-that-members-join-and-leave">A SWIM cluster that members join and leave</a></h2>
+<p>Chapter: <a href="#swim-membership-by-merge">SWIM</a>.</p>
+<p>The previous example calls the node’s methods by hand. This one is the loop around it: a
+listener that serves <code>ping</code> and <code>sync</code>, a join through a seed, a probe that pings one peer
+a second and piggybacks its whole view, a suspicion when a ping fails, a timer that turns
+an unrefuted suspicion into death, and a way to leave. Run three of them; the second and
+third join through a seed:</p>
+<pre><code class="language-text">cargo run --example swim_node -- run 1
+cargo run --example swim_node -- run 2 1
+cargo run --example swim_node -- run 3 2
+</code></pre>
+<p>Type <code>leave</code> in one terminal and the others record a <strong>departure</strong>, not a failure.
+Press Ctrl-C in another and they suspect it, then declare it <strong>dead</strong>. Start it again and it
+comes back at incarnation 1: its first caller tells it the cluster has it as gone, that
+out-ranks its record, and it answers with a higher incarnation. With no arguments the
+example does all of that in one process and asserts it, which is what CI runs.</p>
+<p>Things to notice:</p>
+<ul>
+<li><strong>A join is a <code>sync</code> with a seed.</strong> There is no join call. The seed’s admission policy lets
+the address in, its reply is the whole table, and the others hear of the newcomer by
+gossip. Node 3 above never calls node 1 to join.</li>
+<li><strong>Who may join is a policy, and this example’s is open.</strong> Every loopback address
+<code>127.0.0.1</code> to <code>127.0.0.250</code> is a member. A real deployment writes a stricter one; SWIM
+does not say who should be admitted. The member number comes from the policy and the
+connection, never from the request.</li>
+<li><strong>Leaving and dying are different records.</strong> <code>leave</code> writes <code>Left</code>, which out-ranks a
+failure verdict at the same incarnation, so a suspicion timer already running cannot
+turn a departure into a death. A node that is stopped without leaving is simply dead.</li>
+<li><strong>The timing is this file’s choice and nothing is proved about it.</strong> The merge rule, the
+departure’s precedence, the refutation and the refusal of strangers are the verified and
+tested parts. When to probe, whom, and how long to wait are plain Rust.</li>
+<li><strong>No indirect ping</strong>, and members are never forgotten: a departed member’s record is kept,
+and counts against the bound on members.</li>
+<li><strong>Identity is the connection’s source address.</strong> Each member binds <code>127.0.0.&lt;id&gt;</code> and
+connects from it. That works on Linux; on another OS give each member its own host. An
+address is not a credential, and where a member lives is the deployment’s mapping, not
+something SWIM gossips.</li>
+</ul>
+<pre><code class="language-rust ignore">//! A SWIM node you can run as a process, in a cluster that members join and leave.
+//!
+//! [`Node`] is a table that obeys the merge rule and answers its peers; it has no
+//! clock and no socket. What turns it into a member of a cluster is the part this
+//! file writes, in plain Rust that Verus never sees and that nothing here proves:
+//!
+//! * **join**: start knowing only yourself, and `sync` with a seed. The seed's
+//!   admission policy lets your address in as a member, and its reply is the whole
+//!   cluster. The seed tells the others by gossip; you never call them to join;
+//! * **serve**: accept a connection, hand it to the generated `MembershipService`;
+//! * **probe**: every period, `ping` one peer, piggybacking this node's whole view;
+//! * **suspect**: a ping that fails or times out makes the node believe the peer
+//!   suspect, at the incarnation it had recorded *when the probe began*;
+//! * **declare dead**: a suspicion that is not refuted within its timeout becomes
+//!   death, but only if the peer is still suspect at that incarnation;
+//! * **leave**: record yourself `Left` and tell every peer. A node that is stopped
+//!   without doing so is, to the cluster, a node that died.
+//!
+//! The merge rule, the departure's precedence over a failure verdict, the
+//! refutation and the refusal of strangers are the verified and tested parts.
+//! *When* to probe, whom, and how long to wait are this file's choices, and
+//! `crate::swim::model` says nothing about timing. There is no indirect ping
+//! (`ping_req`): a peer that this node alone cannot reach is suspected on this
+//! node's word.
+//!
+//! **Who may join is a policy, and this example's is open**: `127.0.0.&lt;k&gt;` for
+//! `k` in `1..=250` is member `k`, and anyone who can reach a seed from such an
+//! address is in. A real deployment writes a stricter one. Members are addressed
+//! by loopback address because a node knows its caller by address; each listens
+//! on port 9100 of its own address and connects from it. That works on Linux,
+//! where all of `127.0.0.0/8` is loopback; elsewhere, give each member its own
+//! host instead.
+//!
+//! Run a cluster in three terminals; the second and third join through a seed:
+//!
+//! ```text
+//! cargo run --example swim_node -- run 1
+//! cargo run --example swim_node -- run 2 1
+//! cargo run --example swim_node -- run 3 2
+//! ```
+//!
+//! Type `leave` in one to see the others record a departure. Press Ctrl-C in
+//! another to see them suspect it and declare it dead. Start it again and watch it
+//! be told what it was and outrank that. With no arguments the example does all of
+//! that inside one process and asserts it: `cargo run --example swim_node`.
+
+use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::time::{Duration, Instant};
+
+use jetstream::prelude::jetstream_rpc::session::{Session, SingleLaneSession};
+use jetstream::prelude::*;
+use jetstream_distributed::id::Id;
+use jetstream_distributed::swim::service::{
+    Admission, Liveness, Membership, Node, Update,
+    membership_protocol::{MembershipChannel, MembershipService},
+};
+use tokio::net::{TcpListener, TcpSocket};
+use tokio::task::JoinHandle;
+
+const PORT: u16 = 9100;
+
+/// The timings. Nothing proved depends on them.
+#[derive(Clone, Copy)]
+struct Timing {
+    /// How often this node pings one peer.
+    probe_every: Duration,
+    /// How long a call may take before the peer is suspected.
+    probe_timeout: Duration,
+    /// How long a suspicion stands before it becomes death.
+    suspicion: Duration,
+}
+
+const LIVE: Timing = Timing {
+    probe_every: Duration::from_secs(1),
+    probe_timeout: Duration::from_millis(500),
+    suspicion: Duration::from_secs(5),
+};
+
+const FAST: Timing = Timing {
+    probe_every: Duration::from_millis(40),
+    probe_timeout: Duration::from_millis(100),
+    suspicion: Duration::from_millis(200),
+};
+
+fn addr_of(member: u128) -&gt; IpAddr {
+    IpAddr::V4(Ipv4Addr::new(127, 0, 0, member as u8))
+}
+
+/// Who may join: this example lets in any loopback address `127.0.0.1` to
+/// `127.0.0.250`, as the member with that last number.
+fn policy() -&gt; Admission {
+    std::sync::Arc::new(|a| match a {
+        IpAddr::V4(v4) =&gt; match v4.octets() {
+            [127, 0, 0, k @ 1..=250] =&gt; Some(Id(k as u128)),
+            _ =&gt; None,
+        },
+        IpAddr::V6(_) =&gt; None,
+    })
+}
+
+/// Answer pings and syncs on `127.0.0.&lt;me&gt;:9100` for as long as the task lives.
+async fn serve(node: Node, me: u128) -&gt; std::io::Result&lt;()&gt; {
+    let listener = TcpListener::bind(SocketAddr::new(addr_of(me), PORT)).await?;
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let node = node.clone();
+        tokio::spawn(async move {
+            // The session reads the peer's address off the stream, and `Node`
+            // admits or refuses it: that is where "who is calling" comes from.
+            let session = SingleLaneSession::&lt;MembershipChannel, _, _&gt;::service_io(stream);
+            let Ok(lane) = Session::&lt;MembershipChannel&gt;::accept_lane(&amp;session).await else {
+                return;
+            };
+            let mut service = MembershipService { inner: node };
+            let _ = jetstream_rpc::server::run(&amp;mut service, lane).await;
+        });
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Call {
+    /// SWIM's ping, with the view piggybacked.
+    Ping,
+    /// Push/pull: send the view, get the peer's whole table back. How a node joins.
+    Sync,
+}
+
+/// One call to `peer`, made from this member's own address, carrying `view`.
+async fn call(
+    me: u128,
+    peer: u128,
+    kind: Call,
+    view: Vec&lt;Update&gt;,
+    within: Duration,
+) -&gt; Result&lt;Vec&lt;Update&gt;&gt; {
+    let call = async {
+        // Bind the source so the peer sees `127.0.0.&lt;me&gt;` and applies its policy to it.
+        let socket = TcpSocket::new_v4()?;
+        socket.bind(SocketAddr::new(addr_of(me), 0))?;
+        let stream = socket.connect(SocketAddr::new(addr_of(peer), PORT)).await?;
+        // The session owns the lane's I/O, so it outlives the channel.
+        let session = SingleLaneSession::&lt;MembershipChannel, _, _&gt;::client_io(stream);
+        let lane = Session::&lt;MembershipChannel&gt;::open_lane(&amp;session).await?;
+        let channel = MembershipChannel::new(64, Box::new(lane));
+        channel.negotiate_version(u32::MAX).await?;
+        match kind {
+            Call::Ping =&gt; channel.ping(Context::default(), view).await,
+            Call::Sync =&gt; channel.sync(Context::default(), view).await,
+        }
+    };
+    match tokio::time::timeout(within, call).await {
+        Ok(reply) =&gt; reply,
+        Err(_) =&gt; Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "call timed out").into()),
+    }
+}
+
+/// The members this node would probe: everyone it has heard of except itself and
+/// those that left. A member declared dead is still probed, because it may come back.
+fn peers(node: &amp;Node, me: u128) -&gt; Vec&lt;u128&gt; {
+    node.view()
+        .into_iter()
+        .filter(|u| u.node.0 != me &amp;&amp; u.status != Liveness::Left)
+        .map(|u| u.node.0)
+        .collect()
+}
+
+/// Join through `seed`, then probe whoever the cluster turns out to hold, forever.
+async fn probe(node: Node, me: u128, seed: Option&lt;u128&gt;, timing: Timing, verbose: bool) {
+    // A join is a sync with the seed; its reply is the cluster. The seed may not be
+    // up yet, so keep asking.
+    if let Some(seed) = seed {
+        loop {
+            match call(me, seed, Call::Sync, node.view(), timing.probe_timeout).await {
+                Ok(table) =&gt; {
+                    if let Err(e) = node.apply(&amp;table) {
+                        eprintln!("[{me}] refused the seed's table: {e}");
+                    }
+                    break;
+                }
+                Err(e) =&gt; {
+                    if verbose {
+                        eprintln!("[{me}] cannot reach seed {seed} yet ({e})");
+                    }
+                    tokio::time::sleep(timing.probe_every).await;
+                }
+            }
+        }
+    }
+    let mut seen = node.log().len();
+    let mut turn = 0usize;
+    loop {
+        tokio::time::sleep(timing.probe_every).await;
+        let peers = peers(&amp;node, me);
+        if peers.is_empty() {
+            continue;
+        }
+        let peer = peers[turn % peers.len()];
+        turn += 1;
+        // The incarnation this node holds *now*, before the ping: a refutation
+        // may land while the ping is in flight, and the accusation must not
+        // outlive it.
+        let held = node.record(Id(peer)).expect("a member").incarnation;
+        match call(me, peer, Call::Ping, node.view(), timing.probe_timeout).await {
+            // The ack is the peer's own word about everyone the ping mentioned,
+            // including itself: the evidence that it is up.
+            Ok(ack) =&gt; {
+                if let Err(e) = node.apply(&amp;ack) {
+                    eprintln!("[{me}] refused a reply from {peer}: {e}");
+                }
+            }
+            Err(e) =&gt; {
+                if node.suspect(Id(peer), held).unwrap_or(false) &amp;&amp; verbose {
+                    eprintln!("[{me}] ping to {peer} failed ({e}); suspecting it");
+                }
+                let node = node.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(timing.suspicion).await;
+                    // A no-op unless the peer is still suspect at `held`.
+                    let _ = node.declare_dead(Id(peer), held);
+                });
+            }
+        }
+        if verbose {
+            let log = node.log();
+            for event in &amp;log[seen..] {
+                eprintln!("[{me}] {event:?}");
+            }
+            seen = log.len();
+        }
+    }
+}
+
+/// Start member `me`: a fresh node that knows only itself, serving and probing,
+/// and joining through `seed` if there is one.
+fn start(
+    me: u128,
+    seed: Option&lt;u128&gt;,
+    timing: Timing,
+    verbose: bool,
+) -&gt; (Node, Vec&lt;JoinHandle&lt;()&gt;&gt;) {
+    // A node starts at incarnation 0 and keeps nothing on disk. A restart is
+    // corrected by the first peer that tells it what the cluster thinks of it.
+    let node = Node::admitting(HashMap::from([(addr_of(me), Id(me))]), Id(me), policy())
+        .expect("on its own roster");
+    let server = {
+        let node = node.clone();
+        tokio::spawn(async move {
+            if let Err(e) = serve(node, me).await {
+                eprintln!("[{me}] cannot serve on 127.0.0.{me}:{PORT}: {e}");
+            }
+        })
+    };
+    let prober = tokio::spawn(probe(node.clone(), me, seed, timing, verbose));
+    (node, vec![server, prober])
+}
+
+/// Leave: record the departure and tell every peer this node knows of.
+async fn leave(node: &amp;Node, me: u128, timing: Timing) {
+    let said = node.leave();
+    for peer in peers(node, me) {
+        // A peer that cannot be reached is told by gossip from one that can.
+        let _ = call(me, peer, Call::Ping, vec![said], timing.probe_timeout).await;
+    }
+}
+
+fn status(node: &amp;Node, of: u128) -&gt; Option&lt;Liveness&gt; {
+    node.record(Id(of)).map(|u| u.status)
+}
+
+async fn until(what: &amp;str, mut ready: impl FnMut() -&gt; bool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !ready() {
+        assert!(Instant::now() &lt; deadline, "timed out waiting for {what}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+fn stop(tasks: &amp;[JoinHandle&lt;()&gt;]) {
+    for task in tasks {
+        task.abort();
+    }
+}
+
+/// Members join through different seeds, one leaves, one is stopped, and the
+/// one that left comes back.
+async fn demonstrate() {
+    // 1 starts alone; 2 joins through 1; 3 joins through 2, whose reply is how 3
+    // learns of 1. 1 learns of 3 by gossip from 2.
+    let (n1, _t1) = start(1, None, FAST, false);
+    let (n2, t2) = start(2, Some(1), FAST, false);
+    let (n3, t3) = start(3, Some(2), FAST, false);
+    until("every member to know every other, alive", || {
+        [(&amp;n1, 2), (&amp;n1, 3), (&amp;n2, 3), (&amp;n3, 1)]
+            .iter()
+            .all(|(n, of)| status(n, *of) == Some(Liveness::Alive))
+    })
+    .await;
+    println!("three members joined through two seeds, and all know each other");
+
+    // 3 leaves, and says so. The others record a departure, not a failure.
+    leave(&amp;n3, 3, FAST).await;
+    until("1 and 2 to record 3 as having left", || {
+        status(&amp;n1, 3) == Some(Liveness::Left) &amp;&amp; status(&amp;n2, 3) == Some(Liveness::Left)
+    })
+    .await;
+    stop(&amp;t3);
+    // A suspicion that was already running for 3 would have no effect: wait it out.
+    tokio::time::sleep(FAST.suspicion * 2).await;
+    assert_eq!(status(&amp;n1, 3), Some(Liveness::Left), "left, and not dead");
+    println!("member 3 left: members 1 and 2 recorded a departure, not a failure");
+
+    // 2 is stopped without leaving. To the cluster that is a failure.
+    stop(&amp;t2);
+    until("1 to declare 2 dead", || {
+        status(&amp;n1, 2) == Some(Liveness::Dead)
+    })
+    .await;
+    println!("member 2 stopped without leaving: member 1 declared it dead");
+
+    // 3 starts again, as a new process would: incarnation 0, no memory. It joins
+    // through 1, which holds it as having left, and says so in its reply; that
+    // out-ranks 3's own record, so 3 answers with a higher incarnation.
+    let (n3, _t3) = start(3, Some(1), FAST, false);
+    until("1 to see 3 alive again", || {
+        status(&amp;n1, 3) == Some(Liveness::Alive)
+    })
+    .await;
+    let back = n1.record(Id(3)).unwrap();
+    assert!(back.incarnation &gt;= 1, "back only at a higher incarnation");
+    assert!(n3.record(Id(3)).unwrap().incarnation &gt;= 1);
+    println!(
+        "member 3 rejoined: alive again at incarnation {}",
+        back.incarnation
+    );
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
+    let args: Vec&lt;String&gt; = std::env::args().skip(1).collect();
+    let args: Vec&lt;&amp;str&gt; = args.iter().map(String::as_str).collect();
+    let (me, seed) = match args[..] {
+        [] =&gt; return demonstrate().await,
+        ["run", me] =&gt; (me, None),
+        ["run", me, seed] =&gt; (me, Some(seed)),
+        _ =&gt; {
+            eprintln!("usage: swim_node [run &lt;id&gt; [&lt;seed id&gt;]]");
+            std::process::exit(2);
+        }
+    };
+    let me: u128 = me.parse().expect("a member number");
+    let seed: Option&lt;u128&gt; = seed.map(|s| s.parse().expect("a member number"));
+    assert!((1..=250).contains(&amp;me), "1 &lt;= id &lt;= 250");
+
+    let (node, tasks) = start(me, seed, LIVE, true);
+    eprintln!("[{me}] member {me} on 127.0.0.{me}:{PORT}; type `leave` to leave");
+
+    // Typing `leave` leaves. A closed stdin does nothing: only a person saying so
+    // is a departure.
+    let (told, mut leaving) = tokio::sync::oneshot::channel::&lt;()&gt;();
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        while std::io::stdin().read_line(&amp;mut line).is_ok_and(|n| n &gt; 0) {
+            if line.trim() == "leave" {
+                let _ = told.send(());
+                return;
+            }
+            line.clear();
+        }
+    });
+
+    let mut shown = Vec::new();
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(LIVE.probe_every * 2) =&gt; {}
+            Ok(()) = &amp;mut leaving =&gt; {
+                leave(&amp;node, me, LIVE).await;
+                eprintln!("[{me}] left, and told the cluster");
+                return;
+            }
+        }
+        let view = node.view();
+        if view != shown {
+            let line: Vec&lt;String&gt; = view
+                .iter()
+                .map(|u| format!("{}:{:?}@{}", u.node.0, u.status, u.incarnation))
+                .collect();
+            println!("[{me}] view: {}", line.join(" "));
+            shown = view;
+        }
+        if tasks.iter().any(|t| t.is_finished()) {
+            std::process::exit(1);
+        }
+    }
 }</code></pre>
 <h2 id="hosting-an-actor-under-a-fence"><a class="header" href="#hosting-an-actor-under-a-fence">Hosting an actor under a fence</a></h2>
 <p>Chapters: <a href="#services-over-jetstream">Services over Jetstream</a> and <a href="#the-actor-a-journal-fenced-by-ownership">the actor</a>.</p>
@@ -2981,11 +3436,40 @@ of <em>which</em> record arrived, not a different rule for applying it.</p>
 </div>
 <p>| S10 | <strong>The node’s table is the model.</strong> <code>exec::SwimTable</code> — what a node keeps — reads the model’s <code>record_of</code> (no entry is the fresh record), and <code>learn</code> writes <code>merge</code> of what is held and what arrived and changes nothing else; a table standing for a cluster that learns a record stands for the cluster <code>tr_gossip</code> leads to, and a fresh table stands for <code>swim_init</code> | <code>swim::proofs::table::theorem_new_table_is_the_initial_cluster</code>, <code>theorem_learn_is_a_gossip_step</code> | the table is well formed (each member once) |
 | S11 | <strong>Hearing an accusation about oneself is two gossip steps.</strong> <code>SwimTable::hear</code> merges the record and, if it was the node’s <em>own</em> that changed, merges the refutation on top of it; the model sees <code>tr_gossip</code> twice, and the table ends up believing the refutation. At the top of the incarnation space the second step is refused and the first has happened | <code>swim::proofs::table::theorem_hearing_oneself_accused_is_two_gossip_steps</code> | the table stands for the cluster |
-| S12 | <strong>A table never believes less than it did, and always stands for a reachable cluster.</strong> Whatever it learns, what it then holds for any member out-ranks or equals what it held; and a reachable cluster plus a learned record is a reachable cluster, so S5 is a statement about what the table holds | <code>swim::proofs::table::theorem_learning_never_lowers_a_belief</code>, <code>theorem_a_table_stands_for_a_reachable_cluster_after_learning</code> | the table stands for a reachable cluster |</p>
-<p><strong>What S10–S12 do not cover.</strong> The table is a verified core, and <code>Node</code> is the
-shell around it: the roster (which numbers are members, who may speak), the lock,
-the audit log, the batch limit, and the order a batch is applied in are plain Rust
-that the tests exercise. The theorems are about one record at a time.</p>
+| S12 | <strong>A table never believes less than it did, and always stands for a reachable cluster.</strong> Whatever it learns, what it then holds for any member out-ranks or equals what it held; and a reachable cluster plus a learned record is a reachable cluster, so S5 is a statement about what the table holds | <code>swim::proofs::table::theorem_learning_never_lowers_a_belief</code>, <code>theorem_a_table_stands_for_a_reachable_cluster_after_learning</code> | the table stands for a reachable cluster |
+| S13 | <strong>A departure outlasts every report at or below its incarnation.</strong> <code>Left</code> ranks above <code>Dead</code>, so a suspicion timer that was already running, a late <code>Dead</code> verdict, or an old <code>Alive</code> cannot turn a node that announced its leaving into a failure or a recovery; merging any record at the same or an older incarnation into a <code>Left</code> record returns it unchanged. The one same-incarnation record that is itself <code>Left</code> is the same record, so repeating it changes nothing | <code>swim::proofs::merge::theorem_a_departure_outlasts_every_report_at_or_below_it</code> | none |
+| S14 | <strong>Only a higher incarnation brings a departed member back.</strong> The converse of S13 in the form a service uses: if hearing a record changed what a node believed about a member that had left, the record carried a higher incarnation. <strong>Not claimed:</strong> that only that member can produce one. In the crash-fault model it does, by refuting; the service believes any member’s word about any other, so a lying member can revive a departed one | <code>swim::proofs::merge::theorem_only_a_higher_incarnation_revives_a_departure</code> | none beyond S13 |</p>
+<p><strong>What S10–S14 do not cover.</strong> The table is a verified core, and <code>Node</code> is the
+shell around it: the roster and the admission policy (which numbers are members,
+who may speak and who may join), the lock, the audit log, the batch limit, and the
+order a batch is applied in are plain Rust that the tests exercise. The theorems
+are about one record at a time. In particular nothing proves that <code>Node::leave</code>
+writes the departure <em>without</em> answering it with a refutation: it does so by
+calling the table’s own <code>learn</code> rather than the path a received message takes, and
+<code>tests/swim_dynamic.rs::a_node_does_not_refute_its_own_departure</code> is what fails if
+that changes.</p>
+<p><strong>Joining and leaving.</strong> The model never assumed a fixed membership: a node absent
+from the view is exactly a node at the fresh record. What was fixed was the
+<em>service’s</em> roster. <code>Node::new</code> still builds that closed cluster. <code>Node::admitting</code>
+builds one that grows: a caller whose address is not yet known is put to an
+<code>Admission</code> policy, a function from the connection’s address to the member number
+that address may be, and is admitted if the policy names one and there is room.
+There is no join call: a join is the first <code>ping</code> or <code>sync</code> from an address the
+policy lets in, the <code>sync</code> reply is the whole table, and the others hear of the
+newcomer by gossip. The member number comes out of the policy and the connection,
+never out of the request. <code>Node::leave</code> records the node as <code>Left</code> at its held
+incarnation and returns that record for the caller to tell its peers. What this
+does <strong>not</strong> do: nothing decides who the policy should admit (the example’s admits
+every loopback address; a deployment writes its own); where a member lives is the
+deployment’s mapping from member number to address, not something SWIM gossips;
+members are never forgotten, so a departed member’s record is kept (it is what
+keeps S13 true) and counts against the same bound of <code>MAX_UPDATES</code> members, which any
+one member can fill by gossiping that many made-up numbers, so a cluster that
+admits a member admits its good behaviour; a live member is never given a second
+address, but one that has left or been declared dead may come back from a different
+address, which then replaces the old; a refused request admits nobody; the policy
+runs with the node’s lock held and must be quick; and a node that leaves and tells
+nobody is, to the cluster, a node that died.</p>
 <p><strong>S4 is worth pausing on, because the asymmetry it dismisses is real.</strong>
 <code>key_geq(a, b)</code> and <code>key_geq(b, a)</code> are different expressions, and reading
 <code>merge</code>’s definition — <code>if key_geq(incoming, local) { incoming } else { local }</code> — the incoming side breaks a tie. So <code>merge(a, b)</code> and <code>merge(b, a)</code>
@@ -2994,7 +3478,7 @@ theorem true anyway is <code>status_rank</code>’s injectivity: a <code>MemberR
 exactly its incarnation and its status, and if two records tie on
 <code>key_geq</code> — equal incarnation, equal rank — then by injectivity they have
 equal status too, so they were never two different records to begin with.
-<code>lemma_rank_is_injective</code> is a three-line case split on three enum variants;
+<code>lemma_rank_is_injective</code> is a case split on the four enum variants;
 S4 is the only theorem in this module that spends it.</p>
 <p><strong>What the proofs are not</strong> is a claim that gossip converges <em>in practice</em>.
 Convergence needs every node’s view to eventually receive every update, which
@@ -3036,12 +3520,21 @@ S6 exercised through the service rather than assumed of it.
 <code>tests/swim_turmoil.rs</code> runs SWIM’s own story across a simulated network: a node
 that cannot reach a peer suspects it, the partition heals, the suspicion reaches
 the suspected node, which is alive and refutes it, and the refutation comes back
-in the reply and clears the suspicion.</p>
+in the reply and clears the suspicion. <code>tests/swim_dynamic.rs</code> is the growing
+cluster: a join is a first call and the reply is the cluster, a stranger the policy
+refuses stays a stranger, a closed node still refuses to learn of members it was
+not built with, a second address cannot speak as an existing member, the cluster
+is bounded, a departure survives a late suspicion and a late <code>Dead</code>, a node does
+not refute its own departure but does refute one it did not announce, and a
+departed member returns at a higher incarnation. The same file’s wire test in
+<code>tests/swim_turmoil.rs</code> has a node join through a member that is not the first,
+the rest hear of it by gossip, and a departure arrive as one.</p>
 <p><strong>What the service does not have</strong>, and what it does not claim. A caller is
-identified by address against a fixed roster, and <em>an address is not a
+identified by address, against the roster the node holds (fixed for <code>Node::new</code>,
+growing by policy for <code>Node::admitting</code>), and <em>an address is not a
 credential</em> (the stated assumption every service here makes) — and SWIM
-sharpens it, because any rostered caller may gossip about any member, so a
-rostered node that lies about a third party is believed. SWIM’s failure model is
+sharpens it, because any member may gossip about any member, so a
+member that lies about a third party is believed. SWIM’s failure model is
 crash faults, not Byzantine ones. There is no probe timer, no indirect-ping
 fallback (<code>ping_req</code>), and no piggyback <em>budget</em>: a node sends what its caller
 hands it. That loop — pick a peer, note its incarnation, wait out a timeout, call <code>suspect</code> with the incarnation it noted — is where
@@ -3904,11 +4397,13 @@ inside the fragment, because <code>SeizeToken</code> has no liveness guard on th
 takes the privilege from.</p>
 </li>
 <li>
-<p><strong>SWIM has no voluntary-leave state.</strong> memberlist distinguishes a graceful
-departure (<code>StateLeft</code>) from a failure-detected one (<code>StateDead</code>), with its
-own precedence and rejoin rules; <code>swim::model::Status</code> covers only failure
-detection — <code>Alive</code>, <code>Suspect</code>, <code>Dead</code> — so a node that leaves on purpose is
-not representable here at all, rather than misrepresented as a failure.</p>
+<p><strong>SWIM’s <code>Left</code> is simpler than memberlist’s <code>StateLeft</code>.</strong> memberlist gives a
+graceful departure its own precedence and rejoin rules. <code>swim::model::Status</code>
+has <code>Left</code>, ranked above <code>Dead</code> so that a failure verdict cannot undo a
+departure (S13, S14), but a rejoining node is an ordinary node that hears it is
+gone and refutes with a higher incarnation, exactly as after <code>Dead</code>. There is
+no separate rejoin handshake. Members are never forgotten, so a departed
+member’s record stays and counts against the bound of <code>MAX_UPDATES</code> members.</p>
 </li>
 </ul>
 <p><strong>Future work</strong> (deliberately out of scope):</p>

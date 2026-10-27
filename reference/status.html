@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-06e6da3b.js";
+            window.path_to_searchindex_js = "../searchindex-354d2fb0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-07e7f656.js"></script>
@@ -374,11 +374,13 @@ inside the fragment, because <code>SeizeToken</code> has no liveness guard on th
 takes the privilege from.</p>
 </li>
 <li>
-<p><strong>SWIM has no voluntary-leave state.</strong> memberlist distinguishes a graceful
-departure (<code>StateLeft</code>) from a failure-detected one (<code>StateDead</code>), with its
-own precedence and rejoin rules; <code>swim::model::Status</code> covers only failure
-detection — <code>Alive</code>, <code>Suspect</code>, <code>Dead</code> — so a node that leaves on purpose is
-not representable here at all, rather than misrepresented as a failure.</p>
+<p><strong>SWIM’s <code>Left</code> is simpler than memberlist’s <code>StateLeft</code>.</strong> memberlist gives a
+graceful departure its own precedence and rejoin rules. <code>swim::model::Status</code>
+has <code>Left</code>, ranked above <code>Dead</code> so that a failure verdict cannot undo a
+departure (S13, S14), but a rejoining node is an ordinary node that hears it is
+gone and refutes with a higher incarnation, exactly as after <code>Dead</code>. There is
+no separate rejoin handshake. Members are never forgotten, so a departed
+member’s record stays and counts against the bound of <code>MAX_UPDATES</code> members.</p>
 </li>
 </ul>
 <p><strong>Future work</strong> (deliberately out of scope):</p>

@@ -942,14 +942,13 @@ mod tests {
     /// believe is what the system acts on.
     #[tokio::test]
     async fn watch_follows_a_swim_node() {
-        use std::net::{IpAddr, Ipv4Addr};
-
-        let me = Id::from(1);
-        let roster = HashMap::from([
-            (IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), me),
-            (IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)), HOST),
-        ]);
-        let node = Node::new(roster, me).unwrap();
+        let node = Node::new(Id::from(1));
+        node.apply(&[Update {
+            node: HOST,
+            incarnation: 0,
+            status: Liveness::Alive,
+        }])
+        .unwrap();
         let a = ActorRef(Id::from(7));
         let mut system = system();
         system

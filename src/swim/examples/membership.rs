@@ -11,9 +11,6 @@
 //!
 //! Run it with `cargo run --example swim_membership`.
 
-use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr};
-
 use jetstream_distributed::id::Id;
 use jetstream_distributed::swim::service::{Liveness, Node, Update};
 
@@ -21,14 +18,16 @@ const ME: Id = Id(1);
 const PEER: Id = Id(2);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Who is a member, by address. A node off the roster cannot be built.
-    let roster = HashMap::from([
-        (IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), ME),
-        (IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)), PEER),
-    ]);
-    let node = Node::new(roster, ME)?;
+    // A node knows only itself. There is no roster: the peer becomes a member when
+    // this node hears of it, here from a message that mentions it.
+    let node = Node::new(ME);
+    node.apply(&[Update {
+        node: PEER,
+        incarnation: 0,
+        status: Liveness::Alive,
+    }])?;
 
-    // Everyone starts alive at incarnation 0. Nothing is read from disk.
+    // A member starts alive at incarnation 0. Nothing is read from disk.
     assert_eq!(
         node.record(PEER),
         Some(Update {

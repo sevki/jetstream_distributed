@@ -46,8 +46,8 @@ of *which* record arrived, not a different rule for applying it.
 | S14 | **Only a higher incarnation brings a departed member back.** The converse of S13 in the form a service uses: if hearing a record changed what a node believed about a member that had left, the record carried a higher incarnation. **Not claimed:** that only that member can produce one. In the crash-fault model it does, by refuting; the service believes any member's word about any other, so a lying member can revive a departed one | `swim::proofs::merge::theorem_only_a_higher_incarnation_revives_a_departure` | none beyond S13 |
 
 **What S10–S14 do not cover.** The table is a verified core, and `Node` is the
-shell around it: the roster and the admission policy (which numbers are members,
-who may speak and who may join), the lock, the audit log, the batch limit, and the
+shell around it: the member set and the authenticator (who is calling, and so who
+may speak and who may join), the lock, the audit log, the batch limit, and the
 order a batch is applied in are plain Rust that the tests exercise. The theorems
 are about one record at a time. In particular nothing proves that `Node::leave`
 writes the departure *without* answering it with a refutation: it does so by
@@ -57,26 +57,26 @@ that changes.
 
 **Joining and leaving.** The model never assumed a fixed membership: a node absent
 from the view is exactly a node at the fresh record. What was fixed was the
-*service's* roster. `Node::new` still builds that closed cluster. `Node::admitting`
-builds one that grows: a caller whose address is not yet known is put to an
-`Admission` policy, a function from the connection's address to the member number
-that address may be, and is admitted if the policy names one and there is room.
-There is no join call: a join is the first `ping` or `sync` from an address the
-policy lets in, the `sync` reply is the whole table, and the others hear of the
-newcomer by gossip. The member number comes out of the policy and the connection,
-never out of the request. `Node::leave` records the node as `Left` at its held
-incarnation and returns that record for the caller to tell its peers. What this
-does **not** do: nothing decides who the policy should admit (the example's admits
-every loopback address; a deployment writes its own); where a member lives is the
-deployment's mapping from member number to address, not something SWIM gossips;
-members are never forgotten, so a departed member's record is kept (it is what
-keeps S13 true) and counts against the same bound of `MAX_UPDATES` members, which any
-one member can fill by gossiping that many made-up numbers, so a cluster that
-admits a member admits its good behaviour; a live member is never given a second
-address, but one that has left or been declared dead may come back from a different
-address, which then replaces the old; a refused request admits nobody; the policy
-runs with the node's lock held and must be quick; and a node that leaves and tells
-nobody is, to the cluster, a node that died.
+*service's* roster, and there no longer is one: `Node::new(me)` builds a node that
+knows only itself. `Node::ping` and `Node::sync` take the caller's `Id`, and a
+caller is a member from its first call, if there is room. There is no join call: a
+join is that first call, the `sync` reply is the whole table, and the others hear of
+the newcomer by gossip. `Node` does no I/O and looks at no connection. Turning a
+connection into an `Id` is `Authenticate`'s, and `Endpoint` is the one place the two
+meet; the `Id` comes out of the connection, never out of the request.
+`Node::leave` records the node as `Left` at its held incarnation and returns that
+record for the caller to tell its peers. What this does **not** do: nothing decides
+who may be a member (that is the `Authenticate`'s, and the only ones here are an
+address table for simulation and the example's loopback rule; a deployment writes
+its own); where a member lives is the deployment's mapping from member number to
+address, not something SWIM gossips; members are never forgotten, so a departed
+member's record is kept (it is what keeps S13 true) and counts against the same
+bound of `MAX_UPDATES` members, which any one member can fill by gossiping that many
+made-up numbers, so a cluster that admits a member admits its good behaviour; a
+refused request admits nobody; and a node that leaves and tells nobody is, to the
+cluster, a node that died. Rules that used to live in the node, such as a live
+member never being given a second address, are an authenticator's to keep now, and
+none of the authenticators here keep them.
 
 **S4 is worth pausing on, because the asymmetry it dismisses is real.**
 `key_geq(a, b)` and `key_geq(b, a)` are different expressions, and reading
@@ -148,8 +148,8 @@ departed member returns at a higher incarnation. The same file's wire test in
 the rest hear of it by gossip, and a departure arrive as one.
 
 **What the service does not have**, and what it does not claim. A caller is
-identified by address, against the roster the node holds (fixed for `Node::new`,
-growing by policy for `Node::admitting`), and *an address is not a
+identified by an `Authenticate` (the node believes the `Id` it returns), and the only
+ones here go by address, and *an address is not a
 credential* (the stated assumption every service here makes) — and SWIM
 sharpens it, because any member may gossip about any member, so a
 member that lies about a third party is believed. SWIM's failure model is

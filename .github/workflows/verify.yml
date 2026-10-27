@@ -564,7 +564,7 @@ jobs:
       - name: The examples the book embeds
         run: |
           set -euo pipefail
-          for example in ownership_handover swim_membership actor_hosting actor_basic; do
+          for example in ownership_handover swim_membership swim_node actor_hosting actor_basic; do
             echo "::group::$example"
             cargo +stable run --quiet --features service --locked --example "$example"
             echo "::endgroup::"

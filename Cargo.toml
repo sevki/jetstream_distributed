@@ -58,6 +58,11 @@ name = "swim_membership"
 path = "src/swim/examples/membership.rs"
 required-features = ["service"]
 
+[[example]]
+name = "swim_node"
+path = "src/swim/examples/node.rs"
+required-features = ["service"]
+
 # The services live in `src/{algorithm}/service.rs`, in this crate, behind the
 # `service` feature, which is **on by default** so that depending on the crate
 # gives you the services.

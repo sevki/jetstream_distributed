@@ -1,12 +1,13 @@
 # Usage examples
 
-Four small programs, each runnable, each asserting what it shows. The code on this page
+Five small programs, each runnable, each asserting what it shows. The code on this page
 is **included from the files themselves** when the book is built, so it cannot drift from
 what compiles: `cargo test` builds every example, and CI runs them.
 
 ```text
 cargo run --example ownership_handover
 cargo run --example swim_membership
+cargo run --example swim_node
 cargo run --example actor_hosting
 cargo run --example actor_basic
 ```
@@ -54,6 +55,42 @@ Things to notice:
 
 ```rust,ignore
 {{#include ../../src/swim/examples/membership.rs}}
+```
+
+## A SWIM node as a process
+
+Chapter: [SWIM](swim.md).
+
+The previous example calls the node's methods by hand. This one is the loop around it: a
+listener that serves `ping` and `sync`, a probe that pings one peer a second and
+piggybacks its whole view, a suspicion when a ping fails, and a timer that turns an
+unrefuted suspicion into death. Run three of them and stop one:
+
+```text
+cargo run --example swim_node -- run 1 3
+cargo run --example swim_node -- run 2 3
+cargo run --example swim_node -- run 3 3
+```
+
+The survivors suspect the stopped member, then declare it dead. Start it again and it
+comes back at incarnation 1: its first caller tells it the cluster has it dead at 0, that
+out-ranks its record, and it answers with a higher incarnation. With no arguments the
+example does all of that in one process and asserts it, which is what CI runs.
+
+Things to notice:
+
+- **The timing is this file's choice and nothing is proved about it.** The merge rule, the
+  refutation and the refusal of strangers are the verified and tested parts. When to probe,
+  whom, and how long to wait are plain Rust, and the model says nothing about time.
+- **No indirect ping.** A peer this node alone cannot reach is suspected on its word alone.
+- **Identity is the connection's source address.** Each member binds `127.0.0.<id>` and
+  connects from it, because the roster maps addresses to members. That works on Linux; on
+  another OS give each member its own host. An address is not a credential.
+- **A node writes nothing down.** The restart above is the case that shows it does not
+  need to.
+
+```rust,ignore
+{{#include ../../src/swim/examples/node.rs}}
 ```
 
 ## Hosting an actor under a fence

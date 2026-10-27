@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-354d2fb0.js";
+            window.path_to_searchindex_js = "searchindex-8d6c2834.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-07e7f656.js"></script>
@@ -1922,7 +1922,7 @@ wiring is not built; the example uses a flag in its place.</li>
 <pre><code class="language-rust ignore">//! Hosting an actor under a fence, calling it, and draining it.
 //!
 //! A [`LocalSupervisor`] hosts actors on one node, each behind its own mailbox. The
-//! actor is an ordinary service; it is handed a [`Fence`], which is the question "may
+//! actor is an ordinary service; it is handed a [`Fence`](jetstream_distributed::actor::service::Fence), which is the question "may
 //! this host still act for its actor?". In a deployment the fence is the ownership
 //! registry's `may_write(host, epoch)`. Here it is a flag, so the example can close it.
 //!
@@ -3695,8 +3695,9 @@ moving, stranding authority at a node that no longer holds the privilege.</p>
 <p><strong>What the composed service does not claim.</strong> The composed <em>model</em> guards some
 steps on <code>own.live</code>, which is ground truth — whether a node has crashed is not
 something any process can evaluate. The service has no <code>Crash</code> or <code>Recover</code>, so
-it refines the composed machine’s <strong>crash-free</strong> executions, where every liveness
-guard is vacuously true; C8 states <code>live.contains(..)</code> as a hypothesis rather than
+the steps it calls refine the composed machine’s <strong>crash-free</strong> executions, where
+every liveness guard is vacuously true (the service around those steps is plain
+Rust and tested); C8 states <code>live.contains(..)</code> as a hypothesis rather than
 dropping it. That cut does not lose the case the machine exists for:
 <code>SeizeToken</code> has no liveness guard on the node it takes the privilege <em>from</em>, so
 seizing from a holder that is merely unreachable — the wrongly-suspected node a

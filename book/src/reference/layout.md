@@ -8,6 +8,8 @@ jetstream_distributed/
 ├── fuzz/                   the coverage-guided front end to the protocol-line search (its own workspace, nightly)
 ├── src/
 │   ├── lib.rs
+│   ├── protocol_t.rs       the Protocol trait: the labelled-step shape every model has
+│   ├── protocol_v.rs       each model's instance is its model (next, init); the mailbox run is a run of the protocol
 │   ├── temporal_t.rs       leads-to, weak fairness and WF1: what a liveness proof is stated in
 │   ├── ownership/          exclusive mutable ownership with epoch fencing
 │   │   ├── model_t.rs      state space + transition relation (no specification)

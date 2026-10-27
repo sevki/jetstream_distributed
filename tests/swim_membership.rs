@@ -11,35 +11,24 @@
 //! table that was written outside `merge_step`, say) would leave every theorem
 //! true and the system wrong.
 //!
-//! These drive the `Node` directly. Identity still arrives the way the service
-//! insists on, a `Context` carrying the caller's address and never an argument
-//! naming a sender; the wire is `tests/swim_turmoil.rs`.
+//! These drive the `Node` directly, with the caller's `Id` as an argument: the node
+//! does not look at a connection, so there is none here. Who a connection *is*
+//! is `tests/swim_endpoint.rs`; the wire is `tests/swim_turmoil.rs`.
 
-use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr};
-
-use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
-use jetstream::prelude::*;
 use jetstream_distributed::id::Id;
-use jetstream_distributed::swim::service::{
-    Event, Liveness, MAX_UPDATES, Membership, Node, Update,
-};
+use jetstream_distributed::swim::service::{Event, Liveness, MAX_UPDATES, Node, Update};
 
-const A: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
-const B: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
-const C: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3));
-const STRANGER: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 9, 9, 9));
-
-fn roster() -> HashMap<IpAddr, Id> {
-    HashMap::from([(A, Id(0)), (B, Id(1)), (C, Id(2))])
-}
-
-fn from(addr: IpAddr) -> Context {
-    Context::new(Some(RemoteAddr::IpAddr(addr)), None)
-}
-
+/// Member `me`, in a cluster of members `0`, `1` and `2` that it has heard of,
+/// all alive at incarnation zero.
 fn node(me: u128) -> Node {
-    Node::new(roster(), Id(me)).expect("on the roster")
+    let n = Node::new(Id(me));
+    n.apply(&[
+        u(0, 0, Liveness::Alive),
+        u(1, 0, Liveness::Alive),
+        u(2, 0, Liveness::Alive),
+    ])
+    .expect("three members are well within the bound");
+    n
 }
 
 fn u(node: u128, incarnation: u64, status: Liveness) -> Update {
@@ -50,9 +39,12 @@ fn u(node: u128, incarnation: u64, status: Liveness) -> Update {
     }
 }
 
+/// There is no roster to start from: a node knows itself, and the rest is learned.
 #[test]
-fn a_node_off_the_roster_cannot_be_built() {
-    assert!(Node::new(roster(), Id(7)).is_err());
+fn a_new_node_knows_only_itself() {
+    let n = Node::new(Id(7));
+    assert_eq!(n.view(), vec![u(7, 0, Liveness::Alive)]);
+    assert_eq!(n.record(Id(0)), None, "it has not heard of anyone else");
 }
 
 #[test]
@@ -243,19 +235,22 @@ fn permute(a: &mut Vec<usize>, k: usize, f: &mut impl FnMut(&[usize])) {
     }
 }
 
-/// **A message naming a non-member is refused whole.**
+/// **A message that would take the node past its bound is refused whole.**
 #[test]
 fn a_batch_is_applied_entirely_or_not_at_all() {
     let n = node(0);
-    let err = n
-        .apply(&[u(1, 0, Liveness::Dead), u(9, 0, Liveness::Dead)])
-        .unwrap_err();
+    // A report about a member it knows, and enough new members to overflow.
+    let mut batch = vec![u(1, 0, Liveness::Dead)];
+    batch.extend((100..100 + (MAX_UPDATES as u128 - 2)).map(|i| u(i, 0, Liveness::Alive)));
+    assert!(batch.len() <= MAX_UPDATES, "the message itself is not too big");
+    let err = n.apply(&batch).unwrap_err();
     assert_eq!(err.code(), Some("ERR"));
     assert_eq!(
         n.record(Id(1)),
         Some(u(1, 0, Liveness::Alive)),
-        "the valid half was not applied"
+        "the half that would have fitted was not applied"
     );
+    assert_eq!(n.view().len(), 3, "and nobody was admitted");
 }
 
 #[test]
@@ -270,56 +265,86 @@ fn an_oversized_message_is_refused() {
     );
 }
 
-#[tokio::test]
-async fn a_stranger_is_refused_before_anything_is_read() {
+/// Calling is how a node joins: the caller is a member from then on, however the
+/// receiver heard of it.
+#[test]
+fn a_caller_is_a_member_from_its_first_call() {
     let n = node(0);
-    for r in [
-        n.ping(from(STRANGER), vec![u(1, 0, Liveness::Dead)]).await,
-        n.sync(from(STRANGER), vec![u(1, 0, Liveness::Dead)]).await,
-        n.ping(Context::default(), vec![]).await,
-    ] {
-        assert_eq!(r.unwrap_err().code(), Some("NO"));
-    }
+    assert_eq!(n.record(Id(5)), None);
+    n.ping(Id(5), &[]).unwrap();
+    assert_eq!(n.record(Id(5)), Some(u(5, 0, Liveness::Alive)));
+
+    n.sync(Id(6), &[]).unwrap();
+    assert_eq!(n.record(Id(6)), Some(u(6, 0, Liveness::Alive)));
+}
+
+/// A request refused for being over the bound admits nobody, its caller included.
+#[test]
+fn a_request_refused_over_the_bound_admits_no_one() {
+    let n = node(0);
+    let batch: Vec<Update> = (100..100 + (MAX_UPDATES as u128 - 2))
+        .map(|i| u(i, 0, Liveness::Alive))
+        .collect();
+    assert_eq!(n.ping(Id(5), &batch).unwrap_err().code(), Some("ERR"));
+    assert_eq!(n.record(Id(5)), None, "the caller was not admitted");
+    assert_eq!(n.view().len(), 3);
+}
+
+/// The bound is on members, and it is exactly `MAX_UPDATES`: a `sync` reply is the
+/// whole table, and the node that asked feeds it through `apply`, which would
+/// refuse more.
+#[test]
+fn a_node_holds_exactly_as_many_members_as_one_message_can_carry() {
+    let n = Node::new(Id(0));
+    let rest: Vec<Update> = (1..MAX_UPDATES as u128)
+        .map(|i| u(i, 0, Liveness::Alive))
+        .collect();
+    n.apply(&rest).unwrap();
+    assert_eq!(n.view().len(), MAX_UPDATES);
+
     assert_eq!(
-        n.record(Id(1)),
-        Some(u(1, 0, Liveness::Alive)),
-        "and nothing was applied"
+        n.apply(&[u(MAX_UPDATES as u128, 0, Liveness::Alive)])
+            .unwrap_err()
+            .code(),
+        Some("ERR"),
+        "one more is too many"
     );
+    // The whole table fits in one message, which is the point of the bound.
+    let table = n.sync(Id(1), &[]).unwrap();
+    assert_eq!(table.len(), MAX_UPDATES);
+    Node::new(Id(1)).apply(&table).unwrap();
 }
 
 /// `ping` answers about the members the message mentioned, and about the
 /// receiver; `sync` answers about everyone.
-#[tokio::test]
-async fn ping_answers_with_what_it_was_asked_about_and_sync_with_everything() {
+#[test]
+fn ping_answers_with_what_it_was_asked_about_and_sync_with_everything() {
     let b = node(1);
     b.suspect(Id(2),0).unwrap();
     b.declare_dead(Id(2),0).unwrap();
 
-    let ack = b
-        .ping(from(A), vec![u(2, 0, Liveness::Suspect)])
-        .await
-        .unwrap();
+    let ack = b.ping(Id(0), &[u(2, 0, Liveness::Suspect)]).unwrap();
     assert_eq!(
         ack,
         vec![u(1, 0, Liveness::Alive), u(2, 0, Liveness::Dead)],
         "the sender learns the receiver knew something stronger"
     );
 
-    let ack = b.ping(from(A), vec![]).await.unwrap();
+    let ack = b.ping(Id(0), &[]).unwrap();
     assert_eq!(
         ack,
         vec![u(1, 0, Liveness::Alive)],
         "nothing mentioned: only itself"
     );
 
-    let all = b.sync(from(A), vec![]).await.unwrap();
+    let all = b.sync(Id(0), &[]).unwrap();
     assert_eq!(all, b.view());
     assert_eq!(all.len(), 3);
 }
 
 /// **Three nodes that disagree converge by exchanging tables.**
-#[tokio::test]
-async fn nodes_that_drifted_apart_converge_by_syncing() {
+#[test]
+fn nodes_that_drifted_apart_converge_by_syncing() {
     let (a, b, c) = (node(0), node(1), node(2));
     a.suspect(Id(2),0).unwrap();
     b.suspect(Id(0),0).unwrap();
@@ -329,8 +354,8 @@ async fn nodes_that_drifted_apart_converge_by_syncing() {
     // A round of pushes in a ring, twice, so everything has gone all the way
     // round.
     for _ in 0..2 {
-        for (from_addr, src, dst) in [(A, &a, &b), (B, &b, &c), (C, &c, &a)] {
-            let theirs = dst.sync(from(from_addr), src.view()).await.unwrap();
+        for (src, dst) in [(&a, &b), (&b, &c), (&c, &a)] {
+            let theirs = dst.sync(src.id(), &src.view()).unwrap();
             src.apply(&theirs).unwrap();
         }
     }
@@ -386,17 +411,4 @@ fn death_needs_a_suspicion_at_that_incarnation() {
     assert!(!n.declare_dead(Id(1),7).unwrap(), "suspected at 0, not 7");
     assert!(n.declare_dead(Id(1),0).unwrap());
     assert_eq!(n.record(Id(1)), Some(u(1, 0, Liveness::Dead)));
-}
-
-/// A roster too big for one message could never complete its own push/pull: the
-/// whole-table reply would exceed what `apply` accepts.
-#[test]
-fn a_roster_too_big_for_one_message_is_refused() {
-    let big = |n: usize| -> HashMap<IpAddr, Id> {
-        (0..n as u128)
-            .map(|i| (IpAddr::V4(Ipv4Addr::from(0x0a00_0000 + i as u32)), Id(i)))
-            .collect()
-    };
-    assert!(Node::new(big(MAX_UPDATES), Id(0)).is_ok());
-    assert!(Node::new(big(MAX_UPDATES + 1), Id(0)).is_err());
 }

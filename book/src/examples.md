@@ -81,13 +81,13 @@ example does all of that in one process and asserts it, which is what CI runs.
 
 Things to notice:
 
-- **A join is a `sync` with a seed.** There is no join call. The seed's admission policy lets
-  the address in, its reply is the whole table, and the others hear of the newcomer by
-  gossip. Node 3 above never calls node 1 to join.
-- **Who may join is a policy, and this example's is open.** Every loopback address
-  `127.0.0.1` to `127.0.0.250` is a member. A real deployment writes a stricter one; SWIM
-  does not say who should be admitted. The member number comes from the policy and the
-  connection, never from the request.
+- **A join is a `sync` with a seed.** There is no join call. The seed's authenticator
+  identifies the connection as a member, its reply is the whole table, and the others hear of
+  the newcomer by gossip. Node 3 above never calls node 1 to join.
+- **Who is calling is an `Authenticate`, and this example's is open.** Every loopback address
+  `127.0.0.1` to `127.0.0.250` is a member. A real deployment reads what its transport can
+  prove; SWIM does not say who should be admitted. The member number comes from the
+  authenticator and the connection, never from the request.
 - **Leaving and dying are different records.** `leave` writes `Left`, which out-ranks a
   failure verdict at the same incarnation, so a suspicion timer already running cannot
   turn a departure into a death. A node that is stopped without leaving is simply dead.

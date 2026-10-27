@@ -8,7 +8,7 @@
 //! `tr_gossip`, and that a self-refutation is a second gossip step.
 //!
 //! The table is a pair of vectors searched linearly. That is a choice for the
-//! proof, not for the cluster: a node's table is bounded by its roster, which
+//! proof, not for the cluster: a node's table is bounded by its members, which
 //! the service caps at `MAX_UPDATES`.
 //!
 //! # What is verified
@@ -21,7 +21,7 @@
 //!
 //! # What is not
 //!
-//! The roster (who may speak, which numbers are members), the lock, the audit
+//! The member set (who may speak, which numbers are members), the lock, the audit
 //! log, and the batch limit are the service's. So is the order in which a batch
 //! is applied: each record is one step, and the theorems are about one.
 #![allow(unused_imports)]

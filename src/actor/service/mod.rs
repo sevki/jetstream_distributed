@@ -50,9 +50,10 @@
 //!
 //! # Liveness, stated
 //!
-//! This service refines the actor machine's crash-free executions: it has no
-//! `Crash` or `Recover`, because liveness is ground truth a process cannot
-//! evaluate. See `crate::composed::steps` for the argument.
+//! The steps this service calls refine the actor machine (`actor::proofs::refinement`);
+//! the service around them is plain Rust and tested. It has no `Crash` or
+//! `Recover`, because liveness is ground truth a process cannot evaluate, so it
+//! covers the crash-free executions. See `crate::composed::steps` for the argument.
 //!
 //! # The assumption this rests on, stated
 //!

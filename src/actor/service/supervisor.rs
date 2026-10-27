@@ -117,7 +117,7 @@ pub struct ActorRef(pub Id);
 impl Resource for ActorRef {}
 
 /// Whether an actor is running on this node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, JetStreamWireFormat)]
 pub enum Status {
     /// Hosted here, and its drain is running.
     Running,

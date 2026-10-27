@@ -87,6 +87,8 @@
 mod node;
 mod refusal;
 
+use std::sync::Arc;
+
 pub use node::{Admission, Event, Node};
 
 use crate::{
@@ -173,4 +175,14 @@ pub trait Membership {
     /// have on hand; this is how two nodes that have drifted apart converge
     /// without waiting for the right rumour to come along.
     async fn sync(&self, ctx: Context, updates: Vec<Update>) -> Result<Vec<Update>>;
+}
+
+impl<T: Membership> Membership for Arc<T> {
+    async fn ping(&self, ctx: Context, updates: Vec<Update>) -> Result<Vec<Update>> {
+        T::ping(self, ctx, updates).await
+    }
+
+    async fn sync(&self, ctx: Context, updates: Vec<Update>) -> Result<Vec<Update>> {
+        T::sync(self, ctx, updates).await
+    }
 }

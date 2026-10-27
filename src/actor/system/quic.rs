@@ -23,7 +23,7 @@ use jetstream::quic::QuicTransport;
 use jetstream::{prelude::*, quic};
 use url::Url;
 
-pub(crate) struct QuicActorSystem<F, P: LifetimePredictor<F>> {
+pub struct QuicActorSystem<F, P: LifetimePredictor<F>> {
     supervisor: LocalSupervisor,
     directory: QuicDirectory<F, P>,
     /// Holds the endpoint every connection below was made from, and the
@@ -48,7 +48,7 @@ where
 {
     /// A system for the node `me`, hosting nothing, placing with `scheduler`,
     /// and dialing out through `client`.
-    pub(crate) fn new(me: Id, scheduler: Scheduler<F, P>, client: quic::Client) -> Self {
+    pub fn new(me: Id, scheduler: Scheduler<F, P>, client: quic::Client) -> Self {
         Self {
             supervisor: LocalSupervisor::new(me),
             directory: QuicDirectory::new(scheduler),
@@ -62,13 +62,13 @@ where
     /// its members, and give back the jobs of the hosts that left, as
     /// [`QuicDirectory::observe`] does. Call it as often as membership should
     /// be looked at; looking twice at the same view does nothing the second time.
-    pub(crate) fn watch(&mut self, node: &Node) -> Vec<Job<F>> {
+    pub fn watch(&mut self, node: &Node) -> Vec<Job<F>> {
         self.directory.observe(node.view())
     }
 
     /// Give each address `timeout` to complete the handshake instead of the
     /// default.
-    pub(crate) fn with_connect_timeout(mut self, timeout: Duration) -> Self {
+    pub fn with_connect_timeout(mut self, timeout: Duration) -> Self {
         self.connect_timeout = timeout;
         self
     }
@@ -134,7 +134,7 @@ fn target(location: &Url) -> Result<(&str, u16)> {
 /// cannot tell a local actor from one on another node. What it does **not** do is
 /// pick an actor on a host: the actor's id is not on the wire (#31), so a dial
 /// reaches the actor service that host serves, one per host for now.
-pub(crate) struct QuicActor {
+pub struct QuicActor {
     channel: ActorChannel,
 }
 
@@ -183,7 +183,7 @@ where
 {
     /// A handle on `actor`: connected as [`ActorSystem::connect`] says, with the
     /// protocol's version negotiated, so the first call is an ordinary one.
-    pub(crate) async fn actor(&mut self, actor: ActorRef, from: Context) -> Result<QuicActor> {
+    pub async fn actor(&mut self, actor: ActorRef, from: Context) -> Result<QuicActor> {
         let transport = self.connect::<ActorChannel>(actor, from).await?;
         let channel = ActorChannel::new(64, transport);
         channel.negotiate_version(u32::MAX).await?;

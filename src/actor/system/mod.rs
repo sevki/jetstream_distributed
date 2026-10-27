@@ -88,4 +88,4 @@ pub trait ActorSystem: Sync + Send {
 }
 
 mod iroh;
-mod quic;
+pub mod quic;

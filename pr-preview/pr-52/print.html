@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ff2c7cd3.js";
+            window.path_to_searchindex_js = "searchindex-354d2fb0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-07e7f656.js"></script>
@@ -813,7 +813,7 @@ at a higher incarnation beats suspect and dead at the accusation’s.</li>
 <tr><td>S5</td><td>across a whole run, <strong>no node’s record about any peer ever moves backward</strong>: the actual convergence argument</td></tr>
 <tr><td>S7–S9</td><td>the executable merge is the model’s; a refutation is a gossip step and out-ranks what it answers</td></tr>
 <tr><td>S10–S12</td><td>the node’s table learns by the model’s gossip step, and never believes less than it did</td></tr>
-<tr><td>S13–S14</td><td>a departure (<code>Left</code>) cannot be undone by a late failure report, and only a higher incarnation, which only the departed member can produce, brings it back</td></tr>
+<tr><td>S13–S14</td><td>a departure (<code>Left</code>) cannot be undone by a late failure report, and only a higher incarnation brings it back (which, assuming no member lies, only the departed member produces)</td></tr>
 </tbody>
 </table>
 </div>
@@ -858,8 +858,10 @@ record to tell the peers. A node that is stopped without doing so is, to the clu
 node that died, and the two are different records.</p>
 <p>What this does not settle is <em>who</em> should be admitted. SWIM says nothing about that, and
 the example’s policy lets in every loopback address. Where a member lives is the
-deployment’s mapping from member number to address, not something SWIM gossips. A member
-that comes back must do so from the same address.</p>
+deployment’s mapping from member number to address, not something SWIM gossips. A live
+member keeps one address; one that has left or died may come back from a different one,
+which replaces the old. And a cluster trusts its members: any one can fill the bound on
+members with made-up numbers.</p>
 <h2 id="how-it-relates-to-the-rest"><a class="header" href="#how-it-relates-to-the-rest">How it relates to the rest</a></h2>
 <p>SWIM is independent of the other protocols in the proofs. It is related to them in one
 direction, and only as a <strong>hint</strong>:</p>
@@ -3436,7 +3438,7 @@ of <em>which</em> record arrived, not a different rule for applying it.</p>
 | S11 | <strong>Hearing an accusation about oneself is two gossip steps.</strong> <code>SwimTable::hear</code> merges the record and, if it was the node’s <em>own</em> that changed, merges the refutation on top of it; the model sees <code>tr_gossip</code> twice, and the table ends up believing the refutation. At the top of the incarnation space the second step is refused and the first has happened | <code>swim::proofs::table::theorem_hearing_oneself_accused_is_two_gossip_steps</code> | the table stands for the cluster |
 | S12 | <strong>A table never believes less than it did, and always stands for a reachable cluster.</strong> Whatever it learns, what it then holds for any member out-ranks or equals what it held; and a reachable cluster plus a learned record is a reachable cluster, so S5 is a statement about what the table holds | <code>swim::proofs::table::theorem_learning_never_lowers_a_belief</code>, <code>theorem_a_table_stands_for_a_reachable_cluster_after_learning</code> | the table stands for a reachable cluster |
 | S13 | <strong>A departure outlasts every report at or below its incarnation.</strong> <code>Left</code> ranks above <code>Dead</code>, so a suspicion timer that was already running, a late <code>Dead</code> verdict, or an old <code>Alive</code> cannot turn a node that announced its leaving into a failure or a recovery; merging any record at the same or an older incarnation into a <code>Left</code> record returns it unchanged. The one same-incarnation record that is itself <code>Left</code> is the same record, so repeating it changes nothing | <code>swim::proofs::merge::theorem_a_departure_outlasts_every_report_at_or_below_it</code> | none |
-| S14 | <strong>Only a higher incarnation brings a departed member back.</strong> The converse of S13 in the form a service uses: if hearing a record changed what a node believed about a member that had left, the record carried a higher incarnation, which only that member can have produced. Nobody else can revive it | <code>swim::proofs::merge::theorem_only_a_higher_incarnation_revives_a_departure</code> | none beyond S13 |</p>
+| S14 | <strong>Only a higher incarnation brings a departed member back.</strong> The converse of S13 in the form a service uses: if hearing a record changed what a node believed about a member that had left, the record carried a higher incarnation. <strong>Not claimed:</strong> that only that member can produce one. In the crash-fault model it does, by refuting; the service believes any member’s word about any other, so a lying member can revive a departed one | <code>swim::proofs::merge::theorem_only_a_higher_incarnation_revives_a_departure</code> | none beyond S13 |</p>
 <p><strong>What S10–S14 do not cover.</strong> The table is a verified core, and <code>Node</code> is the
 shell around it: the roster and the admission policy (which numbers are members,
 who may speak and who may join), the lock, the audit log, the batch limit, and the
@@ -3461,8 +3463,12 @@ does <strong>not</strong> do: nothing decides who the policy should admit (the e
 every loopback address; a deployment writes its own); where a member lives is the
 deployment’s mapping from member number to address, not something SWIM gossips;
 members are never forgotten, so a departed member’s record is kept (it is what
-keeps S13 true) and counts against the same bound of <code>MAX_UPDATES</code> members; a member
-that comes back must do so from the same address; and a node that leaves and tells
+keeps S13 true) and counts against the same bound of <code>MAX_UPDATES</code> members, which any
+one member can fill by gossiping that many made-up numbers, so a cluster that
+admits a member admits its good behaviour; a live member is never given a second
+address, but one that has left or been declared dead may come back from a different
+address, which then replaces the old; a refused request admits nobody; the policy
+runs with the node’s lock held and must be quick; and a node that leaves and tells
 nobody is, to the cluster, a node that died.</p>
 <p><strong>S4 is worth pausing on, because the asymmetry it dismisses is real.</strong>
 <code>key_geq(a, b)</code> and <code>key_geq(b, a)</code> are different expressions, and reading

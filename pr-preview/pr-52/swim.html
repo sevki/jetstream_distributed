@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ff2c7cd3.js";
+            window.path_to_searchindex_js = "searchindex-354d2fb0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-07e7f656.js"></script>
@@ -214,7 +214,7 @@ at a higher incarnation beats suspect and dead at the accusation’s.</li>
 <tr><td>S5</td><td>across a whole run, <strong>no node’s record about any peer ever moves backward</strong>: the actual convergence argument</td></tr>
 <tr><td>S7–S9</td><td>the executable merge is the model’s; a refutation is a gossip step and out-ranks what it answers</td></tr>
 <tr><td>S10–S12</td><td>the node’s table learns by the model’s gossip step, and never believes less than it did</td></tr>
-<tr><td>S13–S14</td><td>a departure (<code>Left</code>) cannot be undone by a late failure report, and only a higher incarnation, which only the departed member can produce, brings it back</td></tr>
+<tr><td>S13–S14</td><td>a departure (<code>Left</code>) cannot be undone by a late failure report, and only a higher incarnation brings it back (which, assuming no member lies, only the departed member produces)</td></tr>
 </tbody>
 </table>
 </div>
@@ -259,8 +259,10 @@ record to tell the peers. A node that is stopped without doing so is, to the clu
 node that died, and the two are different records.</p>
 <p>What this does not settle is <em>who</em> should be admitted. SWIM says nothing about that, and
 the example’s policy lets in every loopback address. Where a member lives is the
-deployment’s mapping from member number to address, not something SWIM gossips. A member
-that comes back must do so from the same address.</p>
+deployment’s mapping from member number to address, not something SWIM gossips. A live
+member keeps one address; one that has left or died may come back from a different one,
+which replaces the old. And a cluster trusts its members: any one can fill the bound on
+members with made-up numbers.</p>
 <h2 id="how-it-relates-to-the-rest"><a class="header" href="#how-it-relates-to-the-rest">How it relates to the rest</a></h2>
 <p>SWIM is independent of the other protocols in the proofs. It is related to them in one
 direction, and only as a <strong>hint</strong>:</p>

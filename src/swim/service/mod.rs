@@ -29,6 +29,28 @@
 //! was told something false about *itself* ([`Node::apply`] does it, inline,
 //! the moment a merge changes the node's own record).
 //!
+//! # Joining and leaving
+//!
+//! [`Node::new`] builds a closed cluster: the members are the ones it was given.
+//! [`Node::admitting`] builds one that grows, with an [`Admission`] policy from a
+//! caller's address to the member number that address may be. There is no join
+//! call. A join is the first `ping` or `sync` from an address the policy lets in;
+//! the `sync` reply is the whole table, so the newcomer learns who is there; and
+//! the others hear of it by gossip, which an open node accepts about members it
+//! was not built with and a closed node refuses. The member number comes from the
+//! policy and the connection, never from the request.
+//!
+//! A node leaves by calling [`Node::leave`], which records it as
+//! [`Liveness::Left`] and returns that record to tell its peers. `Left` out-ranks
+//! every failure verdict at the same incarnation
+//! (`crate::swim::proofs::merge::theorem_a_departure_outlasts_every_report_at_or_below_it`),
+//! so a suspicion timer that was already running cannot turn a departure into a
+//! failure. A node stopped without leaving is, to the cluster, a node that died.
+//!
+//! What is *not* settled here is who the policy should admit: SWIM says nothing
+//! about that. Members are never forgotten (a departed member's record is what
+//! keeps stale reports from reviving it) and are bounded by [`MAX_UPDATES`].
+//!
 //! # What a node does not need to write down
 //!
 //! Raft's server and the ownership registry both keep a durable record, because
@@ -45,13 +67,13 @@
 //! # The assumption this rests on, stated
 //!
 //! The same one the other services state. A caller is identified by
-//! [`Context::remote`] against a roster fixed at construction, and **an address
+//! [`Context::remote`] against the roster the node holds, and **an address
 //! is not a credential**. What is worth saying about SWIM specifically is how
-//! little the identity buys: any rostered caller may gossip about *any* member,
-//! so a rostered node that lies about a third party is believed. SWIM's own
+//! little the identity buys: any member may gossip about *any* member,
+//! so a member that lies about a third party is believed. SWIM's own
 //! failure model is crash faults, not Byzantine ones, and this service does not
-//! pretend otherwise; what it does enforce is that a stranger cannot join the
-//! conversation.
+//! pretend otherwise; what it does enforce is that an address the roster and the
+//! admission policy do not accept cannot join the conversation.
 //!
 //! # What is still not here
 //!
@@ -65,7 +87,7 @@
 mod node;
 mod refusal;
 
-pub use node::{Event, Node};
+pub use node::{Admission, Event, Node};
 
 use crate::{
     id::Id,
@@ -88,6 +110,8 @@ pub enum Liveness {
     Alive,
     Suspect,
     Dead,
+    /// The member announced its own departure. See `Node::leave`.
+    Left,
 }
 
 /// One record about one member: *this is what I believe about `node`*.
@@ -110,6 +134,7 @@ impl Update {
                 Liveness::Alive => ExecStatus::Alive,
                 Liveness::Suspect => ExecStatus::Suspect,
                 Liveness::Dead => ExecStatus::Dead,
+                Liveness::Left => ExecStatus::Left,
             },
         }
     }
@@ -122,6 +147,7 @@ impl Update {
                 ExecStatus::Alive => Liveness::Alive,
                 ExecStatus::Suspect => Liveness::Suspect,
                 ExecStatus::Dead => Liveness::Dead,
+                ExecStatus::Left => Liveness::Left,
             },
         }
     }

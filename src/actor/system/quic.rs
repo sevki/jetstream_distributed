@@ -301,8 +301,10 @@ where
     /// Bring this directory up to date with a membership `view`: the records
     /// [`Node::view`] gives, or any others.
     ///
-    /// A `Suspect` host is [held back](Self::host_suspected), a `Dead` one has
-    /// [left](Self::host_left), and an `Alive` one is [back](Self::host_back).
+    /// A `Suspect` host is [held back](Self::host_suspected), a `Dead` or `Left`
+    /// one has [left](Self::host_left), and an `Alive` one is [back](Self::host_back).
+    /// A host that announced its departure and one declared dead are treated alike
+    /// here: either way its actors have to go somewhere else.
     /// Each of those is idempotent, so a view that says what the last one said
     /// does nothing: the jobs of a host that left come back once. A record about
     /// a node that is not one of this directory's hosts is ignored; membership
@@ -321,7 +323,9 @@ where
             match status {
                 Liveness::Alive => self.host_back(node),
                 Liveness::Suspect => self.host_suspected(node),
-                Liveness::Dead => self.host_left(node).map(|jobs| left.extend(jobs)),
+                Liveness::Dead | Liveness::Left => {
+                    self.host_left(node).map(|jobs| left.extend(jobs))
+                }
             }
             .expect("a host in `hosts` is in the scheduler");
         }

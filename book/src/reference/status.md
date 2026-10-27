@@ -181,11 +181,13 @@ invariant preservation):
   inside the fragment, because `SeizeToken` has no liveness guard on the node it
   takes the privilege from.
 
-* **SWIM has no voluntary-leave state.** memberlist distinguishes a graceful
-  departure (`StateLeft`) from a failure-detected one (`StateDead`), with its
-  own precedence and rejoin rules; `swim::model::Status` covers only failure
-  detection — `Alive`, `Suspect`, `Dead` — so a node that leaves on purpose is
-  not representable here at all, rather than misrepresented as a failure.
+* **SWIM's `Left` is simpler than memberlist's `StateLeft`.** memberlist gives a
+  graceful departure its own precedence and rejoin rules. `swim::model::Status`
+  has `Left`, ranked above `Dead` so that a failure verdict cannot undo a
+  departure (S13, S14), but a rejoining node is an ordinary node that hears it is
+  gone and refutes with a higher incarnation, exactly as after `Dead`. There is
+  no separate rejoin handshake. Members are never forgotten, so a departed
+  member's record stays and counts against the bound of `MAX_UPDATES` members.
 
 **Future work** (deliberately out of scope):
 

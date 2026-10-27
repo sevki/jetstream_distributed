@@ -1,12 +1,13 @@
 # Usage examples
 
-Four small programs, each runnable, each asserting what it shows. The code on this page
+Five small programs, each runnable, each asserting what it shows. The code on this page
 is **included from the files themselves** when the book is built, so it cannot drift from
 what compiles: `cargo test` builds every example, and CI runs them.
 
 ```text
 cargo run --example ownership_handover
 cargo run --example swim_membership
+cargo run --example swim_node
 cargo run --example actor_hosting
 cargo run --example actor_basic
 ```
@@ -54,6 +55,54 @@ Things to notice:
 
 ```rust,ignore
 {{#include ../../src/swim/examples/membership.rs}}
+```
+
+## A SWIM cluster that members join and leave
+
+Chapter: [SWIM](swim.md).
+
+The previous example calls the node's methods by hand. This one is the loop around it: a
+listener that serves `ping` and `sync`, a join through a seed, a probe that pings one peer
+a second and piggybacks its whole view, a suspicion when a ping fails, a timer that turns
+an unrefuted suspicion into death, and a way to leave. Run three of them; the second and
+third join through a seed:
+
+```text
+cargo run --example swim_node -- run 1
+cargo run --example swim_node -- run 2 1
+cargo run --example swim_node -- run 3 2
+```
+
+Type `leave` in one terminal and the others record a **departure**, not a failure.
+Press Ctrl-C in another and they suspect it, then declare it **dead**. Start it again and it
+comes back at incarnation 1: its first caller tells it the cluster has it as gone, that
+out-ranks its record, and it answers with a higher incarnation. With no arguments the
+example does all of that in one process and asserts it, which is what CI runs.
+
+Things to notice:
+
+- **A join is a `sync` with a seed.** There is no join call. The seed's admission policy lets
+  the address in, its reply is the whole table, and the others hear of the newcomer by
+  gossip. Node 3 above never calls node 1 to join.
+- **Who may join is a policy, and this example's is open.** Every loopback address
+  `127.0.0.1` to `127.0.0.250` is a member. A real deployment writes a stricter one; SWIM
+  does not say who should be admitted. The member number comes from the policy and the
+  connection, never from the request.
+- **Leaving and dying are different records.** `leave` writes `Left`, which out-ranks a
+  failure verdict at the same incarnation, so a suspicion timer already running cannot
+  turn a departure into a death. A node that is stopped without leaving is simply dead.
+- **The timing is this file's choice and nothing is proved about it.** The merge rule, the
+  departure's precedence, the refutation and the refusal of strangers are the verified and
+  tested parts. When to probe, whom, and how long to wait are plain Rust.
+- **No indirect ping**, and members are never forgotten: a departed member's record is kept,
+  and counts against the bound on members.
+- **Identity is the connection's source address.** Each member binds `127.0.0.<id>` and
+  connects from it. That works on Linux; on another OS give each member its own host. An
+  address is not a credential, and where a member lives is the deployment's mapping, not
+  something SWIM gossips.
+
+```rust,ignore
+{{#include ../../src/swim/examples/node.rs}}
 ```
 
 ## Hosting an actor under a fence

@@ -44,6 +44,7 @@ pub enum ExecStatus {
     Alive,
     Suspect,
     Dead,
+    Left,
 }
 
 /// A member's record, at `u64`.
@@ -60,6 +61,7 @@ impl ExecStatus {
             ExecStatus::Alive => Status::Alive,
             ExecStatus::Suspect => Status::Suspect,
             ExecStatus::Dead => Status::Dead,
+            ExecStatus::Left => Status::Left,
         }
     }
 }
@@ -88,6 +90,7 @@ pub fn rank_exec(s: ExecStatus) -> (r: u8)
         ExecStatus::Alive => 0,
         ExecStatus::Suspect => 1,
         ExecStatus::Dead => 2,
+        ExecStatus::Left => 3,
     }
 }
 

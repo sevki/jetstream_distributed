@@ -89,7 +89,7 @@ fn addr_of(member: u128) -> IpAddr {
 
 /// Who may join: this example lets in any loopback address `127.0.0.1` to
 /// `127.0.0.250`, as the member with that last number.
-fn admit() -> Admission {
+fn policy() -> Admission {
     std::sync::Arc::new(|a| match a {
         IpAddr::V4(v4) => match v4.octets() {
             [127, 0, 0, k @ 1..=250] => Some(Id(k as u128)),
@@ -241,7 +241,7 @@ fn start(
 ) -> (Node, Vec<JoinHandle<()>>) {
     // A node starts at incarnation 0 and keeps nothing on disk. A restart is
     // corrected by the first peer that tells it what the cluster thinks of it.
-    let node = Node::admitting(HashMap::from([(addr_of(me), Id(me))]), Id(me), admit())
+    let node = Node::admitting(HashMap::from([(addr_of(me), Id(me))]), Id(me), policy())
         .expect("on its own roster");
     let server = {
         let node = node.clone();

@@ -26,9 +26,26 @@ pub enum Event {
     /// This node was told something about itself that out-ranked its own
     /// record, and answered with this incarnation.
     Refuted { incarnation: u64 },
+    /// This node announced its own departure, at this incarnation.
+    Departed { incarnation: u64 },
 }
 
+/// Who may join: from a caller's address, the member number that address is
+/// admitted as, or `None` to refuse it.
+///
+/// The member number comes out of the policy and never out of the request, so
+/// a caller cannot name itself: whoever writes the policy decides what an
+/// address is allowed to be, and the connection supplies the address.
+pub type Admission = Arc<dyn Fn(IpAddr) -> Option<Id> + Send + Sync>;
+
 struct Inner {
+    /// Connection address to member number: the members that have been
+    /// admitted. Grows when [`Admission`] lets a new address in.
+    addrs: HashMap<IpAddr, Id>,
+    /// Every member number this node knows of, itself included: those with an
+    /// address above, and those only heard about. Never shrinks, so a departed
+    /// member's record is kept and goes on out-ranking stale reports of it.
+    members: BTreeSet<Id>,
     /// One record per member that has ever been heard about. A member with no
     /// entry is exactly a member at its fresh record — the model's `record_of`
     /// says the same.
@@ -40,9 +57,9 @@ struct Inner {
 #[derive(Clone)]
 pub struct Node {
     inner: Arc<Mutex<Inner>>,
-    /// Connection address to member number. The stated assumption; see the
-    /// module docs.
-    roster: Arc<HashMap<IpAddr, Id>>,
+    /// Who else may join, if anyone. `None` is a closed cluster: the members
+    /// are exactly the ones this node was built with.
+    admission: Option<Admission>,
     /// This node's own number.
     me: Id,
 }
@@ -62,7 +79,38 @@ impl Node {
     ///
     /// Every member starts at its fresh record. Nothing is read from disk; see
     /// "What a node does not need to write down" in the module docs.
+    ///
+    /// The cluster is closed: no address off this roster can ever join. For one
+    /// that grows, see [`Node::admitting`].
     pub fn new(roster: HashMap<IpAddr, Id>, me: Id) -> io::Result<Self> {
+        Self::build(roster, me, None)
+    }
+
+    /// A node whose cluster can grow: `roster` is who it starts with, and
+    /// `admission` decides who else may join.
+    ///
+    /// A caller whose address is not yet known is put to `admission`; if that
+    /// names a member number the caller is admitted, and from then on is known
+    /// by address like any other member. There is no join call: a join is the
+    /// first `ping` or `sync` from an address the policy lets in, and the
+    /// `sync` reply is how the newcomer learns who else is there.
+    ///
+    /// Admission is a *policy*, not a protocol. SWIM says nothing about who may
+    /// be in the cluster, and a policy that admits every address makes every
+    /// address a member, with the standing the module docs describe.
+    pub fn admitting(
+        roster: HashMap<IpAddr, Id>,
+        me: Id,
+        admission: Admission,
+    ) -> io::Result<Self> {
+        Self::build(roster, me, Some(admission))
+    }
+
+    fn build(
+        roster: HashMap<IpAddr, Id>,
+        me: Id,
+        admission: Option<Admission>,
+    ) -> io::Result<Self> {
         if !roster.values().any(|&n| n == me) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -85,10 +133,12 @@ impl Node {
         }
         Ok(Node {
             inner: Arc::new(Mutex::new(Inner {
+                addrs: roster,
+                members,
                 table: SwimTable::new(),
                 log: Vec::new(),
             })),
-            roster: Arc::new(roster),
+            admission,
             me,
         })
     }
@@ -100,10 +150,10 @@ impl Node {
 
     /// What this node believes about `node`, or `None` for a non-member.
     pub fn record(&self, node: Id) -> Option<Update> {
-        if !self.is_member(node) {
+        let g = self.inner.lock().expect("node lock");
+        if !g.members.contains(&node) {
             return None;
         }
-        let g = self.inner.lock().expect("node lock");
         Some(Update::of(node, g.table.get(node)))
     }
 
@@ -158,6 +208,36 @@ impl Node {
         self.accuse(node, accusation, Some(still_suspect))
     }
 
+    /// **This node is leaving**: record itself as [`Liveness::Left`] at the
+    /// incarnation it holds, and return that record to be told to the peers.
+    ///
+    /// Written through the table's own merge, *not* through the path a received
+    /// message takes, because that path answers a record that out-ranks the
+    /// node's own with a refutation, and the whole point here is that this one
+    /// is not refuted. `Left` out-ranks every status at the same incarnation
+    /// (`proofs::merge::theorem_a_departure_outlasts_every_report_at_or_below_it`),
+    /// so nothing already in flight can undo it; only this node itself, restarting
+    /// and refuting with a higher incarnation, can come back.
+    ///
+    /// Leaving changes this node's belief and nothing else. Telling anybody is the
+    /// caller's: `ping` or `sync` a peer with the returned update, and a peer that
+    /// hears it knows this member left, which is not the same as having failed.
+    /// A node that leaves and tells nobody is, to the cluster, a node that died.
+    pub fn leave(&self) -> Update {
+        let mut g = self.inner.lock().expect("node lock");
+        let held = g.table.get(self.me);
+        let departure = ExecRecord {
+            incarnation: held.incarnation,
+            status: ExecStatus::Left,
+        };
+        if g.table.learn(self.me, departure) {
+            g.log.push(Event::Departed {
+                incarnation: held.incarnation,
+            });
+        }
+        Update::of(self.me, g.table.get(self.me))
+    }
+
     /// Merge a batch of updates, as a received message would.
     ///
     /// Public so a node can be fed what it learned by other means — a pull it
@@ -173,8 +253,23 @@ impl Node {
         if updates.len() > MAX_UPDATES {
             return Err(refuse_err("too many updates in one message"));
         }
-        if updates.iter().any(|u| !self.is_member(u.node)) {
-            return Err(refuse_err("an update names a node that is not a member"));
+        let strangers: BTreeSet<Id> = updates
+            .iter()
+            .map(|u| u.node)
+            .filter(|n| !g.members.contains(n))
+            .collect();
+        if !strangers.is_empty() {
+            // A closed cluster has no members it was not built with. An open one
+            // takes the word of a member about who else exists, the same trust it
+            // already gives a member's word about anyone's status, and bounds how
+            // many it will hold.
+            if self.admission.is_none() {
+                return Err(refuse_err("an update names a node that is not a member"));
+            }
+            if g.members.len() + strangers.len() > MAX_UPDATES {
+                return Err(refuse_err("too many members"));
+            }
+            g.members.extend(strangers);
         }
         for u in updates {
             self.merge_one(g, *u)?;
@@ -182,23 +277,38 @@ impl Node {
         Ok(())
     }
 
-    fn is_member(&self, node: Id) -> bool {
-        self.roster.values().any(|&n| n == node)
-    }
-
     /// Which member is calling, from the connection rather than the request.
-    fn caller(&self, ctx: &Context) -> Option<Id> {
-        match ctx.remote() {
-            Some(RemoteAddr::IpAddr(addr)) => self.roster.get(addr).copied(),
-            _ => None,
+    ///
+    /// An address this node has seen is the member it was admitted as. A new one
+    /// is put to the [`Admission`] policy, if there is one, and admitted if the
+    /// policy names a member number for it and there is room. Everything else is
+    /// a stranger.
+    fn caller(&self, g: &mut Inner, ctx: &Context) -> Option<Id> {
+        let Some(RemoteAddr::IpAddr(addr)) = ctx.remote() else {
+            return None;
+        };
+        if let Some(&known) = g.addrs.get(addr) {
+            return Some(known);
         }
+        let admitted = (self.admission.as_ref()?)(*addr)?;
+        // A member number that already has an address does not get a second one:
+        // that would let a new address speak as an old member. (A member only
+        // heard about, with no address yet, is admitted at its first call.)
+        if g.addrs.values().any(|&m| m == admitted) {
+            return None;
+        }
+        if !g.members.contains(&admitted) && g.members.len() >= MAX_UPDATES {
+            return None;
+        }
+        g.addrs.insert(*addr, admitted);
+        g.members.insert(admitted);
+        Some(admitted)
     }
 
     fn view_locked(&self, g: &Inner) -> Vec<Update> {
-        let members: BTreeSet<Id> = self.roster.values().copied().collect();
-        members
-            .into_iter()
-            .map(|n| Update::of(n, g.table.get(n)))
+        g.members
+            .iter()
+            .map(|&n| Update::of(n, g.table.get(n)))
             .collect()
     }
 
@@ -213,10 +323,10 @@ impl Node {
         if node == self.me {
             return Err(refuse_no("a node does not accuse itself"));
         }
-        if !self.is_member(node) {
+        let mut g = self.inner.lock().expect("node lock");
+        if !g.members.contains(&node) {
             return Err(refuse_err("not a member"));
         }
-        let mut g = self.inner.lock().expect("node lock");
         let held = g.table.get(node);
         if required.is_some_and(|r| !same(held, r)) {
             return Ok(false);
@@ -277,19 +387,19 @@ impl Node {
 
 impl Membership for Node {
     async fn ping(&self, ctx: Context, updates: Vec<Update>) -> Result<Vec<Update>> {
-        if self.caller(&ctx).is_none() {
+        let mut g = self.inner.lock().expect("node lock");
+        if self.caller(&mut g, &ctx).is_none() {
             return Err(refuse_no("unknown caller"));
         }
-        let mut g = self.inner.lock().expect("node lock");
         self.apply_locked(&mut g, &updates)?;
         Ok(self.ack(&g, &updates))
     }
 
     async fn sync(&self, ctx: Context, updates: Vec<Update>) -> Result<Vec<Update>> {
-        if self.caller(&ctx).is_none() {
+        let mut g = self.inner.lock().expect("node lock");
+        if self.caller(&mut g, &ctx).is_none() {
             return Err(refuse_no("unknown caller"));
         }
-        let mut g = self.inner.lock().expect("node lock");
         self.apply_locked(&mut g, &updates)?;
         Ok(self.view_locked(&g))
     }

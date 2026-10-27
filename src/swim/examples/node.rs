@@ -1,40 +1,48 @@
-//! A SWIM node you can run as a process, and the same nodes checked in one.
+//! A SWIM node you can run as a process, in a cluster that members join and leave.
 //!
 //! [`Node`] is a table that obeys the merge rule and answers its peers; it has no
 //! clock and no socket. What turns it into a member of a cluster is the part this
 //! file writes, in plain Rust that Verus never sees and that nothing here proves:
 //!
+//! * **join**: start knowing only yourself, and `sync` with a seed. The seed's
+//!   admission policy lets your address in as a member, and its reply is the whole
+//!   cluster. The seed tells the others by gossip; you never call them to join;
 //! * **serve**: accept a connection, hand it to the generated `MembershipService`;
 //! * **probe**: every period, `ping` one peer, piggybacking this node's whole view;
 //! * **suspect**: a ping that fails or times out makes the node believe the peer
 //!   suspect, at the incarnation it had recorded *when the probe began*;
 //! * **declare dead**: a suspicion that is not refuted within its timeout becomes
-//!   death, but only if the peer is still suspect at that incarnation.
+//!   death, but only if the peer is still suspect at that incarnation;
+//! * **leave**: record yourself `Left` and tell every peer. A node that is stopped
+//!   without doing so is, to the cluster, a node that died.
 //!
-//! The merge rule, the refutation and the refusal of strangers are the verified
-//! and tested parts. *When* to probe, whom, and how long to wait are this file's
-//! choices, and `crate::swim::model` says nothing about timing. There is no
-//! indirect ping (`ping_req`): a peer that this node alone cannot reach is
-//! suspected on this node's word.
+//! The merge rule, the departure's precedence over a failure verdict, the
+//! refutation and the refusal of strangers are the verified and tested parts.
+//! *When* to probe, whom, and how long to wait are this file's choices, and
+//! `crate::swim::model` says nothing about timing. There is no indirect ping
+//! (`ping_req`): a peer that this node alone cannot reach is suspected on this
+//! node's word.
 //!
-//! Members are addressed by loopback address, `127.0.0.<id>`, because a node knows
-//! its caller by address and a roster is a map from addresses to members. Every
-//! member listens on port 9100 of its own address and connects from it. That works
-//! on Linux, where all of `127.0.0.0/8` is loopback; elsewhere, give each member
-//! its own host instead.
+//! **Who may join is a policy, and this example's is open**: `127.0.0.<k>` for
+//! `k` in `1..=250` is member `k`, and anyone who can reach a seed from such an
+//! address is in. A real deployment writes a stricter one. Members are addressed
+//! by loopback address because a node knows its caller by address; each listens
+//! on port 9100 of its own address and connects from it. That works on Linux,
+//! where all of `127.0.0.0/8` is loopback; elsewhere, give each member its own
+//! host instead.
 //!
-//! Run a cluster of three in three terminals:
+//! Run a cluster in three terminals; the second and third join through a seed:
 //!
 //! ```text
-//! cargo run --example swim_node -- run 1 3
-//! cargo run --example swim_node -- run 2 3
-//! cargo run --example swim_node -- run 3 3
+//! cargo run --example swim_node -- run 1
+//! cargo run --example swim_node -- run 2 1
+//! cargo run --example swim_node -- run 3 2
 //! ```
 //!
-//! then stop one and watch the others suspect it and declare it dead, start it
-//! again and watch it be told what it was and outrank that. With no arguments it
-//! does the same thing inside one process and asserts it:
-//! `cargo run --example swim_node`.
+//! Type `leave` in one to see the others record a departure. Press Ctrl-C in
+//! another to see them suspect it and declare it dead. Start it again and watch it
+//! be told what it was and outrank that. With no arguments the example does all of
+//! that inside one process and asserts it: `cargo run --example swim_node`.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -44,7 +52,7 @@ use jetstream::prelude::jetstream_rpc::session::{Session, SingleLaneSession};
 use jetstream::prelude::*;
 use jetstream_distributed::id::Id;
 use jetstream_distributed::swim::service::{
-    Liveness, Membership, Node,
+    Admission, Liveness, Membership, Node, Update,
     membership_protocol::{MembershipChannel, MembershipService},
 };
 use tokio::net::{TcpListener, TcpSocket};
@@ -57,7 +65,7 @@ const PORT: u16 = 9100;
 struct Timing {
     /// How often this node pings one peer.
     probe_every: Duration,
-    /// How long a ping may take before the peer is suspected.
+    /// How long a call may take before the peer is suspected.
     probe_timeout: Duration,
     /// How long a suspicion stands before it becomes death.
     suspicion: Duration,
@@ -79,9 +87,16 @@ fn addr_of(member: u128) -> IpAddr {
     IpAddr::V4(Ipv4Addr::new(127, 0, 0, member as u8))
 }
 
-/// Members `1..=n`, each known by its own loopback address.
-fn roster(n: u128) -> HashMap<IpAddr, Id> {
-    (1..=n).map(|m| (addr_of(m), Id(m))).collect()
+/// Who may join: this example lets in any loopback address `127.0.0.1` to
+/// `127.0.0.250`, as the member with that last number.
+fn admit() -> Admission {
+    std::sync::Arc::new(|a| match a {
+        IpAddr::V4(v4) => match v4.octets() {
+            [127, 0, 0, k @ 1..=250] => Some(Id(k as u128)),
+            _ => None,
+        },
+        IpAddr::V6(_) => None,
+    })
 }
 
 /// Answer pings and syncs on `127.0.0.<me>:9100` for as long as the task lives.
@@ -92,7 +107,7 @@ async fn serve(node: Node, me: u128) -> std::io::Result<()> {
         let node = node.clone();
         tokio::spawn(async move {
             // The session reads the peer's address off the stream, and `Node`
-            // looks it up in the roster: that is where "who is calling" comes from.
+            // admits or refuses it: that is where "who is calling" comes from.
             let session = SingleLaneSession::<MembershipChannel, _, _>::service_io(stream);
             let Ok(lane) = Session::<MembershipChannel>::accept_lane(&session).await else {
                 return;
@@ -103,15 +118,24 @@ async fn serve(node: Node, me: u128) -> std::io::Result<()> {
     }
 }
 
-/// One ping to `peer`, made from this member's own address, carrying `view`.
-async fn ping(
+#[derive(Clone, Copy)]
+enum Call {
+    /// SWIM's ping, with the view piggybacked.
+    Ping,
+    /// Push/pull: send the view, get the peer's whole table back. How a node joins.
+    Sync,
+}
+
+/// One call to `peer`, made from this member's own address, carrying `view`.
+async fn call(
     me: u128,
     peer: u128,
-    view: Vec<jetstream_distributed::swim::service::Update>,
+    kind: Call,
+    view: Vec<Update>,
     within: Duration,
-) -> Result<Vec<jetstream_distributed::swim::service::Update>> {
+) -> Result<Vec<Update>> {
     let call = async {
-        // Bind the source so the peer sees `127.0.0.<me>` and finds us on its roster.
+        // Bind the source so the peer sees `127.0.0.<me>` and applies its policy to it.
         let socket = TcpSocket::new_v4()?;
         socket.bind(SocketAddr::new(addr_of(me), 0))?;
         let stream = socket.connect(SocketAddr::new(addr_of(peer), PORT)).await?;
@@ -120,26 +144,64 @@ async fn ping(
         let lane = Session::<MembershipChannel>::open_lane(&session).await?;
         let channel = MembershipChannel::new(64, Box::new(lane));
         channel.negotiate_version(u32::MAX).await?;
-        channel.ping(Context::default(), view).await
+        match kind {
+            Call::Ping => channel.ping(Context::default(), view).await,
+            Call::Sync => channel.sync(Context::default(), view).await,
+        }
     };
     match tokio::time::timeout(within, call).await {
         Ok(reply) => reply,
-        Err(_) => Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "ping timed out").into()),
+        Err(_) => Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "call timed out").into()),
     }
 }
 
-/// Probe the other members in turn, forever.
-async fn probe(node: Node, me: u128, members: u128, timing: Timing, verbose: bool) {
-    let peers: Vec<u128> = (1..=members).filter(|&m| m != me).collect();
+/// The members this node would probe: everyone it has heard of except itself and
+/// those that left. A member declared dead is still probed, because it may come back.
+fn peers(node: &Node, me: u128) -> Vec<u128> {
+    node.view()
+        .into_iter()
+        .filter(|u| u.node.0 != me && u.status != Liveness::Left)
+        .map(|u| u.node.0)
+        .collect()
+}
+
+/// Join through `seed`, then probe whoever the cluster turns out to hold, forever.
+async fn probe(node: Node, me: u128, seed: Option<u128>, timing: Timing, verbose: bool) {
+    // A join is a sync with the seed; its reply is the cluster. The seed may not be
+    // up yet, so keep asking.
+    if let Some(seed) = seed {
+        loop {
+            match call(me, seed, Call::Sync, node.view(), timing.probe_timeout).await {
+                Ok(table) => {
+                    if let Err(e) = node.apply(&table) {
+                        eprintln!("[{me}] refused the seed's table: {e}");
+                    }
+                    break;
+                }
+                Err(e) => {
+                    if verbose {
+                        eprintln!("[{me}] cannot reach seed {seed} yet ({e})");
+                    }
+                    tokio::time::sleep(timing.probe_every).await;
+                }
+            }
+        }
+    }
     let mut seen = node.log().len();
-    for peer in peers.iter().cycle() {
+    let mut turn = 0usize;
+    loop {
         tokio::time::sleep(timing.probe_every).await;
-        let peer = *peer;
+        let peers = peers(&node, me);
+        if peers.is_empty() {
+            continue;
+        }
+        let peer = peers[turn % peers.len()];
+        turn += 1;
         // The incarnation this node holds *now*, before the ping: a refutation
         // may land while the ping is in flight, and the accusation must not
         // outlive it.
         let held = node.record(Id(peer)).expect("a member").incarnation;
-        match ping(me, peer, node.view(), timing.probe_timeout).await {
+        match call(me, peer, Call::Ping, node.view(), timing.probe_timeout).await {
             // The ack is the peer's own word about everyone the ping mentioned,
             // including itself: the evidence that it is up.
             Ok(ack) => {
@@ -169,11 +231,18 @@ async fn probe(node: Node, me: u128, members: u128, timing: Timing, verbose: boo
     }
 }
 
-/// Start member `me` of `members`: a fresh node, serving and probing.
-fn start(me: u128, members: u128, timing: Timing, verbose: bool) -> (Node, Vec<JoinHandle<()>>) {
+/// Start member `me`: a fresh node that knows only itself, serving and probing,
+/// and joining through `seed` if there is one.
+fn start(
+    me: u128,
+    seed: Option<u128>,
+    timing: Timing,
+    verbose: bool,
+) -> (Node, Vec<JoinHandle<()>>) {
     // A node starts at incarnation 0 and keeps nothing on disk. A restart is
     // corrected by the first peer that tells it what the cluster thinks of it.
-    let node = Node::new(roster(members), Id(me)).expect("on its own roster");
+    let node = Node::admitting(HashMap::from([(addr_of(me), Id(me))]), Id(me), admit())
+        .expect("on its own roster");
     let server = {
         let node = node.clone();
         tokio::spawn(async move {
@@ -182,12 +251,21 @@ fn start(me: u128, members: u128, timing: Timing, verbose: bool) -> (Node, Vec<J
             }
         })
     };
-    let prober = tokio::spawn(probe(node.clone(), me, members, timing, verbose));
+    let prober = tokio::spawn(probe(node.clone(), me, seed, timing, verbose));
     (node, vec![server, prober])
 }
 
-fn status(node: &Node, of: u128) -> Liveness {
-    node.record(Id(of)).expect("a member").status
+/// Leave: record the departure and tell every peer this node knows of.
+async fn leave(node: &Node, me: u128, timing: Timing) {
+    let said = node.leave();
+    for peer in peers(node, me) {
+        // A peer that cannot be reached is told by gossip from one that can.
+        let _ = call(me, peer, Call::Ping, vec![said], timing.probe_timeout).await;
+    }
+}
+
+fn status(node: &Node, of: u128) -> Option<Liveness> {
+    node.record(Id(of)).map(|u| u.status)
 }
 
 async fn until(what: &str, mut ready: impl FnMut() -> bool) {
@@ -198,84 +276,120 @@ async fn until(what: &str, mut ready: impl FnMut() -> bool) {
     }
 }
 
-/// Three members in one process: let them find each other, kill one, watch the
-/// others declare it dead, bring it back.
-async fn demonstrate() {
-    let (n1, _t1) = start(1, 3, FAST, false);
-    let (n2, _t2) = start(2, 3, FAST, false);
-    let (_n3, t3) = start(3, 3, FAST, false);
-
-    // Everyone alive, and the probes have run long enough to have heard from all.
-    tokio::time::sleep(Duration::from_millis(400)).await;
-    assert_eq!(status(&n1, 3), Liveness::Alive);
-    assert_eq!(status(&n2, 3), Liveness::Alive);
-    println!("three members, all alive");
-
-    // Member 3 stops answering. Its listener goes with its task.
-    for task in &t3 {
+fn stop(tasks: &[JoinHandle<()>]) {
+    for task in tasks {
         task.abort();
     }
-    until("both survivors to declare 3 dead", || {
-        status(&n1, 3) == Liveness::Dead && status(&n2, 3) == Liveness::Dead
-    })
-    .await;
-    println!("member 3 stopped: members 1 and 2 declared it dead");
-    assert_eq!(status(&n1, 2), Liveness::Alive, "and nobody else with it");
+}
 
-    // Member 3 starts again as a new process would: incarnation 0, no memory.
-    // Its first caller tells it the cluster has it dead at 0; that out-ranks its
-    // own record, so it answers with incarnation 1, and the ack carries that back.
-    let (n3, _t3) = start(3, 3, FAST, false);
-    until("both survivors to see 3 alive again", || {
-        status(&n1, 3) == Liveness::Alive && status(&n2, 3) == Liveness::Alive
+/// Members join through different seeds, one leaves, one is stopped, and the
+/// one that left comes back.
+async fn demonstrate() {
+    // 1 starts alone; 2 joins through 1; 3 joins through 2, whose reply is how 3
+    // learns of 1. 1 learns of 3 by gossip from 2.
+    let (n1, _t1) = start(1, None, FAST, false);
+    let (n2, t2) = start(2, Some(1), FAST, false);
+    let (n3, t3) = start(3, Some(2), FAST, false);
+    until("every member to know every other, alive", || {
+        [(&n1, 2), (&n1, 3), (&n2, 3), (&n3, 1)]
+            .iter()
+            .all(|(n, of)| status(n, *of) == Some(Liveness::Alive))
     })
     .await;
-    let again = n1.record(Id(3)).unwrap();
-    assert!(
-        again.incarnation >= 1,
-        "alive again only at a higher incarnation"
-    );
+    println!("three members joined through two seeds, and all know each other");
+
+    // 3 leaves, and says so. The others record a departure, not a failure.
+    leave(&n3, 3, FAST).await;
+    until("1 and 2 to record 3 as having left", || {
+        status(&n1, 3) == Some(Liveness::Left) && status(&n2, 3) == Some(Liveness::Left)
+    })
+    .await;
+    stop(&t3);
+    // A suspicion that was already running for 3 would have no effect: wait it out.
+    tokio::time::sleep(FAST.suspicion * 2).await;
+    assert_eq!(status(&n1, 3), Some(Liveness::Left), "left, and not dead");
+    println!("member 3 left: members 1 and 2 recorded a departure, not a failure");
+
+    // 2 is stopped without leaving. To the cluster that is a failure.
+    stop(&t2);
+    until("1 to declare 2 dead", || {
+        status(&n1, 2) == Some(Liveness::Dead)
+    })
+    .await;
+    println!("member 2 stopped without leaving: member 1 declared it dead");
+
+    // 3 starts again, as a new process would: incarnation 0, no memory. It joins
+    // through 1, which holds it as having left, and says so in its reply; that
+    // out-ranks 3's own record, so 3 answers with a higher incarnation.
+    let (n3, _t3) = start(3, Some(1), FAST, false);
+    until("1 to see 3 alive again", || {
+        status(&n1, 3) == Some(Liveness::Alive)
+    })
+    .await;
+    let back = n1.record(Id(3)).unwrap();
+    assert!(back.incarnation >= 1, "back only at a higher incarnation");
     assert!(n3.record(Id(3)).unwrap().incarnation >= 1);
     println!(
-        "member 3 restarted: alive again at incarnation {}",
-        again.incarnation
+        "member 3 rejoined: alive again at incarnation {}",
+        back.incarnation
     );
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match args.iter().map(String::as_str).collect::<Vec<_>>()[..] {
-        [] => demonstrate().await,
-        ["run", me, members] => {
-            let me: u128 = me.parse().expect("a member number");
-            let members: u128 = members.parse().expect("a member count");
-            assert!(
-                (1..=members).contains(&me) && members <= 250,
-                "1 <= id <= n <= 250"
-            );
-            let (node, tasks) = start(me, members, LIVE, true);
-            eprintln!("[{me}] member {me} of {members}, on 127.0.0.{me}:{PORT}");
-            let mut shown = Vec::new();
-            loop {
-                tokio::time::sleep(LIVE.probe_every * 5).await;
-                let view = node.view();
-                if view != shown {
-                    let line: Vec<String> = view
-                        .iter()
-                        .map(|u| format!("{}:{:?}@{}", u.node.0, u.status, u.incarnation))
-                        .collect();
-                    println!("[{me}] view: {}", line.join(" "));
-                    shown = view;
-                }
-                if tasks.iter().any(|t| t.is_finished()) {
-                    std::process::exit(1);
-                }
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (me, seed) = match args[..] {
+        [] => return demonstrate().await,
+        ["run", me] => (me, None),
+        ["run", me, seed] => (me, Some(seed)),
+        _ => {
+            eprintln!("usage: swim_node [run <id> [<seed id>]]");
+            std::process::exit(2);
+        }
+    };
+    let me: u128 = me.parse().expect("a member number");
+    let seed: Option<u128> = seed.map(|s| s.parse().expect("a member number"));
+    assert!((1..=250).contains(&me), "1 <= id <= 250");
+
+    let (node, tasks) = start(me, seed, LIVE, true);
+    eprintln!("[{me}] member {me} on 127.0.0.{me}:{PORT}; type `leave` to leave");
+
+    // Typing `leave` leaves. A closed stdin does nothing: only a person saying so
+    // is a departure.
+    let (told, mut leaving) = tokio::sync::oneshot::channel::<()>();
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        while std::io::stdin().read_line(&mut line).is_ok_and(|n| n > 0) {
+            if line.trim() == "leave" {
+                let _ = told.send(());
+                return;
+            }
+            line.clear();
+        }
+    });
+
+    let mut shown = Vec::new();
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(LIVE.probe_every * 2) => {}
+            Ok(()) = &mut leaving => {
+                leave(&node, me, LIVE).await;
+                eprintln!("[{me}] left, and told the cluster");
+                return;
             }
         }
-        _ => {
-            eprintln!("usage: swim_node [run <id> <members>]");
-            std::process::exit(2);
+        let view = node.view();
+        if view != shown {
+            let line: Vec<String> = view
+                .iter()
+                .map(|u| format!("{}:{:?}@{}", u.node.0, u.status, u.incarnation))
+                .collect();
+            println!("[{me}] view: {}", line.join(" "));
+            shown = view;
+        }
+        if tasks.iter().any(|t| t.is_finished()) {
+            std::process::exit(1);
         }
     }
 }

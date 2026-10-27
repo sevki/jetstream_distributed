@@ -27,7 +27,7 @@ choice of *which record arrived*:
 
 ## What is proved
 
-The claims are S1 to S12 in the Reference. In words:
+The claims are S1 to S14 in the Reference. In words:
 
 | | claim |
 | --- | --- |
@@ -35,6 +35,7 @@ The claims are S1 to S12 in the Reference. In words:
 | S5 | across a whole run, **no node's record about any peer ever moves backward**: the actual convergence argument |
 | S7–S9 | the executable merge is the model's; a refutation is a gossip step and out-ranks what it answers |
 | S10–S12 | the node's table learns by the model's gossip step, and never believes less than it did |
+| S13–S14 | a departure (`Left`) cannot be undone by a late failure report, and only a higher incarnation, which only the departed member can produce, brings it back |
 
 Idempotence and absorbing a repeat are what let gossip's real delivery model, at least
 once and arbitrarily duplicated, survive contact with `merge` at all. Commutativity and
@@ -47,10 +48,13 @@ arrives, only that whatever arrives never makes a view *less accurate* than it w
 - **No probe scheduler, no indirect-ping fallback, no dissemination budget.** The model is
   the merge rule and one transition. How often to probe, and what to piggyback, is not
   modelled, so nothing here says gossip *eventually arrives*.
-- **No voluntary leave.** A graceful departure and a failure-detected one have different
-  precedence and rejoin rules in memberlist. Here the status covers failure detection
-  only, so a node that leaves on purpose is not representable, rather than
-  misrepresented as a failure.
+- **No memberlist-style rejoin handshake.** A graceful departure is `Left`, which out-ranks
+  a failure verdict at the same incarnation. A member that comes back is an ordinary
+  node that hears it is gone and refutes with a higher incarnation, exactly as after
+  `Dead`. Memberlist gives a rejoin its own rules; here there are none.
+- **Nothing is forgotten.** A departed or dead member's record is kept, because it is what
+  stops a stale report from reviving it, and it counts against the same bound on members.
+  A cluster that churns through many identities will fill it.
 - **A node writes nothing down.** Incarnations are self-correcting: a restarted node
   begins at 0, and the first peer to tell it what the cluster believes about it out-ranks
   its record and is answered with a higher incarnation. A restart costs a round trip, not
@@ -64,6 +68,22 @@ Suspecting a peer, declaring it dead and refuting an accusation are **not on the
 They are things a node does about its own view, and putting them on the wire would let
 any caller make this node believe anything. A node suspects a peer because *its own*
 probe failed.
+
+**Who is in the cluster is the roster, and it can be closed or grow.** `Node::new` builds
+a closed cluster: the members are the ones it was given, and a batch naming anyone else is
+refused. `Node::admitting` builds one that grows, with an *admission policy*, a function
+from a caller's address to the member number that address may be. There is no join call.
+A join is the first `ping` or `sync` from an address the policy lets in; the `sync` reply
+is the whole table, so the newcomer learns who is there; and the others hear of it by
+gossip. The member number comes from the policy and the connection, never from the
+request. To leave, a node calls `leave`, which records it as `Left` and hands back that
+record to tell the peers. A node that is stopped without doing so is, to the cluster, a
+node that died, and the two are different records.
+
+What this does not settle is *who* should be admitted. SWIM says nothing about that, and
+the example's policy lets in every loopback address. Where a member lives is the
+deployment's mapping from member number to address, not something SWIM gossips. A member
+that comes back must do so from the same address.
 
 ## How it relates to the rest
 

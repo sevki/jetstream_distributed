@@ -1,4 +1,4 @@
-//! **The merge algebra.** Four facts about [`merge`], none of which mentions
+//! **The merge algebra.** Facts about [`merge`], none of which mentions
 //! a cluster, a step or a run — the point of proving them at this level is
 //! that [`crate::swim::proofs::monotone`] then gets to lift them without
 //! re-deriving any arithmetic.
@@ -277,6 +277,59 @@ pub proof fn lemma_key_geq_transitive(a: MemberRecord, b: MemberRecord, c: Membe
             assert(status_rank(a.status) >= status_rank(c.status));
             assert(key_geq(a, c));
         }
+    }
+}
+
+/// **No report at the same or an older incarnation can undo a departure.**
+///
+/// A node that has left stays left against everything that was already in
+/// flight when it left: a suspicion timer started before the departure, a
+/// `Dead` verdict that arrives late, an `Alive` record from before. All of them
+/// carry an incarnation no higher than the departure's, and `Left` is the
+/// highest rank, so `merge` returns the departure unchanged.
+///
+/// The one record at the same incarnation that *is* `Left` is the departure
+/// itself, and by [`lemma_rank_is_injective`] it is the same record, so merging
+/// it in again changes nothing either.
+pub proof fn theorem_a_departure_outlasts_every_report_at_or_below_it(
+    left: MemberRecord,
+    r: MemberRecord,
+)
+    requires
+        left.status == Status::Left,
+        r.incarnation <= left.incarnation,
+    ensures
+        merge(left, r) == left,
+{
+    if r.incarnation < left.incarnation {
+        assert(!key_geq(r, left));
+    } else if r.status == Status::Left {
+        assert(r == left);
+        assert(key_geq(r, left));
+    } else {
+        assert(status_rank(r.status) < status_rank(left.status));
+        assert(!key_geq(r, left));
+    }
+}
+
+/// **Only a higher incarnation brings a departed member back.**
+///
+/// The converse of the theorem above, and the form a service uses: if hearing
+/// a record changed what a node believed about a member that had left, then the
+/// record carried a higher incarnation, which only that member can have
+/// produced. Nobody else can revive it.
+pub proof fn theorem_only_a_higher_incarnation_revives_a_departure(
+    left: MemberRecord,
+    r: MemberRecord,
+)
+    requires
+        left.status == Status::Left,
+        merge(left, r) != left,
+    ensures
+        r.incarnation > left.incarnation,
+{
+    if r.incarnation <= left.incarnation {
+        theorem_a_departure_outlasts_every_report_at_or_below_it(left, r);
     }
 }
 

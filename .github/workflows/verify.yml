@@ -543,6 +543,7 @@ jobs:
             --test raft_log \
             --test raft_store \
             --test swim_membership \
+            --test swim_dynamic \
             --test swim_turmoil \
             --test raymond_routing \
             --test raymond_turmoil \

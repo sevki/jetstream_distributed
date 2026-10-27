@@ -203,3 +203,129 @@ fn a_caller_off_the_roster_is_refused_over_the_wire() {
         "and nothing it said was applied"
     );
 }
+
+/// A node that listens and also makes calls, as a real member does: a turmoil
+/// client that spawns its own server.
+macro_rules! listen {
+    ($node:expr) => {
+        let node: Node = $node.clone();
+        tokio::spawn(async move {
+            let listener = TcpListener::bind((IpAddr::from(Ipv4Addr::UNSPECIFIED), PORT))
+                .await
+                .expect("bind");
+            loop {
+                let (stream, _) = listener.accept().await.expect("accept");
+                let node = node.clone();
+                tokio::spawn(async move {
+                    let session = SingleLaneSession::<MembershipChannel, _, _>::service_io(stream);
+                    let Ok(lane) = Session::<MembershipChannel>::accept_lane(&session).await else {
+                        return;
+                    };
+                    let mut service = MembershipService { inner: node };
+                    let _ = jetstream_rpc::server::run(&mut service, lane).await;
+                });
+            }
+        });
+    };
+}
+
+fn open_node(me: &str, id: u128) -> Node {
+    let policy: jetstream_distributed::swim::service::Admission =
+        Arc::new(|a| roster().get(&a).copied());
+    Node::admitting(
+        HashMap::from([(turmoil::lookup(me), Id(id))]),
+        Id(id),
+        policy,
+    )
+    .expect("on its own roster")
+}
+
+/// **Joining over the wire, through a member that is not the first, and leaving.**
+///
+/// `b` starts alone. `c` joins by syncing with `b`. `a` then joins by syncing with
+/// `c`, not `b`: it learns `b` from `c`'s reply, and `b` learns of `a` only when
+/// `c` next pings it, because membership spreads by gossip like everything else.
+/// Then `c` leaves and says so, and `b` records a departure, not a failure, which
+/// the suspicion timer `b` had running for `c` cannot undo.
+#[test]
+fn a_node_joins_through_any_member_and_a_departure_spreads() {
+    let mut sim = turmoil::Builder::new().build();
+    let b_slot: Arc<OnceLock<Node>> = Arc::new(OnceLock::new());
+    let a_slot: Arc<OnceLock<Node>> = Arc::new(OnceLock::new());
+    let c_slot: Arc<OnceLock<Node>> = Arc::new(OnceLock::new());
+
+    let b_in = b_slot.clone();
+    sim.host("b", move || {
+        let b_in = b_in.clone();
+        async move {
+            let node = b_in.get_or_init(|| open_node("b", 1)).clone();
+            listen!(node);
+            std::future::pending::<()>().await;
+            Ok(())
+        }
+    });
+
+    let c_in = c_slot.clone();
+    sim.client("c", async move {
+        let c = c_in.get_or_init(|| open_node("c", 2)).clone();
+        listen!(c);
+        // Join b: the call is the join, the reply is b's whole table.
+        {
+            connect!("b", _s, ch);
+            let reply = ch.sync(Context::default(), c.view()).await.unwrap();
+            c.apply(&reply).unwrap();
+        }
+        // Wait for a to join c, then gossip to b, as a probe would.
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        assert_eq!(
+            c.record(Id(0)),
+            Some(u(0, 0, Liveness::Alive)),
+            "c admitted a"
+        );
+        {
+            connect!("b", _s, ch);
+            let ack = ch.ping(Context::default(), c.view()).await.unwrap();
+            c.apply(&ack).unwrap();
+        }
+        // Leave, and tell b.
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        let said = c.leave();
+        {
+            connect!("b", _s, ch);
+            ch.ping(Context::default(), vec![said]).await.unwrap();
+        }
+        Ok(())
+    });
+
+    let a_in = a_slot.clone();
+    sim.client("a", async move {
+        let a = a_in.get_or_init(|| open_node("a", 0)).clone();
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        connect!("c", _s, ch);
+        let reply = ch.sync(Context::default(), a.view()).await.unwrap();
+        a.apply(&reply).unwrap();
+        assert_eq!(
+            a.record(Id(1)),
+            Some(u(1, 0, Liveness::Alive)),
+            "a learned b from c, which is the only one it called"
+        );
+        Ok(())
+    });
+
+    sim.run().expect("the simulation runs to completion");
+    let b = b_slot.get().expect("b built its node");
+    assert_eq!(
+        b.record(Id(0)),
+        Some(u(0, 0, Liveness::Alive)),
+        "b heard of a by gossip, having never been called by it"
+    );
+    assert_eq!(
+        b.record(Id(2)),
+        Some(u(2, 0, Liveness::Left)),
+        "and c's departure arrived as one"
+    );
+    assert!(
+        !b.suspect(Id(2), 0).unwrap() && !b.declare_dead(Id(2), 0).unwrap(),
+        "a suspicion timer already running for c cannot turn it into a failure"
+    );
+}

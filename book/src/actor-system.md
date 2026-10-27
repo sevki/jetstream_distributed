@@ -63,7 +63,7 @@ the old address is answered `FENCED`.
 | Membership says | The directory |
 | --- | --- |
 | `Suspect` | places nothing new on the host; what is already there is still found, because a suspect host may be fine |
-| `Dead` | no longer places on the host, no longer finds what was placed on it, and **returns its jobs** to the caller |
+| `Dead` or `Left` (the host announced its departure; treated alike, since either way its actors have to go elsewhere) | no longer places on the host, no longer finds what was placed on it, and **returns its jobs** to the caller |
 | `Alive` again | places on it again, empty |
 
 A host is made placeable again only if the directory is what made it unplaceable, so a

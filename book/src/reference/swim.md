@@ -42,11 +42,37 @@ of *which* record arrived, not a different rule for applying it.
 | S10 | **The node's table is the model.** `exec::SwimTable` — what a node keeps — reads the model's `record_of` (no entry is the fresh record), and `learn` writes `merge` of what is held and what arrived and changes nothing else; a table standing for a cluster that learns a record stands for the cluster `tr_gossip` leads to, and a fresh table stands for `swim_init` | `swim::proofs::table::theorem_new_table_is_the_initial_cluster`, `theorem_learn_is_a_gossip_step` | the table is well formed (each member once) |
 | S11 | **Hearing an accusation about oneself is two gossip steps.** `SwimTable::hear` merges the record and, if it was the node's *own* that changed, merges the refutation on top of it; the model sees `tr_gossip` twice, and the table ends up believing the refutation. At the top of the incarnation space the second step is refused and the first has happened | `swim::proofs::table::theorem_hearing_oneself_accused_is_two_gossip_steps` | the table stands for the cluster |
 | S12 | **A table never believes less than it did, and always stands for a reachable cluster.** Whatever it learns, what it then holds for any member out-ranks or equals what it held; and a reachable cluster plus a learned record is a reachable cluster, so S5 is a statement about what the table holds | `swim::proofs::table::theorem_learning_never_lowers_a_belief`, `theorem_a_table_stands_for_a_reachable_cluster_after_learning` | the table stands for a reachable cluster |
+| S13 | **A departure outlasts every report at or below its incarnation.** `Left` ranks above `Dead`, so a suspicion timer that was already running, a late `Dead` verdict, or an old `Alive` cannot turn a node that announced its leaving into a failure or a recovery; merging any record at the same or an older incarnation into a `Left` record returns it unchanged. The one same-incarnation record that is itself `Left` is the same record, so repeating it changes nothing | `swim::proofs::merge::theorem_a_departure_outlasts_every_report_at_or_below_it` | none |
+| S14 | **Only a higher incarnation brings a departed member back.** The converse of S13 in the form a service uses: if hearing a record changed what a node believed about a member that had left, the record carried a higher incarnation, which only that member can have produced. Nobody else can revive it | `swim::proofs::merge::theorem_only_a_higher_incarnation_revives_a_departure` | none beyond S13 |
 
-**What S10–S12 do not cover.** The table is a verified core, and `Node` is the
-shell around it: the roster (which numbers are members, who may speak), the lock,
-the audit log, the batch limit, and the order a batch is applied in are plain Rust
-that the tests exercise. The theorems are about one record at a time.
+**What S10–S14 do not cover.** The table is a verified core, and `Node` is the
+shell around it: the roster and the admission policy (which numbers are members,
+who may speak and who may join), the lock, the audit log, the batch limit, and the
+order a batch is applied in are plain Rust that the tests exercise. The theorems
+are about one record at a time. In particular nothing proves that `Node::leave`
+writes the departure *without* answering it with a refutation: it does so by
+calling the table's own `learn` rather than the path a received message takes, and
+`tests/swim_dynamic.rs::a_node_does_not_refute_its_own_departure` is what fails if
+that changes.
+
+**Joining and leaving.** The model never assumed a fixed membership: a node absent
+from the view is exactly a node at the fresh record. What was fixed was the
+*service's* roster. `Node::new` still builds that closed cluster. `Node::admitting`
+builds one that grows: a caller whose address is not yet known is put to an
+`Admission` policy, a function from the connection's address to the member number
+that address may be, and is admitted if the policy names one and there is room.
+There is no join call: a join is the first `ping` or `sync` from an address the
+policy lets in, the `sync` reply is the whole table, and the others hear of the
+newcomer by gossip. The member number comes out of the policy and the connection,
+never out of the request. `Node::leave` records the node as `Left` at its held
+incarnation and returns that record for the caller to tell its peers. What this
+does **not** do: nothing decides who the policy should admit (the example's admits
+every loopback address; a deployment writes its own); where a member lives is the
+deployment's mapping from member number to address, not something SWIM gossips;
+members are never forgotten, so a departed member's record is kept (it is what
+keeps S13 true) and counts against the same bound of `MAX_UPDATES` members; a member
+that comes back must do so from the same address; and a node that leaves and tells
+nobody is, to the cluster, a node that died.
 
 **S4 is worth pausing on, because the asymmetry it dismisses is real.**
 `key_geq(a, b)` and `key_geq(b, a)` are different expressions, and reading
@@ -57,7 +83,7 @@ theorem true anyway is `status_rank`'s injectivity: a `MemberRecord` is
 exactly its incarnation and its status, and if two records tie on
 `key_geq` — equal incarnation, equal rank — then by injectivity they have
 equal status too, so they were never two different records to begin with.
-`lemma_rank_is_injective` is a three-line case split on three enum variants;
+`lemma_rank_is_injective` is a case split on the four enum variants;
 S4 is the only theorem in this module that spends it.
 
 **What the proofs are not** is a claim that gossip converges *in practice*.
@@ -107,13 +133,22 @@ S6 exercised through the service rather than assumed of it.
 `tests/swim_turmoil.rs` runs SWIM's own story across a simulated network: a node
 that cannot reach a peer suspects it, the partition heals, the suspicion reaches
 the suspected node, which is alive and refutes it, and the refutation comes back
-in the reply and clears the suspicion.
+in the reply and clears the suspicion. `tests/swim_dynamic.rs` is the growing
+cluster: a join is a first call and the reply is the cluster, a stranger the policy
+refuses stays a stranger, a closed node still refuses to learn of members it was
+not built with, a second address cannot speak as an existing member, the cluster
+is bounded, a departure survives a late suspicion and a late `Dead`, a node does
+not refute its own departure but does refute one it did not announce, and a
+departed member returns at a higher incarnation. The same file's wire test in
+`tests/swim_turmoil.rs` has a node join through a member that is not the first,
+the rest hear of it by gossip, and a departure arrive as one.
 
 **What the service does not have**, and what it does not claim. A caller is
-identified by address against a fixed roster, and *an address is not a
+identified by address, against the roster the node holds (fixed for `Node::new`,
+growing by policy for `Node::admitting`), and *an address is not a
 credential* (the stated assumption every service here makes) — and SWIM
-sharpens it, because any rostered caller may gossip about any member, so a
-rostered node that lies about a third party is believed. SWIM's failure model is
+sharpens it, because any member may gossip about any member, so a
+member that lies about a third party is believed. SWIM's failure model is
 crash faults, not Byzantine ones. There is no probe timer, no indirect-ping
 fallback (`ping_req`), and no piggyback *budget*: a node sends what its caller
 hands it. That loop — pick a peer, note its incarnation, wait out a timeout, call `suspect` with the incarnation it noted — is where

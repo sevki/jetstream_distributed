@@ -49,22 +49,26 @@ verus! {
 /// is. The order — not the declaration order, which Rust does not expose to
 /// spec code anyway — is fixed by [`status_rank`].
 ///
-/// memberlist also has a `StateLeft`, for a node that announced its own
-/// departure rather than being suspected or declared dead by others, and
-/// gives it different precedence and join-handling rules from `StateDead`.
-/// That distinction is deliberately not modeled here: this increment covers
-/// only failure detection — a peer that stops responding — not voluntary
-/// membership changes. A `Left` variant, and the precedence rule for it,
-/// belongs with whatever future increment models graceful leave and rejoin.
+/// `Left` is memberlist's `StateLeft`: a node announced its own departure,
+/// rather than being suspected or declared dead by others. It ranks above
+/// `Dead` so that a failure verdict at the same incarnation — a suspicion timer
+/// that was already running, a late `Dead` report — cannot turn a departure back
+/// into a failure. Only a higher incarnation, which only the node itself can
+/// produce, brings a member back from either.
+///
+/// What is *not* modelled is memberlist's different treatment of `Left` on
+/// rejoin. Here a rejoining node is an ordinary node that hears it is gone and
+/// refutes with a higher incarnation, exactly as after a `Dead` verdict.
 pub enum Status {
     Alive,
     Suspect,
     Dead,
+    Left,
 }
 
-/// The rank [`Status`] compares by: `Alive` < `Suspect` < `Dead`.
+/// The rank [`Status`] compares by: `Alive` < `Suspect` < `Dead` < `Left`.
 ///
-/// Injective by construction — three variants, three distinct naturals — and
+/// Injective by construction — four variants, four distinct naturals — and
 /// [`lemma_rank_is_injective`] is that fact made available to a proof rather
 /// than left for one to rediscover by matching on both arguments itself.
 pub open spec fn status_rank(s: Status) -> nat {
@@ -72,6 +76,7 @@ pub open spec fn status_rank(s: Status) -> nat {
         Status::Alive => 0,
         Status::Suspect => 1,
         Status::Dead => 2,
+        Status::Left => 3,
     }
 }
 
@@ -95,6 +100,7 @@ pub proof fn lemma_rank_is_injective(a: Status, b: Status)
                 Status::Alive => {},
                 Status::Suspect => { assert(false); },
                 Status::Dead => { assert(false); },
+                Status::Left => { assert(false); },
             }
         },
         Status::Suspect => {
@@ -102,6 +108,7 @@ pub proof fn lemma_rank_is_injective(a: Status, b: Status)
                 Status::Alive => { assert(false); },
                 Status::Suspect => {},
                 Status::Dead => { assert(false); },
+                Status::Left => { assert(false); },
             }
         },
         Status::Dead => {
@@ -109,6 +116,15 @@ pub proof fn lemma_rank_is_injective(a: Status, b: Status)
                 Status::Alive => { assert(false); },
                 Status::Suspect => { assert(false); },
                 Status::Dead => {},
+                Status::Left => { assert(false); },
+            }
+        },
+        Status::Left => {
+            match b {
+                Status::Alive => { assert(false); },
+                Status::Suspect => { assert(false); },
+                Status::Dead => { assert(false); },
+                Status::Left => {},
             }
         },
     }

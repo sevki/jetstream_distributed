@@ -224,6 +224,11 @@ path = "tests/swim_membership.rs"
 required-features = ["service"]
 
 [[test]]
+name = "swim_dynamic"
+path = "tests/swim_dynamic.rs"
+required-features = ["service"]
+
+[[test]]
 name = "swim_turmoil"
 path = "tests/swim_turmoil.rs"
 required-features = ["service"]

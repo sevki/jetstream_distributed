@@ -31,6 +31,7 @@
 - [Raft: the same statement, bought by counting](reference/raft.md)
 - [Actor: a journal fenced by ownership](reference/actor.md)
 - [SWIM: gossip membership](reference/swim.md)
+- [Protocol: the shape every model has](reference/protocol.md)
 - [The protocol as a Jetstream service](reference/services.md)
 - [Network resiliency: the model, run for real](reference/simulation.md)
 - [Status: proven, modelled, future work](reference/status.md)

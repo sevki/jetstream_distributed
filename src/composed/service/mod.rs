@@ -43,8 +43,9 @@
 //! # Liveness, stated
 //!
 //! The composed *model* guards some steps on `own.live`, which is ground truth.
-//! This service has no `Crash` or `Recover`: it refines the composed machine's
-//! executions in which no node crashes. See [`crate::composed::steps`] for the
+//! This service has no `Crash` or `Recover`: the steps it calls refine the composed
+//! machine's executions in which no node crashes, and the service around them is
+//! plain Rust and tested. See [`crate::composed::steps`] for the
 //! argument, and for why that still covers the case the machine exists for —
 //! taking the privilege from a holder that is merely unreachable.
 //!

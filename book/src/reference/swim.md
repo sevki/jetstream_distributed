@@ -43,7 +43,7 @@ of *which* record arrived, not a different rule for applying it.
 | S11 | **Hearing an accusation about oneself is two gossip steps.** `SwimTable::hear` merges the record and, if it was the node's *own* that changed, merges the refutation on top of it; the model sees `tr_gossip` twice, and the table ends up believing the refutation. At the top of the incarnation space the second step is refused and the first has happened | `swim::proofs::table::theorem_hearing_oneself_accused_is_two_gossip_steps` | the table stands for the cluster |
 | S12 | **A table never believes less than it did, and always stands for a reachable cluster.** Whatever it learns, what it then holds for any member out-ranks or equals what it held; and a reachable cluster plus a learned record is a reachable cluster, so S5 is a statement about what the table holds | `swim::proofs::table::theorem_learning_never_lowers_a_belief`, `theorem_a_table_stands_for_a_reachable_cluster_after_learning` | the table stands for a reachable cluster |
 | S13 | **A departure outlasts every report at or below its incarnation.** `Left` ranks above `Dead`, so a suspicion timer that was already running, a late `Dead` verdict, or an old `Alive` cannot turn a node that announced its leaving into a failure or a recovery; merging any record at the same or an older incarnation into a `Left` record returns it unchanged. The one same-incarnation record that is itself `Left` is the same record, so repeating it changes nothing | `swim::proofs::merge::theorem_a_departure_outlasts_every_report_at_or_below_it` | none |
-| S14 | **Only a higher incarnation brings a departed member back.** The converse of S13 in the form a service uses: if hearing a record changed what a node believed about a member that had left, the record carried a higher incarnation, which only that member can have produced. Nobody else can revive it | `swim::proofs::merge::theorem_only_a_higher_incarnation_revives_a_departure` | none beyond S13 |
+| S14 | **Only a higher incarnation brings a departed member back.** The converse of S13 in the form a service uses: if hearing a record changed what a node believed about a member that had left, the record carried a higher incarnation. **Not claimed:** that only that member can produce one. In the crash-fault model it does, by refuting; the service believes any member's word about any other, so a lying member can revive a departed one | `swim::proofs::merge::theorem_only_a_higher_incarnation_revives_a_departure` | none beyond S13 |
 
 **What S10–S14 do not cover.** The table is a verified core, and `Node` is the
 shell around it: the roster and the admission policy (which numbers are members,
@@ -70,8 +70,12 @@ does **not** do: nothing decides who the policy should admit (the example's admi
 every loopback address; a deployment writes its own); where a member lives is the
 deployment's mapping from member number to address, not something SWIM gossips;
 members are never forgotten, so a departed member's record is kept (it is what
-keeps S13 true) and counts against the same bound of `MAX_UPDATES` members; a member
-that comes back must do so from the same address; and a node that leaves and tells
+keeps S13 true) and counts against the same bound of `MAX_UPDATES` members, which any
+one member can fill by gossiping that many made-up numbers, so a cluster that
+admits a member admits its good behaviour; a live member is never given a second
+address, but one that has left or been declared dead may come back from a different
+address, which then replaces the old; a refused request admits nobody; the policy
+runs with the node's lock held and must be quick; and a node that leaves and tells
 nobody is, to the cluster, a node that died.
 
 **S4 is worth pausing on, because the asymmetry it dismisses is real.**

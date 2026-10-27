@@ -35,7 +35,7 @@ The claims are S1 to S14 in the Reference. In words:
 | S5 | across a whole run, **no node's record about any peer ever moves backward**: the actual convergence argument |
 | S7–S9 | the executable merge is the model's; a refutation is a gossip step and out-ranks what it answers |
 | S10–S12 | the node's table learns by the model's gossip step, and never believes less than it did |
-| S13–S14 | a departure (`Left`) cannot be undone by a late failure report, and only a higher incarnation, which only the departed member can produce, brings it back |
+| S13–S14 | a departure (`Left`) cannot be undone by a late failure report, and only a higher incarnation brings it back (which, assuming no member lies, only the departed member produces) |
 
 Idempotence and absorbing a repeat are what let gossip's real delivery model, at least
 once and arbitrarily duplicated, survive contact with `merge` at all. Commutativity and
@@ -82,8 +82,10 @@ node that died, and the two are different records.
 
 What this does not settle is *who* should be admitted. SWIM says nothing about that, and
 the example's policy lets in every loopback address. Where a member lives is the
-deployment's mapping from member number to address, not something SWIM gossips. A member
-that comes back must do so from the same address.
+deployment's mapping from member number to address, not something SWIM gossips. A live
+member keeps one address; one that has left or died may come back from a different one,
+which replaces the old. And a cluster trusts its members: any one can fill the bound on
+members with made-up numbers.
 
 ## How it relates to the rest
 

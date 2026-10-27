@@ -119,7 +119,7 @@ pub proof fn theorem_merge_is_commutative(a: MemberRecord, b: MemberRecord)
 ///
 /// Every two records compare, one way or the other: a strict incarnation
 /// difference decides it outright, and at equal incarnations, `nat`'s own
-/// totality on `status_rank`'s three possible values decides it. Needed
+/// totality on `status_rank`'s four possible values decides it. Needed
 /// below because [`theorem_merge_is_associative`]'s case split has to know
 /// that failing to establish `key_geq(x, y)` still leaves `key_geq(y, x)`
 /// available, rather than leaving a case where neither holds.
@@ -316,8 +316,9 @@ pub proof fn theorem_a_departure_outlasts_every_report_at_or_below_it(
 ///
 /// The converse of the theorem above, and the form a service uses: if hearing
 /// a record changed what a node believed about a member that had left, then the
-/// record carried a higher incarnation, which only that member can have
-/// produced. Nobody else can revive it.
+/// record carried a higher incarnation. In the crash-fault model only that member
+/// produces one, by refuting; the theorem does not say so, and a member that lies
+/// about a third party (which the service believes) can forge one.
 pub proof fn theorem_only_a_higher_incarnation_revives_a_departure(
     left: MemberRecord,
     r: MemberRecord,

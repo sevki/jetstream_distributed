@@ -162,6 +162,66 @@ async fn a_second_address_cannot_speak_as_an_existing_member() {
         .expect("and the first address is unaffected");
 }
 
+/// **A member that left, or died, may come back from a different address**, which
+/// is what a restarted host usually is. The new address replaces the old, which is
+/// then a stranger.
+#[tokio::test]
+async fn a_member_that_left_or_died_may_return_from_a_new_address() {
+    // Member 2 has been at address 2, and may also be at address 7.
+    let policy: Admission = Arc::new(|a| match a {
+        a if a == addr(2) || a == addr(7) => Some(Id(2)),
+        a if a == addr(3) || a == addr(8) => Some(Id(3)),
+        _ => None,
+    });
+    for (member, old, new, how) in [(2u128, 2u8, 7u8, "left"), (3, 3, 8, "died")] {
+        let seed =
+            Node::admitting(HashMap::from([(addr(1), Id(1))]), Id(1), policy.clone()).unwrap();
+        seed.ping(from(addr(old)), vec![]).await.unwrap();
+        // While it is live, a new address is refused.
+        let err = seed.ping(from(addr(new)), vec![]).await.unwrap_err();
+        assert_eq!(
+            err.code(),
+            Some("NO"),
+            "{how}: still live, no second address"
+        );
+
+        match how {
+            "left" => seed.apply(&[u(member, 0, Liveness::Left)]).unwrap(),
+            _ => seed.apply(&[u(member, 0, Liveness::Dead)]).unwrap(),
+        }
+        seed.ping(from(addr(new)), vec![])
+            .await
+            .unwrap_or_else(|e| panic!("{how}: should return from the new address: {e}"));
+        // It refutes, as a restarted node does: live again, at the new address.
+        seed.apply(&[u(member, 1, Liveness::Alive)]).unwrap();
+        let err = seed.ping(from(addr(old)), vec![]).await.unwrap_err();
+        assert_eq!(
+            err.code(),
+            Some("NO"),
+            "{how}: and once it is live again the old address is a second one, refused"
+        );
+    }
+}
+
+/// A request that is refused admits nobody: no new member and no new address is
+/// left behind.
+#[tokio::test]
+async fn a_refused_request_leaves_no_new_member_behind() {
+    let seed = lone(1);
+    // Address 5 is admissible as member 5, but its message is over the limit.
+    let too_many: Vec<Update> = (0..=MAX_UPDATES)
+        .map(|_| u(1, 0, Liveness::Alive))
+        .collect();
+    let err = seed.ping(from(addr(5)), too_many).await.unwrap_err();
+    assert_eq!(err.code(), Some("ERR"));
+    assert_eq!(seed.record(Id(5)), None, "refused, so not admitted");
+    assert_eq!(seed.view(), vec![u(1, 0, Liveness::Alive)]);
+
+    // Admitted by an ordinary call afterwards, as if the refused one never was.
+    seed.ping(from(addr(5)), vec![]).await.unwrap();
+    assert_eq!(seed.record(Id(5)), Some(u(5, 0, Liveness::Alive)));
+}
+
 /// The cluster is bounded by what one message can carry, so a sync reply always
 /// fits.
 #[tokio::test]

@@ -36,7 +36,38 @@ pub enum Event {
 /// The member number comes out of the policy and never out of the request, so
 /// a caller cannot name itself: whoever writes the policy decides what an
 /// address is allowed to be, and the connection supplies the address.
+///
+/// The policy is called with the node's lock held, once per call from an address
+/// the node has not admitted. It must be quick and must not call back into the
+/// node, or the node stalls.
+///
+/// A member that has left or been declared dead may come back from a different
+/// address, and the new one replaces the old; a member that is live may not be
+/// given a second address.
 pub type Admission = Arc<dyn Fn(IpAddr) -> Option<Id> + Send + Sync>;
+
+/// Who is calling, and what accepting the request would change about who is known.
+enum Caller {
+    /// An address already admitted.
+    Known,
+    /// A new address the policy lets in as `id`, replacing `replaces` (the old
+    /// addresses of a member that has left or died).
+    Admit {
+        addr: IpAddr,
+        id: Id,
+        replaces: Vec<IpAddr>,
+    },
+}
+
+impl Caller {
+    /// The member this request would add, if it is a new one.
+    fn admitting(&self) -> Option<Id> {
+        match self {
+            Caller::Known => None,
+            Caller::Admit { id, .. } => Some(*id),
+        }
+    }
+}
 
 struct Inner {
     /// Connection address to member number: the members that have been
@@ -246,16 +277,20 @@ impl Node {
     /// half-applied message is not a state this node can be in.
     pub fn apply(&self, updates: &[Update]) -> Result<()> {
         let mut g = self.inner.lock().expect("node lock");
-        self.apply_locked(&mut g, updates)
+        self.apply_locked(&mut g, updates, None)
     }
 
-    fn apply_locked(&self, g: &mut Inner, updates: &[Update]) -> Result<()> {
+    /// `caller` is a member being admitted by this very request, if any: counted
+    /// against the bound and added with the others, so that a request refused for
+    /// being over the bound admits nobody.
+    fn apply_locked(&self, g: &mut Inner, updates: &[Update], caller: Option<Id>) -> Result<()> {
         if updates.len() > MAX_UPDATES {
             return Err(refuse_err("too many updates in one message"));
         }
         let strangers: BTreeSet<Id> = updates
             .iter()
             .map(|u| u.node)
+            .chain(caller)
             .filter(|n| !g.members.contains(n))
             .collect();
         if !strangers.is_empty() {
@@ -283,26 +318,53 @@ impl Node {
     /// is put to the [`Admission`] policy, if there is one, and admitted if the
     /// policy names a member number for it and there is room. Everything else is
     /// a stranger.
-    fn caller(&self, g: &mut Inner, ctx: &Context) -> Option<Id> {
+    ///
+    /// Reads only. Admitting is [`Node::accept`], called once the request has been
+    /// applied, so a request that is refused leaves no new member or address behind.
+    fn caller(&self, g: &Inner, ctx: &Context) -> Option<Caller> {
         let Some(RemoteAddr::IpAddr(addr)) = ctx.remote() else {
             return None;
         };
-        if let Some(&known) = g.addrs.get(addr) {
-            return Some(known);
+        if g.addrs.contains_key(addr) {
+            return Some(Caller::Known);
         }
-        let admitted = (self.admission.as_ref()?)(*addr)?;
-        // A member number that already has an address does not get a second one:
-        // that would let a new address speak as an old member. (A member only
-        // heard about, with no address yet, is admitted at its first call.)
-        if g.addrs.values().any(|&m| m == admitted) {
+        let id = (self.admission.as_ref()?)(*addr)?;
+        let held: Vec<IpAddr> = g
+            .addrs
+            .iter()
+            .filter(|&(_, &m)| m == id)
+            .map(|(&a, _)| a)
+            .collect();
+        // A member number that already has an address does not get a second one
+        // while it is live: that would let a new address speak as an old member.
+        // One that has left or been declared dead may come back from somewhere
+        // else, which is the usual case for a restarted host, and the new address
+        // replaces the old. (A member only heard about, with no address yet, is
+        // admitted at its first call.)
+        if !held.is_empty()
+            && !matches!(g.table.get(id).status, ExecStatus::Left | ExecStatus::Dead)
+        {
             return None;
         }
-        if !g.members.contains(&admitted) && g.members.len() >= MAX_UPDATES {
+        if !g.members.contains(&id) && g.members.len() >= MAX_UPDATES {
             return None;
         }
-        g.addrs.insert(*addr, admitted);
-        g.members.insert(admitted);
-        Some(admitted)
+        Some(Caller::Admit {
+            addr: *addr,
+            id,
+            replaces: held,
+        })
+    }
+
+    /// The request from `caller` was applied: record the address it spoke from.
+    fn accept(&self, g: &mut Inner, caller: Caller) {
+        if let Caller::Admit { addr, id, replaces } = caller {
+            for old in replaces {
+                g.addrs.remove(&old);
+            }
+            g.addrs.insert(addr, id);
+            g.members.insert(id);
+        }
     }
 
     fn view_locked(&self, g: &Inner) -> Vec<Update> {
@@ -388,19 +450,21 @@ impl Node {
 impl Membership for Node {
     async fn ping(&self, ctx: Context, updates: Vec<Update>) -> Result<Vec<Update>> {
         let mut g = self.inner.lock().expect("node lock");
-        if self.caller(&mut g, &ctx).is_none() {
+        let Some(caller) = self.caller(&g, &ctx) else {
             return Err(refuse_no("unknown caller"));
-        }
-        self.apply_locked(&mut g, &updates)?;
+        };
+        self.apply_locked(&mut g, &updates, caller.admitting())?;
+        self.accept(&mut g, caller);
         Ok(self.ack(&g, &updates))
     }
 
     async fn sync(&self, ctx: Context, updates: Vec<Update>) -> Result<Vec<Update>> {
         let mut g = self.inner.lock().expect("node lock");
-        if self.caller(&mut g, &ctx).is_none() {
+        let Some(caller) = self.caller(&g, &ctx) else {
             return Err(refuse_no("unknown caller"));
-        }
-        self.apply_locked(&mut g, &updates)?;
+        };
+        self.apply_locked(&mut g, &updates, caller.admitting())?;
+        self.accept(&mut g, caller);
         Ok(self.view_locked(&g))
     }
 }

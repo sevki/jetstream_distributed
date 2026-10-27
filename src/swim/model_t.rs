@@ -8,13 +8,13 @@
 //! # The record, and why it is exactly two fields
 //!
 //! memberlist's `state.go` remembers, for every peer, an **incarnation
-//! number** and a **status** — `Alive`, `Suspect` or `Dead` — and nothing
+//! number** and a **status** — `Alive`, `Suspect`, `Dead` or `Left` — and nothing
 //! else is needed to decide whether an incoming gossip message should
 //! overwrite what a node already believes. The incarnation is a peer's own
 //! epoch: only *that peer* increments it, by refuting a suspicion of itself,
 //! and every other node's information about it is stamped with the
 //! incarnation that was current when the information was produced. The
-//! status is where in `Alive -> Suspect -> Dead` the peer sits as far as the
+//! status is where in `Alive -> Suspect -> Dead -> Left` the peer sits as far as the
 //! sender of the message knows.
 //!
 //! # `key_geq`: the total order the whole module rests on
@@ -27,7 +27,9 @@
 //! (the usual case: a probe just timed out) while never letting a `Suspect`
 //! message undo a `Dead` one at that same incarnation (the peer has already
 //! been declared gone at this epoch; a later, weaker report of it changes
-//! nothing until the peer itself speaks again with a higher incarnation).
+//! nothing until the peer itself speaks again with a higher incarnation). `Left`
+//! ranks above `Dead` for the same reason one step further: a node's own
+//! announcement of its departure is not undone by a failure verdict.
 //!
 //! `status_rank` is what turns "how dead" into a number `key_geq` can compare,
 //! and it has to be **injective** — no two statuses may share a rank — for
@@ -53,8 +55,8 @@ verus! {
 /// rather than being suspected or declared dead by others. It ranks above
 /// `Dead` so that a failure verdict at the same incarnation — a suspicion timer
 /// that was already running, a late `Dead` report — cannot turn a departure back
-/// into a failure. Only a higher incarnation, which only the node itself can
-/// produce, brings a member back from either.
+/// into a failure. Only a higher incarnation brings a member back from either, which
+/// in the crash-fault model only the node itself produces.
 ///
 /// What is *not* modelled is memberlist's different treatment of `Left` on
 /// rejoin. Here a rejoining node is an ordinary node that hears it is gone and

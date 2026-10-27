@@ -31,14 +31,12 @@
 //!
 //! # Joining and leaving
 //!
-//! [`Node::new`] builds a closed cluster: the members are the ones it was given.
-//! [`Node::admitting`] builds one that grows, with an [`Admission`] policy from a
-//! caller's address to the member number that address may be. There is no join
-//! call. A join is the first `ping` or `sync` from an address the policy lets in;
+//! [`Node::new`] builds a node that knows only itself. There is no roster and no
+//! join call. A join is the first `ping` or `sync` from a caller the node has been
+//! told the identity of ([`Node::ping`] and [`Node::sync`] take the caller's `Id`);
 //! the `sync` reply is the whole table, so the newcomer learns who is there; and
-//! the others hear of it by gossip, which an open node accepts about members it
-//! was not built with and a closed node refuses. The member number comes from the
-//! policy and the connection, never from the request.
+//! the others hear of it by gossip, which a node accepts about members it has not
+//! met, up to [`MAX_UPDATES`].
 //!
 //! A node leaves by calling [`Node::leave`], which records it as
 //! [`Liveness::Left`] and returns that record to tell its peers. `Left` out-ranks
@@ -47,9 +45,10 @@
 //! so a suspicion timer that was already running cannot turn a departure into a
 //! failure. A node stopped without leaving is, to the cluster, a node that died.
 //!
-//! What is *not* settled here is who the policy should admit: SWIM says nothing
-//! about that. Members are never forgotten (a departed member's record is what
-//! keeps stale reports from reviving it) and are bounded by [`MAX_UPDATES`].
+//! Who may be a member is not settled here, and not by the node: SWIM says
+//! nothing about it, and the node trusts the `Id` it is handed. Members are never
+//! forgotten (a departed member's record is what keeps stale reports from reviving
+//! it) and are bounded by [`MAX_UPDATES`].
 //!
 //! # What a node does not need to write down
 //!
@@ -66,14 +65,24 @@
 //!
 //! # The assumption this rests on, stated
 //!
-//! The same one the other services state. A caller is identified by
-//! [`Context::remote`] against the roster the node holds, and **an address
-//! is not a credential**. What is worth saying about SWIM specifically is how
-//! little the identity buys: any member may gossip about *any* member,
-//! so a member that lies about a third party is believed. SWIM's own
-//! failure model is crash faults, not Byzantine ones, and this service does not
-//! pretend otherwise; what it does enforce is that an address the roster and the
-//! admission policy do not accept cannot join the conversation.
+//! A caller is who the connection says it is, **and the node does not look at the
+//! connection**. [`Node`] takes an `Id` and believes it. Turning a `Context` into
+//! that `Id` is [`Authenticate`]'s job, and [`Endpoint`] is the one place the two
+//! meet: it asks the authenticator, refuses a caller it cannot identify, and
+//! hands the node the answer. So whatever the transport can prove (a certificate
+//! chain from mTLS, a peer key, a Unix credential) is a matter for an
+//! `Authenticate` that knows that transport, and the node, the protocol and its
+//! tests do not change with it. [`ByAddress`] is the weakest one there is, a
+//! table from address to member, which **an address is not a credential** says
+//! is no credential at all; it is here for simulations and tests.
+//!
+//! What is worth saying about SWIM specifically is how little the identity buys:
+//! any member may gossip about *any* member, so a member that lies about a third
+//! party is believed. SWIM's own failure model is crash faults, not Byzantine
+//! ones, and this service does not pretend otherwise. What the identity gives is
+//! that only a caller the authenticator accepts can join the conversation, and
+//! the rules for that (one live address per member, say, or one certificate)
+//! are the authenticator's, not the node's.
 //!
 //! # What is still not here
 //!
@@ -84,12 +93,14 @@
 //! incarnation it started from is the caller's. That is where timing
 //! lives, and nothing in `crate::swim::model` says anything about timing.
 
+mod endpoint;
 mod node;
 mod refusal;
 
 use std::sync::Arc;
 
-pub use node::{Admission, Event, Node};
+pub use endpoint::{Authenticate, ByAddress, Endpoint};
+pub use node::{Event, Node};
 
 use crate::{
     id::Id,

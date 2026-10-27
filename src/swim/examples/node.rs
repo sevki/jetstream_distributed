@@ -5,9 +5,10 @@
 //! file writes, in plain Rust that Verus never sees and that nothing here proves:
 //!
 //! * **join**: start knowing only yourself, and `sync` with a seed. The seed's
-//!   admission policy lets your address in as a member, and its reply is the whole
-//!   cluster. The seed tells the others by gossip; you never call them to join;
-//! * **serve**: accept a connection, hand it to the generated `MembershipService`;
+//!   authenticator identifies your connection as a member, and its reply is the
+//!   whole cluster. The seed tells the others by gossip; you never call them to join;
+//! * **serve**: accept a connection, hand it to the generated `MembershipService`,
+//!   behind an [`Endpoint`] that asks an [`Authenticate`](jetstream_distributed::swim::service::Authenticate) who is calling;
 //! * **probe**: every period, `ping` one peer, piggybacking this node's whole view;
 //! * **suspect**: a ping that fails or times out makes the node believe the peer
 //!   suspect, at the incarnation it had recorded *when the probe began*;
@@ -23,10 +24,11 @@
 //! (`ping_req`): a peer that this node alone cannot reach is suspected on this
 //! node's word.
 //!
-//! **Who may join is a policy, and this example's is open**: `127.0.0.<k>` for
-//! `k` in `1..=250` is member `k`, and anyone who can reach a seed from such an
-//! address is in. A real deployment writes a stricter one. Members are addressed
-//! by loopback address because a node knows its caller by address; each listens
+//! **Who is calling is an [`Authenticate`](jetstream_distributed::swim::service::Authenticate), and this example's is open**:
+//! `127.0.0.<k>` for `k` in `1..=250` is member `k`, and anyone who can reach a
+//! seed from such an address is in. A real deployment reads what its transport
+//! can prove (a certificate, say) instead. Members are addressed
+//! by loopback address because this authenticator goes by address; each listens
 //! on port 9100 of its own address and connects from it. That works on Linux,
 //! where all of `127.0.0.0/8` is loopback; elsewhere, give each member its own
 //! host instead.
@@ -44,15 +46,15 @@
 //! be told what it was and outrank that. With no arguments the example does all of
 //! that inside one process and asserts it: `cargo run --example swim_node`.
 
-use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
+use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::jetstream_rpc::session::{Session, SingleLaneSession};
 use jetstream::prelude::*;
 use jetstream_distributed::id::Id;
 use jetstream_distributed::swim::service::{
-    Admission, Liveness, Membership, Node, Update,
+    Endpoint, Liveness, Membership, Node, Update,
     membership_protocol::{MembershipChannel, MembershipService},
 };
 use tokio::net::{TcpListener, TcpSocket};
@@ -87,16 +89,18 @@ fn addr_of(member: u128) -> IpAddr {
     IpAddr::V4(Ipv4Addr::new(127, 0, 0, member as u8))
 }
 
-/// Who may join: this example lets in any loopback address `127.0.0.1` to
-/// `127.0.0.250`, as the member with that last number.
-fn policy() -> Admission {
-    std::sync::Arc::new(|a| match a {
-        IpAddr::V4(v4) => match v4.octets() {
+/// Who is calling: this example takes any loopback address `127.0.0.1` to
+/// `127.0.0.250` to be the member with that last number. It is an
+/// [`Authenticate`](jetstream_distributed::swim::service::Authenticate), so it is the only place that knows members are addressed by
+/// loopback; the node is told an `Id` and nothing else.
+fn authenticate(ctx: &Context) -> Option<Id> {
+    match ctx.remote() {
+        Some(RemoteAddr::IpAddr(IpAddr::V4(v4))) => match v4.octets() {
             [127, 0, 0, k @ 1..=250] => Some(Id(k as u128)),
             _ => None,
         },
-        IpAddr::V6(_) => None,
-    })
+        _ => None,
+    }
 }
 
 /// Answer pings and syncs on `127.0.0.<me>:9100` for as long as the task lives.
@@ -104,15 +108,16 @@ async fn serve(node: Node, me: u128) -> std::io::Result<()> {
     let listener = TcpListener::bind(SocketAddr::new(addr_of(me), PORT)).await?;
     loop {
         let (stream, _) = listener.accept().await?;
-        let node = node.clone();
+        let endpoint = Endpoint::new(node.clone(), authenticate);
         tokio::spawn(async move {
-            // The session reads the peer's address off the stream, and `Node`
-            // admits or refuses it: that is where "who is calling" comes from.
+            // The session reads the peer's address off the stream, and the
+            // endpoint asks `authenticate` who that is: that is where "who is
+            // calling" comes from.
             let session = SingleLaneSession::<MembershipChannel, _, _>::service_io(stream);
             let Ok(lane) = Session::<MembershipChannel>::accept_lane(&session).await else {
                 return;
             };
-            let mut service = MembershipService { inner: node };
+            let mut service = MembershipService { inner: endpoint };
             let _ = jetstream_rpc::server::run(&mut service, lane).await;
         });
     }
@@ -241,8 +246,7 @@ fn start(
 ) -> (Node, Vec<JoinHandle<()>>) {
     // A node starts at incarnation 0 and keeps nothing on disk. A restart is
     // corrected by the first peer that tells it what the cluster thinks of it.
-    let node = Node::admitting(HashMap::from([(addr_of(me), Id(me))]), Id(me), policy())
-        .expect("on its own roster");
+    let node = Node::new(Id(me));
     let server = {
         let node = node.clone();
         tokio::spawn(async move {

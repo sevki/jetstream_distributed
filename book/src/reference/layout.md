@@ -98,6 +98,10 @@ jetstream_distributed/
 │   │       ├── scenario_v.rs     a run in which an election actually happens
 │   │       ├── store_v.rs        recovery is exact; a crash can only rewind
 │   │       └── wire_v.rs         cut the bytes anywhere; a record prefix comes back
+│   ├── hyparview/          membership by two small views: one node, so far
+│   │   ├── model_t.rs      the views, the four handlers, the messages they send
+│   │   ├── exec_v.rs       HvTable: the views as verified code; each handler is a step of the model
+│   │   └── proofs/invariant_v.rs   the views stay bounded, disjoint, free of the node itself
 │   └── swim/               gossip membership: merge, not majority
 │       ├── model_t.rs      the record, the merge rule, one transition
 │       ├── steps_v.rs      the merge and the refutation as executable u64 functions

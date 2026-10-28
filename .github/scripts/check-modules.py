@@ -10,9 +10,14 @@ checks, without building or a network:
 
 * **No cycle.** No two modules depend on each other, directly or through others.
 * **Standalone modules stay standalone.** The modules in `STANDALONE` may depend
-  only on `id` and `protocol` (the shape every model has). Adding an edge from one
-  of them to another module fails here, which is the point: that is a decision, and
-  it is made by editing this list in the same change, where a reviewer sees it.
+  only on `VOCABULARY`: `id` and the modules that only describe shapes (the
+  `protocol` every model fills in, `temporal`, the `compose` and `membership`
+  contracts). Adding an edge from one of them to anything else fails here, which is
+  the point: that is a decision, and it is made by editing these sets in the same
+  change, where a reviewer sees it.
+* **The vocabulary stays a vocabulary.** A shape module may depend only on other shape
+  modules, so that "depends on the contract" never smuggles in a dependency on a
+  protocol.
 * **The extraction is not blind.** Every edge in `KNOWN_EDGES` must be found. A
   pattern that stops matching would otherwise report "no cycle" for any graph, and
   the first version of this check, written by hand, did exactly that.
@@ -30,9 +35,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 
-# Modules that stand alone: each may depend only on these.
+# Modules that stand alone: each may depend only on VOCABULARY.
 STANDALONE = {"ownership", "raft", "swim"}
-STANDALONE_MAY_USE = {"id", "protocol"}
+
+# `id`, and the modules that only describe shapes and import no protocol. A name
+# here that is not (yet) a module of `src/lib.rs` is fine; one that is must obey.
+VOCABULARY = {"id", "protocol", "temporal", "compose", "membership"}
 
 # Edges that are true today and that the extraction must find. If one of these
 # stops being true, edit it out here; if the check stops finding one that is true,
@@ -209,10 +217,18 @@ def main() -> int:
             problems.append(f"STANDALONE names {m}, which is not a module of src/lib.rs")
             continue
         for dep, where in sorted(edges[m].items()):
-            if dep not in STANDALONE_MAY_USE:
+            if dep not in VOCABULARY:
                 problems.append(
                     f"{m} is standalone but depends on {dep} ({sorted(where)[0]}); "
-                    f"it may use only {sorted(STANDALONE_MAY_USE)}"
+                    f"it may use only {sorted(VOCABULARY)}"
+                )
+
+    for m in sorted(VOCABULARY & set(mods)):
+        for dep, where in sorted(edges[m].items()):
+            if dep not in VOCABULARY:
+                problems.append(
+                    f"{m} only describes a shape but depends on {dep} ({sorted(where)[0]}); "
+                    f"a shape module may use only {sorted(VOCABULARY)}"
                 )
 
     if problems:

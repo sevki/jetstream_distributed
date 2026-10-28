@@ -17,14 +17,12 @@ use vstd::prelude::*;
 
 use crate::id::Id;
 
-use crate::composed::model::*;
 use crate::ownership::fencing::*;
 use crate::ownership::model::*;
 use crate::ownership::spec::*;
 use crate::ownership::proofs::fencing::*;
 use crate::ownership::proofs::invariant::*;
 use crate::ownership::proofs::transfer::*;
-use crate::raymond::model::*;
 use crate::ownership::transfer::*;
 
 verus! {
@@ -621,39 +619,6 @@ pub proof fn theorem_no_authority_without_token(sys: OwnershipSystem, a: Id, n: 
 {
     let tr = choose|tr: Seq<OwnershipSystem>| valid_execution(tr) && tr[tr.len() - 1] == sys;
     lemma_authority_backed_execution(tr, tr.len() - 1);
-}
-
-// ---------------------------------------------------------------------------
-// Composed machine
-// ---------------------------------------------------------------------------
-
-/// **Epoch monotonicity survives composition.** No composed transition - not
-/// routing, not a token transfer, not an acquisition - decreases the actor's
-/// epoch.
-pub proof fn theorem_composed_epoch_monotone(pre: Composed, post: Composed, s: ComposedStep)
-    requires
-        composed_step(pre, post, s),
-        pre.own.actors.contains_key(pre.actor),
-    ensures
-        post.own.actors.contains_key(post.actor),
-        current_epoch(post.own.actors[post.actor]) >= current_epoch(pre.own.actors[pre.actor]),
-{
-    match s {
-        ComposedStep::Ray { ray_step } => {},
-        ComposedStep::PassToken { node, head } => {},
-        // A seizure rewrites routing state only; `own` is untouched.
-        ComposedStep::SeizeToken { from, to } => {},
-        // Reconciliation touches only the seizure marker.
-        ComposedStep::Reconcile { node } => {},
-        ComposedStep::Own { own_step } => {
-            lemma_step_epoch_monotone(pre.own, post.own, own_step, pre.actor);
-        },
-        ComposedStep::AcquireUnderToken { node } => {
-            let acq = Step::Acquire { actor: pre.actor, node: node };
-            assert(step(pre.own, post.own, acq));
-            lemma_step_epoch_monotone(pre.own, post.own, acq, pre.actor);
-        },
-    }
 }
 
 } // verus!

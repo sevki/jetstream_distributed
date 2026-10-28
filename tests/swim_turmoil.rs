@@ -10,31 +10,19 @@
 //! Every reply here is read off the wire and handed to the node that asked, the
 //! only path by which what a peer knows becomes what this node knows.
 
-use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, OnceLock};
 
 use jetstream::prelude::*;
 use jetstream_distributed::id::Id;
 use jetstream_distributed::swim::service::{
-    ByAddress, Endpoint, Liveness, Membership, Node, Update,
+    Liveness, Membership, Node, Update,
     membership_protocol::{MembershipChannel, MembershipService},
 };
 use jetstream_rpc::session::{Session, SingleLaneSession};
 use turmoil::net::{TcpListener, TcpStream};
 
 const PORT: u16 = 9100;
-
-/// Who is which member, by address: what the simulation authenticates callers
-/// with, since there is no transport security to read. Built inside a host or a
-/// client: `turmoil::lookup` panics outside a live simulation.
-fn roster() -> HashMap<IpAddr, Id> {
-    HashMap::from([
-        (turmoil::lookup("a"), Id(0)),
-        (turmoil::lookup("b"), Id(1)),
-        (turmoil::lookup("c"), Id(2)),
-    ])
-}
 
 fn u(node: u128, incarnation: u64, status: Liveness) -> Update {
     Update {
@@ -72,15 +60,12 @@ macro_rules! serve {
         $sim.host($name, move || {
             let slot = slot.clone();
             async move {
-                let node = slot
-                    .get_or_init(|| Node::new(Id($id)))
-                    .clone();
-                let auth = ByAddress::new(roster());
+                let node = slot.get_or_init(|| Node::new(Id($id))).clone();
                 let listener =
                     TcpListener::bind((IpAddr::from(Ipv4Addr::UNSPECIFIED), PORT)).await?;
                 loop {
                     let (stream, _) = listener.accept().await?;
-                    let endpoint = Endpoint::new(node.clone(), auth.clone());
+                    let node = node.clone();
                     tokio::spawn(async move {
                         let session =
                             SingleLaneSession::<MembershipChannel, _, _>::service_io(stream);
@@ -88,7 +73,7 @@ macro_rules! serve {
                         else {
                             return;
                         };
-                        let mut service = MembershipService { inner: endpoint };
+                        let mut service = MembershipService { inner: node };
                         let _ = jetstream_rpc::server::run(&mut service, lane).await;
                     });
                 }
@@ -107,7 +92,7 @@ fn a_ping_carries_a_rumour_over_the_wire() {
     sim.client("a", async move {
         connect!("b", _s, ch);
         let ack = ch
-            .ping(Context::default(), vec![u(2, 0, Liveness::Suspect)])
+            .ping(Context::default(), Id(0), vec![u(2, 0, Liveness::Suspect)])
             .await
             .unwrap();
         assert_eq!(
@@ -158,7 +143,7 @@ fn a_suspected_node_that_is_alive_refutes_over_the_wire() {
 
         turmoil::repair("a", "b");
         connect!("b", _s, ch);
-        let theirs = ch.sync(Context::default(), a.view()).await.unwrap();
+        let theirs = ch.sync(Context::default(), a.id(), a.view()).await.unwrap();
         a.apply(&theirs).unwrap();
         Ok(())
     });
@@ -179,28 +164,29 @@ fn a_suspected_node_that_is_alive_refutes_over_the_wire() {
     );
 }
 
-/// A caller the authenticator cannot identify is refused by the service, over the
-/// wire.
+/// The sender is whoever the message says. A host nobody has heard of joins by
+/// calling, as itself, over the wire, and is a member from then on: there is no
+/// roster to be missing from.
 #[test]
-fn a_caller_the_authenticator_does_not_know_is_refused_over_the_wire() {
+fn a_caller_is_a_member_from_its_first_call_over_the_wire() {
     let mut sim = turmoil::Builder::new().build();
     let b_slot: Arc<OnceLock<Node>> = Arc::new(OnceLock::new());
     serve!(sim, "b", 1, b_slot);
 
-    // "x" is a host the address table has never heard of.
     sim.client("x", async move {
         connect!("b", _s, ch);
-        let err = ch
-            .ping(Context::default(), vec![u(2, 0, Liveness::Dead)])
-            .await
-            .unwrap_err();
-        assert_eq!(err.code(), Some("NO"));
+        let reply = ch.sync(Context::default(), Id(9), vec![]).await.unwrap();
+        assert_eq!(
+            reply,
+            vec![u(1, 0, Liveness::Alive), u(9, 0, Liveness::Alive)],
+            "the newcomer is told everyone, itself included"
+        );
         Ok(())
     });
 
     sim.run().expect("the simulation runs to completion");
     let b = b_slot.get().expect("b built its node");
-    assert_eq!(b.record(Id(2)), None, "and nothing it said was applied");
+    assert_eq!(b.record(Id(9)), Some(u(9, 0, Liveness::Alive)));
 }
 
 /// A node that listens and also makes calls, as a real member does: a turmoil
@@ -208,20 +194,19 @@ fn a_caller_the_authenticator_does_not_know_is_refused_over_the_wire() {
 macro_rules! listen {
     ($node:expr) => {
         let node: Node = $node.clone();
-        let auth = ByAddress::new(roster());
         tokio::spawn(async move {
             let listener = TcpListener::bind((IpAddr::from(Ipv4Addr::UNSPECIFIED), PORT))
                 .await
                 .expect("bind");
             loop {
                 let (stream, _) = listener.accept().await.expect("accept");
-                let endpoint = Endpoint::new(node.clone(), auth.clone());
+                let node = node.clone();
                 tokio::spawn(async move {
                     let session = SingleLaneSession::<MembershipChannel, _, _>::service_io(stream);
                     let Ok(lane) = Session::<MembershipChannel>::accept_lane(&session).await else {
                         return;
                     };
-                    let mut service = MembershipService { inner: endpoint };
+                    let mut service = MembershipService { inner: node };
                     let _ = jetstream_rpc::server::run(&mut service, lane).await;
                 });
             }
@@ -266,7 +251,7 @@ fn a_node_joins_through_any_member_and_a_departure_spreads() {
         // Join b: the call is the join, the reply is b's whole table.
         {
             connect!("b", _s, ch);
-            let reply = ch.sync(Context::default(), c.view()).await.unwrap();
+            let reply = ch.sync(Context::default(), c.id(), c.view()).await.unwrap();
             c.apply(&reply).unwrap();
         }
         // Wait for a to join c, then gossip to b, as a probe would.
@@ -278,7 +263,7 @@ fn a_node_joins_through_any_member_and_a_departure_spreads() {
         );
         {
             connect!("b", _s, ch);
-            let ack = ch.ping(Context::default(), c.view()).await.unwrap();
+            let ack = ch.ping(Context::default(), c.id(), c.view()).await.unwrap();
             c.apply(&ack).unwrap();
         }
         // Leave, and tell b.
@@ -286,7 +271,7 @@ fn a_node_joins_through_any_member_and_a_departure_spreads() {
         let said = c.leave();
         {
             connect!("b", _s, ch);
-            ch.ping(Context::default(), vec![said]).await.unwrap();
+            ch.ping(Context::default(), c.id(), vec![said]).await.unwrap();
         }
         Ok(())
     });
@@ -296,7 +281,7 @@ fn a_node_joins_through_any_member_and_a_departure_spreads() {
         let a = a_in.get_or_init(|| open_node(0)).clone();
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         connect!("c", _s, ch);
-        let reply = ch.sync(Context::default(), a.view()).await.unwrap();
+        let reply = ch.sync(Context::default(), a.id(), a.view()).await.unwrap();
         a.apply(&reply).unwrap();
         assert_eq!(
             a.record(Id(1)),

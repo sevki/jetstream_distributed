@@ -70,25 +70,24 @@ any caller make this node believe anything. A node suspects a peer because *its 
 probe failed.
 
 **There is no roster: a node knows itself, and the rest is learned.** `Node::new(me)`
-builds a node with one member. `Node::ping` and `Node::sync` take the caller's `Id`, and a
-caller is a member from its first call. There is no join call. A join is that first call;
+builds a node with one member. `ping` and `sync` carry the sender's `Id` in the message, and a
+sender is a member from its first call. There is no join call. A join is that first call;
 the `sync` reply is the whole table, so the newcomer learns who is there; and the others
 hear of it by gossip. To leave, a node calls `leave`, which records it as `Left` and hands
 back that record to tell the peers. A node that is stopped without doing so is, to the
 cluster, a node that died, and the two are different records.
 
-**The node does not look at a connection.** It is handed an `Id` and believes it. Getting
-the `Id` is an `Authenticate`, one method from the call's `Context` to an optional member,
-and an `Endpoint` is the service that asks it and refuses a caller it cannot identify. So
-what a transport can prove (a certificate chain from mTLS, a peer key) is read by an
-authenticator that knows that transport, and the node, the protocol and their tests do not
-change. A test writes one in a line.
+**Who is sending is in the message, and nothing here checks it.** The node does not look
+at a connection and does no authentication. A message says who sent it and the node
+believes it, as it already believes a member's word about any other member. Keeping
+outsiders out, and revoking one, is a separate concern that lives in front of the service
+or beside it, and what the cluster believes about a member (`Dead`, `Left`) is not a
+security decision either.
 
-What this does not settle is *who* may be a member. SWIM says nothing about that, and the
-authenticators here are an address table for simulations and the example's loopback rule;
-neither is a credential. Where a member lives is the deployment's mapping from member
-number to address, not something SWIM gossips. And a cluster trusts its members: any one
-can fill the bound on members with made-up numbers.
+What this does not settle is *who* may be a member. SWIM says nothing about that. Where a
+member lives is the deployment's mapping from member number to address, not something SWIM
+gossips. And a cluster trusts its members: any one can fill the bound on members with
+made-up numbers.
 
 ## How it relates to the rest
 

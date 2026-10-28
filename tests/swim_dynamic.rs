@@ -13,8 +13,8 @@
 //! `merge`; what is exercised here is the service's glue around it: the write that
 //! must not be refuted, and a caller becoming a member.
 //!
-//! Who a caller is, and who may join, is `tests/swim_endpoint.rs`: the node is
-//! handed an `Id` and believes it.
+//! The sender is whoever the message says. Who may reach a node at all is not
+//! SWIM's to decide, and nothing here checks.
 
 use jetstream_distributed::id::Id;
 use jetstream_distributed::swim::service::{Event, Liveness, MAX_UPDATES, Node, Update};

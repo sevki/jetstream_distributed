@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
 use super::refusal::{refuse, refuse_err, refuse_no};
-use super::{Liveness, MAX_UPDATES, Update};
+use super::{Liveness, MAX_UPDATES, Membership, Update};
 use crate::id::Id;
 use crate::swim::exec::SwimTable;
 use crate::swim::steps::{ExecRecord, ExecStatus, key_geq_exec};
@@ -60,14 +60,12 @@ fn same(a: ExecRecord, b: ExecRecord) -> bool {
 impl Node {
     /// A node that knows only itself.
     ///
-    /// Everyone else is learned: a member is whoever calls, and whoever a member
-    /// says exists (see [`Node::ping`] and [`Node::apply`]). Every member starts
-    /// at its fresh record. Nothing is read from disk; see "What a node does not
-    /// need to write down" in the module docs.
+    /// Everyone else is learned: a member is whoever a message says is sending
+    /// it, and whoever a member says exists (see [`Node::ping`] and
+    /// [`Node::apply`]). Every member starts at its fresh record. Nothing is read
+    /// from disk; see "What a node does not need to write down" in the module docs.
     ///
-    /// Who may call is not the node's to say. That is the job of whatever
-    /// identifies callers before they reach it ([`Authenticate`](super::Authenticate)),
-    /// and a node trusts the `Id` it is given.
+    /// Who may call is not the node's to say, and it does not check.
     pub fn new(me: Id) -> Self {
         Node {
             inner: Arc::new(Mutex::new(Inner {
@@ -294,11 +292,11 @@ impl Node {
     }
 }
 
-/// What the node does when a peer calls, with the peer already identified.
+/// What the node does when a peer calls.
 ///
-/// Who `from` is was established by something else -- [`Endpoint`](super::Endpoint)
-/// asks an [`Authenticate`](super::Authenticate) about the connection -- so these
-/// take no `Context`, do no I/O, and need no transport to be tested.
+/// The sender is an argument, taken from the message, and these take no `Context`
+/// and do no I/O, so they need no transport to be driven or tested. The
+/// [`Membership`] service below is these, behind the generated protocol.
 impl Node {
     /// SWIM's ping from `from`, with the dissemination piggybacked: merge
     /// `updates`, and answer with this node's records for every member they
@@ -320,5 +318,21 @@ impl Node {
         let mut g = self.inner.lock().expect("node lock");
         self.apply_locked(&mut g, updates, Some(from))?;
         Ok(self.view_locked(&g))
+    }
+}
+
+/// The node, served. The sender is the one the message names; the `Context` is
+/// not read.
+///
+/// (`Node::ping` and `Node::sync` above take precedence in a method call; the
+/// service's own, with a `Context`, are reached through the generated channel or
+/// as `Membership::ping(&node, ctx, from, updates)`.)
+impl Membership for Node {
+    async fn ping(&self, _ctx: Context, from: Id, updates: Vec<Update>) -> Result<Vec<Update>> {
+        Node::ping(self, from, &updates)
+    }
+
+    async fn sync(&self, _ctx: Context, from: Id, updates: Vec<Update>) -> Result<Vec<Update>> {
+        Node::sync(self, from, &updates)
     }
 }

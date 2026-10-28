@@ -84,7 +84,7 @@ copies holds. That is [ownership](ownership.md), not this.
   That is not built.
 - **Nobody drives the membership view on a timer**, and the SWIM node has no change
   notification, so the view is polled.
-- **SWIM's members are whatever `Id` its authenticator returns**, so mapping a SWIM node
+- **SWIM's members are whatever `Id` its messages name**, so mapping a SWIM node
   to a host here relies on both using the same `Id` for a host.
 - **The Iroh system is entirely commented out.**
 - **No automatic failover**, and no retrying caller that re-asks discovery on `FENCED`.

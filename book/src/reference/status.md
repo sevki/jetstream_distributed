@@ -251,7 +251,7 @@ invariant preservation):
 * **the rest of SWIM.** The probe timer and its schedule, the indirect-ping
   fallback a probe target's neighbours run when a direct probe times out, and
   the piggyback selection that decides which records ride on which probe. The
-  merge core, its executable steps and the `Membership` service are done; what
+  merge core, its executable steps and the `Swim` service are done; what
   is left is the part with a clock in it. The [SWIM](swim.md#swim-gossip-membership-bought-by-merge-rather-than-majority)
   section above says what is and is not claimed.
 

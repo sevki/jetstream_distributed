@@ -9,15 +9,15 @@
 //!
 //! # What goes on the wire, and what does not
 //!
-//! [`Membership`] is two methods, and both do the same thing to the receiver:
+//! [`Swim`] is two methods, and both do the same thing to the receiver:
 //! merge every [`Update`] in the message into the node's table. They differ in
 //! what comes back.
 //!
-//! * [`Membership::ping`] answers with the receiver's records for the members
+//! * [`Swim::ping`] answers with the receiver's records for the members
 //!   the message mentioned, plus its own. That is SWIM's ping/ack with the
 //!   dissemination piggybacked on it: the sender learns, in the same round
 //!   trip, whether the receiver knew something newer.
-//! * [`Membership::sync`] answers with the receiver's whole table. That is
+//! * [`Swim::sync`] answers with the receiver's whole table. That is
 //!   memberlist's push/pull — the anti-entropy that repairs what the piggyback
 //!   missed.
 //!
@@ -33,7 +33,7 @@
 //!
 //! [`Node::new`] builds a node that knows only itself. There is no roster and no
 //! join call. A join is the first `ping` or `sync` naming a sender the node has
-//! not met ([`Membership::ping`] and [`Membership::sync`] carry the sender's
+//! not met ([`Swim::ping`] and [`Swim::sync`] carry the sender's
 //! `Id`); the `sync` reply is the whole table, so the newcomer learns who is
 //! there; and the others hear of it by gossip, which a node accepts about members
 //! it has not met, up to [`MAX_UPDATES`].
@@ -92,6 +92,7 @@ use std::sync::Arc;
 
 pub use node::{Event, Node};
 
+pub use crate::membership::Liveness;
 use crate::{
     id::Id,
     swim::steps::{ExecRecord, ExecStatus},
@@ -106,16 +107,6 @@ use jetstream::prelude::*;
 /// itself; the cap is generous for any real cluster and small enough that
 /// refusing is cheap.
 pub const MAX_UPDATES: usize = 1024;
-
-/// A member's standing, on the wire.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, JetStreamWireFormat)]
-pub enum Liveness {
-    Alive,
-    Suspect,
-    Dead,
-    /// The member announced its own departure. See `Node::leave`.
-    Left,
-}
 
 /// One record about one member: *this is what I believe about `node`*.
 ///
@@ -161,7 +152,7 @@ impl Update {
 /// service takes it at its word: see the module docs for what that does and does
 /// not mean.
 #[service(uses(super::{Id, Update}))]
-pub trait Membership {
+pub trait Swim {
     /// SWIM's ping from `from`, with the dissemination piggybacked.
     ///
     /// Merges `updates` into the receiver's table and answers with the
@@ -179,7 +170,7 @@ pub trait Membership {
     async fn sync(&self, ctx: Context, from: Id, updates: Vec<Update>) -> Result<Vec<Update>>;
 }
 
-impl<T: Membership> Membership for Arc<T> {
+impl<T: Swim> Swim for Arc<T> {
     async fn ping(&self, ctx: Context, from: Id, updates: Vec<Update>) -> Result<Vec<Update>> {
         T::ping(self, ctx, from, updates).await
     }

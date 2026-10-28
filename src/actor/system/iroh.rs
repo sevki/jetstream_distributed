@@ -1,5 +1,5 @@
 #![cfg(all(feature = "service", feature = "iroh"))]
-// use crate::swim::service::{Membership, membership_protocol::MembershipService};
+// use crate::swim::service::{Swim, swim_protocol::SwimService};
 // use crate::{
 //     actor::{
 //         service::{Actor, Receipt, Record, Snapshot},

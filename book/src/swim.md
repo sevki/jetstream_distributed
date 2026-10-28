@@ -62,6 +62,10 @@ arrives, only that whatever arrives never makes a view *less accurate* than it w
 
 ## The service
 
+What a *consumer* of membership reads is not this service's wire protocol: it is
+`membership::PeerSampling` and `membership::FailureDetector`, which `Node` implements
+and which do not name SWIM. See [the Reference](reference/swim.md#the-service).
+
 `Node` is the shell around a verified table: the member set, the lock, the audit log, the
 batch limit and the order a batch is applied in are plain Rust that the tests exercise.
 Suspecting a peer, declaring it dead and refuting an accusation are **not on the wire**.

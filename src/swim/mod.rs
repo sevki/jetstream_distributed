@@ -28,7 +28,7 @@
 //!   `tr_gossip`, and `hear` is it twice when the record that changed is the
 //!   node's own.
 //! * `service`   — the protocol over Jetstream RPC, behind the `service`
-//!   feature: a `Membership` trait with `ping` and `sync`.
+//!   feature: a `Swim` trait with `ping` and `sync`.
 //!
 //! Not here yet: the probe timer, the indirect-ping fallback, and the piggyback
 //! *selection* that decides which records ride on which probe. Those are a real

@@ -283,10 +283,10 @@ fn a_caller_is_a_member_from_its_first_call() {
 #[tokio::test]
 async fn the_service_takes_the_sender_from_the_message() {
     use jetstream::prelude::Context;
-    use jetstream_distributed::swim::service::Membership;
+    use jetstream_distributed::swim::service::Swim;
 
     let n = node(0);
-    let ack = Membership::ping(&n, Context::default(), Id(5), vec![u(5, 0, Liveness::Alive)])
+    let ack = Swim::ping(&n, Context::default(), Id(5), vec![u(5, 0, Liveness::Alive)])
         .await
         .unwrap();
     assert_eq!(
@@ -295,7 +295,7 @@ async fn the_service_takes_the_sender_from_the_message() {
     );
     assert_eq!(n.record(Id(5)), Some(u(5, 0, Liveness::Alive)));
 
-    let all = Membership::sync(&n, Context::default(), Id(6), vec![])
+    let all = Swim::sync(&n, Context::default(), Id(6), vec![])
         .await
         .unwrap();
     assert_eq!(all, n.view());

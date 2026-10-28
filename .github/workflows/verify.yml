@@ -544,6 +544,7 @@ jobs:
             --test raft_store \
             --test swim_membership \
             --test swim_dynamic \
+            --test membership_contract \
             --test swim_turmoil \
             --test raymond_routing \
             --test raymond_turmoil \

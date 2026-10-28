@@ -8,6 +8,8 @@ jetstream_distributed/
 ├── fuzz/                   the coverage-guided front end to the protocol-line search (its own workspace, nightly)
 ├── src/
 │   ├── lib.rs
+│   ├── membership/         what a consumer of any membership protocol reads   [feature = "service"]
+│   │   └── mod.rs          Liveness, PeerSampling, FailureDetector (SWIM implements both)
 │   ├── temporal_t.rs       leads-to, weak fairness and WF1: what a liveness proof is stated in
 │   ├── ownership/          exclusive mutable ownership with epoch fencing
 │   │   ├── model_t.rs      state space + transition relation (no specification)
@@ -101,7 +103,7 @@ jetstream_distributed/
 │       ├── steps_v.rs      the merge and the refutation as executable u64 functions
 │       ├── exec_v.rs       SwimTable: the node's table as verified code, learn and hear
 │       ├── service/        the protocol over Jetstream RPC   [feature = "service"]
-│       │   ├── mod.rs          the Membership trait and what goes on the wire
+│       │   ├── mod.rs          the Swim trait and what goes on the wire
 │       │   ├── node.rs         the table, and the merge into it
 │       │   └── refusal.rs      the refusals, in the line protocol's alphabet
 │       └── proofs/

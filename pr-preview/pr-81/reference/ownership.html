@@ -1,0 +1,767 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Ownership: the model and its claims - jetstream_distributed</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="How the protocols in jetstream_distributed relate: what each one buys, what it assumes, and what is proved, tested or only intended.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-e96d0476.css">
+        <link rel="stylesheet" href="../css/chrome-d279d366.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-320f979e.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-65b1449c.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">jetstream_distributed</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/sevki/jetstream_distributed" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/sevki/jetstream_distributed/edit/main/book/src/reference/ownership.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="ownership-the-model-and-its-claims"><a class="header" href="#ownership-the-model-and-its-claims">Ownership: the model and its claims</a></h1>
+<h2 id="what-this-is-and-what-it-is-not"><a class="header" href="#what-this-is-and-what-it-is-not">What this is, and what it is not</a></h2>
+<p>This repository does <strong>not</strong> claim that Rust’s borrow checker has been extended
+across machines. Nothing here is checked at compile time for your application
+code, no lifetime crosses a network link, and no <code>&amp;mut</code> is transported anywhere.</p>
+<p>What this is: a <strong>runtime protocol</strong> for moving exclusive write authority over
+an actor (named by an <code>Id</code>) between nodes, together with <strong>machine-checked proofs</strong> that the
+protocol’s exclusivity and fencing properties hold in every reachable state,
+including under crashes, partitions, duplicated messages and interrupted
+handovers.</p>
+<p>The analogy to Rust is about the <em>shape</em> of the guarantee, not the mechanism.
+Rust’s <code>&amp;mut T</code> is exclusive because the compiler refuses to create a second
+one. Here, authority is exclusive because <code>may_mutate</code> is only ever true in one
+shape - the actor is <code>Owned</code>, the caller is the owner, and the caller’s fencing
+epoch is exactly the actor’s current epoch - and because the protocol’s
+transitions provably keep it that way.</p>
+<p>The core of this repository is a <em>model</em>, and the proofs are about the model.
+Each algorithm also has a service over Jetstream RPC, which runs the verified step
+functions; what those services do and do not claim is stated in
+<a href="services.html#the-protocol-as-a-jetstream-service">The protocol as a Jetstream service</a> and
+in each module’s docs.</p>
+<h2 id="relation-to-chubby"><a class="header" href="#relation-to-chubby">Relation to Chubby</a></h2>
+<p>The obvious prior art is <a href="https://storage.googleapis.com/gweb-research2023-media/pubtools/4444.pdf"><em>The Chubby lock service for loosely-coupled
+distributed systems</em></a>
+(Burrows, OSDI 2006). It is worth being precise about the relationship, because
+the central mechanism here is Chubby’s, not a new one.</p>
+<p><strong>The fencing mechanism is the same idea.</strong> Chubby §2.4: a lock holder may
+request a <em>sequencer</em>, “an opaque byte-string that describes the state of the
+lock immediately after acquisition”, containing the lock name, the mode, and the
+<strong>lock generation number</strong> — a per-node counter that “increases when the node’s
+lock transitions from free to held”. The client passes it to the resource
+server, which “is expected to test whether the sequencer is still valid … if
+not, it should reject the request”. That is exactly <code>Token { actor, epoch, holder }</code> plus <code>valid_fence</code>, and Chubby’s lock generation number is this
+model’s <code>Epoch</code>. This repository is a formalisation of that design, not an
+alternative to it.</p>
+<p><strong>What this adds is the proof, and the precision that a proof forces.</strong> Chubby
+is an experience paper: it describes the initial design, compares it with actual
+use, and explains how the design had to change. It carries no machine-checked
+proofs, and it does not need to — its evidence is years of production at scale.
+The evidence here is different in kind. “The recipient server is expected to
+test whether the sequencer is still valid” is doing a great deal of work in that
+sentence, and writing the obligation down as a state machine is what turns it
+into something checkable:</p>
+<ul>
+<li>who may mutate is a single predicate, <code>may_mutate</code>, and
+<code>theorem_no_authority_without_token</code> proves that anyone who satisfies it
+provably holds an issued token for exactly that <code>(actor, epoch)</code>;</li>
+<li>the headline scenario — <code>A</code> owns at 41, <code>B</code> takes over at 42, <code>A</code> returns
+still holding its epoch-41 token — is the situation sequencers exist for, and
+it is discharged as a nine-step execution rather than argued informally;</li>
+<li>the awkward part, <strong>a node cannot fence itself</strong>, becomes impossible to leave
+implicit. <code>FenceGuard::accepts</code> consults the node’s own belief, so a
+partitioned holder accepts its own stale epoch; the rejection that matters
+happens where the effect lands. Chubby’s locks are <em>advisory</em> for exactly this
+reason — “holding a lock called F neither is necessary to access the file F,
+nor prevents other clients from doing so” — and this model is advisory in the
+same sense, but has to say so in a proof obligation rather than in prose.</li>
+</ul>
+<p><strong>Three deliberate differences, and why.</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>Chubby</th><th>here</th></tr>
+</thead>
+<tbody>
+<tr><td>Timing</td><td><code>lock-delay</code>: after a holder fails, the lock is withheld for up to a minute, protecting servers that do <strong>not</strong> check sequencers. Described in the paper as “imperfect but easier”.</td><td>No timing assumptions at all. Messages never expire, <code>issued</code> and <code>network</code> never shrink, and safety rests only on epoch ordering. A delay-based argument cannot be proved safe in an asynchronous model, so the unmodified-server path is deliberately not modelled.</td></tr>
+<tr><td>Consensus</td><td>A Chubby cell is five replicas running Paxos; that is what makes a lock’s state a single agreed fact.</td><td>Assumed, not modelled. “Ownership records are updated atomically” is the first row of the failure-model table, and Chubby is precisely the kind of thing that would discharge it.</td></tr>
+<tr><td>Topology</td><td>Centralised: clients talk to a master.</td><td>The privilege is routed <strong>peer-to-peer</strong> by Raymond’s algorithm, and <code>couples</code> proves routing cannot manufacture authority. Chubby has no analogue, because it does not need one.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The third difference is where this model has something Chubby does not, and it
+is also where it was recently found to be wrong. Because privilege moves between
+peers rather than being held centrally, a node can be left believing it holds
+the privilege after the privilege has moved. Chubby handles the corresponding
+case by checking a sequencer “against the server’s Chubby cache or … the most
+recent sequencer that the server has observed” — belief is checked against
+authority. This model originally had no such split on the routing side and
+resolved a seizure by editing the absent node’s state, which no implementation
+can do; see <a href="status.html#the-holder-graph-is-a-tree-and-now-says-so">The holder graph is a tree</a>
+and the <code>believes_holds</code> / <code>has_token</code> split in <code>src/raymond/model_t.rs</code>.</p>
+<p><strong>What Chubby has that this does not</strong>: a deployed system, sessions and
+KeepAlives, failover, caching with invalidations, a filesystem namespace, ACLs,
+events, and liveness of any kind. This model proves safety only, and says so.</p>
+<h2 id="the-state-machine"><a class="header" href="#the-state-machine">The state machine</a></h2>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Id is `crate::id::Id`, a newtype around a `u128` (a UUID or a ULID converts to one);
+// a model names a host, and an actor, by it directly. (An actor was a `nat` here
+// before; the theorems now quantify over the `u128` actors a host always was, not
+// over unbounded ones. No theorem relied on there being more.)
+pub type Epoch   = nat;
+
+pub enum OwnershipState {
+    Owned        { owner: Id, epoch: Epoch },
+    Transferring { from: Id, to: Id, old_epoch: Epoch, new_epoch: Epoch },
+    Unowned      { epoch: Epoch, intended_owner: Id },
+}
+<span class="boring">}</span></code></pre>
+<p>Ownership never moves atomically. A handover is four protocol transitions:</p>
+<pre><code class="language-text">Owned(A, 41)
+      |  BeginTransfer(A -&gt; B)         epoch 42 is allocated here
+Transferring(A, B, 41, 42)
+      |  CompleteRelease
+Unowned(42, B)
+      |  Acquire(B)
+Owned(B, 42)
+</code></pre>
+<p>Two deliberate design points:</p>
+<ul>
+<li><strong>The epoch advances at the <em>start</em> of a handover, not at the end.</strong> From the
+moment <code>A</code> agrees to transfer, <code>current_epoch</code> is 42, so <code>A</code>’s epoch-41
+authority is already fenced out. <code>A</code> does not have to be reachable, or even
+alive, for this to take effect.</li>
+<li><strong>During the two middle stages nobody has authority at all.</strong> That is the
+trade this design makes: it gives up availability during a handover so that
+double ownership is not representable. It is acceptable for neither node to
+have mutable authority during a transfer; it is never acceptable for both to.</li>
+</ul>
+<h3 id="the-two-specification-functions"><a class="header" href="#the-two-specification-functions">The two specification functions</a></h3>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Who may perform an authoritative mutation.
+spec fn may_mutate(s: OwnershipState, node: Id, epoch: Epoch) -&gt; bool {
+    match s {
+        Owned { owner, epoch: e } =&gt; node == owner &amp;&amp; epoch == e,
+        Transferring { .. }       =&gt; false,
+        Unowned { .. }            =&gt; false,
+    }
+}
+
+// The fence check a server performs on an incoming request.
+spec fn valid_fence(s: OwnershipState, e: Epoch) -&gt; bool { e &gt;= current_epoch(s) }
+<span class="boring">}</span></code></pre>
+<p><code>current_epoch</code> reports <code>new_epoch</code> while <code>Transferring</code>, which is what makes
+the outgoing owner stale immediately.</p>
+<h3 id="capability-tokens"><a class="header" href="#capability-tokens">Capability tokens</a></h3>
+<p>A <code>Token { actor, epoch, holder }</code> is a <em>physical</em> artifact. It can be copied,
+it survives a crash, and a node that was partitioned away for an hour can come
+back still clutching one. The model reflects that: <code>System::issued</code> is the set
+of every token ever issued and it <strong>never shrinks</strong>.</p>
+<p>Whether a token confers <em>authority</em> is a completely separate question, answered
+by <code>token_authorized</code>, which consults the actor’s current state. Stale physical
+tokens exist; they are inert.</p>
+<h2 id="failure-model"><a class="header" href="#failure-model">Failure model</a></h2>
+<p>These are the assumptions the proofs rest on. They are part of the system model,
+not hidden side conditions.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Assumption</th><th>How it is modelled</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Ownership records are updated atomically (linearizably)</strong></td><td>Every epoch-advancing transition reads <code>pre.actors[a]</code> and writes <code>post.actors.insert(a, ..)</code> in one step, so an actor’s record is a single value with no interleaving. This is the <strong>strongest assumption in the model</strong> and it is load-bearing: it rules out, by construction, two coordinators deciding concurrently — both reading <code>Owned { owner, epoch }</code> and both allocating <code>epoch + 1</code> for different successors. A real deployment must buy that atomicity from consensus or from a store with compare-and-swap, which is what makes “read <code>Owned { A, 41 }</code>, write <code>Unowned { 42, B }</code>” one step. <code>System::actors</code> is that registry, <strong>not</strong> per-node state.</td></tr>
+<tr><td>The network may duplicate, reorder, delay and lose messages arbitrarily</td><td><code>System::network</code> is a set that only grows, and delivery does not consume. A message is therefore deliverable zero, one or many times, in any order, at any later point. <code>Step::Replay</code> additionally makes duplication an explicit transition. The Raymond layer models its requests the same way, via <code>Raymond::requests</code>.</td></tr>
+<tr><td>Nodes may crash at any time</td><td><code>Step::Crash</code> removes a node from <code>live</code>. It does <strong>not</strong> remove that node’s tokens from <code>issued</code>.</td></tr>
+<tr><td>Crashed nodes may come back with stale beliefs</td><td><code>Step::Recover</code> puts the node back in <code>live</code>. It regains nothing else - in particular it still holds only its old, superseded tokens.</td></tr>
+<tr><td>Failure detection is unreliable</td><td><code>Step::RevokeOwner</code> may fire against a node that is perfectly healthy. Safety must come from the epoch bump, not from the detector being right.</td></tr>
+<tr><td>A handover may be interrupted at any point</td><td><code>Step::AbortTransfer</code> fires from <code>Transferring</code> and burns <em>another</em> epoch, so a <code>Grant</code> for the abandoned epoch is already stale when it arrives. <code>Step::ReassignUnowned</code> covers an intended owner that never picks the actor up.</td></tr>
+<tr><td>Epoch allocation is done by the protocol, not by a clock</td><td>Every epoch-advancing transition sets the new epoch to <code>old + 1</code> of the state it reads, so epochs are per-actor and totally ordered by construction.</td></tr>
+<tr><td>Nodes are not Byzantine</td><td>There is no transition that mints a token, fabricates an <code>Owned</code> state, or forges a state transition. A node can replay any message it has seen and present any token it was ever given; it cannot invent one.</td></tr>
+<tr><td>Epochs do not overflow</td><td><code>Epoch = nat</code>, so the model has unbounded epochs. A <code>u64</code> implementation must treat exhaustion as a hard failure.</td></tr>
+</tbody>
+</table>
+</div>
+<p>What is <strong>not</strong> claimed: <strong>liveness</strong>. Nothing here says a transfer completes,
+that a request is eventually served, or that an actor ever becomes owned again.
+Under arbitrary crashes and partitions none of those are achievable anyway.
+Safety survives every case above; progress does not, and is treated separately.</p>
+<h2 id="claimed-invariants-and-the-proofs-that-establish-them"><a class="header" href="#claimed-invariants-and-the-proofs-that-establish-them">Claimed invariants and the proofs that establish them</a></h2>
+<p>Every row names a <code>proof fn</code> that Verus checks in CI. If a row’s proof stops
+verifying, the build fails.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>#</th><th>Invariant</th><th>Verus theorem</th><th>Assumptions</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td><strong>Exclusive mutable ownership</strong> - in any reachable state, if <code>A</code> and <code>B</code> may both mutate an actor then <code>A == B</code> (and their epochs are equal)</td><td><code>ownership::proofs::exclusivity::theorem_exclusive_mutable_ownership</code></td><td>reachability; none beyond the model</td></tr>
+<tr><td>1a</td><td>The same, structurally: no state at all, reachable or not, admits two mutable owners</td><td><code>ownership::proofs::exclusivity::theorem_exclusive_mutable_ownership_structural</code></td><td>none</td></tr>
+<tr><td>1b</td><td>Two capability tokens that both confer authority over the same actor are the same token</td><td><code>ownership::proofs::exclusivity::theorem_authorized_token_unique</code></td><td>reachability</td></tr>
+<tr><td>2</td><td><strong>Unique current epoch</strong> - existence stated outright, and uniqueness as an implication over <em>arbitrary</em> epochs (not under the assumption that a witness was already supplied)</td><td><code>ownership::proofs::fencing::theorem_unique_current_epoch</code></td><td>none</td></tr>
+<tr><td>3</td><td><strong>Stale-owner fencing</strong> - <code>current_epoch(actor) &gt; supplied_epoch ==&gt; !can_mutate(actor, node, supplied_epoch)</code></td><td><code>ownership::proofs::fencing::theorem_stale_epoch_cannot_mutate</code></td><td>none</td></tr>
+<tr><td>3a</td><td>Advancing <code>n -&gt; n+1</code> strips authority from every holder of <code>n</code></td><td><code>ownership::proofs::fencing::theorem_epoch_advance_fences_previous</code></td><td>none</td></tr>
+<tr><td>3b</td><td>For issued tokens the fence check is exactly epoch equality (no token is ever ahead of the actor)</td><td><code>ownership::proofs::fencing::theorem_fence_is_exact_for_issued_tokens</code></td><td>reachability</td></tr>
+<tr><td>4</td><td><strong>Transfer safety</strong> - every permitted transition preserves the ownership and fencing invariants</td><td><code>ownership::proofs::transfer::theorem_transition_preserves_invariants</code></td><td><code>inv</code> holds before the step</td></tr>
+<tr><td>4a</td><td>Across a whole handover, the epoch never decreases, nobody has authority at the middle stages, and the outgoing owner is fenced from the first transition onwards</td><td><code>ownership::proofs::transfer::theorem_handover_safety</code></td><td><code>A != B</code></td></tr>
+<tr><td>4b</td><td>At no stage of a handover can both nodes have authority</td><td><code>ownership::proofs::transfer::theorem_handover_never_both</code></td><td><code>A != B</code></td></tr>
+<tr><td>4c</td><td>An interrupted handover fences both the old and the abandoned new epoch</td><td><code>ownership::proofs::transfer::theorem_interrupted_transfer_fences_both</code></td><td>none</td></tr>
+<tr><td>4d</td><td>Ownership cannot be manufactured: the only step that can make <code>may_mutate</code> true is <code>Acquire</code>, from <code>Unowned</code> at that exact epoch with a matching grant</td><td><code>ownership::proofs::transfer::theorem_ownership_only_via_acquire</code></td><td>none</td></tr>
+<tr><td>5</td><td><strong>Epoch monotonicity</strong> - no transition decreases an actor’s epoch</td><td><code>ownership::proofs::fencing::theorem_epoch_monotone_step</code>, <code>..._next</code>, <code>..._execution</code></td><td>none</td></tr>
+<tr><td>6</td><td><strong>Token uniqueness (authority)</strong> - at most one token confers authority per <code>(actor, Epoch)</code>, an actor being an <code>Id</code></td><td><code>ownership::proofs::tokens::theorem_valid_token_unique_per_actor_epoch</code></td><td>none</td></tr>
+<tr><td>6a</td><td><strong>Token uniqueness (physical)</strong> - at most one token is ever <em>issued</em> per <code>(actor, Epoch)</code></td><td><code>ownership::proofs::tokens::theorem_issued_token_unique_per_actor_epoch</code></td><td>reachability</td></tr>
+<tr><td>6b</td><td>Stale physical tokens confer no authority</td><td><code>ownership::proofs::tokens::theorem_stale_token_has_no_authority</code></td><td>none</td></tr>
+<tr><td>6c</td><td>No token is ever minted for a future epoch</td><td><code>ownership::proofs::tokens::theorem_no_future_tokens</code></td><td>reachability</td></tr>
+<tr><td>E</td><td>The runtime <code>u64</code> check returns exactly the model’s verdict <strong>for the generation the guard records</strong>, and rejects any epoch superseded <em>within that record</em></td><td><code>ownership::exec::FenceGuard::accepts</code>, <code>ownership::exec::FenceGuard::rejects_stale</code></td><td>the guard is the node’s own belief, immutable after <code>FenceGuard::new</code>. <strong>This is node-local staleness rejection, not fencing</strong>: a partitioned <code>A</code> still holding <code>FenceGuard::new(A, 41)</code> accepts <code>(A, 41)</code> while the system is at <code>Owned { B, 42 }</code>. A node cannot fence itself — see below</td></tr>
+<tr><td>E1</td><td><strong>Acquire refines <code>tr_acquire</code></strong> — when the step fires the model fires, to exactly the record the step computed; when it refuses a request naming the actor’s current epoch, <em>no</em> post state satisfies <code>tr_acquire</code>; and however the model acquires, the record it lands on is the one the step computes</td><td><code>ownership::proofs::refinement::theorem_acquire_step_refines_tr_acquire</code>, <code>..._refuses_exactly_when_disabled</code>, <code>..._outcome_is_the_step</code></td><td>the couplings (see the module docs of <code>ownership::proofs::refinement</code>); the refusal direction additionally assumes the request named the current epoch, which is the one place the executable step is narrower than the model</td></tr>
+<tr><td>E2</td><td><strong>Begin-transfer refines <code>tr_begin_transfer</code></strong>, in the same three parts. Refusal is exactly disablement <em>or</em> epoch exhaustion, and the refusal says which</td><td><code>ownership::proofs::refinement::theorem_begin_transfer_step_refines_tr_begin_transfer</code>, <code>..._refuses_exactly_when_disabled</code>, <code>..._outcome_is_the_step</code></td><td>the couplings; <code>u64</code> exhaustion is the implementation’s, not the model’s</td></tr>
+<tr><td>E3</td><td><strong>Release refines <code>tr_handle_revoke</code> followed by <code>tr_complete_release</code></strong> — two model transitions, one method, with the middle state exhibited rather than assumed to exist. A refused release is provably not the handover the model would complete</td><td><code>ownership::proofs::refinement::theorem_release_step_refines_handle_revoke_then_complete_release</code>, <code>theorem_refused_release_is_not_the_models_release</code></td><td>the couplings, and that the <code>Revoke</code> being acknowledged is on the network — which <code>tr_begin_transfer</code> put there</td></tr>
+<tr><td>E4</td><td><strong>Forced revocation refines all three of its transitions</strong>: <code>tr_revoke_owner</code> from <code>Owned</code>, <code>tr_reassign_unowned</code> from <code>Unowned</code>, <code>tr_abort_transfer</code> from <code>Transferring</code> — and in the last case the actor provably goes back to the node the transfer came from, whatever successor the coordinator named</td><td><code>ownership::proofs::refinement::theorem_force_step_refines_tr_revoke_owner</code>, <code>..._tr_reassign_unowned</code>, <code>..._tr_abort_transfer</code></td><td>the roster answers <code>pre.nodes.contains(next)</code></td></tr>
+<tr><td>E5</td><td><strong>A poll is <code>tr_issue_grant</code> or the delivery of a <code>Revoke</code></strong>, and the epoch it offers is the actor’s current one — so a poll can never hand out a generation the registry has already left. <code>Nothing</code> is returned only to a node that is owed nothing</td><td><code>ownership::proofs::refinement::theorem_poll_step_refines_tr_issue_grant</code>, <code>..._tr_handle_revoke</code>, <code>theorem_poll_step_offers_nothing_only_when_nothing_is_owed</code></td><td>the couplings</td></tr>
+<tr><td>E6</td><td><strong>The registry’s fence is the <em>system’s</em> fence</strong> — <code>may_write_step</code> on the registry’s own record is <code>can_mutate</code>, not a node’s belief about it. Same postcondition as E, different thing, bought entirely by where it is called</td><td><code>ownership::steps::may_write_step</code>, <code>ownership::proofs::refinement::theorem_may_write_step_is_the_system_fence</code></td><td>the record the step is handed is the actor’s</td></tr>
+<tr><td>E7</td><td><strong>The refinement theorems are not vacuous.</strong> Each is an implication under hypotheses, and hypotheses that cannot all hold make a theorem true and empty — a refinement suite can be green and say nothing. So one concrete system is written out in full and a whole handover walked through it, each theorem applied to the state the previous one produced, with what came out asserted</td><td><code>ownership::proofs::refinement::scenario_a_handover_through_the_verified_steps</code></td><td>none: the system is exhibited</td></tr>
+<tr><td>E7a</td><td>The same for the <em>refusal</em> theorems, whose hypotheses are the negation of a guard and so are untouched by a run in which the guard holds. In a system where no grant was published, <strong>no</strong> post state satisfies <code>tr_acquire</code> — quantified over all of them, not over one the server had in mind</td><td><code>ownership::proofs::refinement::scenario_the_refusals_are_refusals_of_something_real</code></td><td>none</td></tr>
+<tr><td>E8</td><td><strong>The registry’s record is the model, grants included.</strong> <code>registry::RegistryCore</code> — the actor’s record, the grants published and the writes landed — takes the model’s step at every method: <code>poll</code> is <code>tr_issue_grant</code> and publishes the grant it answers with; <code>acquire</code> is <code>tr_acquire</code> and reads the grant from the published set; <code>begin_transfer</code> is <code>tr_begin_transfer</code>; <code>release</code> is <code>tr_handle_revoke</code> then <code>tr_complete_release</code> and publishes the grant that completes the handover; <code>force</code> is <code>tr_revoke_owner</code>, <code>tr_reassign_unowned</code> or <code>tr_abort_transfer</code> by state, and publishes the grant it offers the actor on with. The relation (<code>stands_for</code>) is an equality between the published set and the network’s <code>Grant</code>s for that actor — the coupling E1’s refusal theorem is worth nothing without, and the one a registry once broke</td><td><code>ownership::proofs::registry::theorem_poll_is_issue_grant</code>, <code>theorem_acquire_is_tr_acquire</code>, <code>theorem_begin_transfer_is_tr_begin_transfer</code>, <code>theorem_release_is_handle_revoke_then_complete_release</code>, <code>theorem_force_from_owned_is_tr_revoke_owner</code>, <code>theorem_force_from_unowned_is_tr_reassign_unowned</code>, <code>theorem_force_from_transferring_is_tr_abort_transfer</code>, <code>theorem_a_landed_write_is_can_mutate</code></td><td>the sender-side hypotheses E1–E6 already name (<code>live</code>, <code>nodes</code>), and for <code>release</code> the <code>Revoke</code> on the network, which <code>begin_transfer</code> put there</td></tr>
+<tr><td>E9</td><td><strong>A refused step is one the model could not take.</strong> A refused <code>acquire</code> (for a request naming the actor’s current epoch) and a refused <code>begin_transfer</code> are disabled in every post-state; a refusal changes nothing, publishes no grant and counts no write. A refusal that is the <code>u64</code> epoch running out is the one the model does not have, and says so</td><td><code>ownership::proofs::registry::theorem_refused_acquire_is_disabled</code>, <code>theorem_refused_begin_transfer_is_disabled</code> and the <code>ensures</code> of each <code>RegistryCore</code> method</td><td><code>stands_for</code></td></tr>
+<tr><td>P1</td><td><strong>Issued tokens never disappear</strong> — no crash, partition or recovery retracts a capability, which is why stale tokens must be fenced rather than revoked</td><td><code>ownership::proofs::properties::theorem_issued_monotone</code></td><td>none</td></tr>
+<tr><td>P2</td><td><strong>Sent messages never disappear</strong> — the fact that makes duplication, reordering and unbounded delay free in the model</td><td><code>ownership::proofs::properties::theorem_network_monotone</code></td><td>none</td></tr>
+<tr><td>P3</td><td><strong>The actor population is constant</strong> — no transition creates or destroys an actor</td><td><code>ownership::proofs::properties::theorem_actor_domain_constant</code></td><td>none</td></tr>
+<tr><td>P4</td><td><strong>An epoch advances by at most one per transition</strong> — with claim 5, the epoch sequence is non-decreasing and never skips a generation</td><td><code>ownership::proofs::properties::theorem_epoch_increases_by_at_most_one</code></td><td>none</td></tr>
+<tr><td>P5</td><td><strong>Ownership at a given epoch is final</strong> — once owned by <code>n</code> at <code>e</code>, every later state still at <code>e</code> is still owned by <code>n</code> at <code>e</code>; a handover <em>must</em> burn the epoch</td><td><code>ownership::proofs::properties::theorem_ownership_at_an_epoch_is_final</code></td><td>valid execution</td></tr>
+<tr><td>P6</td><td><strong>An epoch determines its owner</strong> — any two points of an execution owned at the same epoch have the same owner</td><td><code>ownership::proofs::properties::theorem_epoch_determines_owner</code></td><td>valid execution</td></tr>
+<tr><td>P7</td><td><strong>Staleness is permanent</strong> — a fenced-out node can never be fenced back in by waiting</td><td><code>ownership::proofs::properties::theorem_stale_stays_stale</code></td><td>valid execution</td></tr>
+<tr><td>P8</td><td><strong>No authority without a capability</strong> — a node that may mutate provably holds an issued token for exactly that <code>(actor, epoch)</code></td><td><code>ownership::proofs::properties::theorem_no_authority_without_token</code></td><td>reachability</td></tr>
+<tr><td>P9</td><td><strong>Epoch monotonicity survives composition</strong></td><td><code>composed::proofs::epoch::theorem_composed_epoch_monotone</code></td><td>none</td></tr>
+<tr><td>R9</td><td><strong>The privilege is never lost</strong> — every Raymond transition leaves <code>privilege</code> pointing at a node</td><td><code>raymond::proofs::routing_layer::lemma_ray_token_exists_init</code>, <code>lemma_ray_token_exists_step</code></td><td>Raymond invariant</td></tr>
+<tr><td>R10</td><td><strong>Raymond critical sections are exclusive — while nobody’s belief is stale.</strong> The hypothesis is not a weakening; it is the algorithm’s real scope. Raymond’s mutual exclusion rests on every node agreeing where the privilege is, and a seizure breaks that until the seized node reconciles</td><td><code>raymond::proofs::routing_layer::theorem_ray_critical_section_is_exclusive</code></td><td>Raymond invariant, <code>ray_no_stale_holders</code></td></tr>
+<tr><td>R10a</td><td><strong>At most one node is <em>authorised</em> to be in its critical section</strong>, with no side conditions: the authorised occupant is the privilege holder, and there is one of those by construction. This is the part of R10 that survives a seizure</td><td><code>raymond::proofs::routing_layer::theorem_authorised_critical_section_is_exclusive</code></td><td>Raymond invariant</td></tr>
+<tr><td>R13</td><td><strong>A stale holder confers no authority.</strong> A node that believes it holds the privilege, does not, and may still be inside its critical section, still cannot mutate the actor — <code>couples</code> is written against possession, not belief. The routing counterpart of 6b, and what survives imperfect failure detection</td><td><code>raymond::proofs::routing_layer::theorem_stale_holder_confers_no_authority</code></td><td>the coupling</td></tr>
+<tr><td>R14</td><td><strong>Reconciliation repairs the belief</strong>: the stale holder drops it, leaves the critical section it thought it was in, and re-points at the real holder</td><td><code>raymond::proofs::routing_layer::lemma_reconcile_preserves_inv</code></td><td>Raymond invariant</td></tr>
+<tr><td>R11</td><td><strong>The holder pointers are acyclic</strong> — part of <code>ray_inv</code>, preserved by every transition. A handover rewrites two pointers and needs a new rank (the old one shifted up by one, new root at zero); a seizure only makes the new holder point at itself, which <em>removes</em> a constraint, so the old rank still works</td><td><code>raymond::proofs::routing_layer::lemma_frame_acyclic</code>, <code>lemma_repoint_acyclic</code></td><td>Raymond invariant</td></tr>
+<tr><td>R12</td><td><strong>Every node reaches the privilege holder by following holder pointers</strong> — what makes “requests travel hop-by-hop towards the token” a checked claim. Two hypotheses, both load-bearing: R11 says the walk terminates rather than circling, and <code>ray_no_stale_holders</code> says it terminates at the real holder rather than at somebody who merely thinks so. The second was free when authority <em>was</em> belief; it is not free now, and it should not be — after a seizure a node whose belief-path leads to the seized holder genuinely cannot route to the privilege</td><td><code>raymond::proofs::routing_layer::theorem_every_node_reaches_the_token</code></td><td>Raymond invariant, <code>ray_no_stale_holders</code></td></tr>
+<tr><td>R15</td><td><strong>The executable routing steps agree with the model, in both directions.</strong> For each of <code>MakeRequest</code>, <code>ReceiveRequest</code>, <code>AssignPrivilege</code>, <code>EnterCs</code> and <code>ExitCs</code>: when the step fires the model’s transition fires, to exactly the state computed; when it refuses, the model’s transition is not enabled in <em>any</em> post-state. <code>AssignPrivilege</code>’s guard reads <strong>both</strong> <code>privilege == me</code> and <code>holder == me</code> — a step that read only the belief would let a stale holder pass a privilege it does not have — while <code>EnterCs</code>’s deliberately reads only the belief, as the model’s does</td><td><code>raymond::proofs::refinement::theorem_make_request_step_refines</code>, <code>theorem_receive_request_step_refines</code>, <code>theorem_assign_step_refines</code>, <code>theorem_enter_cs_step_refines</code>, <code>theorem_exit_cs_step_refines</code> and their <code>..._refuses_exactly_when_disabled</code> counterparts, <code>theorem_request_cs_post_is_the_model_step</code></td><td>the couplings in the module’s table: the scalars a step reads are the router’s own table, read under its lock</td></tr>
+<tr><td>R16</td><td><strong>The routing record is the model.</strong> <code>exec::RayTable</code> — every node’s holder pointer, queue and flags, the requests sent, and where the privilege is — has a view that is a model <code>Raymond</code>, and each method’s contract is the model’s step: <code>request_cs</code>, <code>make_request</code>, <code>receive_request</code>, <code>assign_privilege</code>, <code>enter_cs</code> and <code>exit_cs</code> leave the view at the model’s <code>*_post</code> with the model’s transition enabled to it; <code>seize</code> and <code>reconcile</code> are the composed machine’s two routing-side steps. The R15 theorems are applied to the live table inside each method, not assumed of it</td><td><code>raymond::exec::RayTable::{request_cs, make_request, receive_request, assign_privilege, enter_cs, exit_cs, seize, reconcile}</code> (contracts), <code>lemma_update_entry</code>, <code>lemma_push_request</code>, <code>lemma_set_privilege</code></td><td>the table is well formed (each node once; the privilege is at a node)</td></tr>
+<tr><td>R17</td><td><strong>A refusal is a step the model could not take, at any state.</strong> Each of those methods, when it refuses, leaves the view unchanged and carries <code>forall post. !ray_*(old, post, ..)</code>: not “the code said no” but “no state is a legal result” — including for a node that is not on the roster, since every model step begins with <code>nodes.contains</code>. <code>assign_privilege</code> says it for <em>every</em> head, because with an empty queue none is named</td><td>the same contracts</td><td>the table is well formed</td></tr>
+<tr><td>C1</td><td><strong>Election Safety — at most one leader per term.</strong> The headline. Three sentences: a leader won a majority; any two majorities share a member; a member votes once per term</td><td><code>raft::proofs::election::theorem_election_safety</code>, <code>..._reachable</code></td><td>the Raft invariant, discharged for reachable states by <code>theorem_reachable_raft_inv</code></td></tr>
+<tr><td>C2</td><td><strong>Any two majorities of a cluster share a member.</strong> The one piece of real mathematics, and the reason Raft needs no coordinator: two disjoint subsets whose sizes sum past the whole would make a union larger than a set containing it</td><td><code>raft::proofs::election::lemma_quorums_intersect</code></td><td>none</td></tr>
+<tr><td>C3</td><td><strong>A server votes at most once per term</strong> — sentence three, and the clause <code>tr_grant_vote</code>’s guard exists to maintain</td><td><code>raft::proofs::election::inv_votes_unique</code>, preserved by <code>lemma_raft_step_preserves_inv</code></td><td>the Raft invariant</td></tr>
+<tr><td>C4</td><td><strong>A cast vote is never ahead of its voter’s term.</strong> Not in the headline argument and the clause without which it does not survive induction: it is what makes a fresh candidacy safe, because a server timing out into term <code>t + 1</code> can only be voting there for the first time</td><td><code>raft::proofs::election::inv_vote_implies_term</code></td><td>the Raft invariant</td></tr>
+<tr><td>C5</td><td><strong>The Raft invariant holds in every reachable state</strong> (<code>raft_init ==&gt; inv</code>, <code>inv /\ raft_next ==&gt; inv</code>)</td><td><code>raft::proofs::election::theorem_reachable_raft_inv</code></td><td>the model’s transition relation</td></tr>
+<tr><td>C6</td><td><strong>A majority, once won, stays won</strong> — votes only accumulate and the cluster does not change size, so a leader elected at term 7 remains, as a matter of record, the winner of term 7</td><td><code>raft::proofs::election::lemma_quorum_survives</code></td><td>none</td></tr>
+<tr><td>C7</td><td><strong>Terms never decrease, and votes are never retracted.</strong> The Raft counterparts of epoch monotonicity (claim 5) and token permanence (P1) — and a vote is physical in the same sense a token is, which is exactly why a returning server must not vote again in a term it has already voted in</td><td><code>raft::proofs::election::theorem_term_monotone_step</code>, <code>theorem_votes_monotone_step</code></td><td>none</td></tr>
+<tr><td>C8</td><td><strong>The coupling guards agree with the composed model.</strong> <code>PassToken</code> fires only once the actor is <code>Unowned</code> and the routing layer’s own step fires; <code>SeizeToken</code> only from the holder, to a different node, with the actor <code>Unowned</code>; <code>AcquireUnderToken</code> only for the node holding the privilege; <code>Reconcile</code> only for a node that owes one and whose belief is stale. Each refuses exactly when the composed model’s transition is not enabled</td><td><code>composed::proofs::refinement::theorem_pass_token_step_refines</code>, <code>theorem_pass_token_refuses_while_the_actor_is_held</code>, <code>theorem_pass_token_refuses_when_the_routing_step_does</code>, <code>theorem_seize_step_refines</code>, <code>theorem_seize_step_refuses_exactly_when_disabled</code>, <code>theorem_acquire_under_token_step_refines</code>, <code>theorem_acquire_under_token_refuses_a_node_without_the_privilege</code>, <code>theorem_reconcile_step_refines</code>, <code>theorem_reconcile_step_refuses_exactly_when_disabled</code></td><td><strong>every node is live</strong> (<code>own.live.contains(..)</code>) — the service has no <code>Crash</code> step, so it refines the composed machine’s crash-free executions; see below</td></tr>
+<tr><td>C9</td><td><strong>A step a layer already proved is carried by the composed machine without a second proof.</strong> <code>cs_ray</code> adds only that the step does not move the privilege and that its actor is live; <code>cs_own</code> adds only that the step does not create authority over this actor and does not bring back a node owing a reconciliation</td><td><code>composed::proofs::refinement::theorem_a_routing_step_is_carried</code>, <code>theorem_an_ownership_step_is_carried</code></td><td>the hypotheses of the carried step</td></tr>
+<tr><td>CX1</td><td><strong>The composed steps over the layers’ records are the composed model.</strong> <code>composed::exec::pass_token</code>, <code>seize_token</code>, <code>acquire_under_token</code> and <code>reconcile</code> take the ownership record (<code>RegistryCore</code>), the routing record (<code>RayTable</code>) and the set of nodes that owe a reconciliation (<code>id::IdSet</code>), check the coupling guard, take the layers’ steps and keep the debts — and each contract is <code>cs_pass_token</code>, <code>cs_seize_token</code>, <code>cs_acquire_under_token</code> or <code>cs_reconcile</code>: the privilege moves only once the actor is <code>Unowned</code>, only <code>to</code> acts on a seizure and the old holder then owes a reconciliation, the recipient of a passed privilege is discharged of its debt, a node acquires only holding the privilege. The relation (<code>stands_for_composed</code>) is the ownership relation of E8 (grants included), the routing view <em>being</em> <code>c.ray</code>, and the debts <em>being</em> <code>c.seized</code></td><td><code>composed::proofs::exec::theorem_pass_token_is_cs_pass_token</code>, <code>theorem_seize_token_is_cs_seize_token</code>, <code>theorem_acquire_under_token_is_cs_acquire_under_token</code>, <code>theorem_reconcile_is_cs_reconcile</code></td><td>the nodes involved are live (<code>own.live</code>). The service’s identity lookup speaks only for the <em>caller</em>; the recipient of a passed privilege and the target of a seizure are not callers, so for them this is a hypothesis nothing in the service establishes</td></tr>
+<tr><td>CX2</td><td><strong>A refused composed step is one the model could not take.</strong> A refusal changes neither layer nor the debts and carries “the actor was not released, or the layer’s own step was disabled in every post-state” (<code>pass_token</code>, <code>seize_token</code>), “the node does not hold the privilege” (<code>acquire_under_token</code>), or “the node owes nothing, or is not stale” (<code>reconcile</code>). <strong>Not claimed</strong>: that a refusal from the ownership layer inside <code>acquire_under_token</code> (no published grant, a wrong epoch) is a step the <em>composed</em> model could not take — it is the ownership layer’s own refusal, covered by E8, and the composed theorem for <code>acquire_under_token</code> is about the privilege test only</td><td><code>composed::proofs::exec::theorem_refused_pass_token_is_disabled</code>, <code>theorem_refused_seize_token_is_disabled</code>, <code>theorem_acquire_without_the_privilege_is_disabled</code>, <code>theorem_refused_reconcile_is_disabled</code></td><td><code>stands_for_composed</code></td></tr>
+<tr><td>C8</td><td><strong>A lone self-vote is not a majority</strong> in a cluster of more than one. The check that the <code>&gt;</code> in the quorum threshold is load-bearing rather than decorative: with <code>&gt;=</code> a single server could elect itself</td><td><code>raft::proofs::election::theorem_a_lone_vote_is_not_a_majority</code></td><td>a cluster of at least two</td></tr>
+<tr><td>C9</td><td><strong>An election actually happens.</strong> A concrete three-server cluster walked from initialisation through a real election, exported with every step named, so C1 is not a safety property of a protocol that never elects anybody</td><td><code>raft::proofs::scenario::scenario_a_leader_is_elected</code></td><td>none: the cluster is exhibited</td></tr>
+<tr><td>C10</td><td><strong>The election steps refine the model</strong>, in both directions: each executable step fires exactly when the model’s transition is enabled, and lands where the model lands</td><td><code>raft::proofs::refinement::theorem_timeout_step_refines_tr_timeout</code>, <code>..._grant_vote_...</code>, <code>..._become_leader_...</code>, <code>..._step_down_...</code>, and the <code>..._refuses_exactly_when_disabled</code> for each</td><td>the couplings, tabulated in <code>raft::proofs::refinement</code>’s module docs</td></tr>
+<tr><td>C11</td><td><strong>The <code>u64</code> tally answers the model’s question about the set.</strong> <code>is_majority</code> computes <code>votes + votes &gt; members</code> with no multiplication to overflow and no subtraction that can go below zero; this is what makes that the same question as <code>is_quorum</code></td><td><code>raft::steps::is_majority</code>, <code>raft::proofs::refinement::theorem_majority_count_is_a_quorum</code>, <code>theorem_a_tally_fits_in_the_membership</code></td><td>that the tally does not double-count a voter and the membership count is not stale — neither of which a step function can check, so both are named</td></tr>
+<tr><td>CE1</td><td><strong>The election record is the model.</strong> <code>exec::ElectionCore</code> — a server’s role and term, whom it voted for in that term, and the votes it has counted — takes the model’s step at every method: <code>stand</code> is <code>tr_timeout</code> (the next term, a self-vote, a tally of one); a fresh <code>grant</code> is <code>tr_grant_vote</code>; counting a vote that makes a majority of voters who each voted is <code>tr_become_leader</code>; <code>step_down</code> is <code>tr_step_down</code>, and the vote and tally leave with the old term; <code>yield_to</code> is the role change <code>tr_append_entries</code> makes on a candidate. The relation (<code>stands_for</code>) is the cluster’s role and term, <strong>the vote</strong> (the core’s <code>voted_for</code> is exactly <code>has_voted(c, n, term)</code> — the equality <code>grant_vote_step</code>’s <code>already_voted</code> stands for), <strong>the tally</strong> (a subset of the voters for this candidacy — <code>has_quorum ⇒ won_election</code>), and that no vote by this server is ahead of its term</td><td><code>raft::proofs::election_core::theorem_stand_is_tr_timeout</code>, <code>theorem_grant_is_tr_grant_vote</code>, <code>theorem_a_won_count_is_tr_become_leader</code>, <code>theorem_step_down_is_tr_step_down</code>, <code>theorem_yield_is_the_append_role_change</code>, <code>lemma_already_voted_is_has_voted</code></td><td><code>stands_for</code>; a counted ballot was a vote that was cast (receiving a <code>Granted</code> for this term supplies it); the candidate’s log is up to date, supplied by the caller’s comparison</td></tr>
+<tr><td>CE2</td><td><strong>A refused election step is one the model could not take.</strong> A refused <code>stand</code>, <code>grant</code> or <code>step_down</code> is a step the model’s transition is not enabled for, in any post-state (for a log that is behind, given that the caller’s <code>up_to_date</code> is the model’s <code>at_least_as_up_to_date</code>); a refusal changes neither the term, the vote nor the tally. A count that does not win is <strong>not</strong> claimed to be a step the model could not take: the tally is a subset of the voters and may undercount, so a not-yet-majority tally says nothing about <code>won_election</code>. The theorem covers the other direction — where the <em>model’s</em> election is not won, <code>tr_become_leader</code> is disabled. The retransmission of a vote already given is the one answer that is outside the model’s transition by design — a repeat of an earlier reply, the model’s <code>votes</code> being a set. A refusal because the <code>u64</code> term ran out is the one the model does not have, and says so</td><td><code>raft::proofs::election_core::theorem_refused_stand_is_disabled</code>, <code>theorem_refused_grant_is_disabled</code>, <code>theorem_refused_stale_log_is_disabled</code>, <code>theorem_a_lost_count_is_disabled</code>, <code>theorem_a_refused_step_down_is_disabled</code></td><td><code>stands_for</code></td></tr>
+<tr><td>C12</td><td><strong>Elections do not touch logs, and neither does committing.</strong> Standing, voting, winning and standing down change who a server thinks it is; advancing the commit point is a claim about how much of the log is decided, not a change to it</td><td><code>raft::proofs::log::theorem_elections_do_not_touch_logs</code>, <code>theorem_committing_does_not_touch_the_log</code></td><td>none</td></tr>
+<tr><td>C13</td><td><strong>Leader Append-Only.</strong> A server that is a leader before and after a step has only gained entries — everything it had, it still has, in the same places. This is where Election Safety buys something concrete: the only transition that shortens a log makes its receiver a follower, so a server that is a leader on both sides was not the receiver</td><td><code>raft::proofs::log::theorem_leader_append_only</code></td><td>none</td></tr>
+<tr><td>C14</td><td><strong>A client command is stamped with the term of the leader that accepted it</strong>, and appended at the end. The term on an entry names the leader that made it, because Election Safety says there was only one leader of that term</td><td><code>raft::proofs::log::theorem_client_request_stamps_the_leaders_term</code></td><td>none</td></tr>
+<tr><td>C15</td><td><strong>A follower agrees before it accepts</strong> — the consistency check, named: it takes an entry at <code>prefix</code> only if it already holds an entry at <code>prefix - 1</code> of the leader’s term, and drops everything beyond</td><td><code>raft::proofs::log::theorem_a_follower_agrees_before_it_accepts</code></td><td>none</td></tr>
+<tr><td>C16</td><td><strong>Entries are never invented.</strong> A follower’s new entry is the leader’s entry at the same index — copied, not constructed</td><td><code>raft::proofs::log::theorem_replication_copies_the_leaders_entry</code></td><td>none</td></tr>
+<tr><td>C17</td><td><strong>Commitment needs a majority <em>and</em> the entry has to be of the committing leader’s own term</strong> — figure 8 of the Raft paper. A majority <em>holding</em> an entry is not a majority having <em>voted</em> on it, and committing on replica count alone lets a later leader overwrite it</td><td><code>raft::proofs::log::theorem_commit_needs_a_majority_of_its_own_term</code></td><td>none</td></tr>
+<tr><td>C18</td><td><strong>Two commits of the same length share a holder.</strong> As far as quorum intersection reaches without Log Matching: it produces a server holding both prefixes, which is the first line of a Leader Completeness proof and not a substitute for one</td><td><code>raft::proofs::log::theorem_two_commits_share_a_holder</code></td><td>none</td></tr>
+<tr><td>C19</td><td><strong>One log is extended per term</strong>, because the leader of a term is unique. A corollary of C1, stated because it is the shape every later log argument leans on</td><td><code>raft::proofs::log::theorem_one_log_is_extended_per_term</code></td><td>the Raft invariant</td></tr>
+<tr><td>C20</td><td><strong>An append makes its receiver a follower, and the executable step computes that</strong> — the role change at an <em>equal</em> term, which <code>tr_step_down</code> cannot reach and which figure 2 gives candidates. The refusal side is stated asymmetrically on purpose: a leader at an equal term is the state Election Safety rules out, and a step that fired on it would let any peer depose a leader by naming its term</td><td><code>raft::proofs::refinement::theorem_an_append_makes_its_receiver_a_follower</code>, <code>theorem_follow_step_agrees_with_tr_append_entries</code>, <code>theorem_follow_step_refuses_exactly_when_disabled</code></td><td>none</td></tr>
+<tr><td>C21</td><td><strong>The ghost history neither enables nor disables anything.</strong> For <em>any</em> history whatsoever — not the one the run produced, any at all — every step still fires from the same real state and lands in the same real state. This is the soundness condition for an auxiliary variable, and it is what makes <code>Cluster::created</code> and <code>Cluster::led</code> a record rather than an assumption: no guard reads them</td><td><code>raft::proofs::history::theorem_history_does_not_gate_the_protocol</code>, <code>theorem_history_is_monotone</code></td><td>none</td></tr>
+<tr><td>C22</td><td><strong>At most one server <em>ever</em> leads a term</strong> — across the whole run, not merely at one instant. Strictly stronger than C1, which compares two servers that are leaders <em>now</em>: a leader that stepped down an hour ago is outside C1 and its entries are still in logs. The sentence the log argument needs, and it cannot be stated without history</td><td><code>raft::proofs::history::theorem_at_most_one_server_ever_leads_a_term</code>, <code>..._reachable</code></td><td>the history invariant</td></tr>
+<tr><td>C23</td><td><strong>Having led a term, you are still leading it or you have moved past it.</strong> The load-bearing history invariant. The ways to stop leading either raise the term or cannot fire: a leader of <code>t</code> is refused a vote in <code>t</code> because it spent that vote on itself, and an append demoting it at an equal term would be two leaders in one term</td><td><code>raft::proofs::history::inv_led_means_at_or_past</code>, with <code>inv_standing_implies_voted</code>, <code>inv_leader_is_led</code>, <code>inv_led_implies_won</code></td><td>the Raft invariant (Election Safety)</td></tr>
+<tr><td>C24</td><td><strong>A leader of a term holds everything created at that term</strong> — the freshness clause. A leader appends at the end of its own log, and this says every slot already written at its term is inside that log, so the slot it is about to write is not one of them. At <code>tr_become_leader</code> it holds because a term being won <em>now</em> has never been led, which is C22</td><td><code>raft::proofs::history::inv_creator_holds</code>, <code>lemma_become_leader_finds_its_term_unwritten</code>, <code>lemma_client_request_writes_a_fresh_slot</code></td><td>the history invariant</td></tr>
+<tr><td>C25</td><td><strong>The consistency check is exactly the guard that keeps the creation record true.</strong> A follower taking the leader’s entry at <code>prefix</code> records a predecessor that is now <em>its own</em> entry at <code>prefix - 1</code>, not the leader’s — and those agree precisely because <code>tr_append_entries</code> will not fire unless they do</td><td><code>raft::proofs::history::lemma_the_consistency_check_preserves_the_record</code></td><td>the history invariant</td></tr>
+<tr><td>C26</td><td><strong>Log Matching — two logs that agree on an entry’s term at an index agree on every entry at and below it.</strong> The headline of the log half. One slot gives one recorded value and one recorded predecessor, so agreement at an index is agreement one index down, and repeating reaches zero</td><td><code>raft::proofs::history::theorem_log_matching</code>, <code>theorem_log_matching_prefixes</code>, <code>theorem_log_matching_values</code>, <code>theorem_log_matching_reachable</code></td><td><code>inv_logs_follow_created</code>, discharged for reachable states by <code>theorem_reachable_hist_inv</code></td></tr>
+<tr><td>C27</td><td><strong>Recovery is exact.</strong> The in-memory log equals <code>replay</code> of the device before and after every operation — append, truncate, <em>and</em> crash-recovery. The recovery case is trivial, and that is the design working: the device <strong>is</strong> the log, not a journal of intentions about it, so recovery reconciles nothing</td><td><code>raft::proofs::store::theorem_recovery_is_exact</code>, <code>theorem_the_store_always_agrees</code>, <code>theorem_a_fresh_store_agrees</code></td><td>none</td></tr>
+<tr><td>C28</td><td><strong>A crash can only rewind.</strong> <code>replay</code> is total on every sequence of records, so there is no prefix a crash can leave that recovery cannot read, and what comes back is a log the store had rather than one no sequence of writes could produce. Records that reached the device are unchanged and at the same indices</td><td><code>raft::proofs::store::theorem_a_crash_can_only_rewind</code>, <code>theorem_a_crash_keeps_what_reached_the_device</code></td><td>that a crash keeps a <strong>prefix</strong> — the property an append-only device gives you, and what pmemlog’s write restriction enforces</td></tr>
+<tr><td>C29</td><td><strong>Accepting a replicated entry costs at most two records</strong>, and <code>appended_log</code> is what they replay to — so figure 2’s rule 3, which deletes a suffix, is implementable on a device that deletes nothing. <strong>Three costs, and which one you pay says what just happened</strong>: <em>nothing</em> when the entry is already there, so a duplicate <code>AppendEntries</code> never reaches the device; <em>one record</em> when extending, since the marker would be <code>Truncate { len: log.len() }</code> and writing the identity would double the cost of the steady state; <em>two</em> on a genuine conflict, however long the tail it deletes. The zero-cost branch is C25’s conditional again, as an operational fact</td><td><code>raft::proofs::store::theorem_accepting_an_entry_is_at_most_two_records</code>, <code>theorem_extending_the_log_costs_one_record</code>, <code>theorem_a_follower_accepts_with_at_most_two_writes</code></td><td>the store invariant (C27)</td></tr>
+<tr><td>C30</td><td><strong>The device is append-only.</strong> No operation moves its tail back: the records that were there are still there, in order, at the same indices. A <code>Record::Truncate</code> shortens the <em>log</em> and lengthens the device. This is the property that lets the whole store sit on <code>vendor/verified-storage/pmemlog</code>, whose abstract state has <code>append</code> and <code>advance_head</code> and nothing that shortens a tail</td><td><code>raft::proofs::store::theorem_the_device_is_append_only</code></td><td>none</td></tr>
+<tr><td>C31</td><td><strong>Compaction is sound</strong>, costs one record per entry, and leaves no truncation behind — so a store can rewrite itself as pure appends. It is also <strong>scheduled</strong>: <code>worth_compacting</code> fires at <code>records &gt; 2 * (entries + 1)</code>, which is amortised O(1) per operation, and the bound is asserted every round over sixty rounds of the worst shape. This row read <em>“soundness only: nothing schedules it”</em> for three PRs after the policy landed — the code and the claim drifted apart in the direction that understates the code, which is rarer and no better</td><td><code>raft::proofs::store::theorem_compaction_replays_the_same</code>, <code>theorem_compaction_is_one_record_per_entry</code>, <code>theorem_compaction_leaves_no_truncations</code></td><td>none</td></tr>
+<tr><td>C32</td><td><strong>Cut the bytes anywhere and a record prefix comes back</strong> — for <em>every</em> <code>k</code>, not for multiples of seventeen. The tear can land in the middle of a <code>u64</code> and the theorem still holds, because fixed width means no byte of a half-written record can be mistaken for the start of a whole one. This is what C28 needs and cannot state for itself: <code>store_recover</code> is written over a <em>record</em> prefix, and a device gives back a <em>byte</em> prefix</td><td><code>raft::proofs::wire::theorem_a_torn_tail_is_a_record_prefix</code>, <code>theorem_recovery_from_a_torn_device</code></td><td>every record fits in 64 bits (<code>records_fit</code>)</td></tr>
+<tr><td>C33</td><td><strong>What was written is what is read</strong>, and the encoding is exactly seventeen bytes per record — which is what makes <code>bytes.len() / 17</code> the record count and the parser’s stopping condition an observation rather than an argument</td><td><code>raft::proofs::wire::theorem_parse_of_encode</code>, <code>theorem_the_encoding_is_fixed_width</code>, <code>lemma_a_record_round_trips</code>, <code>lemma_a_record_is_seventeen_bytes</code></td><td><code>records_fit</code></td></tr>
+<tr><td>C34</td><td>Eight bytes, least significant first, and back again</td><td><code>raft::proofs::wire::lemma_le_round_trip</code> (by <code>bit_vector</code>)</td><td>none</td></tr>
+<tr><td>C35</td><td><strong>Nothing reported durable is ever lost, by any transition, ever.</strong> The line does not retreat <em>and</em> everything below it is unchanged record for record — a store that kept the right <em>number</em> of records while rewriting one would satisfy the first clause and fail the second. Stated per step, across a whole run with any number of crashes, and finally as the sentence Raft needs: <strong>a follower that answers <code>Accepted</code> has written the entry down</strong>, so a leader counting that answer toward a majority is counting something that cannot be taken back</td><td><code>raft::proofs::store::theorem_durability_never_retreats</code>, <code>theorem_a_durable_record_is_durable_for_ever</code>, <code>theorem_a_follower_that_answers_accepted_has_written_it_down</code>, <code>theorem_a_crash_keeps_everything_reported_durable</code></td><td>that a crash keeps a <strong>prefix</strong> of the records, and that a <code>LogStore</code> method is durable before it returns — the latter discharged by <code>theorem_an_append_is_a_write_then_a_sync</code></td></tr>
+<tr><td>C36</td><td><strong>A staged compaction is inert until the old generation is reclaimed, and the batch has no middle.</strong> Compaction on an append-only device is two steps and a crash can land between them; writing <code>compacted(log)</code> alone would leave <code>old ++ compacted(log)</code>, which replays to <strong><code>log + log</code></strong>. The leading <code>Truncate { len: 0 }</code> makes the staged generation self-sufficient, so the device means the same log with the old records there and once they are gone — which turns the reclaim into a no-op rather than a change. And the batch is written by one <code>store_write_batch</code>, so no recovery the model permits can observe it part-way</td><td><code>raft::proofs::store::theorem_a_staged_compaction_is_inert</code>, <code>theorem_after_compaction_the_old_records_are_dead</code>, <code>theorem_an_atomic_batch_has_no_middle</code>, <code>lemma_a_compacted_log_appends_itself</code></td><td>that the batch lands atomically — one pmemlog <code>append</code>, whose crash view is the log before it or after it and nothing between. The <strong>one</strong> property of the device this design asks for and cannot itself check</td></tr>
+<tr><td>C36b</td><td><strong>A batch written a record at a time rewinds the log</strong>, exactly — a crash after <code>k</code> of its entries recovers exactly <code>k</code>. The reason C36 needs atomicity rather than merely preferring it: the marker has already cleared everything, so a partial batch is the compaction of a <em>shorter</em> log. Proved as an equality, not a possibility</td><td><code>raft::proofs::store::theorem_a_partial_batch_can_rewind</code>, <code>lemma_compacted_take_is_take_compacted</code></td><td>none</td></tr>
+<tr><td>C37</td><td><strong>Every reachable store is encodable, so the two halves compose.</strong> <code>records_fit</code> is a guard on the write transitions and a clause of <code>store_inv</code>, not a precondition that filters which theorems may be <em>invoked</em> — stated only on the theorems, an unencodable state stays reachable and the encoding theorems quietly stop applying exactly where they are needed. This is the theorem that spends it: any store satisfying the invariant round-trips through the encoding <em>and</em> survives a tear at any byte</td><td><code>raft::proofs::wire::theorem_a_reachable_store_is_encodable</code>, <code>theorem_no_reachable_store_is_unwritable</code>, with <code>lemma_pushing_a_fitting_record_fits</code>, <code>lemma_a_prefix_of_a_fitting_sequence_fits</code></td><td>none</td></tr>
+<tr><td>C38</td><td><strong>The commit point never outruns the log</strong>, and <strong>retreats only when a truncation cuts below it</strong>. Raft’s commit index is supposed to be monotone; <code>accepted_commit</code>’s clamp to the log length gives that up in exactly one case, because a truncation below the commit point forces a choice between a commit index naming absent entries and one that goes backwards. This model retreats — a broken promise is readable, a commit point past the end of the log is not — and these say precisely when. Commit <strong>is</strong> monotone whenever the truncation is at or above it, which is every step of a healthy cluster; and when it retreats, the leader deleted an entry the follower had <em>committed</em></td><td><code>raft::proofs::log::theorem_the_commit_point_never_outruns_the_log</code>, <code>theorem_the_commit_point_does_not_retreat_above_a_truncation</code>, <code>theorem_the_commit_point_retreats_only_below_a_truncation</code>, <code>theorem_a_commit_retreat_means_a_committed_entry_was_deleted</code></td><td>none — and the condition on monotonicity is exactly what <strong>Leader Completeness</strong> would discharge, so when that lands the hypothesis becomes vacuous and monotonicity becomes unconditional</td></tr>
+<tr><td>C39</td><td><strong>A log’s terms never decrease, and none exceeds its holder’s own term.</strong> Two facts proved together, because they hold for one reason: a leader stamps a new entry with its own term, and that term bounds everything already in the log, so the new entry is the largest <em>because</em> it is bounded. The replication case is the <strong>consistency check</strong> paying for itself a third time — a follower accepting at <code>prefix</code> keeps <code>follower.take(prefix)</code> and adds the leader’s entry, and the terms of that are sorted only because the two logs <em>agree</em> at <code>prefix - 1</code></td><td><code>raft::proofs::terms::inv_log_shape</code>, <code>theorem_reachable_term_inv</code>, <code>lemma_accepting_keeps_shape</code>, <code>lemma_push_keeps_shape</code></td><td>none</td></tr>
+<tr><td>C40</td><td><strong>The last term is the largest</strong>, so the up-to-date comparison — which reads only a log’s final entry — says something about every entry in it. One line from C39, and the line the election restriction is stated over</td><td><code>raft::proofs::terms::lemma_the_last_term_is_the_largest</code></td><td>none</td></tr>
+<tr><td>C41</td><td><strong>A follower that already agrees with the leader at an index keeps its entry there.</strong> The payoff of C25’s conditional truncation, and the reason it is load-bearing rather than merely faithful to figure 2. If <code>prefix &lt;= i</code>, Log Matching says the two logs agree at <code>prefix</code> as well, so the guard fires and the follower’s log is <strong>not touched at all</strong>; if <code>prefix &gt; i</code>, the truncation is above <code>i</code>. Under an <em>unconditional</em> truncation the first case is false — a duplicate <code>AppendEntries</code> for an early index would delete an entry the follower already agreed on — and the induction Leader Completeness needs would have no base</td><td><code>raft::proofs::terms::theorem_a_follower_that_agrees_keeps_the_entry</code></td><td>Log Matching (C26)</td></tr>
+<tr><td>C42</td><td><strong>An entry leaves a log only to a leader that disagrees with it there.</strong> C41 lifted from one transition to the whole relation, which is the shape the missing induction consumes: it has to rule out an entry vanishing from a voter’s log between the moment a quorum stored it and the moment that voter cast its next vote, and this says the only step that can is an <code>AppendEntries</code> from a leader whose own log differs at that index</td><td><code>raft::proofs::terms::theorem_an_agreed_entry_survives_any_step</code></td><td>Log Matching (C26)</td></tr>
+<tr><td>C43</td><td><strong>A candidate behind on terms is refused, and cannot collect that vote.</strong> A voter holding <em>any</em> entry of term <code>T</code> refuses every candidate whose last term is below <code>T</code> — so <code>tr_grant_vote</code> cannot fire, stated over the transition relation rather than over the guard. An empty log is the special case that makes C39’s <em>lower</em> bound worth having: <code>last_term</code> of an empty log is 0, no entry is ever at term 0, so an empty log is strictly behind every non-empty one rather than incomparable with it</td><td><code>raft::proofs::terms::theorem_a_candidate_missing_a_term_is_refused</code>, <code>theorem_a_stale_candidate_cannot_collect_that_vote</code>, <code>theorem_an_empty_log_cannot_win_a_vote</code>, <code>theorem_a_stale_candidate_cannot_collect_that_vote_reachable</code></td><td>none</td></tr>
+<tr><td>C44</td><td><strong>Every committed entry matches the creation record of its slot</strong>, and its own term is at least 1 and no later than the term of the leader that committed it. The bridge from the new <code>committed</code> ghost record to the <code>created</code> record Log Matching is stated over. It survives <code>tr_client_request</code> — the one transition that <em>inserts</em> into <code>created</code>, where an insert at a slot already written would silently replace a record a committed entry is matched against — because C22’s <code>inv_creator_holds</code> puts every slot already created at a leader’s term <em>inside</em> that leader’s log, and the slot being written is one past its end</td><td><code>raft::proofs::commit::inv_committed_is_created</code>, <code>inv_committed_within_its_term</code>, <code>theorem_reachable_commit_inv</code></td><td>none</td></tr>
+<tr><td>C45</td><td><strong>At the moment of commitment a majority held that entry at that index</strong> — entry for entry, not “a prefix of that length”. The difference is the whole point: quorum intersection hands the induction a voter, and what it needs from that voter is the entry in its log, not a count. Stated over the transition, because it is the one fact about commitment that is about a moment rather than a state</td><td><code>raft::proofs::commit::theorem_a_commit_was_on_a_quorum</code></td><td>none</td></tr>
+<tr><td>C46</td><td><strong>Two commits at one index whose entries carry the same term are the same entry</strong> — so <strong>State Machine Safety holds with exactly one hypothesis added</strong>, that the two commits agree on the entry’s term. The value half is free: one <code>(term, index)</code> names one act of creation by one leader, which Election Safety and the <code>created</code> record give unconditionally. Nothing about values, quorums or counting is missing. What is missing is the answer to one question — can two leaders commit entries of <em>different terms</em> at one index? — and that question is Leader Completeness</td><td><code>raft::proofs::commit::theorem_two_commits_at_one_slot_agree</code>, <code>theorem_state_machine_safety_at_agreeing_terms</code></td><td>that the two commits agree on the entry’s term, which is precisely Leader Completeness</td></tr>
+<tr><td>C47</td><td><strong>A commit is a commit for ever</strong>, across a whole run, and the ghost record covers the real count at the moment it is written. The first is what makes the record usable where <code>Server::commit</code> is not — a count on one server that C38 proves <em>retreats</em>. The second is what stops it becoming a second bookkeeping scheme that drifts from the first, a hazard this repository was already bitten by once in <code>records_fit</code> (C37)</td><td><code>raft::proofs::commit::theorem_a_commit_is_a_commit_for_ever</code>, <code>theorem_the_record_covers_the_count</code>, <code>raft::proofs::history::theorem_history_is_monotone</code></td><td>none</td></tr>
+<tr><td>C48</td><td><strong>An entry persists across a run whenever every leader replicating to its holder already agrees with it there.</strong> The run-level form of C42, and it exists because the <em>prose</em> around C42 was wrong in a way the theorem never was: this document said the persistence step was already a theorem, when C42 carries a hypothesis — the replicating leader must already agree at that index — whose discharge for every intervening leader <strong>is</strong> Leader Completeness at the intervening terms. The condition now lives in a signature, quantified over the steps between the two states. <strong>Sufficient, not necessary</strong>: a replication at a <code>prefix</code> below the index, where the logs happen to agree at <code>prefix</code>, leaves the follower’s log untouched and the entry survives whatever the leader holds above it. Sufficiency is all the induction needs. This is the lemma it calls at its inductive step, with the induction hypothesis discharging the quantifier</td><td><code>raft::proofs::commit::theorem_an_entry_persists_while_leaders_agree</code>, <code>replication_agrees_at</code>, <code>lemma_a_labelled_execution_is_an_execution</code></td><td>the quantifier in its own statement, which is exactly the induction hypothesis</td></tr>
+<tr><td>C49</td><td><strong>Every vote has its judgement on the record, and every recorded vote went to a candidate at least as up to date as the voter’s log at that moment.</strong> <code>tr_grant_vote</code>’s guard compares against a log <em>at an instant</em>; by the time any later theorem asks what the comparison was, the voter has extended, truncated or replaced that log. <code>Cluster::voted_with</code> records both sides — the voter’s log as it stood and the candidate summary it was weighed against — because storing one side would leave the other to be reconstructed from a state that no longer holds it. The completeness clause matters as much as the judgement clause: a record written in some arms and not others would be silently partial, and a theorem quantified over it would say nothing about the votes it had missed. That is why <code>tr_timeout</code>’s self-vote is recorded even though it constrains nothing</td><td><code>raft::proofs::votes::inv_every_vote_has_its_log</code>, <code>inv_a_vote_was_up_to_date</code>, <code>inv_a_recorded_log_is_shaped</code>, <code>theorem_reachable_vote_inv</code></td><td>none</td></tr>
+<tr><td>C50</td><td><strong>A candidate that won a vote was at least as late, in terms, as every entry in that voter’s log</strong> — C43 read off the record rather than off a live state, which is the whole reason the record exists. And <strong>quorum intersection with the judgement attached</strong>: any quorum whatsoever meets the winner’s voters in a server for which the record says what its log was when it voted, and that the winner’s summary dominated it. Instantiate that quorum with the one C45 produces — the majority that held a committed entry — and the shared voter is a server that both held the entry and judged the winner at least as up to date as its own log. This is the induction’s first and third steps joined at a single voter</td><td><code>raft::proofs::votes::theorem_a_voter_saw_nothing_later_than_the_candidate</code>, <code>theorem_a_winner_shares_a_judged_voter_with_any_quorum</code>, <code>theorem_a_winner_shares_a_judged_voter_with_any_quorum_reachable</code> — the reachable wrapper <strong>repeats</strong> the existential rather than forwarding it, because a wrapper’s contract is written and not inferred: a caller sees only what the wrapper’s own <code>ensures</code> says, so forwarding a call does not forward its postconditions</td><td>none — but it is a statement about <strong>one state</strong>, and the induction needs the commit-time quorum carried <em>across the run</em> to the election, which is C48’s conditional job</td></tr>
+<tr><td>C51</td><td><strong>A <code>RequestVote</code>’s summary is a snapshot of the log it summarises</strong>, for as long as its sender is still a standing candidate of that term — and every judgement on the record quotes a <code>RequestVote</code> that is still on the wire. No fifth ghost record was needed for this — <code>Cluster</code> already carries four, and the reason is worth naming: <strong><code>Cluster::messages</code> never shrinks</strong>, so the network is already a history variable. The third clause, that a <code>RequestVote</code> never names a term its sender has not reached, looks like bookkeeping and is what makes the second <em>inductive</em>: the awkward case is <code>tr_timeout</code> itself, where a server becoming a candidate of <code>t</code> makes every <code>RequestVote</code> for <code>(t, n)</code> on the wire suddenly have to summarise its new log. The one it just sent does; an <strong>older</strong> one would not, and would sink the invariant. There is no older one, because a server enters a term once — which is that third clause, machine-checked</td><td><code>raft::proofs::summary::inv_a_recorded_summary_was_on_the_wire</code>, <code>inv_a_requestvote_is_not_ahead_of_its_sender</code>, <code>inv_a_requestvote_summarises_a_candidate</code>, <code>theorem_reachable_summary_inv</code></td><td>none — and no other invariant bundle is carried either, which is unusual here: the argument is entirely about the network and one server’s role</td></tr>
+<tr><td>C52</td><td><strong>At the instant it wins, a new leader’s own log is at least as up to date as the log of a voter it shares with any quorum whatsoever</strong> — and its last term dominates every entry that voter held. This is C50 with the winner’s <em>log</em> in place of the pair of integers C50 actually produced. Read C50’s conclusion again: <code>at_least_as_up_to_date(ct, ci, lg)</code>, where <code>ct</code> and <code>ci</code> are two numbers that arrived over the network, and nothing anywhere said they had anything to do with the winner’s log. The induction’s third step was therefore not available, and this document asserted it was. <code>tr_become_leader</code> is the right place to state it, because it is the last instant at which the winner is still a candidate and so the last instant at which its summary is its log — afterwards the log grows and the <code>RequestVote</code> is spent</td><td><code>raft::proofs::summary::theorem_a_candidate_is_judged_on_its_own_log</code>, <code>theorem_a_candidate_dominates_its_judged_voter</code>, <code>theorem_a_candidates_log_is_the_latest_its_voters_saw</code>, <code>theorem_the_new_leaders_log_dominates_a_judged_voter</code>, <code>theorem_the_new_leaders_log_dominates_a_judged_voter_reachable</code> — the reachable wrapper repeats its existential, per the rule C50 learned</td><td>none</td></tr>
+<tr><td>C53</td><td><strong>Every member of a commit’s quorum is already at the committing leader’s term or past it — so only a leader at or past that term can ever write to it again.</strong> Three lines and a guard: figure 8’s restriction says the last entry of the committed prefix carries the leader’s own term <code>T</code>, a quorum member holds that prefix so it holds an entry of term <code>T</code>, and <code>terms_within</code> says no entry’s term exceeds its holder’s own. Terms never fall across a run, so it stays true. And <code>tr_append_entries</code> — the only transition that can shorten a log — requires the leader’s term to <strong>equal</strong> the follower’s, so nothing below <code>T</code> can touch it. Note which guard is load-bearing: without figure 8, the committed prefix could end in an <em>old</em> term and this would be false. That restriction is usually explained as ruling out one counterexample; here it is what gives the whole argument its shape</td><td><code>raft::proofs::persistence::theorem_a_term_never_falls_across_a_run</code>, <code>theorem_a_commit_quorum_is_at_or_past_its_term</code>, <code>theorem_a_replicating_leader_shares_the_followers_term</code></td><td>none</td></tr>
+<tr><td>C54</td><td><strong>A member of the quorum that committed an entry still holds it at any later point, provided every leader from the commit’s term onwards held it</strong> — which is C48 with its hypothesis translated out of <em>steps</em> and into <em>leaders of terms</em>. That translation is the content. C48 quantifies over every step of the run; the induction hypothesis is a statement about leaders, so between the two sat a gap that the roadmap crossed <strong>in prose</strong> by saying C48’s hypothesis “is the induction hypothesis at the intervening terms” — true, and not a translation. C53 is what performs it: the steps that could hurt are driven by leaders at one known term, the holder’s. <code>replicators_hold</code> is the tight form — every standing leader that could reach the holder <em>right now</em> — and carries no term bound, because persistence needs none; <code>leaders_within_hold</code> is what the induction supplies, Leader Completeness over the <strong>closed range</strong> <code>[t0, t1]</code>. <strong>Both bounds are load-bearing, and the upper one is there because <code>@codex</code> found the first version of this module without it</strong>: strong induction on the election’s term supplies Leader Completeness <em>below</em> that term, and an unbounded predicate demands it above as well. Such leaders exist — nothing here orders terms cluster-wide, so a far-higher-term leader can be running while a delayed campaign still collects votes — and they are harmless, since they cannot replicate to a voter at a lower term. The old predicate demanded they hold the entry anyway, so C54 could not have been discharged without assuming the conclusion at terms the induction had not reached</td><td><code>raft::proofs::persistence::replicators_hold</code>, <code>leaders_within_hold</code>, <code>lemma_a_bounded_hypothesis_covers_the_replicators</code>, <code>theorem_an_entry_survives_leaders_that_could_reach_it</code>, <code>theorem_a_commit_quorum_still_holds_it</code></td><td>the hypothesis in its own statement — now the induction hypothesis over a closed range, whose <strong>upper endpoint the induction still owes</strong>: a leader of <code>t1</code> can exist before this voter has voted in <code>t1</code>, because winning <code>t1</code> needs <em>a</em> quorum and not this one</td></tr>
+<tr><td>I</td><td>The inductive invariant holds in every reachable state (<code>init ==&gt; inv</code>, <code>inv /\ next ==&gt; inv</code>)</td><td><code>ownership::proofs::invariant::theorem_reachable_inv</code></td><td>the model’s transition relation</td></tr>
+<tr><td>S</td><td><strong>The headline scenario</strong>: <code>A</code> owns X@41, a transfer and a crash/recovery occur, <code>B</code> owns X@42, <code>A</code> returns still holding its epoch-41 token - and cannot perform an authoritative mutation. The postcondition exports the whole nine-step run, so the crash, the recovery and the outcome are the same execution — exported as separate existentials they need not have been, and an ordinary live handover could supply the outcome</td><td><code>ownership::proofs::adversarial::scenario_stale_owner_returns</code></td><td><code>A != B</code></td></tr>
+<tr><td>S1</td><td>A stale <code>Grant</code> cannot resurrect a superseded epoch</td><td><code>ownership::proofs::adversarial::theorem_stale_grant_cannot_be_used</code></td><td>none</td></tr>
+<tr><td>S2</td><td>Message duplication / reordering / delay cannot change ownership</td><td><code>ownership::proofs::adversarial::theorem_network_steps_cannot_change_ownership</code></td><td>none</td></tr>
+<tr><td>S3</td><td>Crash and stale-node recovery cannot change ownership</td><td><code>ownership::proofs::adversarial::theorem_crash_recovery_cannot_change_ownership</code></td><td>none</td></tr>
+<tr><td>S4</td><td>An interrupted transfer leaves nobody with authority and burns the epoch. A step property, not a constructed execution — hence <code>theorem_</code>, not <code>scenario_</code></td><td><code>ownership::proofs::adversarial::theorem_interrupted_transfer_burns_the_epoch</code></td><td><code>inv</code> holds before the step (and so, by <code>theorem_reachable_inv</code>, every reachable state)</td></tr>
+<tr><td>S4a</td><td><strong>An interrupted transfer really happens</strong>: the run is exported with its four labels, so the <code>AbortTransfer</code> at index 3 interrupts the very <code>BeginTransfer</code> at index 2 that opened the transfer, ending at <code>Unowned(43, A)</code> with nobody able to mutate at 41 or 42. Without it, S4 stays provable even if <code>AbortTransfer</code> were changed to be always false — a conditional lemma about an unreachable transition</td><td><code>ownership::proofs::adversarial::scenario_interrupted_transfer</code></td><td><code>A != B</code></td></tr>
+<tr><td>S5</td><td><strong>A fabricated <code>Released</code> is inert.</strong> <code>HandleRevoke</code> lets any live node manufacture a <code>Released</code> from any <code>Revoke</code> ever sent, however old. <code>CompleteRelease</code> is the only step that consumes one, and it re-reads the actor’s current state, so if it fires the actor is <code>Transferring</code> right now and the network holds the <code>Released</code> naming exactly that handover’s <code>from</code> and <code>new_epoch</code></td><td><code>ownership::proofs::adversarial::theorem_complete_release_needs_the_matching_released</code></td><td>none</td></tr>
+<tr><td>S6</td><td><strong>A fabricated <code>Released</code> cannot steer a handover.</strong> The resulting epoch is read from the live <code>Transferring</code> record, not from the message</td><td><code>ownership::proofs::adversarial::theorem_complete_release_outcome_is_fixed_by_state</code></td><td>none</td></tr>
+<tr><td>R1</td><td><strong>Raymond: exactly one valid privilege</strong> - now <em>structural</em>: <code>Raymond::privilege</code> is one node id, so uniqueness needs no invariant. It used to be inductive, and that was exactly what made a returning stale holder unrepresentable</td><td><code>raymond::proofs::routing_layer::theorem_ray_exactly_one_token</code>, <code>theorem_ray_at_most_one_token</code>, preserved by <code>lemma_ray_step_preserves_inv</code></td><td>Raymond invariant</td></tr>
+<tr><td>R2</td><td><strong>Raymond: holder/routing changes cannot manufacture ownership</strong></td><td><code>raymond::proofs::routing_layer::theorem_routing_cannot_manufacture_ownership</code></td><td>Raymond invariant, coupling</td></tr>
+<tr><td>R3</td><td><strong>Raymond: duplicate/reordered requests cannot create a second owner</strong></td><td><code>raymond::proofs::routing_layer::theorem_duplicate_requests_are_safe</code></td><td>Raymond invariant</td></tr>
+<tr><td>R4</td><td><strong>Raymond: token transfer preserves ownership safety</strong></td><td><code>composed::proofs::coupling::lemma_composed_pass_token_preserves_inv</code> (and, as a layer-local lemma, <code>raymond::proofs::routing_layer::theorem_token_transfer_preserves_ownership_safety</code>)</td><td>none — in the composed machine the release-before-transfer condition is a <em>guard</em>, not an assumption</td></tr>
+<tr><td>R5</td><td><strong>Composed exclusivity</strong>: in every reachable composed state at most one node may mutate the actor, and it is the node holding the token</td><td><code>composed::proofs::coupling::theorem_composed_exclusivity</code></td><td>composed reachability</td></tr>
+<tr><td>C0</td><td><strong>Non-degeneracy</strong>: a composed state in which a node is <em>actually inside</em> the critical section is reachable from <code>composed_init</code>. The contract exports the run: three labels, <code>RequestCs</code> / <code>EnterCs</code> / <code>ExitCs</code>, with <code>using</code> false at indices 0, 1 and 3 and true at 2 — so the node inside got there by entering, and the exit leaves the state it entered</td><td><code>composed::proofs::scenario::scenario_composed_critical_section</code></td><td><code>A != B</code></td></tr>
+<tr><td>C0a</td><td>(Step-level lemma backing C0) <code>EnterCs</code>/<code>ExitCs</code> are legal <code>ComposedStep::Ray</code> transitions and preserve the composed invariant</td><td><code>composed::proofs::coupling::theorem_composed_admits_critical_section</code>, <code>..._exit</code></td><td>composed invariant holds before the step</td></tr>
+<tr><td>C1</td><td><strong>Non-vacuity</strong>: a complete <em>voluntary</em> handover driven through <strong>both</strong> layers is reachable. The contract exports the whole run: <code>labels == handover_labels(x, a, b)</code> — ten steps, <code>BeginTransfer</code> at 2, <code>CompleteRelease</code> at 4, <code>PassToken</code> at 8 — plus the <code>Transferring { a, b, 41, 42 }</code> state at index 3, since the labels carry no epochs. No other execution satisfies it: the substitutes that satisfied earlier versions were crash takeover, revoking a live <code>A</code>, and an unrelated 39 → 40 transfer</td><td><code>composed::proofs::scenario::scenario_composed_handover</code></td><td><code>A != B</code></td></tr>
+<tr><td>C2</td><td><strong>Crash-driven takeover is reachable in the composed machine</strong>: <code>A</code> owns X@41 holding the token, crashes and takes no further step; the coordinator burns the epoch; the token is <em>seized</em>; <code>B</code> ends up owning X@42 and holding the token, with <code>A</code>’s epoch-41 token still issued and powerless. The postcondition exports the whole run — eight labels with <code>Crash(A)</code> at 2, <code>RevokeOwner</code> at 3 and <code>SeizeToken</code> at 4, and no <code>CompleteRelease</code> anywhere, so a voluntary release before the crash cannot stand in for the revocation</td><td><code>composed::proofs::scenario::scenario_composed_crash_takeover</code></td><td><code>A != B</code></td></tr>
+<tr><td>C3</td><td>Seizing the token preserves the coupling and leaves the target holding the one token — safety comes from the epoch being burned first, not from the holder agreeing to let go</td><td><code>composed::proofs::coupling::lemma_composed_seize_preserves_inv</code>, <code>raymond::proofs::routing_layer::lemma_seize_preserves_inv</code></td><td>composed invariant. <strong>No liveness assumption</strong>: the epoch was burned first, so this holds even when the seized node is healthy and was suspected wrongly — see below</td></tr>
+<tr><td>C4</td><td><strong>Privilege movement is partitioned by cooperation</strong>: a holder that acts passes it on, a holder that does not has it taken, and no other composed step moves it at all. This used to be partitioned by <em>liveness</em>, which required a guard no coordinator can evaluate</td><td><code>composed::proofs::coupling::theorem_token_movement_is_partitioned</code></td><td>composed invariant</td></tr>
+<tr><td>C5</td><td>The two layers describe the <strong>same cluster</strong>: <code>ray.nodes == own.nodes</code> is part of <code>composed_inv</code> and <code>composed_init</code>. Without it a Raymond root could be a node the ownership layer never heard of, so <code>!own.live.contains(n)</code> would hold for it with no <code>Crash</code> having happened, and the seizure guard would be satisfied by unmodelled liveness rather than by a fail-stop</td><td><code>composed::model::composed_inv</code>, preserved by <code>composed::proofs::coupling::theorem_composed_step_preserves_inv</code></td><td>—</td></tr>
+<tr><td>P10</td><td><strong>The node population is constant</strong> — <code>Crash</code> and <code>Recover</code> move nodes in and out of <code>live</code>, never out of <code>nodes</code></td><td><code>ownership::proofs::properties::theorem_node_domain_constant</code></td><td>none</td></tr>
+<tr><td>C6</td><td><strong>A seized node cannot rejoin <code>live</code> while still seized</strong> — <code>cs_own</code> refuses <code>Recover</code> for it, so the only way back is through <code>Reconcile</code>, which now carries the content the claim always asserted: it is where the stale belief is dropped, by the node that holds it. Backed by <code>composed_inv</code>’s “every stale holder owes a reconciliation”, which is what makes <code>seized</code> mean somethint must perform a step an execution has to contain rather than an assumption</td><td><code>composed::proofs::coupling::theorem_seized_node_cannot_recover</code></td><td>—</td></tr>
+<tr><td>C7</td><td>Reconciliation is <strong>not a dead end</strong>: <code>A</code> can be told what happened and then rejoin, holding no token and no authority</td><td><code>composed::proofs::scenario::scenario_composed_crash_takeover</code> (third witness)</td><td><code>A != B</code></td></tr>
+<tr><td>C</td><td>The coupling is an <strong>invariant</strong> of the composed machine: <code>composed_init ==&gt; composed_inv</code>, <code>composed_inv /\ composed_next ==&gt; composed_inv</code>, hence <code>composed_reachable ==&gt; composed_inv</code></td><td><code>composed::proofs::coupling::theorem_composed_reachable_inv</code>, <code>theorem_composed_step_preserves_inv</code></td><td>the composed transition relation</td></tr>
+<tr><td>R6</td><td>A concrete routing execution: request <code>D → B → A → C[token]</code>, token <code>C → A → B → D</code>, then a twelfth step redelivering <code>D</code>’s original request after the token has finished moving. The contract exports the whole run — <code>tr[0] == routing_init_state(a, b, c, d)</code> and <code>labels == routing_labels(a, b, c, d)</code> — which pins the <em>path</em> and not just the endpoints: exactly one <code>RequestCs</code>, <code>D</code>’s, so each forward is caused by the receive before it. Pinning <code>r0</code> alone was not enough, because reachability still admitted <code>A</code>, <code>B</code> and <code>D</code> requesting independently and serving their own queue heads</td><td><code>raymond::proofs::routing_run::scenario_request_and_token_routing</code></td><td>four distinct nodes</td></tr>
+<tr><td>R7</td><td>A request outlives the topology it was routed against: after the token moves it is still in <code>requests</code> and still deliverable</td><td><code>raymond::proofs::routing_layer::theorem_delayed_request_survives_token_move</code></td><td>none</td></tr>
+<tr><td>R8</td><td>Delivering an arbitrarily delayed request preserves the Raymond invariant and leaves token possession completely unchanged</td><td><code>raymond::proofs::routing_layer::theorem_delayed_request_delivery_is_safe</code></td><td>Raymond invariant</td></tr>
+</tbody>
+</table>
+</div>
+<p>“Reachability” means the hypothesis <code>reachable(sys)</code>, i.e. some finite execution
+starting from an <code>init</code> state ends in <code>sys</code>. It is discharged once and for all by
+<code>theorem_reachable_inv</code>.</p>
+<h3 id="privilege-movement-is-partitioned-by-cooperation"><a class="header" href="#privilege-movement-is-partitioned-by-cooperation">Privilege movement is partitioned by cooperation</a></h3>
+<p>A holder that acts hands the privilege on (<code>ComposedStep::PassToken</code>, which
+requires <code>pre.own.live.contains(n)</code> and <code>believes_holds</code>); a holder that does
+not has it taken (<code>ComposedStep::SeizeToken</code>).
+<code>composed::proofs::coupling::theorem_token_movement_is_partitioned</code> proves there is no
+third way: routing steps, ownership transitions, acquisition and reconciliation
+all leave possession exactly as they found it.</p>
+<p>The <code>SeizeToken</code> arm used to claim <code>!pre.own.live.contains(m)</code> as well, because
+seizure was guarded on it. It no longer is, and the arm now says only what is
+true and checkable: the privilege moved away from <code>m</code> without <code>m</code> taking a step.
+That is the distinction a deployment can act on — a coordinator knows whether
+<em>it</em> is forcing the transfer; it does not know whether the node is alive. See
+<a href="#seizure-needs-no-oracle-belief-versus-authority">Seizure needs no oracle</a>.</p>
+<p>The liveness guard on <code>PassToken</code> stays, and means something different: it is
+not a detection requirement but a statement about who is acting.
+<code>ray_assign_privilege</code> models the holder <em>choosing</em> to hand the privilege to the
+head of its queue, and a crashed node cannot choose anything.</p>
+<h3 id="a-seized-node-must-reconcile-before-it-returns"><a class="header" href="#a-seized-node-must-reconcile-before-it-returns">A seized node must reconcile before it returns</a></h3>
+<p>A seizure leaves the seized node’s <code>holder</code> and <code>using</code> entries exactly as they
+were — nobody can reach into a machine that is down — and <code>Step::Recover</code>’s
+contract says a node comes back <em>with no knowledge of what happened meanwhile</em>.
+So a node that is simply allowed to recover comes back still believing
+<code>holder[n] == n</code>, and can enter its Raymond critical section beside the new
+holder. Ownership stays safe, because the epoch fences it; Raymond’s critical
+section has no epoch.</p>
+<p>So <code>Composed</code> carries <code>seized</code>, the set of nodes whose privilege was taken and
+whose belief has not yet been repaired, and <code>composed_inv</code> ties it to reality:
+<strong>every stale holder owes a reconciliation</strong>. <code>cs_own</code> refuses <code>Step::Recover</code>
+for a node in that set, and <code>ComposedStep::Reconcile</code> is the only way out.</p>
+<p>The reconciliation a real deployment must perform — re-read the routing state
+rather than trust what you remember — is therefore a <strong>modelled transition</strong>
+with content, not a marker: it is the step in which the belief is dropped, the
+critical section left, and the holder pointer re-aimed at the node that actually
+holds the privilege. <code>scenario_composed_crash_takeover</code> runs it through to <code>A</code>
+rejoining afterwards, so the guard is a discipline rather than an unreachable
+restriction.</p>
+<p>It is not guarded on the node being down. Seizure is no longer restricted to
+crashed nodes, so a live node can be left stale by a coordinator that suspected
+it wrongly, and must be able to learn the truth too. What the ordering rule
+still enforces is the crashed case: you cannot come back and start acting on a
+belief you never corrected.</p>
+<h3 id="seizure-needs-no-oracle-belief-versus-authority"><a class="header" href="#seizure-needs-no-oracle-belief-versus-authority">Seizure needs no oracle: belief versus authority</a></h3>
+<p>An earlier version of this model guarded <code>ComposedStep::SeizeToken</code> on
+<code>!pre.own.live.contains(from)</code>, with this argument: <code>RevokeOwner</code> may fire
+against a perfectly healthy owner, so without a liveness guard a seizure could
+fire against a live node inside its Raymond critical section; <code>ray_seize</code> clears
+<code>using[from]</code>, so the model would report exclusivity while two nodes were really
+inside.</p>
+<p>The analysis was right and the conclusion was wrong, twice over.</p>
+<p><strong>It conflated two guarantees.</strong> Ownership safety is fenced by the epoch, which
+is burned <em>before</em> the seizure fires, so it never needed the node to be dead.
+Only Raymond’s critical-section exclusivity needed anything, and what it needs
+is a condition on the <em>state</em> — <code>ray_no_stale_holders</code> — not a guard on the
+step. The difference matters: a state condition is something a deployment can
+restore, by reconciling; a step guard is something it must evaluate.</p>
+<p><strong>And <code>!live</code> is ground truth, which no coordinator has.</strong> It has a suspicion —
+which is exactly why <code>RevokeOwner</code> is modelled as firing against healthy nodes.
+Guarding the forcible path on perfect failure detection put the composed
+machine’s strongest theorems out of reach of any real deployment, in a clause
+that read like an ordinary guard.</p>
+<p>The repair was the one the ownership layer had already made once. <code>issued</code> keeps
+a crashed node’s capability for ever and <code>token_authorized</code> decides whether it
+still confers anything; the routing layer now makes the same split:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>physical / believed</th><th>authoritative</th></tr>
+</thead>
+<tbody>
+<tr><td>ownership</td><td><code>issued</code></td><td><code>token_authorized</code></td></tr>
+<tr><td>routing</td><td><code>holder[n]</code> — state stored <em>at</em> <code>n</code></td><td><code>Raymond::privilege</code></td></tr>
+<tr><td>predicate</td><td><code>believes_holds(r, n)</code></td><td><code>has_token(r, n)</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><code>ray_seize</code> now touches only the new holder. <code>from</code>’s <code>holder</code>, <code>using</code> and
+<code>asked</code> entries are left exactly as they are, because they live on a machine
+nobody can reach — editing them was modelling something no implementation can
+do. What that creates is a <strong>stale holder</strong>: a node that believes it holds the
+privilege, does not, and may still be inside its critical section believing that
+too.</p>
+<p>That state is the point. It could not previously be written down, because
+<code>ray_unique_token</code> was an inductive invariant over the holder pointers and the
+state violated it outright — the invariant held partly because the dangerous
+state was unrepresentable, which is the pattern the ownership layer takes such
+care to avoid. Uniqueness is now <em>structural</em> (<code>privilege</code> is one value), the
+stale state is representable, and <code>theorem_stale_holder_confers_no_authority</code>
+proves it inert: <code>couples</code> is written against possession, so belief confers
+nothing however firm it is.</p>
+<p><strong>The rule this leaves behind.</strong> Not all liveness guards are oracles, and the
+difference is which node the step makes <em>act</em>:</p>
+<blockquote>
+<p><strong>Liveness may guard the nodes a step makes act, and may not guard the ones it
+does not.</strong></p>
+</blockquote>
+<p>A guard on an acting node is a statement about who takes part — nobody has to
+determine anything, because if the node is down the exchange simply does not
+happen. A guard on a non-acting node is an oracle, because something must
+evaluate it before the step may fire. <code>!live(from)</code> was the second kind, which
+is why it had to go; <code>live(n)</code> on <code>cs_pass_token</code> was always the first kind.</p>
+<p>Applying the rule uniformly closed two more holes of exactly the shape the
+review found, on the <em>receiving</em> side:</p>
+<ul>
+<li><code>cs_pass_token</code> now guards <code>head</code> as well as <code>n</code>. <code>ray_assign_privilege</code> has
+<code>head</code> record <code>holder[head] := head</code>, so if <code>head</code> crashed after its request
+reached <code>n</code>, the old step installed a belief in a node that could not receive
+it — and a later <code>Recover(head)</code> framed it in, modelling the node as knowing
+about an event it never observed.</li>
+<li><code>cs_seize_token</code> guards <code>to</code> for the same reason: the coordinator hands it the
+privilege and it records that, so it is acting.</li>
+</ul>
+<p>The rule covers the <strong>ownership</strong> layer too, and enumerating it there found the
+last gap: <code>tr_begin_transfer</code> is documented as “the current owner agrees to hand
+<code>actor</code> over”, which is an action by <code>from</code>, and it had no liveness guard. So
+<code>Acquire(A) → Crash(A) → BeginTransfer(A, B)</code> was accepted — a crashed node
+volunteering. That one matters beyond tidiness: <code>RevokeOwner</code> and <code>SeizeToken</code>
+exist precisely for the case where the owner <em>cannot</em> cooperate, and a model in
+which the dead cooperate does not need them.</p>
+<p>The full audit, by who acts:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>transition</th><th>acting node</th><th>guard</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Acquire</code></td><td>the acquiring node</td><td><code>live(n)</code></td></tr>
+<tr><td><code>BeginTransfer</code></td><td>the outgoing owner</td><td><code>live(from)</code> — <strong>added</strong></td></tr>
+<tr><td><code>HandleRevoke</code></td><td>the revoked node</td><td><code>live(target)</code></td></tr>
+<tr><td><code>Crash</code> / <code>Recover</code></td><td>the node</td><td><code>live</code> / <code>!live</code>, being the boundary itself</td></tr>
+<tr><td><code>IssueGrant</code>, <code>CompleteRelease</code>, <code>AbortTransfer</code>, <code>RevokeOwner</code>, <code>ReassignUnowned</code></td><td>none — the coordinator</td><td>correctly unguarded</td></tr>
+<tr><td><code>Replay</code></td><td>none — the network</td><td>correctly unguarded</td></tr>
+<tr><td><code>Stutter</code></td><td>none — it does nothing</td><td>correctly unguarded</td></tr>
+</tbody>
+</table>
+</div>
+<p>That is all twelve variants of <code>Step</code>, which is the point: a table that omits
+one cannot support a coverage argument, however right the rows it does contain
+are. This one omitted <code>ReassignUnowned</code> and <code>Stutter</code> when first published.</p>
+<p><code>RevokeOwner</code> being unguarded is the design, not an oversight: it is the step
+that fires <em>without</em> the owner’s cooperation, against a node that may be
+perfectly healthy. <code>ReassignUnowned</code> is the same shape — the coordinator
+re-offering an actor that nobody owns, burning an epoch to do it.</p>
+<p><code>cs_ray</code> guards whichever node the Raymond step makes act
+(<code>ray_step_actor</code>), which is the carrier that has most of them. Without it a
+crashed node could queue requests, forward them, and — the serious case — enter
+its critical section: after <code>Crash(A) → RevokeOwner → SeizeToken(A, B)</code>,
+<code>Ray { EnterCs(A) }</code> fired on <code>A</code>’s untouched holder and queue while <code>A</code> was
+still down and still marked, walking straight past the
+reconciliation-before-acting discipline. <code>ReceiveRequest</code> acts at <code>at</code>; <code>from</code>
+sent its request earlier and takes no part in the delivery.</p>
+<p><code>cs_reconcile</code> guards nobody, and that is not an exception to the rule but a
+consequence of what <code>live</code> means here. <code>live</code> is <em>participating in the
+protocol</em>, not <em>powered on</em> — the field’s documentation said “currently up”
+until this was chased down, which was a second meaning hiding in one set. Reconciliation is the boundary step — the node
+re-reading authoritative state as part of coming back, before it resumes
+participating — which is why it may fire while <code>!live</code> and why <code>Recover</code> is a
+separate step that follows it. A node that was seized while live may also
+reconcile at any time, since it is acting either way.</p>
+<p><strong>Granting the privilege discharges the debt.</strong> Both grant steps now clear the
+recipient from <code>seized</code>, because receiving the privilege <em>is</em> the node learning
+the truth: it is live, it records <code>holder := itself</code>, and it really does hold, so
+its belief is correct again. Without that, a node marked by an earlier seizure
+and later handed the privilege back would stop being stale while staying marked
+— and <code>cs_reconcile</code> requires <code>is_stale_holder</code>, so the marker could never be
+cleared and <code>recovers_a_seized_node</code> would reject that node’s recovery for ever.</p>
+<p>That state became reachable only when the <code>!live(from)</code> guard came off. Before,
+a marked node was always dead and had to reconcile before rejoining, so it could
+never be a live grant target; afterwards it can be. A guard removed for good
+reasons opened a path that had to be closed somewhere else.</p>
+<p>Three consequences worth stating plainly:</p>
+<ul>
+<li><strong><code>cs_seize_token</code> has no liveness guard at all.</strong> Ownership safety survives
+seizure from a node that is perfectly healthy and wrongly suspected, which is
+the case a deployment will actually hit.</li>
+<li><strong>Raymond’s mutual exclusion has a window.</strong> Between a seizure and the seized
+node’s reconciliation, two nodes can be inside their critical sections. That
+is true of any system that takes a privilege away from a node it cannot reach,
+and the model now says so instead of hiding it.</li>
+<li><strong><code>cs_reconcile</code> acquired its content.</strong> It used to remove a marker and change
+nothing else; the work it claimed to model had already been done at seizure
+time, by the coordinator, to a node it could not talk to. Now it is where the
+belief is dropped — by the node that holds it.</li>
+</ul>
+<p>Chubby reaches the same place from the other direction: a sequencer’s validity
+is checked “against the server’s Chubby cache or … the most recent sequencer
+that the server has observed”, which is belief checked against authority. See
+<a href="#relation-to-chubby">Relation to Chubby</a>.</p>
+<h3 id="a-node-cannot-fence-itself"><a class="header" href="#a-node-cannot-fence-itself">A node cannot fence itself</a></h3>
+<p>Row E is narrower than it looks, and the gap is worth stating plainly rather
+than leaving a reader to infer it.</p>
+<p><code>FenceGuard::accepts</code> consults the node’s <strong>own</strong> belief about the actor —
+whatever generation it last observed. A partitioned <code>A</code> still holding
+<code>FenceGuard::new(A, 41)</code> gets <code>accepts(A, 41) == true</code> while the system has
+already moved to <code>Owned { B, 42 }</code>. The stale owner from the headline scenario
+passes its own fence, every time.</p>
+<p>That is not a contradiction: the postcondition promises
+<code>may_mutate(self.view(), ..)</code>, and <code>view()</code> is exactly that stale belief. But
+the safety property proved here is about the <em>system’s</em> state
+(<code>can_mutate(sys, ..)</code>), and nothing in <code>src/ownership/exec_v.rs</code> connects a guard to it.
+What a guard buys is <strong>node-local staleness rejection, not fencing</strong>.</p>
+<p>Real fencing has to happen where the effect lands, against authoritative state:
+the storage layer refusing a write whose epoch is superseded, or a reply gate
+that re-reads the ownership record after a write is durable and before
+acknowledging it, refusing the acknowledgement if the record no longer names
+this node at this epoch. That check is what turns exclusivity into a property an
+outsider can rely on. It is not in this crate, and proving the protocol says
+nothing about whether an implementation performs it.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../examples.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../reference/raymond.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../examples.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../reference/raymond.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-609e4cb8.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

@@ -31,9 +31,6 @@ use vstd::prelude::*;
 
 use crate::id::Id;
 
-use crate::ownership::fencing::*;
-use crate::ownership::model::*;
-use crate::ownership::spec::*;
 use crate::raymond::proofs::routing_layer::*;
 use crate::raymond::model::*;
 

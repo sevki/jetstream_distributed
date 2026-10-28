@@ -36,7 +36,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 
 # Modules that stand alone: each may depend only on VOCABULARY.
-STANDALONE = {"ownership", "raft", "swim"}
+STANDALONE = {"ownership", "raft", "raymond", "swim"}
 
 # `id`, and the modules that only describe shapes and import no protocol. A name
 # here that is not (yet) a module of `src/lib.rs` is fine; one that is must obey.
@@ -48,7 +48,6 @@ VOCABULARY = {"id", "protocol", "temporal", "compose", "membership"}
 KNOWN_EDGES = {
     ("composed", "ownership"),
     ("composed", "raymond"),
-    ("raymond", "ownership"),
     ("scheduling", "compute"),
     ("actor", "ownership"),
 }

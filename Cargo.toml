@@ -97,7 +97,8 @@ crush = ["dep:mycrush"]
 #
 iroh = ["dep:iroh", "jetstream/iroh"]
 quic = ["jetstream/quic", "dep:quinn"]
-machine-uid = ["dep:machine-uid"]
+# `Id::machine_id` returns Jetstream's `Result`, so it needs the `service` feature's Jetstream.
+machine-uid = ["service", "dep:machine-uid"]
 
 [dependencies]
 # `vstd` is the Verus standard library. This is the version that ships with

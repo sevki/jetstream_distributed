@@ -272,4 +272,21 @@ pub open spec fn actor_reachable(c: ActorSystem) -> bool {
     exists|tr: Seq<ActorSystem>| actor_execution(tr) && tr[tr.len() - 1] == c
 }
 
+/// The actor machine as a [`Protocol`]. `init` and `step` are [`actor_init`] and [`actor_step`].
+pub struct ActorProtocol;
+
+impl crate::protocol::Protocol for ActorProtocol {
+    type Config = ();
+    type State = ActorSystem;
+    type Step = ActorStep;
+
+    open spec fn init(cfg: (), s: ActorSystem) -> bool {
+        actor_init(s)
+    }
+
+    open spec fn step(pre: ActorSystem, post: ActorSystem, label: ActorStep) -> bool {
+        actor_step(pre, post, label)
+    }
+}
+
 } // verus!

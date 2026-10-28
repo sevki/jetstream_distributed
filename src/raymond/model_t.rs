@@ -605,4 +605,21 @@ pub open spec fn couples(r: Raymond, s: OwnershipState) -> bool {
     forall|n: Id, e: Epoch| #[trigger] may_mutate(s, n, e) ==> has_token(r, n)
 }
 
+/// Raymond's routing layer as a [`Protocol`]. The root is the configuration: it is chosen before a run and is not part of what a step changes.
+pub struct RaymondProtocol;
+
+impl crate::protocol::Protocol for RaymondProtocol {
+    type Config = Id;
+    type State = Raymond;
+    type Step = RayStep;
+
+    open spec fn init(cfg: Id, s: Raymond) -> bool {
+        ray_init(s, cfg)
+    }
+
+    open spec fn step(pre: Raymond, post: Raymond, label: RayStep) -> bool {
+        ray_step(pre, post, label)
+    }
+}
+
 } // verus!

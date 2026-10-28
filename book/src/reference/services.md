@@ -167,8 +167,9 @@ moving, stranding authority at a node that no longer holds the privilege.
 **What the composed service does not claim.** The composed *model* guards some
 steps on `own.live`, which is ground truth — whether a node has crashed is not
 something any process can evaluate. The service has no `Crash` or `Recover`, so
-it refines the composed machine's **crash-free** executions, where every liveness
-guard is vacuously true; C8 states `live.contains(..)` as a hypothesis rather than
+the steps it calls refine the composed machine's **crash-free** executions, where
+every liveness guard is vacuously true (the service around those steps is plain
+Rust and tested); C8 states `live.contains(..)` as a hypothesis rather than
 dropping it. That cut does not lose the case the machine exists for:
 `SeizeToken` has no liveness guard on the node it takes the privilege *from*, so
 seizing from a holder that is merely unreachable — the wrongly-suspected node a

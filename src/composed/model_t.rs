@@ -439,4 +439,21 @@ pub open spec fn composed_reachable(c: Composed) -> bool {
     exists|tr: Seq<Composed>| composed_valid_execution(tr) && tr[tr.len() - 1] == c
 }
 
+/// The composed machine as a [`Protocol`]. `init` and `step` are [`composed_init`] and [`composed_step`].
+pub struct ComposedProtocol;
+
+impl crate::protocol::Protocol for ComposedProtocol {
+    type Config = ();
+    type State = Composed;
+    type Step = ComposedStep;
+
+    open spec fn init(cfg: (), s: Composed) -> bool {
+        composed_init(s)
+    }
+
+    open spec fn step(pre: Composed, post: Composed, label: ComposedStep) -> bool {
+        composed_step(pre, post, label)
+    }
+}
+
 } // verus!

@@ -31,6 +31,9 @@
 //!   that it does not name SWIM. `service` feature.
 //! * [`swim`]      — gossip membership, which buys neither exclusivity nor
 //!   agreement, and promises only that disagreements resolve.
+//! * [`protocol`]  — not an algorithm: the labelled-step shape every model above
+//!   has, written once as a trait; [`protocol_agreement`] proves each model's
+//!   instance is the model it describes.
 //! * [`temporal`]  — not an algorithm: the small temporal logic (leads-to, weak
 //!   fairness, WF1) that [`actor::mailbox`]'s liveness theorem
 //!   is stated in.
@@ -76,5 +79,9 @@ pub mod raft;
 pub mod raymond;
 pub mod scheduling;
 pub mod swim;
+#[path = "protocol_t.rs"]
+pub mod protocol;
+#[path = "protocol_v.rs"]
+pub mod protocol_agreement;
 #[path = "temporal_t.rs"]
 pub mod temporal;

@@ -4,10 +4,11 @@
 //! clock and no socket. What turns it into a member of a cluster is the part this
 //! file writes, in plain Rust that Verus never sees and that nothing here proves:
 //!
-//! * **join**: start knowing only yourself, and `sync` with a seed. The seed's
-//!   admission policy lets your address in as a member, and its reply is the whole
+//! * **join**: start knowing only yourself, and `sync` with a seed, naming yourself
+//!   as the sender. The seed takes you in as a member, and its reply is the whole
 //!   cluster. The seed tells the others by gossip; you never call them to join;
-//! * **serve**: accept a connection, hand it to the generated `MembershipService`;
+//! * **serve**: accept a connection and hand it to the generated
+//!   `MembershipService`;
 //! * **probe**: every period, `ping` one peer, piggybacking this node's whole view;
 //! * **suspect**: a ping that fails or times out makes the node believe the peer
 //!   suspect, at the incarnation it had recorded *when the probe began*;
@@ -23,13 +24,12 @@
 //! (`ping_req`): a peer that this node alone cannot reach is suspected on this
 //! node's word.
 //!
-//! **Who may join is a policy, and this example's is open**: `127.0.0.<k>` for
-//! `k` in `1..=250` is member `k`, and anyone who can reach a seed from such an
-//! address is in. A real deployment writes a stricter one. Members are addressed
-//! by loopback address because a node knows its caller by address; each listens
-//! on port 9100 of its own address and connects from it. That works on Linux,
-//! where all of `127.0.0.0/8` is loopback; elsewhere, give each member its own
-//! host instead.
+//! **Nothing here checks who is calling**: each message says who sent it, and the
+//! node believes it, so anyone who can reach a seed is in. Keeping outsiders out is
+//! a job for something in front of the service, not for SWIM. Members are addressed
+//! by loopback address, `127.0.0.<k>` for member `k`; each listens on port 9100 of
+//! its own address. That works on Linux, where all of `127.0.0.0/8` is loopback;
+//! elsewhere, give each member its own host instead.
 //!
 //! Run a cluster in three terminals; the second and third join through a seed:
 //!
@@ -44,7 +44,6 @@
 //! be told what it was and outrank that. With no arguments the example does all of
 //! that inside one process and asserts it: `cargo run --example swim_node`.
 
-use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
@@ -52,10 +51,10 @@ use jetstream::prelude::jetstream_rpc::session::{Session, SingleLaneSession};
 use jetstream::prelude::*;
 use jetstream_distributed::id::Id;
 use jetstream_distributed::swim::service::{
-    Admission, Liveness, Membership, Node, Update,
+    Liveness, Membership, Node, Update,
     membership_protocol::{MembershipChannel, MembershipService},
 };
-use tokio::net::{TcpListener, TcpSocket};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
 
 const PORT: u16 = 9100;
@@ -87,18 +86,6 @@ fn addr_of(member: u128) -> IpAddr {
     IpAddr::V4(Ipv4Addr::new(127, 0, 0, member as u8))
 }
 
-/// Who may join: this example lets in any loopback address `127.0.0.1` to
-/// `127.0.0.250`, as the member with that last number.
-fn policy() -> Admission {
-    std::sync::Arc::new(|a| match a {
-        IpAddr::V4(v4) => match v4.octets() {
-            [127, 0, 0, k @ 1..=250] => Some(Id(k as u128)),
-            _ => None,
-        },
-        IpAddr::V6(_) => None,
-    })
-}
-
 /// Answer pings and syncs on `127.0.0.<me>:9100` for as long as the task lives.
 async fn serve(node: Node, me: u128) -> std::io::Result<()> {
     let listener = TcpListener::bind(SocketAddr::new(addr_of(me), PORT)).await?;
@@ -106,8 +93,7 @@ async fn serve(node: Node, me: u128) -> std::io::Result<()> {
         let (stream, _) = listener.accept().await?;
         let node = node.clone();
         tokio::spawn(async move {
-            // The session reads the peer's address off the stream, and `Node`
-            // admits or refuses it: that is where "who is calling" comes from.
+            // Who is calling is in each message. Nothing here checks it.
             let session = SingleLaneSession::<MembershipChannel, _, _>::service_io(stream);
             let Ok(lane) = Session::<MembershipChannel>::accept_lane(&session).await else {
                 return;
@@ -135,18 +121,15 @@ async fn call(
     within: Duration,
 ) -> Result<Vec<Update>> {
     let call = async {
-        // Bind the source so the peer sees `127.0.0.<me>` and applies its policy to it.
-        let socket = TcpSocket::new_v4()?;
-        socket.bind(SocketAddr::new(addr_of(me), 0))?;
-        let stream = socket.connect(SocketAddr::new(addr_of(peer), PORT)).await?;
+        let stream = TcpStream::connect(SocketAddr::new(addr_of(peer), PORT)).await?;
         // The session owns the lane's I/O, so it outlives the channel.
         let session = SingleLaneSession::<MembershipChannel, _, _>::client_io(stream);
         let lane = Session::<MembershipChannel>::open_lane(&session).await?;
         let channel = MembershipChannel::new(64, Box::new(lane));
         channel.negotiate_version(u32::MAX).await?;
         match kind {
-            Call::Ping => channel.ping(Context::default(), view).await,
-            Call::Sync => channel.sync(Context::default(), view).await,
+            Call::Ping => channel.ping(Context::default(), Id(me), view).await,
+            Call::Sync => channel.sync(Context::default(), Id(me), view).await,
         }
     };
     match tokio::time::timeout(within, call).await {
@@ -241,8 +224,7 @@ fn start(
 ) -> (Node, Vec<JoinHandle<()>>) {
     // A node starts at incarnation 0 and keeps nothing on disk. A restart is
     // corrected by the first peer that tells it what the cluster thinks of it.
-    let node = Node::admitting(HashMap::from([(addr_of(me), Id(me))]), Id(me), policy())
-        .expect("on its own roster");
+    let node = Node::new(Id(me));
     let server = {
         let node = node.clone();
         tokio::spawn(async move {

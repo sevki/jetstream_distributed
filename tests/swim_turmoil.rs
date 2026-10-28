@@ -10,7 +10,6 @@
 //! Every reply here is read off the wire and handed to the node that asked, the
 //! only path by which what a peer knows becomes what this node knows.
 
-use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, OnceLock};
 
@@ -24,16 +23,6 @@ use jetstream_rpc::session::{Session, SingleLaneSession};
 use turmoil::net::{TcpListener, TcpStream};
 
 const PORT: u16 = 9100;
-
-/// Who is which member, by address. Built inside a host or a client:
-/// `turmoil::lookup` panics outside a live simulation.
-fn roster() -> HashMap<IpAddr, Id> {
-    HashMap::from([
-        (turmoil::lookup("a"), Id(0)),
-        (turmoil::lookup("b"), Id(1)),
-        (turmoil::lookup("c"), Id(2)),
-    ])
-}
 
 fn u(node: u128, incarnation: u64, status: Liveness) -> Update {
     Update {
@@ -71,9 +60,7 @@ macro_rules! serve {
         $sim.host($name, move || {
             let slot = slot.clone();
             async move {
-                let node = slot
-                    .get_or_init(|| Node::new(roster(), Id($id)).expect("on its own roster"))
-                    .clone();
+                let node = slot.get_or_init(|| Node::new(Id($id))).clone();
                 let listener =
                     TcpListener::bind((IpAddr::from(Ipv4Addr::UNSPECIFIED), PORT)).await?;
                 loop {
@@ -105,7 +92,7 @@ fn a_ping_carries_a_rumour_over_the_wire() {
     sim.client("a", async move {
         connect!("b", _s, ch);
         let ack = ch
-            .ping(Context::default(), vec![u(2, 0, Liveness::Suspect)])
+            .ping(Context::default(), Id(0), vec![u(2, 0, Liveness::Suspect)])
             .await
             .unwrap();
         assert_eq!(
@@ -142,9 +129,9 @@ fn a_suspected_node_that_is_alive_refutes_over_the_wire() {
     let a_slot: Arc<OnceLock<Node>> = Arc::new(OnceLock::new());
     let built = a_slot.clone();
     sim.client("a", async move {
-        let a = built
-            .get_or_init(|| Node::new(roster(), Id(0)).expect("on the roster"))
-            .clone();
+        let a = built.get_or_init(|| Node::new(Id(0))).clone();
+        a.apply(&[u(1, 0, Liveness::Alive)])
+            .expect("a has heard of b");
 
         turmoil::partition("a", "b");
         assert!(
@@ -156,7 +143,7 @@ fn a_suspected_node_that_is_alive_refutes_over_the_wire() {
 
         turmoil::repair("a", "b");
         connect!("b", _s, ch);
-        let theirs = ch.sync(Context::default(), a.view()).await.unwrap();
+        let theirs = ch.sync(Context::default(), a.id(), a.view()).await.unwrap();
         a.apply(&theirs).unwrap();
         Ok(())
     });
@@ -177,31 +164,29 @@ fn a_suspected_node_that_is_alive_refutes_over_the_wire() {
     );
 }
 
-/// A stranger on the network is refused by the service, over the wire.
+/// The sender is whoever the message says. A host nobody has heard of joins by
+/// calling, as itself, over the wire, and is a member from then on: there is no
+/// roster to be missing from.
 #[test]
-fn a_caller_off_the_roster_is_refused_over_the_wire() {
+fn a_caller_is_a_member_from_its_first_call_over_the_wire() {
     let mut sim = turmoil::Builder::new().build();
     let b_slot: Arc<OnceLock<Node>> = Arc::new(OnceLock::new());
     serve!(sim, "b", 1, b_slot);
 
-    // "x" is a host the roster has never heard of.
     sim.client("x", async move {
         connect!("b", _s, ch);
-        let err = ch
-            .ping(Context::default(), vec![u(2, 0, Liveness::Dead)])
-            .await
-            .unwrap_err();
-        assert_eq!(err.code(), Some("NO"));
+        let reply = ch.sync(Context::default(), Id(9), vec![]).await.unwrap();
+        assert_eq!(
+            reply,
+            vec![u(1, 0, Liveness::Alive), u(9, 0, Liveness::Alive)],
+            "the newcomer is told everyone, itself included"
+        );
         Ok(())
     });
 
     sim.run().expect("the simulation runs to completion");
     let b = b_slot.get().expect("b built its node");
-    assert_eq!(
-        b.record(Id(2)),
-        Some(u(2, 0, Liveness::Alive)),
-        "and nothing it said was applied"
-    );
+    assert_eq!(b.record(Id(9)), Some(u(9, 0, Liveness::Alive)));
 }
 
 /// A node that listens and also makes calls, as a real member does: a turmoil
@@ -229,15 +214,9 @@ macro_rules! listen {
     };
 }
 
-fn open_node(me: &str, id: u128) -> Node {
-    let policy: jetstream_distributed::swim::service::Admission =
-        Arc::new(|a| roster().get(&a).copied());
-    Node::admitting(
-        HashMap::from([(turmoil::lookup(me), Id(id))]),
-        Id(id),
-        policy,
-    )
-    .expect("on its own roster")
+/// A node that knows only itself, as every one starts.
+fn open_node(id: u128) -> Node {
+    Node::new(Id(id))
 }
 
 /// **Joining over the wire, through a member that is not the first, and leaving.**
@@ -258,7 +237,7 @@ fn a_node_joins_through_any_member_and_a_departure_spreads() {
     sim.host("b", move || {
         let b_in = b_in.clone();
         async move {
-            let node = b_in.get_or_init(|| open_node("b", 1)).clone();
+            let node = b_in.get_or_init(|| open_node(1)).clone();
             listen!(node);
             std::future::pending::<()>().await;
             Ok(())
@@ -267,12 +246,12 @@ fn a_node_joins_through_any_member_and_a_departure_spreads() {
 
     let c_in = c_slot.clone();
     sim.client("c", async move {
-        let c = c_in.get_or_init(|| open_node("c", 2)).clone();
+        let c = c_in.get_or_init(|| open_node(2)).clone();
         listen!(c);
         // Join b: the call is the join, the reply is b's whole table.
         {
             connect!("b", _s, ch);
-            let reply = ch.sync(Context::default(), c.view()).await.unwrap();
+            let reply = ch.sync(Context::default(), c.id(), c.view()).await.unwrap();
             c.apply(&reply).unwrap();
         }
         // Wait for a to join c, then gossip to b, as a probe would.
@@ -284,7 +263,7 @@ fn a_node_joins_through_any_member_and_a_departure_spreads() {
         );
         {
             connect!("b", _s, ch);
-            let ack = ch.ping(Context::default(), c.view()).await.unwrap();
+            let ack = ch.ping(Context::default(), c.id(), c.view()).await.unwrap();
             c.apply(&ack).unwrap();
         }
         // Leave, and tell b.
@@ -292,17 +271,17 @@ fn a_node_joins_through_any_member_and_a_departure_spreads() {
         let said = c.leave();
         {
             connect!("b", _s, ch);
-            ch.ping(Context::default(), vec![said]).await.unwrap();
+            ch.ping(Context::default(), c.id(), vec![said]).await.unwrap();
         }
         Ok(())
     });
 
     let a_in = a_slot.clone();
     sim.client("a", async move {
-        let a = a_in.get_or_init(|| open_node("a", 0)).clone();
+        let a = a_in.get_or_init(|| open_node(0)).clone();
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         connect!("c", _s, ch);
-        let reply = ch.sync(Context::default(), a.view()).await.unwrap();
+        let reply = ch.sync(Context::default(), a.id(), a.view()).await.unwrap();
         a.apply(&reply).unwrap();
         assert_eq!(
             a.record(Id(1)),

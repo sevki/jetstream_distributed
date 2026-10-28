@@ -34,8 +34,8 @@
 //! *selection* that decides which records ride on which probe. Those are a real
 //! network protocol with real timing, and nothing in [`model`] says anything
 //! about timing. A `service::Node` is a verified table ([`exec::SwimTable`]) behind
-//! a roster (closed, or growing by an admission policy) and a lock that answers its
-//! peers; the roster, the policy, the lock and the log are not
+//! a set of members learned from the callers it is told about and a lock that answers
+//! its peers; the member set, the lock and the log are not
 //! verified; the loop that picks a peer, waits out a timeout
 //! and calls `suspect` is the caller's.
 //!

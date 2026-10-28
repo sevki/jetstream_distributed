@@ -15,8 +15,9 @@ service adds around a protocol, and the pieces that let several of them share a 
   class of "the message lied about who sent it" from a guarded-against bug into an
   unrepresentable one.
 - **Today that identity is an address against a roster**, and an address is not a
-  credential. The roster is fixed at construction everywhere except SWIM, whose node can
-  also be built to admit new addresses by a policy (see [SWIM](swim.md)). The shape survives replacing it with a TLS or key identity.
+  credential. The roster is fixed at construction everywhere except SWIM, whose node has no
+  roster at all: its messages carry the sender's `Id`, and nothing checks it (see
+  [SWIM](swim.md)). The shape survives replacing the address with a TLS or key identity.
 - **One gate across a decision.** A decision that reads the registry and then writes
   the journal holds one lock across both. Two locks taken one after the other would leave
   the gap that fencing exists to close.

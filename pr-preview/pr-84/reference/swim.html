@@ -1,0 +1,407 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>SWIM: gossip membership - jetstream_distributed</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="How the protocols in jetstream_distributed relate: what each one buys, what it assumes, and what is proved, tested or only intended.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-e96d0476.css">
+        <link rel="stylesheet" href="../css/chrome-d279d366.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-d1424e7b.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-20c669f1.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">jetstream_distributed</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/sevki/jetstream_distributed" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/sevki/jetstream_distributed/edit/main/book/src/reference/swim.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="swim-gossip-membership-bought-by-merge-rather-than-majority"><a class="header" href="#swim-gossip-membership-bought-by-merge-rather-than-majority">SWIM: gossip membership, bought by merge rather than majority</a></h1>
+<p>Ownership and Raft both spend a majority round-trip to get one authoritative
+answer. SWIM does not try to agree on anything: every node keeps its own view
+of who else is alive, those views disagree constantly, and the protocol’s
+only promise is that disagreements resolve rather than compound. That is a
+different kind of promise from Election Safety or exclusive ownership, and it
+is bought a different way — by an algebraic property of a merge rule, not by
+quorum intersection.</p>
+<p><strong>This is the first piece, not the whole protocol</strong>, in the same sense
+<code>src/raft/model_t.rs</code> was the first piece of Raft: the state space and one
+transition, proved correct on their own terms, with the probe timer,
+indirect-ping fallback and dissemination piggyback still to come. The piece
+chosen first is the one everything else depends on being right: <code>state.go</code>’s
+merge rule, the one function every gossip message, probe timeout and
+self-refutation in <a href="https://github.com/hashicorp/memberlist">hashicorp/memberlist</a>
+ultimately calls.</p>
+<h2 id="the-record-and-the-rule-for-merging-two-of-them"><a class="header" href="#the-record-and-the-rule-for-merging-two-of-them">The record, and the rule for merging two of them</a></h2>
+<p>A <code>MemberRecord</code> is an incarnation number and a status — <code>Alive</code>, <code>Suspect</code> or
+<code>Dead</code> — and <code>key_geq</code> compares two of them: a higher incarnation always wins,
+and at equal incarnations the more-dead status wins. <code>merge</code> keeps whichever
+side has the larger key. That is the entire rule; <code>tr_gossip</code> is <code>merge</code>
+applied to whatever a peer’s own view already holds and whatever record just
+arrived, and a probe timeout or a self-refutation is only a different choice
+of <em>which</em> record arrived, not a different rule for applying it.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>claim</th><th>theorem</th><th>assumes</th></tr>
+</thead>
+<tbody>
+<tr><td>S1</td><td><strong>Merging a record with itself changes nothing</strong></td><td><code>swim::proofs::merge::theorem_merge_is_idempotent</code></td><td>none</td></tr>
+<tr><td>S2</td><td><strong>Merging in the same message twice has no more effect than merging it in once</strong> — the fact that lets gossip’s real delivery model, at-least-once and arbitrarily duplicated, survive contact with <code>merge</code> at all</td><td><code>swim::proofs::merge::theorem_merge_absorbs_a_repeat</code></td><td>none</td></tr>
+<tr><td>S3</td><td><strong>A record that does not out-rank the local one cannot change it</strong> — the safety half: a stale or weaker report is accepted nowhere, at any incarnation</td><td><code>swim::proofs::merge::theorem_merge_never_regresses</code></td><td>none</td></tr>
+<tr><td>S4</td><td><strong><code>merge</code> does not care which side is called local and which is called incoming</strong> — true of what it returns even though the comparison it is built from is not symmetric, because the one case where the asymmetry could show, a tie, is a tie between two copies of the same record</td><td><code>swim::proofs::merge::theorem_merge_is_commutative</code></td><td><code>status_rank</code> is injective (<code>swim::model::lemma_rank_is_injective</code>)</td></tr>
+<tr><td>S5</td><td><strong>No node’s record about any peer ever moves backward, across a whole run</strong> — S1–S4 are arithmetic about two records; this is what they add up to once lifted through every step of an execution, and it is the actual convergence argument SWIM needs: not that gossip arrives in order, or even that it arrives at all, only that whatever arrives never makes a view of the world <em>less</em> accurate than it already was</td><td><code>swim::proofs::monotone::theorem_a_record_key_never_falls_across_a_run</code></td><td>none beyond <code>key_geq</code>’s own transitivity (<code>swim::proofs::merge::lemma_key_geq_transitive</code>)</td></tr>
+<tr><td>S6</td><td><strong><code>merge</code> does not care how three records are grouped</strong> — S4 alone only says swapping two arguments doesn’t matter; a node’s view is built by folding in one delivered record after another, so order-independence needs grouping not to matter either, which is what associativity says</td><td><code>swim::proofs::merge::theorem_merge_is_associative</code></td><td><code>key_geq</code> is total and antisymmetric up to record equality (<code>swim::proofs::merge::lemma_key_geq_total</code>, <code>lemma_key_geq_antisymmetric</code>)</td></tr>
+<tr><td>S7</td><td><strong>The executable <code>merge_step</code> is the model’s <code>merge</code>, and applying it is the model’s <code>tr_gossip</code></strong> — the service’s merge is not a second implementation that the algebra above is merely about; it is the function those theorems quantify over, and a node that merges an arrival into its table and writes the result back has taken exactly the model’s step</td><td><code>swim::steps::merge_step</code> (its <code>ensures</code>), <code>swim::proofs::refinement::theorem_merge_step_is_a_gossip_step</code></td><td>the executable record is the model’s (<code>local.view() == record_of(pre, n)</code>), which the service keeps true by holding its table under one lock</td></tr>
+<tr><td>S8</td><td><strong>A refutation out-ranks the accusation it answers, and everything its author could have held when it was made</strong> — alive at one incarnation above beats suspect <em>and</em> dead at the accusation’s, because a higher incarnation wins at any status</td><td><code>swim::proofs::refinement::theorem_a_refutation_outranks_what_it_answers</code></td><td><code>held.incarnation &lt;= accused</code></td></tr>
+<tr><td>S9</td><td><strong>A refutation is a gossip step, not a new kind of step, and <code>refute_step</code> computes it</strong> — the model gains no transition for answering an accusation; the node applies <code>tr_gossip</code> to a record it made itself, and the executable step makes exactly that record or refuses at the top of the <code>u64</code> space</td><td><code>swim::proofs::refinement::theorem_a_refutation_is_a_gossip_step</code>, <code>theorem_refute_step_is_the_refutation</code>, <code>swim::steps::refute_step</code> (its <code>ensures</code>)</td><td>none</td></tr>
+</tbody>
+</table>
+</div>
+<p>| S10 | <strong>The node’s table is the model.</strong> <code>exec::SwimTable</code> — what a node keeps — reads the model’s <code>record_of</code> (no entry is the fresh record), and <code>learn</code> writes <code>merge</code> of what is held and what arrived and changes nothing else; a table standing for a cluster that learns a record stands for the cluster <code>tr_gossip</code> leads to, and a fresh table stands for <code>swim_init</code> | <code>swim::proofs::table::theorem_new_table_is_the_initial_cluster</code>, <code>theorem_learn_is_a_gossip_step</code> | the table is well formed (each member once) |
+| S11 | <strong>Hearing an accusation about oneself is two gossip steps.</strong> <code>SwimTable::hear</code> merges the record and, if it was the node’s <em>own</em> that changed, merges the refutation on top of it; the model sees <code>tr_gossip</code> twice, and the table ends up believing the refutation. At the top of the incarnation space the second step is refused and the first has happened | <code>swim::proofs::table::theorem_hearing_oneself_accused_is_two_gossip_steps</code> | the table stands for the cluster |
+| S12 | <strong>A table never believes less than it did, and always stands for a reachable cluster.</strong> Whatever it learns, what it then holds for any member out-ranks or equals what it held; and a reachable cluster plus a learned record is a reachable cluster, so S5 is a statement about what the table holds | <code>swim::proofs::table::theorem_learning_never_lowers_a_belief</code>, <code>theorem_a_table_stands_for_a_reachable_cluster_after_learning</code> | the table stands for a reachable cluster |
+| S13 | <strong>A departure outlasts every report at or below its incarnation.</strong> <code>Left</code> ranks above <code>Dead</code>, so a suspicion timer that was already running, a late <code>Dead</code> verdict, or an old <code>Alive</code> cannot turn a node that announced its leaving into a failure or a recovery; merging any record at the same or an older incarnation into a <code>Left</code> record returns it unchanged. The one same-incarnation record that is itself <code>Left</code> is the same record, so repeating it changes nothing | <code>swim::proofs::merge::theorem_a_departure_outlasts_every_report_at_or_below_it</code> | none |
+| S14 | <strong>Only a higher incarnation brings a departed member back.</strong> The converse of S13 in the form a service uses: if hearing a record changed what a node believed about a member that had left, the record carried a higher incarnation. <strong>Not claimed:</strong> that only that member can produce one. In the crash-fault model it does, by refuting; the service believes any member’s word about any other, so a lying member can revive a departed one | <code>swim::proofs::merge::theorem_only_a_higher_incarnation_revives_a_departure</code> | none beyond S13 |</p>
+<p><strong>What S10–S14 do not cover.</strong> The table is a verified core, and <code>Node</code> is the
+shell around it: the member set (and so who has joined), the lock, the audit log, the batch limit, and the
+order a batch is applied in are plain Rust that the tests exercise. The theorems
+are about one record at a time. In particular nothing proves that <code>Node::leave</code>
+writes the departure <em>without</em> answering it with a refutation: it does so by
+calling the table’s own <code>learn</code> rather than the path a received message takes, and
+<code>tests/swim_dynamic.rs::a_node_does_not_refute_its_own_departure</code> is what fails if
+that changes.</p>
+<p><strong>Joining and leaving.</strong> The model never assumed a fixed membership: a node absent
+from the view is exactly a node at the fresh record. What was fixed was the
+<em>service’s</em> roster, and there no longer is one: <code>Node::new(me)</code> builds a node that
+knows only itself. <code>ping</code> and <code>sync</code> carry the sender’s <code>Id</code>, and a sender is a
+member from its first call, if there is room. There is no join call: a join is that
+first call, the <code>sync</code> reply is the whole table, and the others hear of the newcomer
+by gossip. <code>Node</code> does no I/O and looks at no connection; the sender is the one the
+message names. <code>Node::leave</code> records the node as <code>Left</code> at its held incarnation and
+returns that record for the caller to tell its peers. What this does <strong>not</strong> do:
+nothing authenticates a sender or decides who may be a member (a deployment puts that
+in front of the service); where a member lives is the deployment’s mapping from member
+number to address, not something SWIM gossips; members are never forgotten, so a
+departed member’s record is kept (it is what keeps S13 true) and counts against the
+same bound of <code>MAX_UPDATES</code> members, which any one member can fill by gossiping that
+many made-up numbers, so a cluster that admits a member admits its good behaviour; a
+refused request admits nobody; and a node that leaves and tells nobody is, to the
+cluster, a node that died. The rules the node used to keep because it bound addresses
+(a live member never given a second address, a dead one returning from a new one) are
+gone with the address table.</p>
+<p><strong>S4 is worth pausing on, because the asymmetry it dismisses is real.</strong>
+<code>key_geq(a, b)</code> and <code>key_geq(b, a)</code> are different expressions, and reading
+<code>merge</code>’s definition — <code>if key_geq(incoming, local) { incoming } else { local }</code> — the incoming side breaks a tie. So <code>merge(a, b)</code> and <code>merge(b, a)</code>
+each hand a <em>different call</em> the tie-breaking advantage. What makes the
+theorem true anyway is <code>status_rank</code>’s injectivity: a <code>MemberRecord</code> is
+exactly its incarnation and its status, and if two records tie on
+<code>key_geq</code> — equal incarnation, equal rank — then by injectivity they have
+equal status too, so they were never two different records to begin with.
+<code>lemma_rank_is_injective</code> is a case split on the four enum variants;
+S4 is the only theorem in this module that spends it.</p>
+<p><strong>What the proofs are not</strong> is a claim that gossip converges <em>in practice</em>.
+Convergence needs every node’s view to eventually receive every update, which
+is a property of the dissemination schedule — how often a node piggybacks
+which records onto which probes — and that schedule is not modelled here at
+all. S5 is the half of the argument that has nothing to do with scheduling:
+whatever arrives, however late or however duplicated, can only move things
+forward. The other half — that something eventually arrives — is exactly the
+network-timing piece that is still future work.</p>
+<h2 id="the-service"><a class="header" href="#the-service">The service</a></h2>
+<p><code>src/swim/service/</code> serves the protocol over
+<a href="https://github.com/sevki/jetstream">Jetstream</a> RPC: <code>#[service] trait Swim</code> with <code>ping</code> and <code>sync</code>, implemented by a <code>Node</code> whose table is
+written in exactly one place, by <code>exec::SwimTable::hear</code> — the verified table, whose
+merge is <code>steps::merge_step</code> (S10–S12).</p>
+<p>Both methods do the same thing to the receiver — merge every <code>Update</code> in the
+message — and differ in the reply. <code>ping</code> answers with the receiver’s records
+for the members the message mentioned plus its own (SWIM’s ping/ack, with the
+dissemination riding on it); <code>sync</code> answers with the whole table
+(memberlist’s push/pull, the anti-entropy that repairs what a piggyback
+missed). As in the other two services, <strong>no method takes the sender’s number</strong>:
+who is calling is the <code>Context</code>, and an <code>Update</code>’s <code>node</code> field names the
+member being spoken <em>about</em>, which has to be content.</p>
+<h3 id="what-a-consumer-reads-is-not-swims-wire-protocol"><a class="header" href="#what-a-consumer-reads-is-not-swims-wire-protocol">What a consumer reads is not SWIM’s wire protocol</a></h3>
+<p><code>Swim</code> is how SWIM nodes talk to each other. What a <em>consumer</em> of membership reads
+(the placement layer in the QUIC system, say) is a different and smaller thing, and
+it is written once, in <code>src/membership/</code>, so that it does not name SWIM:</p>
+<ul>
+<li><code>membership::PeerSampling</code>: <code>local()</code> and <code>peers()</code>, the members this node would
+exchange gossip with. Never itself, never repeated. This is the part any
+membership protocol offers, including one with a partial view and no verdicts.</li>
+<li><code>membership::FailureDetector</code>: a <code>PeerSampling</code> that also gives each member heard
+of a <code>Liveness</code> (<code>Alive</code>, <code>Suspect</code>, <code>Dead</code>, <code>Left</code>), through <code>standing(node)</code> and
+<code>standings()</code>. This is what SWIM adds.</li>
+</ul>
+<p><code>Node</code> implements both. For SWIM, <code>peers()</code> is every member but itself that is
+<code>Alive</code> or <code>Suspect</code> (a suspect member is still probed, which is how a wrong
+suspicion is refuted), and <code>standings()</code> keeps the dead and the departed as well,
+because a consumer acting on a departure has to hear it. <code>QuicActorSystem::watch</code>
+takes any <code>FailureDetector</code>.</p>
+<p><strong>Not proved.</strong> This layer is plain Rust. Verus checks the merge rule and the
+executable steps (S1–S14), not what <code>peers</code> and <code>standings</code> return. What the traits
+promise is held by <code>tests/membership_contract.rs</code>, whose checks are written against
+the traits and so apply unchanged to any other implementation. There is no spec-level
+view of a protocol’s state yet: it is defined against the first property that reads
+it, and with SWIM the only implementation the shared part could not be told apart from
+SWIM’s own.</p>
+<p><strong>Suspecting, declaring dead and refuting are not on the wire</strong>, for the reason
+Raft’s <code>stand_for_election</code> is not on its: they are things a node does about its
+own view, and putting them in the trait would let any caller make this node
+believe anything. <code>Node::suspect</code> and <code>Node::declare_dead</code> are what the caller’s
+probe loop calls when a probe times out, and both take the incarnation the
+probe or timer <em>began</em> with — a refutation can land while either is running, and
+a timer that re-read the table would kill an incarnation nobody suspected; the refutation happens inside the merge,
+the moment the record that changed is the node’s own.</p>
+<p><strong>The node writes nothing down, and that is deliberate.</strong> Raft’s server and the
+ownership registry both keep a durable record because forgetting it breaks their
+safety. Incarnations are self-correcting: a node restarted at incarnation 0,
+whose peers remember it dead at 3, is told so by the first message that mentions
+it, and answers with 4 (<code>a_restarted_node_is_told_what_it_was_and_outranks_it</code>).</p>
+<p><code>tests/swim_membership.rs</code> delivers one set of updates in all 120 orders, with
+every message repeated, and checks the table is the same each time — S2, S4 and
+S6 exercised through the service rather than assumed of it.
+<code>tests/swim_turmoil.rs</code> runs SWIM’s own story across a simulated network: a node
+that cannot reach a peer suspects it, the partition heals, the suspicion reaches
+the suspected node, which is alive and refutes it, and the refutation comes back
+in the reply and clears the suspicion. <code>tests/swim_dynamic.rs</code> is the growing
+cluster: a join is a first call and the reply is the cluster, a stranger the policy
+refuses stays a stranger, a closed node still refuses to learn of members it was
+not built with, a second address cannot speak as an existing member, the cluster
+is bounded, a departure survives a late suspicion and a late <code>Dead</code>, a node does
+not refute its own departure but does refute one it did not announce, and a
+departed member returns at a higher incarnation. The same file’s wire test in
+<code>tests/swim_turmoil.rs</code> has a node join through a member that is not the first,
+the rest hear of it by gossip, and a departure arrive as one.</p>
+<p><strong>What the service does not have</strong>, and what it does not claim. A caller is
+whoever the message says it is, and nothing checks (the other services identify a
+caller by address, which is not a credential either) — and SWIM
+sharpens it, because any member may gossip about any member, so a
+member that lies about a third party is believed, and a sender that lies about
+itself is too. SWIM’s failure model is
+crash faults, not Byzantine ones. There is no probe timer, no indirect-ping
+fallback (<code>ping_req</code>), and no piggyback <em>budget</em>: a node sends what its caller
+hands it. That loop — pick a peer, note its incarnation, wait out a timeout, call <code>suspect</code> with the incarnation it noted — is where
+timing lives, and nothing in <code>swim::model</code> says anything about timing.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../reference/actor.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../reference/hyparview.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../reference/actor.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../reference/hyparview.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-609e4cb8.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

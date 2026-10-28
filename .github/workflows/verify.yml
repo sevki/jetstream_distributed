@@ -548,6 +548,7 @@ jobs:
             --test swim_membership \
             --test swim_dynamic \
             --test membership_contract \
+            --test hyparview_cluster \
             --test swim_turmoil \
             --test raymond_routing \
             --test raymond_turmoil \

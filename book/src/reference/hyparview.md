@@ -26,7 +26,11 @@ theorems.
 
 * **Symmetry of active views.** The paper's central property is that if `a` is in
   `b`'s active view then `b` is in `a`'s. That is a property of how *several* nodes are
-  connected, and this model is one node. It is not stated here and is not proved.
+  connected, and this model is one node. It is not stated here and is not proved. It is
+  **tested** on simulated runs (`tests/hyparview_cluster.rs`: nodes joining one at a
+  time and all at once, each message delivered once and in order), which is evidence
+  about those runs and nothing more; replay and reordering, which the model allows, are
+  not exercised there.
   The `Neighbor` request that a terminal `ForwardJoin` sends is the mechanism that
   makes links two-sided, and what it sends is proved (H4); that the other end acts on it
   is the network's.
@@ -44,4 +48,6 @@ theorems.
   model says it as a message so that it has a name and is replay-safe.
 * **The network.** `sent` only grows and a message may be delivered any number of
   times, so the handlers are proved safe on replays. Delivery itself, authentication of
-  who is speaking, and the lock around a table are the service's, which is plain Rust.
+  who is speaking, and the lock around a table are the service's, which is plain Rust
+  (`hyparview::service::Node`). Its `handle` is told who a message is from, as an
+  argument, which is the transport's to know; whether that may be trusted is #66.

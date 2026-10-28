@@ -30,7 +30,8 @@
 //!   peers are; for a failure detector, each member's standing), written once so
 //!   that it does not name SWIM. `service` feature.
 //! * [`hyparview`] — membership by two small views (who to gossip with), not a
-//!   table of the cluster: one node, so far, with its handlers proved.
+//!   table of the cluster: one node with its handlers proved, and a transport-free
+//!   service over it.
 //! * [`swim`]      — gossip membership, which buys neither exclusivity nor
 //!   agreement, and promises only that disagreements resolve.
 //! * [`protocol`]  — not an algorithm: the labelled-step shape every model above

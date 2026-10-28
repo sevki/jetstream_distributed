@@ -39,8 +39,19 @@ vacated active slot), and nothing about several nodes together: **symmetry of ac
 views is the paper's central property and is not claimed here**, because the model is one
 node. The [Reference](reference/hyparview.md) has the rows and the full list.
 
-Nothing consumes HyParView yet. It is written to sit beside SWIM behind the same
-`membership::PeerSampling` contract, so that a consumer can depend on the contract and
-not on either.
+## The service half
+
+`hyparview::service::Node` is the table behind a lock, with the random choices drawn
+from a seeded generator, and it implements `membership::PeerSampling` (`peers()` is the
+active view). It is **transport-free**: `handle(from, message)` returns the messages to
+send, so a test or a real transport can sit in front of it. It is the second
+implementation of the contract, held to the same checks as SWIM in
+`tests/membership_contract.rs`. HyParView passes a verdict on nobody, so it is held to
+`PeerSampling` alone and is not a `FailureDetector`; that is what the split is for.
+
+Whether a cluster of these nodes is an overlay is **tested, not proved**:
+`tests/hyparview_cluster.rs` runs nodes against a queue and checks that active views end
+up symmetric, bounded, and connected. The model is one node and says nothing about that.
+Nothing in the crate consumes HyParView yet.
 
 Next: [the mailbox](mailbox.md).

@@ -11,6 +11,8 @@
 //! * [`model`]  — a node's two views, the four handlers, and the messages they send.
 //! * [`exec`]   — the views as verified code: each handler returns the messages to
 //!   send, and is a step of the model for any history.
+//! * [`service`] — a transport-free node over the table that implements
+//!   [`PeerSampling`](crate::membership::PeerSampling). `service` feature.
 //! * [`proofs`] — the views stay bounded, disjoint, and free of the node itself.
 
 #[path = "exec_v.rs"]
@@ -18,3 +20,5 @@ pub mod exec;
 #[path = "model_t.rs"]
 pub mod model;
 pub mod proofs;
+#[cfg(feature = "service")]
+pub mod service;

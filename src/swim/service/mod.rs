@@ -32,11 +32,11 @@
 //! # Joining and leaving
 //!
 //! [`Node::new`] builds a node that knows only itself. There is no roster and no
-//! join call. A join is the first `ping` or `sync` from a caller the node has been
-//! told the identity of ([`Node::ping`] and [`Node::sync`] take the caller's `Id`);
-//! the `sync` reply is the whole table, so the newcomer learns who is there; and
-//! the others hear of it by gossip, which a node accepts about members it has not
-//! met, up to [`MAX_UPDATES`].
+//! join call. A join is the first `ping` or `sync` naming a sender the node has
+//! not met ([`Membership::ping`] and [`Membership::sync`] carry the sender's
+//! `Id`); the `sync` reply is the whole table, so the newcomer learns who is
+//! there; and the others hear of it by gossip, which a node accepts about members
+//! it has not met, up to [`MAX_UPDATES`].
 //!
 //! A node leaves by calling [`Node::leave`], which records it as
 //! [`Liveness::Left`] and returns that record to tell its peers. `Left` out-ranks
@@ -45,10 +45,9 @@
 //! so a suspicion timer that was already running cannot turn a departure into a
 //! failure. A node stopped without leaving is, to the cluster, a node that died.
 //!
-//! Who may be a member is not settled here, and not by the node: SWIM says
-//! nothing about it, and the node trusts the `Id` it is handed. Members are never
-//! forgotten (a departed member's record is what keeps stale reports from reviving
-//! it) and are bounded by [`MAX_UPDATES`].
+//! Who may be a member is not settled here: SWIM says nothing about it. Members
+//! are never forgotten (a departed member's record is what keeps stale reports
+//! from reviving it) and are bounded by [`MAX_UPDATES`].
 //!
 //! # What a node does not need to write down
 //!
@@ -65,24 +64,17 @@
 //!
 //! # The assumption this rests on, stated
 //!
-//! A caller is who the connection says it is, **and the node does not look at the
-//! connection**. [`Node`] takes an `Id` and believes it. Turning a `Context` into
-//! that `Id` is [`Authenticate`]'s job, and [`Endpoint`] is the one place the two
-//! meet: it asks the authenticator, refuses a caller it cannot identify, and
-//! hands the node the answer. So whatever the transport can prove (a certificate
-//! chain from mTLS, a peer key, a Unix credential) is a matter for an
-//! `Authenticate` that knows that transport, and the node, the protocol and its
-//! tests do not change with it. [`ByAddress`] is the weakest one there is, a
-//! table from address to member, which **an address is not a credential** says
-//! is no credential at all; it is here for simulations and tests.
-//!
-//! What is worth saying about SWIM specifically is how little the identity buys:
+//! **The sender is whoever the message says it is, and nothing here checks.** The
+//! service does no authentication: it does not look at the connection, and it has
+//! no opinion on who may join or who has been revoked. SWIM's own failure model is
+//! crash faults, not Byzantine ones, and this service does not pretend otherwise:
 //! any member may gossip about *any* member, so a member that lies about a third
-//! party is believed. SWIM's own failure model is crash faults, not Byzantine
-//! ones, and this service does not pretend otherwise. What the identity gives is
-//! that only a caller the authenticator accepts can join the conversation, and
-//! the rules for that (one live address per member, say, or one certificate)
-//! are the authenticator's, not the node's.
+//! party is believed, and a caller that lies about itself is believed too.
+//!
+//! Keeping outsiders out is a separate concern, and it lives somewhere else: in
+//! front of this service (the transport, a gateway, a policy that decides who may
+//! reach it) or beside it. Nothing about membership, a record that says `Dead` or
+//! `Left`, is a security decision either, and none is made from one.
 //!
 //! # What is still not here
 //!
@@ -93,13 +85,11 @@
 //! incarnation it started from is the caller's. That is where timing
 //! lives, and nothing in `crate::swim::model` says anything about timing.
 
-mod endpoint;
 mod node;
 mod refusal;
 
 use std::sync::Arc;
 
-pub use endpoint::{Authenticate, ByAddress, Endpoint};
 pub use node::{Event, Node};
 
 use crate::{
@@ -129,9 +119,8 @@ pub enum Liveness {
 
 /// One record about one member: *this is what I believe about `node`*.
 ///
-/// The subject is a field and the sender is not. Who is speaking arrives with
-/// the connection, as in the other services; who is being spoken *about* is the
-/// content, and has to be.
+/// The subject is a field. Who is speaking is a field of the call (`from`), not of
+/// the record: a message says who sent it, and a record says who it is about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, JetStreamWireFormat)]
 pub struct Update {
     pub node: Id,
@@ -168,32 +157,34 @@ impl Update {
 
 /// The node-facing protocol.
 ///
-/// Two methods, and neither takes a node number for the *sender* — see the
-/// module docs.
-#[service(uses(super::{Update}))]
+/// Both methods say who is sending. The sender is part of the message, and the
+/// service takes it at its word: see the module docs for what that does and does
+/// not mean.
+#[service(uses(super::{Id, Update}))]
 pub trait Membership {
-    /// SWIM's ping, with the dissemination piggybacked.
+    /// SWIM's ping from `from`, with the dissemination piggybacked.
     ///
     /// Merges `updates` into the receiver's table and answers with the
     /// receiver's records for every member those updates mentioned, plus its own
     /// — so the caller finds out in one round trip whether the receiver knew
     /// something newer, and the receiver's own record is evidence it is up.
-    async fn ping(&self, ctx: Context, updates: Vec<Update>) -> Result<Vec<Update>>;
+    async fn ping(&self, ctx: Context, from: Id, updates: Vec<Update>) -> Result<Vec<Update>>;
 
-    /// Push/pull: merge `updates`, answer with the receiver's whole table.
+    /// Push/pull from `from`: merge `updates`, answer with the receiver's whole
+    /// table.
     ///
     /// The anti-entropy pass. A piggyback carries only what a node happened to
     /// have on hand; this is how two nodes that have drifted apart converge
     /// without waiting for the right rumour to come along.
-    async fn sync(&self, ctx: Context, updates: Vec<Update>) -> Result<Vec<Update>>;
+    async fn sync(&self, ctx: Context, from: Id, updates: Vec<Update>) -> Result<Vec<Update>>;
 }
 
 impl<T: Membership> Membership for Arc<T> {
-    async fn ping(&self, ctx: Context, updates: Vec<Update>) -> Result<Vec<Update>> {
-        T::ping(self, ctx, updates).await
+    async fn ping(&self, ctx: Context, from: Id, updates: Vec<Update>) -> Result<Vec<Update>> {
+        T::ping(self, ctx, from, updates).await
     }
 
-    async fn sync(&self, ctx: Context, updates: Vec<Update>) -> Result<Vec<Update>> {
-        T::sync(self, ctx, updates).await
+    async fn sync(&self, ctx: Context, from: Id, updates: Vec<Update>) -> Result<Vec<Update>> {
+        T::sync(self, ctx, from, updates).await
     }
 }

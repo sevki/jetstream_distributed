@@ -11,9 +11,9 @@
 //! table that was written outside `merge_step`, say) would leave every theorem
 //! true and the system wrong.
 //!
-//! These drive the `Node` directly, with the caller's `Id` as an argument: the node
-//! does not look at a connection, so there is none here. Who a connection *is*
-//! is `tests/swim_endpoint.rs`; the wire is `tests/swim_turmoil.rs`.
+//! These drive the `Node` directly, with the sender's `Id` as an argument: the node
+//! does not look at a connection, so there is none here. The wire is
+//! `tests/swim_turmoil.rs`.
 
 use jetstream_distributed::id::Id;
 use jetstream_distributed::swim::service::{Event, Liveness, MAX_UPDATES, Node, Update};
@@ -276,6 +276,30 @@ fn a_caller_is_a_member_from_its_first_call() {
 
     n.sync(Id(6), &[]).unwrap();
     assert_eq!(n.record(Id(6)), Some(u(6, 0, Liveness::Alive)));
+}
+
+/// The service takes the sender from the message and reads nothing else: the
+/// `Context` is empty here, and the caller is still a member.
+#[tokio::test]
+async fn the_service_takes_the_sender_from_the_message() {
+    use jetstream::prelude::Context;
+    use jetstream_distributed::swim::service::Membership;
+
+    let n = node(0);
+    let ack = Membership::ping(&n, Context::default(), Id(5), vec![u(5, 0, Liveness::Alive)])
+        .await
+        .unwrap();
+    assert_eq!(
+        ack,
+        vec![u(0, 0, Liveness::Alive), u(5, 0, Liveness::Alive)]
+    );
+    assert_eq!(n.record(Id(5)), Some(u(5, 0, Liveness::Alive)));
+
+    let all = Membership::sync(&n, Context::default(), Id(6), vec![])
+        .await
+        .unwrap();
+    assert_eq!(all, n.view());
+    assert!(all.contains(&u(6, 0, Liveness::Alive)), "and 6 joined by it");
 }
 
 /// A request refused for being over the bound admits nobody, its caller included.

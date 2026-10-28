@@ -16,9 +16,8 @@ service adds around a protocol, and the pieces that let several of them share a 
   unrepresentable one.
 - **Today that identity is an address against a roster**, and an address is not a
   credential. The roster is fixed at construction everywhere except SWIM, whose node has no
-  roster at all: it takes the caller's `Id` from an `Authenticate`, which reads the
-  `Context` and which a test writes in a line (see [SWIM](swim.md)). The shape survives
-  replacing the address with a TLS or key identity, and SWIM is where that is already true.
+  roster at all: its messages carry the sender's `Id`, and nothing checks it (see
+  [SWIM](swim.md)). The shape survives replacing the address with a TLS or key identity.
 - **One gate across a decision.** A decision that reads the registry and then writes
   the journal holds one lock across both. Two locks taken one after the other would leave
   the gap that fencing exists to close.

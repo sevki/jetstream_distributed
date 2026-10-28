@@ -4,11 +4,11 @@
 //! clock and no socket. What turns it into a member of a cluster is the part this
 //! file writes, in plain Rust that Verus never sees and that nothing here proves:
 //!
-//! * **join**: start knowing only yourself, and `sync` with a seed. The seed's
-//!   authenticator identifies your connection as a member, and its reply is the
-//!   whole cluster. The seed tells the others by gossip; you never call them to join;
-//! * **serve**: accept a connection, hand it to the generated `MembershipService`,
-//!   behind an [`Endpoint`] that asks an [`Authenticate`](jetstream_distributed::swim::service::Authenticate) who is calling;
+//! * **join**: start knowing only yourself, and `sync` with a seed, naming yourself
+//!   as the sender. The seed takes you in as a member, and its reply is the whole
+//!   cluster. The seed tells the others by gossip; you never call them to join;
+//! * **serve**: accept a connection and hand it to the generated
+//!   `MembershipService`;
 //! * **probe**: every period, `ping` one peer, piggybacking this node's whole view;
 //! * **suspect**: a ping that fails or times out makes the node believe the peer
 //!   suspect, at the incarnation it had recorded *when the probe began*;
@@ -24,14 +24,12 @@
 //! (`ping_req`): a peer that this node alone cannot reach is suspected on this
 //! node's word.
 //!
-//! **Who is calling is an [`Authenticate`](jetstream_distributed::swim::service::Authenticate), and this example's is open**:
-//! `127.0.0.<k>` for `k` in `1..=250` is member `k`, and anyone who can reach a
-//! seed from such an address is in. A real deployment reads what its transport
-//! can prove (a certificate, say) instead. Members are addressed
-//! by loopback address because this authenticator goes by address; each listens
-//! on port 9100 of its own address and connects from it. That works on Linux,
-//! where all of `127.0.0.0/8` is loopback; elsewhere, give each member its own
-//! host instead.
+//! **Nothing here checks who is calling**: each message says who sent it, and the
+//! node believes it, so anyone who can reach a seed is in. Keeping outsiders out is
+//! a job for something in front of the service, not for SWIM. Members are addressed
+//! by loopback address, `127.0.0.<k>` for member `k`; each listens on port 9100 of
+//! its own address. That works on Linux, where all of `127.0.0.0/8` is loopback;
+//! elsewhere, give each member its own host instead.
 //!
 //! Run a cluster in three terminals; the second and third join through a seed:
 //!
@@ -49,15 +47,14 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
-use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::jetstream_rpc::session::{Session, SingleLaneSession};
 use jetstream::prelude::*;
 use jetstream_distributed::id::Id;
 use jetstream_distributed::swim::service::{
-    Endpoint, Liveness, Membership, Node, Update,
+    Liveness, Membership, Node, Update,
     membership_protocol::{MembershipChannel, MembershipService},
 };
-use tokio::net::{TcpListener, TcpSocket};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
 
 const PORT: u16 = 9100;
@@ -89,35 +86,19 @@ fn addr_of(member: u128) -> IpAddr {
     IpAddr::V4(Ipv4Addr::new(127, 0, 0, member as u8))
 }
 
-/// Who is calling: this example takes any loopback address `127.0.0.1` to
-/// `127.0.0.250` to be the member with that last number. It is an
-/// [`Authenticate`](jetstream_distributed::swim::service::Authenticate), so it is the only place that knows members are addressed by
-/// loopback; the node is told an `Id` and nothing else.
-fn authenticate(ctx: &Context) -> Option<Id> {
-    match ctx.remote() {
-        Some(RemoteAddr::IpAddr(IpAddr::V4(v4))) => match v4.octets() {
-            [127, 0, 0, k @ 1..=250] => Some(Id(k as u128)),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
 /// Answer pings and syncs on `127.0.0.<me>:9100` for as long as the task lives.
 async fn serve(node: Node, me: u128) -> std::io::Result<()> {
     let listener = TcpListener::bind(SocketAddr::new(addr_of(me), PORT)).await?;
     loop {
         let (stream, _) = listener.accept().await?;
-        let endpoint = Endpoint::new(node.clone(), authenticate);
+        let node = node.clone();
         tokio::spawn(async move {
-            // The session reads the peer's address off the stream, and the
-            // endpoint asks `authenticate` who that is: that is where "who is
-            // calling" comes from.
+            // Who is calling is in each message. Nothing here checks it.
             let session = SingleLaneSession::<MembershipChannel, _, _>::service_io(stream);
             let Ok(lane) = Session::<MembershipChannel>::accept_lane(&session).await else {
                 return;
             };
-            let mut service = MembershipService { inner: endpoint };
+            let mut service = MembershipService { inner: node };
             let _ = jetstream_rpc::server::run(&mut service, lane).await;
         });
     }
@@ -140,18 +121,15 @@ async fn call(
     within: Duration,
 ) -> Result<Vec<Update>> {
     let call = async {
-        // Bind the source so the peer sees `127.0.0.<me>` and applies its policy to it.
-        let socket = TcpSocket::new_v4()?;
-        socket.bind(SocketAddr::new(addr_of(me), 0))?;
-        let stream = socket.connect(SocketAddr::new(addr_of(peer), PORT)).await?;
+        let stream = TcpStream::connect(SocketAddr::new(addr_of(peer), PORT)).await?;
         // The session owns the lane's I/O, so it outlives the channel.
         let session = SingleLaneSession::<MembershipChannel, _, _>::client_io(stream);
         let lane = Session::<MembershipChannel>::open_lane(&session).await?;
         let channel = MembershipChannel::new(64, Box::new(lane));
         channel.negotiate_version(u32::MAX).await?;
         match kind {
-            Call::Ping => channel.ping(Context::default(), view).await,
-            Call::Sync => channel.sync(Context::default(), view).await,
+            Call::Ping => channel.ping(Context::default(), Id(me), view).await,
+            Call::Sync => channel.sync(Context::default(), Id(me), view).await,
         }
     };
     match tokio::time::timeout(within, call).await {

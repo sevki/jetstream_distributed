@@ -81,13 +81,11 @@ example does all of that in one process and asserts it, which is what CI runs.
 
 Things to notice:
 
-- **A join is a `sync` with a seed.** There is no join call. The seed's authenticator
-  identifies the connection as a member, its reply is the whole table, and the others hear of
+- **A join is a `sync` with a seed.** There is no join call. The seed takes the sender
+  named in the message as a member, its reply is the whole table, and the others hear of
   the newcomer by gossip. Node 3 above never calls node 1 to join.
-- **Who is calling is an `Authenticate`, and this example's is open.** Every loopback address
-  `127.0.0.1` to `127.0.0.250` is a member. A real deployment reads what its transport can
-  prove; SWIM does not say who should be admitted. The member number comes from the
-  authenticator and the connection, never from the request.
+- **Nothing checks who is calling.** Each message says who sent it and the node believes
+  it, so anyone who can reach a seed is in. Keeping outsiders out is not SWIM's job.
 - **Leaving and dying are different records.** `leave` writes `Left`, which out-ranks a
   failure verdict at the same incarnation, so a suspicion timer already running cannot
   turn a departure into a death. A node that is stopped without leaving is simply dead.

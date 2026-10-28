@@ -262,4 +262,21 @@ pub open spec fn swim_reachable(c: Cluster) -> bool {
     exists|tr: Seq<Cluster>| swim_execution(tr) && tr[tr.len() - 1] == c
 }
 
+/// SWIM as a [`Protocol`]. `init` and `step` are [`swim_init`] and [`swim_step`].
+pub struct SwimProtocol;
+
+impl crate::protocol::Protocol for SwimProtocol {
+    type Config = ();
+    type State = Cluster;
+    type Step = SwimStep;
+
+    open spec fn init(cfg: (), s: Cluster) -> bool {
+        swim_init(s)
+    }
+
+    open spec fn step(pre: Cluster, post: Cluster, label: SwimStep) -> bool {
+        swim_step(pre, post, label)
+    }
+}
+
 } // verus!

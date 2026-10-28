@@ -504,6 +504,9 @@ jobs:
           cargo +stable build --lib --no-default-features --locked
           cargo +stable build --lib --no-default-features --features service --locked
           cargo +stable build --lib --no-default-features --features crush --locked
+          cargo +stable build --lib --no-default-features --features iroh --locked
+          cargo +stable build --lib --no-default-features --features quic --locked
+          cargo +stable build --lib --no-default-features --features machine-uid --locked
 
       # Named explicitly rather than as a bare `cargo test --features service`:
       # the simulation suite already runs under the pinned toolchain in the job

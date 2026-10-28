@@ -494,4 +494,21 @@ pub open spec fn reachable(sys: OwnershipSystem) -> bool {
     exists|tr: Seq<OwnershipSystem>| valid_execution(tr) && tr[tr.len() - 1] == sys
 }
 
+/// The ownership layer as a [`Protocol`]. `init` and `step` are this module's own.
+pub struct OwnershipProtocol;
+
+impl crate::protocol::Protocol for OwnershipProtocol {
+    type Config = ();
+    type State = OwnershipSystem;
+    type Step = Step;
+
+    open spec fn init(cfg: (), s: OwnershipSystem) -> bool {
+        init(s)
+    }
+
+    open spec fn step(pre: OwnershipSystem, post: OwnershipSystem, label: Step) -> bool {
+        step(pre, post, label)
+    }
+}
+
 } // verus!

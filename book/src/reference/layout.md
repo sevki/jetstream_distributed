@@ -10,6 +10,8 @@ jetstream_distributed/
 │   ├── lib.rs
 │   ├── membership/         what a consumer of any membership protocol reads   [feature = "service"]
 │   │   └── mod.rs          Liveness, PeerSampling, FailureDetector (SWIM implements both)
+│   ├── protocol_t.rs       the Protocol trait: the labelled-step shape every model has
+│   ├── protocol_v.rs       each model's instance is its model (next, init); the mailbox run is a run of the protocol
 │   ├── temporal_t.rs       leads-to, weak fairness and WF1: what a liveness proof is stated in
 │   ├── ownership/          exclusive mutable ownership with epoch fencing
 │   │   ├── model_t.rs      state space + transition relation (no specification)
@@ -98,6 +100,10 @@ jetstream_distributed/
 │   │       ├── scenario_v.rs     a run in which an election actually happens
 │   │       ├── store_v.rs        recovery is exact; a crash can only rewind
 │   │       └── wire_v.rs         cut the bytes anywhere; a record prefix comes back
+│   ├── hyparview/          membership by two small views: one node, so far
+│   │   ├── model_t.rs      the views, the four handlers, the messages they send
+│   │   ├── exec_v.rs       HvTable: the views as verified code; each handler is a step of the model
+│   │   └── proofs/invariant_v.rs   the views stay bounded, disjoint, free of the node itself
 │   └── swim/               gossip membership: merge, not majority
 │       ├── model_t.rs      the record, the merge rule, one transition
 │       ├── steps_v.rs      the merge and the refutation as executable u64 functions

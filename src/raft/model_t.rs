@@ -1036,4 +1036,21 @@ pub open spec fn raft_reachable(c: Cluster) -> bool {
     exists|tr: Seq<Cluster>| raft_execution(tr) && tr[tr.len() - 1] == c
 }
 
+/// Raft as a [`Protocol`]. `init` and `step` are [`raft_init`] and [`raft_step`].
+pub struct RaftProtocol;
+
+impl crate::protocol::Protocol for RaftProtocol {
+    type Config = ();
+    type State = Cluster;
+    type Step = RaftStep;
+
+    open spec fn init(cfg: (), s: Cluster) -> bool {
+        raft_init(s)
+    }
+
+    open spec fn step(pre: Cluster, post: Cluster, label: RaftStep) -> bool {
+        raft_step(pre, post, label)
+    }
+}
+
 } // verus!

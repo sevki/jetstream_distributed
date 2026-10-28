@@ -239,4 +239,21 @@ pub open spec fn mb_next(pre: Mailbox, post: Mailbox) -> bool {
     exists|step: MbStep| #[trigger] mb_step(step, pre, post)
 }
 
+/// The mailbox as a [`Protocol`]. [`mb_step`] takes the label first; the instance puts it in the trait's order.
+pub struct MailboxProtocol;
+
+impl crate::protocol::Protocol for MailboxProtocol {
+    type Config = ();
+    type State = Mailbox;
+    type Step = MbStep;
+
+    open spec fn init(cfg: (), s: Mailbox) -> bool {
+        mb_init(s)
+    }
+
+    open spec fn step(pre: Mailbox, post: Mailbox, label: MbStep) -> bool {
+        mb_step(label, pre, post)
+    }
+}
+
 } // verus!

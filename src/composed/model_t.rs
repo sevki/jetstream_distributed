@@ -39,6 +39,7 @@
 
 use vstd::prelude::*;
 
+use crate::compose::*;
 use crate::id::Id;
 
 use crate::ownership::fencing::*;
@@ -453,6 +454,108 @@ impl crate::protocol::Protocol for ComposedProtocol {
 
     open spec fn step(pre: Composed, post: Composed, label: ComposedStep) -> bool {
         composed_step(pre, post, label)
+    }
+}
+
+/// What the coupling of ownership and Raymond keeps for itself: which actor is
+/// governed, and the nodes that owe a reconciliation. Neither is either layer's.
+pub struct ComposedGlue {
+    pub actor: Id,
+    pub seized: Set<Id>,
+}
+
+/// The steps of the composed machine that belong to neither layer: the
+/// coordinator's own. Seizing edits Raymond's state without being a Raymond step,
+/// because the node it takes the privilege from does not act.
+pub enum CoordinatorStep {
+    Seize { from: Id, to: Id },
+    Reconcile { node: Id },
+}
+
+/// Ownership and Raymond's coupling, as a [`Coupling`]: the same guards as the
+/// `cs_*` steps above, stated once as which moves each layer is allowed and what
+/// the glue does, instead of as one step type with a variant per case.
+///
+/// [`crate::composed::proofs::product`] proves that the machine this describes is
+/// [`composed_step`], so it is a second way of writing the same model, and the
+/// first stays the one the rest of the crate is stated in.
+pub struct OwnRayCoupling;
+
+impl Coupling<OwnershipProtocol, RaymondProtocol> for OwnRayCoupling {
+    type Glue = ComposedGlue;
+    type Joint = CoordinatorStep;
+
+    open spec fn init(s: Prod<OwnershipSystem, Raymond, ComposedGlue>) -> bool {
+        &&& s.a.actors.contains_key(s.g.actor)
+        &&& s.b.nodes == s.a.nodes
+        &&& s.g.seized == Set::<Id>::empty()
+    }
+
+    /// Ownership moves alone, except that the one transition that creates
+    /// authority over this actor needs the node to hold the token, and a seized
+    /// node may not come back until it has reconciled.
+    open spec fn allow_a(s: Prod<OwnershipSystem, Raymond, ComposedGlue>, la: Step) -> bool {
+        match la {
+            Step::Acquire { actor, node } => actor != s.g.actor || has_token(s.b, node),
+            Step::Recover { node } => !s.g.seized.contains(node),
+            _ => true,
+        }
+    }
+
+    /// Raymond moves alone: a step that preserves the token needs its acting node
+    /// live; passing the privilege needs the actor released and both nodes live,
+    /// and settles the receiver's debt.
+    open spec fn allow_b(s: Prod<OwnershipSystem, Raymond, ComposedGlue>, lb: RayStep) -> bool {
+        match lb {
+            RayStep::AssignPrivilege { node, head } => {
+                &&& is_unowned(s.a.actors[s.g.actor])
+                &&& s.a.live.contains(node)
+                &&& s.a.live.contains(head)
+            },
+            _ => s.a.live.contains(ray_step_actor(lb)),
+        }
+    }
+
+    open spec fn glue_after_a(s: Prod<OwnershipSystem, Raymond, ComposedGlue>, la: Step) -> ComposedGlue {
+        s.g
+    }
+
+    open spec fn glue_after_b(s: Prod<OwnershipSystem, Raymond, ComposedGlue>, lb: RayStep) -> ComposedGlue {
+        match lb {
+            RayStep::AssignPrivilege { node: _, head } => ComposedGlue {
+                actor: s.g.actor,
+                seized: s.g.seized.remove(head),
+            },
+            _ => s.g,
+        }
+    }
+
+    open spec fn joint(
+        pre: Prod<OwnershipSystem, Raymond, ComposedGlue>,
+        post: Prod<OwnershipSystem, Raymond, ComposedGlue>,
+        lc: CoordinatorStep,
+    ) -> bool {
+        match lc {
+            CoordinatorStep::Seize { from, to } => {
+                &&& is_unowned(pre.a.actors[pre.g.actor])
+                &&& pre.a.live.contains(to)
+                &&& ray_seize(pre.b, post.b, from, to)
+                &&& post.a == pre.a
+                &&& post.g == ComposedGlue {
+                    actor: pre.g.actor,
+                    seized: pre.g.seized.insert(from).remove(to),
+                }
+            },
+            CoordinatorStep::Reconcile { node } => {
+                &&& pre.g.seized.contains(node)
+                &&& ray_reconcile(pre.b, post.b, node)
+                &&& post.a == pre.a
+                &&& post.g == ComposedGlue {
+                    actor: pre.g.actor,
+                    seized: pre.g.seized.remove(node),
+                }
+            },
+        }
     }
 }
 

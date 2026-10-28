@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-881f1195.js";
+            window.path_to_searchindex_js = "searchindex-f748fbb4.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-07e7f656.js"></script>
+        <script src="toc-65b1449c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -248,23 +248,22 @@ They are things a node does about its own view, and putting them on the wire wou
 any caller make this node believe anything. A node suspects a peer because <em>its own</em>
 probe failed.</p>
 <p><strong>There is no roster: a node knows itself, and the rest is learned.</strong> <code>Node::new(me)</code>
-builds a node with one member. <code>Node::ping</code> and <code>Node::sync</code> take the caller’s <code>Id</code>, and a
-caller is a member from its first call. There is no join call. A join is that first call;
+builds a node with one member. <code>ping</code> and <code>sync</code> carry the sender’s <code>Id</code> in the message, and a
+sender is a member from its first call. There is no join call. A join is that first call;
 the <code>sync</code> reply is the whole table, so the newcomer learns who is there; and the others
 hear of it by gossip. To leave, a node calls <code>leave</code>, which records it as <code>Left</code> and hands
 back that record to tell the peers. A node that is stopped without doing so is, to the
 cluster, a node that died, and the two are different records.</p>
-<p><strong>The node does not look at a connection.</strong> It is handed an <code>Id</code> and believes it. Getting
-the <code>Id</code> is an <code>Authenticate</code>, one method from the call’s <code>Context</code> to an optional member,
-and an <code>Endpoint</code> is the service that asks it and refuses a caller it cannot identify. So
-what a transport can prove (a certificate chain from mTLS, a peer key) is read by an
-authenticator that knows that transport, and the node, the protocol and their tests do not
-change. A test writes one in a line.</p>
-<p>What this does not settle is <em>who</em> may be a member. SWIM says nothing about that, and the
-authenticators here are an address table for simulations and the example’s loopback rule;
-neither is a credential. Where a member lives is the deployment’s mapping from member
-number to address, not something SWIM gossips. And a cluster trusts its members: any one
-can fill the bound on members with made-up numbers.</p>
+<p><strong>Who is sending is in the message, and nothing here checks it.</strong> The node does not look
+at a connection and does no authentication. A message says who sent it and the node
+believes it, as it already believes a member’s word about any other member. Keeping
+outsiders out, and revoking one, is a separate concern that lives in front of the service
+or beside it, and what the cluster believes about a member (<code>Dead</code>, <code>Left</code>) is not a
+security decision either.</p>
+<p>What this does not settle is <em>who</em> may be a member. SWIM says nothing about that. Where a
+member lives is the deployment’s mapping from member number to address, not something SWIM
+gossips. And a cluster trusts its members: any one can fill the bound on members with
+made-up numbers.</p>
 <h2 id="how-it-relates-to-the-rest"><a class="header" href="#how-it-relates-to-the-rest">How it relates to the rest</a></h2>
 <p>SWIM is independent of the other protocols in the proofs. It is related to them in one
 direction, and only as a <strong>hint</strong>:</p>

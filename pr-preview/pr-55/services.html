@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-881f1195.js";
+            window.path_to_searchindex_js = "searchindex-f748fbb4.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-07e7f656.js"></script>
+        <script src="toc-65b1449c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -196,9 +196,8 @@ class of “the message lied about who sent it” from a guarded-against bug int
 unrepresentable one.</li>
 <li><strong>Today that identity is an address against a roster</strong>, and an address is not a
 credential. The roster is fixed at construction everywhere except SWIM, whose node has no
-roster at all: it takes the caller’s <code>Id</code> from an <code>Authenticate</code>, which reads the
-<code>Context</code> and which a test writes in a line (see <a href="swim.html">SWIM</a>). The shape survives
-replacing the address with a TLS or key identity, and SWIM is where that is already true.</li>
+roster at all: its messages carry the sender’s <code>Id</code>, and nothing checks it (see
+<a href="swim.html">SWIM</a>). The shape survives replacing the address with a TLS or key identity.</li>
 <li><strong>One gate across a decision.</strong> A decision that reads the registry and then writes
 the journal holds one lock across both. Two locks taken one after the other would leave
 the gap that fencing exists to close.</li>

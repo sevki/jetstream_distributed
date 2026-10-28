@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-881f1195.js";
+            window.path_to_searchindex_js = "searchindex-f748fbb4.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-07e7f656.js"></script>
+        <script src="toc-65b1449c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -847,23 +847,22 @@ They are things a node does about its own view, and putting them on the wire wou
 any caller make this node believe anything. A node suspects a peer because <em>its own</em>
 probe failed.</p>
 <p><strong>There is no roster: a node knows itself, and the rest is learned.</strong> <code>Node::new(me)</code>
-builds a node with one member. <code>Node::ping</code> and <code>Node::sync</code> take the caller’s <code>Id</code>, and a
-caller is a member from its first call. There is no join call. A join is that first call;
+builds a node with one member. <code>ping</code> and <code>sync</code> carry the sender’s <code>Id</code> in the message, and a
+sender is a member from its first call. There is no join call. A join is that first call;
 the <code>sync</code> reply is the whole table, so the newcomer learns who is there; and the others
 hear of it by gossip. To leave, a node calls <code>leave</code>, which records it as <code>Left</code> and hands
 back that record to tell the peers. A node that is stopped without doing so is, to the
 cluster, a node that died, and the two are different records.</p>
-<p><strong>The node does not look at a connection.</strong> It is handed an <code>Id</code> and believes it. Getting
-the <code>Id</code> is an <code>Authenticate</code>, one method from the call’s <code>Context</code> to an optional member,
-and an <code>Endpoint</code> is the service that asks it and refuses a caller it cannot identify. So
-what a transport can prove (a certificate chain from mTLS, a peer key) is read by an
-authenticator that knows that transport, and the node, the protocol and their tests do not
-change. A test writes one in a line.</p>
-<p>What this does not settle is <em>who</em> may be a member. SWIM says nothing about that, and the
-authenticators here are an address table for simulations and the example’s loopback rule;
-neither is a credential. Where a member lives is the deployment’s mapping from member
-number to address, not something SWIM gossips. And a cluster trusts its members: any one
-can fill the bound on members with made-up numbers.</p>
+<p><strong>Who is sending is in the message, and nothing here checks it.</strong> The node does not look
+at a connection and does no authentication. A message says who sent it and the node
+believes it, as it already believes a member’s word about any other member. Keeping
+outsiders out, and revoking one, is a separate concern that lives in front of the service
+or beside it, and what the cluster believes about a member (<code>Dead</code>, <code>Left</code>) is not a
+security decision either.</p>
+<p>What this does not settle is <em>who</em> may be a member. SWIM says nothing about that. Where a
+member lives is the deployment’s mapping from member number to address, not something SWIM
+gossips. And a cluster trusts its members: any one can fill the bound on members with
+made-up numbers.</p>
 <h2 id="how-it-relates-to-the-rest"><a class="header" href="#how-it-relates-to-the-rest">How it relates to the rest</a></h2>
 <p>SWIM is independent of the other protocols in the proofs. It is related to them in one
 direction, and only as a <strong>hint</strong>:</p>
@@ -1050,9 +1049,8 @@ class of “the message lied about who sent it” from a guarded-against bug int
 unrepresentable one.</li>
 <li><strong>Today that identity is an address against a roster</strong>, and an address is not a
 credential. The roster is fixed at construction everywhere except SWIM, whose node has no
-roster at all: it takes the caller’s <code>Id</code> from an <code>Authenticate</code>, which reads the
-<code>Context</code> and which a test writes in a line (see <a href="#swim-membership-by-merge">SWIM</a>). The shape survives
-replacing the address with a TLS or key identity, and SWIM is where that is already true.</li>
+roster at all: its messages carry the sender’s <code>Id</code>, and nothing checks it (see
+<a href="#swim-membership-by-merge">SWIM</a>). The shape survives replacing the address with a TLS or key identity.</li>
 <li><strong>One gate across a decision.</strong> A decision that reads the registry and then writes
 the journal holds one lock across both. Two locks taken one after the other would leave
 the gap that fencing exists to close.</li>
@@ -1265,7 +1263,7 @@ other calls (<code>poll</code>, <code>acquire</code>, <code>accept</code>, <code
 That is not built.</li>
 <li><strong>Nobody drives the membership view on a timer</strong>, and the SWIM node has no change
 notification, so the view is polled.</li>
-<li><strong>SWIM’s members are whatever <code>Id</code> its authenticator returns</strong>, so mapping a SWIM node
+<li><strong>SWIM’s members are whatever <code>Id</code> its messages name</strong>, so mapping a SWIM node
 to a host here relies on both using the same <code>Id</code> for a host.</li>
 <li><strong>The Iroh system is entirely commented out.</strong></li>
 <li><strong>No automatic failover</strong>, and no retrying caller that re-asks discovery on <code>FENCED</code>.</li>
@@ -1490,13 +1488,11 @@ out-ranks its record, and it answers with a higher incarnation. With no argument
 example does all of that in one process and asserts it, which is what CI runs.</p>
 <p>Things to notice:</p>
 <ul>
-<li><strong>A join is a <code>sync</code> with a seed.</strong> There is no join call. The seed’s authenticator
-identifies the connection as a member, its reply is the whole table, and the others hear of
+<li><strong>A join is a <code>sync</code> with a seed.</strong> There is no join call. The seed takes the sender
+named in the message as a member, its reply is the whole table, and the others hear of
 the newcomer by gossip. Node 3 above never calls node 1 to join.</li>
-<li><strong>Who is calling is an <code>Authenticate</code>, and this example’s is open.</strong> Every loopback address
-<code>127.0.0.1</code> to <code>127.0.0.250</code> is a member. A real deployment reads what its transport can
-prove; SWIM does not say who should be admitted. The member number comes from the
-authenticator and the connection, never from the request.</li>
+<li><strong>Nothing checks who is calling.</strong> Each message says who sent it and the node believes
+it, so anyone who can reach a seed is in. Keeping outsiders out is not SWIM’s job.</li>
 <li><strong>Leaving and dying are different records.</strong> <code>leave</code> writes <code>Left</code>, which out-ranks a
 failure verdict at the same incarnation, so a suspicion timer already running cannot
 turn a departure into a death. A node that is stopped without leaving is simply dead.</li>
@@ -1516,11 +1512,11 @@ something SWIM gossips.</li>
 //! clock and no socket. What turns it into a member of a cluster is the part this
 //! file writes, in plain Rust that Verus never sees and that nothing here proves:
 //!
-//! * **join**: start knowing only yourself, and `sync` with a seed. The seed's
-//!   authenticator identifies your connection as a member, and its reply is the
-//!   whole cluster. The seed tells the others by gossip; you never call them to join;
-//! * **serve**: accept a connection, hand it to the generated `MembershipService`,
-//!   behind an [`Endpoint`] that asks an [`Authenticate`](jetstream_distributed::swim::service::Authenticate) who is calling;
+//! * **join**: start knowing only yourself, and `sync` with a seed, naming yourself
+//!   as the sender. The seed takes you in as a member, and its reply is the whole
+//!   cluster. The seed tells the others by gossip; you never call them to join;
+//! * **serve**: accept a connection and hand it to the generated
+//!   `MembershipService`;
 //! * **probe**: every period, `ping` one peer, piggybacking this node's whole view;
 //! * **suspect**: a ping that fails or times out makes the node believe the peer
 //!   suspect, at the incarnation it had recorded *when the probe began*;
@@ -1536,14 +1532,12 @@ something SWIM gossips.</li>
 //! (`ping_req`): a peer that this node alone cannot reach is suspected on this
 //! node's word.
 //!
-//! **Who is calling is an [`Authenticate`](jetstream_distributed::swim::service::Authenticate), and this example's is open**:
-//! `127.0.0.&lt;k&gt;` for `k` in `1..=250` is member `k`, and anyone who can reach a
-//! seed from such an address is in. A real deployment reads what its transport
-//! can prove (a certificate, say) instead. Members are addressed
-//! by loopback address because this authenticator goes by address; each listens
-//! on port 9100 of its own address and connects from it. That works on Linux,
-//! where all of `127.0.0.0/8` is loopback; elsewhere, give each member its own
-//! host instead.
+//! **Nothing here checks who is calling**: each message says who sent it, and the
+//! node believes it, so anyone who can reach a seed is in. Keeping outsiders out is
+//! a job for something in front of the service, not for SWIM. Members are addressed
+//! by loopback address, `127.0.0.&lt;k&gt;` for member `k`; each listens on port 9100 of
+//! its own address. That works on Linux, where all of `127.0.0.0/8` is loopback;
+//! elsewhere, give each member its own host instead.
 //!
 //! Run a cluster in three terminals; the second and third join through a seed:
 //!
@@ -1561,15 +1555,14 @@ something SWIM gossips.</li>
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
-use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::jetstream_rpc::session::{Session, SingleLaneSession};
 use jetstream::prelude::*;
 use jetstream_distributed::id::Id;
 use jetstream_distributed::swim::service::{
-    Endpoint, Liveness, Membership, Node, Update,
+    Liveness, Membership, Node, Update,
     membership_protocol::{MembershipChannel, MembershipService},
 };
-use tokio::net::{TcpListener, TcpSocket};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
 
 const PORT: u16 = 9100;
@@ -1601,35 +1594,19 @@ fn addr_of(member: u128) -&gt; IpAddr {
     IpAddr::V4(Ipv4Addr::new(127, 0, 0, member as u8))
 }
 
-/// Who is calling: this example takes any loopback address `127.0.0.1` to
-/// `127.0.0.250` to be the member with that last number. It is an
-/// [`Authenticate`](jetstream_distributed::swim::service::Authenticate), so it is the only place that knows members are addressed by
-/// loopback; the node is told an `Id` and nothing else.
-fn authenticate(ctx: &amp;Context) -&gt; Option&lt;Id&gt; {
-    match ctx.remote() {
-        Some(RemoteAddr::IpAddr(IpAddr::V4(v4))) =&gt; match v4.octets() {
-            [127, 0, 0, k @ 1..=250] =&gt; Some(Id(k as u128)),
-            _ =&gt; None,
-        },
-        _ =&gt; None,
-    }
-}
-
 /// Answer pings and syncs on `127.0.0.&lt;me&gt;:9100` for as long as the task lives.
 async fn serve(node: Node, me: u128) -&gt; std::io::Result&lt;()&gt; {
     let listener = TcpListener::bind(SocketAddr::new(addr_of(me), PORT)).await?;
     loop {
         let (stream, _) = listener.accept().await?;
-        let endpoint = Endpoint::new(node.clone(), authenticate);
+        let node = node.clone();
         tokio::spawn(async move {
-            // The session reads the peer's address off the stream, and the
-            // endpoint asks `authenticate` who that is: that is where "who is
-            // calling" comes from.
+            // Who is calling is in each message. Nothing here checks it.
             let session = SingleLaneSession::&lt;MembershipChannel, _, _&gt;::service_io(stream);
             let Ok(lane) = Session::&lt;MembershipChannel&gt;::accept_lane(&amp;session).await else {
                 return;
             };
-            let mut service = MembershipService { inner: endpoint };
+            let mut service = MembershipService { inner: node };
             let _ = jetstream_rpc::server::run(&amp;mut service, lane).await;
         });
     }
@@ -1652,18 +1629,15 @@ async fn call(
     within: Duration,
 ) -&gt; Result&lt;Vec&lt;Update&gt;&gt; {
     let call = async {
-        // Bind the source so the peer sees `127.0.0.&lt;me&gt;` and applies its policy to it.
-        let socket = TcpSocket::new_v4()?;
-        socket.bind(SocketAddr::new(addr_of(me), 0))?;
-        let stream = socket.connect(SocketAddr::new(addr_of(peer), PORT)).await?;
+        let stream = TcpStream::connect(SocketAddr::new(addr_of(peer), PORT)).await?;
         // The session owns the lane's I/O, so it outlives the channel.
         let session = SingleLaneSession::&lt;MembershipChannel, _, _&gt;::client_io(stream);
         let lane = Session::&lt;MembershipChannel&gt;::open_lane(&amp;session).await?;
         let channel = MembershipChannel::new(64, Box::new(lane));
         channel.negotiate_version(u32::MAX).await?;
         match kind {
-            Call::Ping =&gt; channel.ping(Context::default(), view).await,
-            Call::Sync =&gt; channel.sync(Context::default(), view).await,
+            Call::Ping =&gt; channel.ping(Context::default(), Id(me), view).await,
+            Call::Sync =&gt; channel.sync(Context::default(), Id(me), view).await,
         }
     };
     match tokio::time::timeout(within, call).await {
@@ -1929,7 +1903,7 @@ wiring is not built; the example uses a flag in its place.</li>
 <pre><code class="language-rust ignore">//! Hosting an actor under a fence, calling it, and draining it.
 //!
 //! A [`LocalSupervisor`] hosts actors on one node, each behind its own mailbox. The
-//! actor is an ordinary service; it is handed a [`Fence`], which is the question "may
+//! actor is an ordinary service; it is handed a [`Fence`](jetstream_distributed::actor::service::Fence), which is the question "may
 //! this host still act for its actor?". In a deployment the fence is the ownership
 //! registry's `may_write(host, epoch)`. Here it is a flag, so the example can close it.
 //!
@@ -3447,8 +3421,7 @@ of <em>which</em> record arrived, not a different rule for applying it.</p>
 | S13 | <strong>A departure outlasts every report at or below its incarnation.</strong> <code>Left</code> ranks above <code>Dead</code>, so a suspicion timer that was already running, a late <code>Dead</code> verdict, or an old <code>Alive</code> cannot turn a node that announced its leaving into a failure or a recovery; merging any record at the same or an older incarnation into a <code>Left</code> record returns it unchanged. The one same-incarnation record that is itself <code>Left</code> is the same record, so repeating it changes nothing | <code>swim::proofs::merge::theorem_a_departure_outlasts_every_report_at_or_below_it</code> | none |
 | S14 | <strong>Only a higher incarnation brings a departed member back.</strong> The converse of S13 in the form a service uses: if hearing a record changed what a node believed about a member that had left, the record carried a higher incarnation. <strong>Not claimed:</strong> that only that member can produce one. In the crash-fault model it does, by refuting; the service believes any member’s word about any other, so a lying member can revive a departed one | <code>swim::proofs::merge::theorem_only_a_higher_incarnation_revives_a_departure</code> | none beyond S13 |</p>
 <p><strong>What S10–S14 do not cover.</strong> The table is a verified core, and <code>Node</code> is the
-shell around it: the member set and the authenticator (who is calling, and so who
-may speak and who may join), the lock, the audit log, the batch limit, and the
+shell around it: the member set (and so who has joined), the lock, the audit log, the batch limit, and the
 order a batch is applied in are plain Rust that the tests exercise. The theorems
 are about one record at a time. In particular nothing proves that <code>Node::leave</code>
 writes the departure <em>without</em> answering it with a refutation: it does so by
@@ -3458,25 +3431,22 @@ that changes.</p>
 <p><strong>Joining and leaving.</strong> The model never assumed a fixed membership: a node absent
 from the view is exactly a node at the fresh record. What was fixed was the
 <em>service’s</em> roster, and there no longer is one: <code>Node::new(me)</code> builds a node that
-knows only itself. <code>Node::ping</code> and <code>Node::sync</code> take the caller’s <code>Id</code>, and a
-caller is a member from its first call, if there is room. There is no join call: a
-join is that first call, the <code>sync</code> reply is the whole table, and the others hear of
-the newcomer by gossip. <code>Node</code> does no I/O and looks at no connection. Turning a
-connection into an <code>Id</code> is <code>Authenticate</code>’s, and <code>Endpoint</code> is the one place the two
-meet; the <code>Id</code> comes out of the connection, never out of the request.
-<code>Node::leave</code> records the node as <code>Left</code> at its held incarnation and returns that
-record for the caller to tell its peers. What this does <strong>not</strong> do: nothing decides
-who may be a member (that is the <code>Authenticate</code>’s, and the only ones here are an
-address table for simulation and the example’s loopback rule; a deployment writes
-its own); where a member lives is the deployment’s mapping from member number to
-address, not something SWIM gossips; members are never forgotten, so a departed
-member’s record is kept (it is what keeps S13 true) and counts against the same
-bound of <code>MAX_UPDATES</code> members, which any one member can fill by gossiping that many
-made-up numbers, so a cluster that admits a member admits its good behaviour; a
+knows only itself. <code>ping</code> and <code>sync</code> carry the sender’s <code>Id</code>, and a sender is a
+member from its first call, if there is room. There is no join call: a join is that
+first call, the <code>sync</code> reply is the whole table, and the others hear of the newcomer
+by gossip. <code>Node</code> does no I/O and looks at no connection; the sender is the one the
+message names. <code>Node::leave</code> records the node as <code>Left</code> at its held incarnation and
+returns that record for the caller to tell its peers. What this does <strong>not</strong> do:
+nothing authenticates a sender or decides who may be a member (a deployment puts that
+in front of the service); where a member lives is the deployment’s mapping from member
+number to address, not something SWIM gossips; members are never forgotten, so a
+departed member’s record is kept (it is what keeps S13 true) and counts against the
+same bound of <code>MAX_UPDATES</code> members, which any one member can fill by gossiping that
+many made-up numbers, so a cluster that admits a member admits its good behaviour; a
 refused request admits nobody; and a node that leaves and tells nobody is, to the
-cluster, a node that died. Rules that used to live in the node, such as a live
-member never being given a second address, are an authenticator’s to keep now, and
-none of the authenticators here keep them.</p>
+cluster, a node that died. The rules the node used to keep because it bound addresses
+(a live member never given a second address, a dead one returning from a new one) are
+gone with the address table.</p>
 <p><strong>S4 is worth pausing on, because the asymmetry it dismisses is real.</strong>
 <code>key_geq(a, b)</code> and <code>key_geq(b, a)</code> are different expressions, and reading
 <code>merge</code>’s definition — <code>if key_geq(incoming, local) { incoming } else { local }</code> — the incoming side breaks a tie. So <code>merge(a, b)</code> and <code>merge(b, a)</code>
@@ -3537,15 +3507,56 @@ departed member returns at a higher incarnation. The same file’s wire test in
 <code>tests/swim_turmoil.rs</code> has a node join through a member that is not the first,
 the rest hear of it by gossip, and a departure arrive as one.</p>
 <p><strong>What the service does not have</strong>, and what it does not claim. A caller is
-identified by an <code>Authenticate</code> (the node believes the <code>Id</code> it returns), and the only
-ones here go by address, and <em>an address is not a
-credential</em> (the stated assumption every service here makes) — and SWIM
+whoever the message says it is, and nothing checks (the other services identify a
+caller by address, which is not a credential either) — and SWIM
 sharpens it, because any member may gossip about any member, so a
-member that lies about a third party is believed. SWIM’s failure model is
+member that lies about a third party is believed, and a sender that lies about
+itself is too. SWIM’s failure model is
 crash faults, not Byzantine ones. There is no probe timer, no indirect-ping
 fallback (<code>ping_req</code>), and no piggyback <em>budget</em>: a node sends what its caller
 hands it. That loop — pick a peer, note its incarnation, wait out a timeout, call <code>suspect</code> with the incarnation it noted — is where
 timing lives, and nothing in <code>swim::model</code> says anything about timing.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="protocol-the-shape-every-model-has"><a class="header" href="#protocol-the-shape-every-model-has">Protocol: the shape every model has</a></h1>
+<p>Every model in this crate is a labelled-step state machine: a state, a label for each
+kind of step, an initial predicate, and a relation saying which labelled steps are
+allowed. Each module spelled that differently (<code>init</code>/<code>next</code>, <code>raft_init</code>/<code>raft_next</code>,
+<code>ray_init</code>/<code>ray_next</code>, <code>swim_init</code>, <code>actor_init</code>, <code>mb_init</code>, <code>composed_init</code>), so
+nothing in the types said what a protocol is.</p>
+<p><code>protocol::Protocol</code> (<code>src/protocol_t.rs</code>, trusted) is that shape, written once: an
+associated <code>Config</code>, <code>State</code> and <code>Step</code>, an <code>init</code>, a <code>step</code>, and a provided
+<code>next</code> that is “some step”. Each model implements it at the bottom of its own
+<code>model_t.rs</code>. The agreement lemmas (<code>src/protocol_v.rs</code>, verified) pin each instance
+to the model it describes.</p>
+<h2 id="what-is-proved-1"><a class="header" href="#what-is-proved-1">What is proved</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ID</th><th>Claim</th><th>Theorem</th><th>Assumes</th></tr>
+</thead>
+<tbody>
+<tr><td>P1</td><td><strong>Each instance’s <code>next</code> is its model’s <code>next</code></strong>, in both directions, for ownership, Raft, Raymond, SWIM, the actor, the mailbox and the composed machine. A theorem about a model and the same theorem about its <code>Protocol</code> are the same theorem</td><td><code>protocol_agreement::lemma_ownership_next_agrees</code>, <code>lemma_raft_next_agrees</code>, <code>lemma_raymond_next_agrees</code>, <code>lemma_swim_next_agrees</code>, <code>lemma_actor_next_agrees</code>, <code>lemma_mailbox_next_agrees</code>, <code>lemma_composed_next_agrees</code></td><td>none</td></tr>
+<tr><td>P2</td><td><strong>The instances’ <code>init</code> is the model’s <code>init</code></strong>, at the configuration the model has (Raymond’s root; <code>()</code> elsewhere). By definition today, stated so that a later change to an instance cannot drift from the model</td><td><code>protocol_agreement::lemma_init_agrees</code></td><td>none</td></tr>
+<tr><td>P3</td><td><strong>A mailbox run in the crate’s existing sense is a run of the mailbox <code>Protocol</code></strong>, so <code>protocol::runs_of</code> and the statement the mailbox’s liveness proof is built on are the same notion</td><td><code>protocol_agreement::lemma_mailbox_run_is_a_run_of_the_protocol</code></td><td><code>mb_run(ex)</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="what-this-does-not-say"><a class="header" href="#what-this-does-not-say">What this does not say</a></h2>
+<ul>
+<li><strong>It is a shape, not a relationship.</strong> No theorem here relates two protocols. In
+particular the composed machine’s <code>Protocol</code> instance is written by hand; it is
+<em>not</em> derived from the ownership and Raymond instances. Deriving it is the generic
+composition tracked in <a href="https://github.com/sevki/jetstream_distributed/issues/67">#67</a>.</li>
+<li><strong>There is no observable view.</strong> What a consumer of a protocol may read (a
+membership protocol’s peers, a log’s committed prefix) is defined alongside the
+first property that reads it, in the membership contract (<a href="https://github.com/sevki/jetstream_distributed/issues/65">#65</a>).</li>
+<li><strong>No liveness for the other protocols.</strong> <code>runs_of</code> exists, but only the mailbox
+states a liveness theorem against it (P3). Giving the others one is separate work
+per protocol, and each needs its own fairness assumption.</li>
+<li><strong>Nothing about the services.</strong> The <code>service</code> code is plain Rust and does not
+implement <code>Protocol</code>; it calls the verified step functions, which the refinement
+rows in the per-protocol chapters tie to the models.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="the-protocol-as-a-jetstream-service"><a class="header" href="#the-protocol-as-a-jetstream-service">The protocol as a Jetstream service</a></h1>
 <p><strong>Every algorithm in this repository has a service</strong>, and each is a <code>#[service] trait</code> over Jetstream RPC implemented by a type that holds the algorithm’s state
@@ -3702,8 +3713,9 @@ moving, stranding authority at a node that no longer holds the privilege.</p>
 <p><strong>What the composed service does not claim.</strong> The composed <em>model</em> guards some
 steps on <code>own.live</code>, which is ground truth — whether a node has crashed is not
 something any process can evaluate. The service has no <code>Crash</code> or <code>Recover</code>, so
-it refines the composed machine’s <strong>crash-free</strong> executions, where every liveness
-guard is vacuously true; C8 states <code>live.contains(..)</code> as a hypothesis rather than
+the steps it calls refine the composed machine’s <strong>crash-free</strong> executions, where
+every liveness guard is vacuously true (the service around those steps is plain
+Rust and tested); C8 states <code>live.contains(..)</code> as a hypothesis rather than
 dropping it. That cut does not lose the case the machine exists for:
 <code>SeizeToken</code> has no liveness guard on the node it takes the privilege <em>from</em>, so
 seizing from a holder that is merely unreachable — the wrongly-suspected node a
@@ -4710,6 +4722,8 @@ attribute.</p>
 ├── fuzz/                   the coverage-guided front end to the protocol-line search (its own workspace, nightly)
 ├── src/
 │   ├── lib.rs
+│   ├── protocol_t.rs       the Protocol trait: the labelled-step shape every model has
+│   ├── protocol_v.rs       each model's instance is its model (next, init); the mailbox run is a run of the protocol
 │   ├── temporal_t.rs       leads-to, weak fairness and WF1: what a liveness proof is stated in
 │   ├── ownership/          exclusive mutable ownership with epoch fencing
 │   │   ├── model_t.rs      state space + transition relation (no specification)

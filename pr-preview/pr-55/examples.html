@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-881f1195.js";
+            window.path_to_searchindex_js = "searchindex-f748fbb4.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-07e7f656.js"></script>
+        <script src="toc-65b1449c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -395,13 +395,11 @@ out-ranks its record, and it answers with a higher incarnation. With no argument
 example does all of that in one process and asserts it, which is what CI runs.</p>
 <p>Things to notice:</p>
 <ul>
-<li><strong>A join is a <code>sync</code> with a seed.</strong> There is no join call. The seed’s authenticator
-identifies the connection as a member, its reply is the whole table, and the others hear of
+<li><strong>A join is a <code>sync</code> with a seed.</strong> There is no join call. The seed takes the sender
+named in the message as a member, its reply is the whole table, and the others hear of
 the newcomer by gossip. Node 3 above never calls node 1 to join.</li>
-<li><strong>Who is calling is an <code>Authenticate</code>, and this example’s is open.</strong> Every loopback address
-<code>127.0.0.1</code> to <code>127.0.0.250</code> is a member. A real deployment reads what its transport can
-prove; SWIM does not say who should be admitted. The member number comes from the
-authenticator and the connection, never from the request.</li>
+<li><strong>Nothing checks who is calling.</strong> Each message says who sent it and the node believes
+it, so anyone who can reach a seed is in. Keeping outsiders out is not SWIM’s job.</li>
 <li><strong>Leaving and dying are different records.</strong> <code>leave</code> writes <code>Left</code>, which out-ranks a
 failure verdict at the same incarnation, so a suspicion timer already running cannot
 turn a departure into a death. A node that is stopped without leaving is simply dead.</li>
@@ -421,11 +419,11 @@ something SWIM gossips.</li>
 //! clock and no socket. What turns it into a member of a cluster is the part this
 //! file writes, in plain Rust that Verus never sees and that nothing here proves:
 //!
-//! * **join**: start knowing only yourself, and `sync` with a seed. The seed's
-//!   authenticator identifies your connection as a member, and its reply is the
-//!   whole cluster. The seed tells the others by gossip; you never call them to join;
-//! * **serve**: accept a connection, hand it to the generated `MembershipService`,
-//!   behind an [`Endpoint`] that asks an [`Authenticate`](jetstream_distributed::swim::service::Authenticate) who is calling;
+//! * **join**: start knowing only yourself, and `sync` with a seed, naming yourself
+//!   as the sender. The seed takes you in as a member, and its reply is the whole
+//!   cluster. The seed tells the others by gossip; you never call them to join;
+//! * **serve**: accept a connection and hand it to the generated
+//!   `MembershipService`;
 //! * **probe**: every period, `ping` one peer, piggybacking this node's whole view;
 //! * **suspect**: a ping that fails or times out makes the node believe the peer
 //!   suspect, at the incarnation it had recorded *when the probe began*;
@@ -441,14 +439,12 @@ something SWIM gossips.</li>
 //! (`ping_req`): a peer that this node alone cannot reach is suspected on this
 //! node's word.
 //!
-//! **Who is calling is an [`Authenticate`](jetstream_distributed::swim::service::Authenticate), and this example's is open**:
-//! `127.0.0.&lt;k&gt;` for `k` in `1..=250` is member `k`, and anyone who can reach a
-//! seed from such an address is in. A real deployment reads what its transport
-//! can prove (a certificate, say) instead. Members are addressed
-//! by loopback address because this authenticator goes by address; each listens
-//! on port 9100 of its own address and connects from it. That works on Linux,
-//! where all of `127.0.0.0/8` is loopback; elsewhere, give each member its own
-//! host instead.
+//! **Nothing here checks who is calling**: each message says who sent it, and the
+//! node believes it, so anyone who can reach a seed is in. Keeping outsiders out is
+//! a job for something in front of the service, not for SWIM. Members are addressed
+//! by loopback address, `127.0.0.&lt;k&gt;` for member `k`; each listens on port 9100 of
+//! its own address. That works on Linux, where all of `127.0.0.0/8` is loopback;
+//! elsewhere, give each member its own host instead.
 //!
 //! Run a cluster in three terminals; the second and third join through a seed:
 //!
@@ -466,15 +462,14 @@ something SWIM gossips.</li>
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
-use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::jetstream_rpc::session::{Session, SingleLaneSession};
 use jetstream::prelude::*;
 use jetstream_distributed::id::Id;
 use jetstream_distributed::swim::service::{
-    Endpoint, Liveness, Membership, Node, Update,
+    Liveness, Membership, Node, Update,
     membership_protocol::{MembershipChannel, MembershipService},
 };
-use tokio::net::{TcpListener, TcpSocket};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
 
 const PORT: u16 = 9100;
@@ -506,35 +501,19 @@ fn addr_of(member: u128) -&gt; IpAddr {
     IpAddr::V4(Ipv4Addr::new(127, 0, 0, member as u8))
 }
 
-/// Who is calling: this example takes any loopback address `127.0.0.1` to
-/// `127.0.0.250` to be the member with that last number. It is an
-/// [`Authenticate`](jetstream_distributed::swim::service::Authenticate), so it is the only place that knows members are addressed by
-/// loopback; the node is told an `Id` and nothing else.
-fn authenticate(ctx: &amp;Context) -&gt; Option&lt;Id&gt; {
-    match ctx.remote() {
-        Some(RemoteAddr::IpAddr(IpAddr::V4(v4))) =&gt; match v4.octets() {
-            [127, 0, 0, k @ 1..=250] =&gt; Some(Id(k as u128)),
-            _ =&gt; None,
-        },
-        _ =&gt; None,
-    }
-}
-
 /// Answer pings and syncs on `127.0.0.&lt;me&gt;:9100` for as long as the task lives.
 async fn serve(node: Node, me: u128) -&gt; std::io::Result&lt;()&gt; {
     let listener = TcpListener::bind(SocketAddr::new(addr_of(me), PORT)).await?;
     loop {
         let (stream, _) = listener.accept().await?;
-        let endpoint = Endpoint::new(node.clone(), authenticate);
+        let node = node.clone();
         tokio::spawn(async move {
-            // The session reads the peer's address off the stream, and the
-            // endpoint asks `authenticate` who that is: that is where "who is
-            // calling" comes from.
+            // Who is calling is in each message. Nothing here checks it.
             let session = SingleLaneSession::&lt;MembershipChannel, _, _&gt;::service_io(stream);
             let Ok(lane) = Session::&lt;MembershipChannel&gt;::accept_lane(&amp;session).await else {
                 return;
             };
-            let mut service = MembershipService { inner: endpoint };
+            let mut service = MembershipService { inner: node };
             let _ = jetstream_rpc::server::run(&amp;mut service, lane).await;
         });
     }
@@ -557,18 +536,15 @@ async fn call(
     within: Duration,
 ) -&gt; Result&lt;Vec&lt;Update&gt;&gt; {
     let call = async {
-        // Bind the source so the peer sees `127.0.0.&lt;me&gt;` and applies its policy to it.
-        let socket = TcpSocket::new_v4()?;
-        socket.bind(SocketAddr::new(addr_of(me), 0))?;
-        let stream = socket.connect(SocketAddr::new(addr_of(peer), PORT)).await?;
+        let stream = TcpStream::connect(SocketAddr::new(addr_of(peer), PORT)).await?;
         // The session owns the lane's I/O, so it outlives the channel.
         let session = SingleLaneSession::&lt;MembershipChannel, _, _&gt;::client_io(stream);
         let lane = Session::&lt;MembershipChannel&gt;::open_lane(&amp;session).await?;
         let channel = MembershipChannel::new(64, Box::new(lane));
         channel.negotiate_version(u32::MAX).await?;
         match kind {
-            Call::Ping =&gt; channel.ping(Context::default(), view).await,
-            Call::Sync =&gt; channel.sync(Context::default(), view).await,
+            Call::Ping =&gt; channel.ping(Context::default(), Id(me), view).await,
+            Call::Sync =&gt; channel.sync(Context::default(), Id(me), view).await,
         }
     };
     match tokio::time::timeout(within, call).await {
@@ -834,7 +810,7 @@ wiring is not built; the example uses a flag in its place.</li>
 <pre><code class="language-rust ignore">//! Hosting an actor under a fence, calling it, and draining it.
 //!
 //! A [`LocalSupervisor`] hosts actors on one node, each behind its own mailbox. The
-//! actor is an ordinary service; it is handed a [`Fence`], which is the question "may
+//! actor is an ordinary service; it is handed a [`Fence`](jetstream_distributed::actor::service::Fence), which is the question "may
 //! this host still act for its actor?". In a deployment the fence is the ownership
 //! registry's `may_write(host, epoch)`. Here it is a flag, so the example can close it.
 //!

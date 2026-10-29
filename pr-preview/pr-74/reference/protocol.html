@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-84889bdb.js";
+            window.path_to_searchindex_js = "../searchindex-e67cd7a1.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-65b1449c.js"></script>
+        <script src="../toc-20c669f1.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -198,7 +198,7 @@ to the model it describes.</p>
 <tr><th>ID</th><th>Claim</th><th>Theorem</th><th>Assumes</th></tr>
 </thead>
 <tbody>
-<tr><td>P1</td><td><strong>Each instance’s <code>next</code> is its model’s <code>next</code></strong>, in both directions, for ownership, Raft, Raymond, SWIM, the actor, the mailbox and the composed machine. A theorem about a model and the same theorem about its <code>Protocol</code> are the same theorem</td><td><code>protocol_agreement::lemma_ownership_next_agrees</code>, <code>lemma_raft_next_agrees</code>, <code>lemma_raymond_next_agrees</code>, <code>lemma_swim_next_agrees</code>, <code>lemma_actor_next_agrees</code>, <code>lemma_mailbox_next_agrees</code>, <code>lemma_composed_next_agrees</code></td><td>none</td></tr>
+<tr><td>P1</td><td><strong>Each instance’s <code>next</code> is its model’s <code>next</code></strong>, in both directions, for ownership, Raft, Raymond, SWIM, HyParView, the actor, the mailbox and the composed machine. A theorem about a model and the same theorem about its <code>Protocol</code> are the same theorem</td><td><code>protocol_agreement::lemma_ownership_next_agrees</code>, <code>lemma_raft_next_agrees</code>, <code>lemma_raymond_next_agrees</code>, <code>lemma_swim_next_agrees</code>, <code>lemma_hyparview_next_agrees</code>, <code>lemma_actor_next_agrees</code>, <code>lemma_mailbox_next_agrees</code>, <code>lemma_composed_next_agrees</code></td><td>none</td></tr>
 <tr><td>P2</td><td><strong>The instances’ <code>init</code> is the model’s <code>init</code></strong>, at the configuration the model has (Raymond’s root; <code>()</code> elsewhere). By definition today, stated so that a later change to an instance cannot drift from the model</td><td><code>protocol_agreement::lemma_init_agrees</code></td><td>none</td></tr>
 <tr><td>P3</td><td><strong>A mailbox run in the crate’s existing sense is a run of the mailbox <code>Protocol</code></strong>, so <code>protocol::runs_of</code> and the statement the mailbox’s liveness proof is built on are the same notion</td><td><code>protocol_agreement::lemma_mailbox_run_is_a_run_of_the_protocol</code></td><td><code>mb_run(ex)</code></td></tr>
 </tbody>
@@ -264,7 +264,7 @@ them, so the composed service’s trait is still written out.</li>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../reference/swim.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../reference/hyparview.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -278,7 +278,7 @@ them, so the composed service’s trait is still written out.</li>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../reference/swim.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../reference/hyparview.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 

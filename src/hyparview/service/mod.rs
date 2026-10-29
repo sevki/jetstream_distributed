@@ -24,6 +24,11 @@
 //!   argument. That is the transport's job, and who it believes is
 //!   [#66](https://github.com/sevki/jetstream_distributed/issues/66)'s question;
 //!   a caller that lies here can put any node in this node's views.
+//! * **Symmetric under concurrent joins.** A `Neighbor` is always granted, so one
+//!   that overlaps a `Disconnect` between the same two nodes can restore a link the
+//!   other end is about to drop, leaving it one-sided for good. The cluster tests
+//!   pin one such interleaving (`an_overlapping_neighbor_and_disconnect_leave_a_one_sided_link`).
+//!   Closing it needs a handshake the model does not have.
 //! * **Complete.** There is no shuffle and no promotion on failure, as in the model.
 
 use std::sync::{Arc, Mutex};
@@ -144,9 +149,10 @@ impl Node {
     /// Run the handler for `message`, which the transport says is from `from`, and
     /// return the messages to send.
     ///
-    /// A message the model has no step for is dropped: a `Join` or `Neighbor` from
-    /// this node itself, and a `ForwardJoin` from a node that is not an active peer
-    /// (the model's handler requires one).
+    /// A `Join` or `Neighbor` from this node itself is dropped: the model has no
+    /// step for it. A `ForwardJoin` from a node that is not an active peer is the
+    /// model's own no-op (a replay after that peer was dropped), so the table
+    /// handles it.
     pub fn handle(&self, from: Id, message: Message) -> Vec<Outgoing> {
         let mut g = self.inner.lock().unwrap();
         let picks = g.picks();
@@ -155,9 +161,7 @@ impl Node {
             Message::Join if from != me => g.table.join(me, p, from, picks),
             Message::Neighbor if from != me => g.table.neighbor(me, p, from, picks),
             Message::Disconnect => g.table.disconnect(me, p, from, picks),
-            Message::ForwardJoin { new, ttl } if g.table.in_active(from) => {
-                g.table.forward_join(me, p, new, ttl, from, picks)
-            }
+            Message::ForwardJoin { new, ttl } => g.table.forward_join(me, p, new, ttl, from, picks),
             _ => Vec::new(),
         };
         out.into_iter().map(Outgoing::from).collect()

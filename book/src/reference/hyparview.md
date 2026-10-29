@@ -30,7 +30,12 @@ theorems.
   **tested** on simulated runs (`tests/hyparview_cluster.rs`: nodes joining one at a
   time and all at once, each message delivered once and in order), which is evidence
   about those runs and nothing more; replay and reordering, which the model allows, are
-  not exercised there.
+  not exercised there. **Symmetry does not hold in general**: `Neighbor` is always
+  granted, so one still in flight when its sender is evicted restores a link the other
+  end is about to drop, and the active views end one-sided with nothing left to repair
+  them. `an_overlapping_neighbor_and_disconnect_leave_a_one_sided_link` pins one such
+  interleaving. Closing it needs a handshake (a request that can be refused or told
+  stale) that the model does not have.
   The `Neighbor` request that a terminal `ForwardJoin` sends is the mechanism that
   makes links two-sided, and what it sends is proved (H4); that the other end acts on it
   is the network's.

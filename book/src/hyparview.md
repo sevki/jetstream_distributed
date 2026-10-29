@@ -51,7 +51,9 @@ implementation of the contract, held to the same checks as SWIM in
 
 Whether a cluster of these nodes is an overlay is **tested, not proved**:
 `tests/hyparview_cluster.rs` runs nodes against a queue and checks that active views end
-up symmetric, bounded, and connected. The model is one node and says nothing about that.
+up symmetric, bounded, and connected on those runs. The model is one node and says
+nothing about that, and **symmetry does not hold in general**: a `Neighbor` that overlaps
+a `Disconnect` can leave a link one-sided, and a test pins one such interleaving.
 Nothing in the crate consumes HyParView yet.
 
 Next: [the mailbox](mailbox.md).

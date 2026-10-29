@@ -140,3 +140,52 @@ fn the_overlay_of_one_run_is_connected() {
     }
     assert_eq!(seen.len(), c.nodes.len(), "reached {seen:?}");
 }
+
+/// **A known gap, pinned.** A `Neighbor` is always granted, so one that is still in
+/// flight when its sender is evicted restores a link the other end is about to drop.
+///
+/// With one active slot each: `A` and `B` hold each other, each with a redundant
+/// `Neighbor` to the other in flight (the pair a terminal `ForwardJoin` queues at
+/// both ends). Then a newcomer `C` joins at `A`, which evicts `B` and tells it to
+/// disconnect. Delivered in the order sent, `B` hears `Disconnect` and drops `A`,
+/// while `A` hears `B`'s old `Neighbor` and takes `B` back: `A` lists `B`, `B` does
+/// not list `A`, and nothing is left in flight to repair it.
+///
+/// The model has no handshake to tell a stale `Neighbor` from a fresh one, so this
+/// is the model's behaviour and not a bug in the node; the test exists so that
+/// closing the gap is a visible change (it will then need to assert symmetry).
+#[test]
+fn an_overlapping_neighbor_and_disconnect_leave_a_one_sided_link() {
+    let one_slot = ExecParams {
+        active_cap: 1,
+        passive_cap: 4,
+        arwl: 3,
+        prwl: 1,
+    };
+    let (a, b, cc) = (Id(1), Id(2), Id(3));
+    let mut c = Cluster::new();
+    for id in [a, b, cc] {
+        c.nodes.insert(id, Node::new(id, one_slot, id.0 as u64));
+    }
+    // A and B hold each other.
+    let out = c.nodes[&a].handle(b, Message::Neighbor);
+    c.send(a, out);
+    let out = c.nodes[&b].handle(a, Message::Neighbor);
+    c.send(b, out);
+    assert_eq!(c.nodes[&a].peers(), vec![b]);
+    assert_eq!(c.nodes[&b].peers(), vec![a]);
+    // Each still has a `Neighbor` for the other in flight, sent before C arrives.
+    c.network.push_back((a, b, Message::Neighbor));
+    c.network.push_back((b, a, Message::Neighbor));
+    // C joins at A: A evicts B and says so.
+    let out = c.nodes[&a].handle(cc, Message::Join);
+    c.send(a, out);
+    c.settle();
+
+    let a_lists_b = c.nodes[&a].peers().contains(&b);
+    let b_lists_a = c.nodes[&b].peers().contains(&a);
+    assert!(
+        a_lists_b && !b_lists_a,
+        "expected the one-sided link this test pins; A->B {a_lists_b}, B->A {b_lists_a}"
+    );
+}

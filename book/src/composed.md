@@ -69,6 +69,9 @@ a layer already proved is carried without a second proof.
   guard on the node it takes the privilege from.
 - **Both layers live behind one gate in one process.** The `Coordinator` serialises
   them because the coupling reads both. It checks the rules; it does not distribute them.
+  The coupling's four steps are now data (`Command`, run through `apply`), which is what a
+  replicated coordinator would need first; what it would need after that is in the
+  [Reference](reference/services.md#raymond-and-the-composed-machine).
 - **The nodes involved must be live for a recipient or a seizure target.** The service's
   identity lookup speaks only for the *caller*, and a recipient of a passed privilege is
   not a caller, so nothing in the service establishes that for them.

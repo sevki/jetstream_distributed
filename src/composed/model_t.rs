@@ -49,6 +49,24 @@ use crate::raymond::model::*;
 
 verus! {
 
+// ---------------------------------------------------------------------------
+// The coupling predicate
+// ---------------------------------------------------------------------------
+//
+// This was defined in the Raymond model, which therefore imported the ownership
+// protocol. It is about both layers, so it is defined with the machine that joins
+// them, and Raymond imports nothing of ownership.
+
+/// The glue between the two layers: **anybody with mutable authority over the
+/// actor must be the node that currently possesses the Raymond token.**
+///
+/// Note the direction. The routing layer does not *grant* authority; it only
+/// constrains who could possibly have it. Authority still comes exclusively
+/// from the ownership state and its epoch.
+pub open spec fn couples(r: Raymond, s: OwnershipState) -> bool {
+    forall|n: Id, e: Epoch| #[trigger] may_mutate(s, n, e) ==> has_token(r, n)
+}
+
 /// One actor, governed jointly by the ownership protocol and Raymond routing.
 pub struct Composed {
     pub own: OwnershipSystem,
@@ -64,7 +82,7 @@ pub struct Composed {
     /// believes it holds the privilege, it does not, and it may still be inside
     /// its critical section believing that too. Ownership is safe regardless -
     /// the epoch fences it, and
-    /// `crate::raymond::proofs::routing_layer::theorem_stale_holder_confers_no_authority`
+    /// `crate::composed::proofs::couples::theorem_stale_holder_confers_no_authority`
     /// proves it - but Raymond's critical section has no epoch, so the belief
     /// has to be repaired before the node acts again.
     ///

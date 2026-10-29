@@ -15,6 +15,8 @@ pub mod properties;
 pub mod refinement;
 #[path = "registry_v.rs"]
 pub mod registry;
+#[path = "safe_v.rs"]
+pub mod safe;
 #[path = "tokens_v.rs"]
 pub mod tokens;
 #[path = "transfer_v.rs"]

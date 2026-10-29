@@ -38,15 +38,22 @@ fn cluster() -> Node {
     n
 }
 
-/// Everything the traits promise, for any implementation.
-fn obeys_the_contract<D: FailureDetector>(d: &D) {
-    let me = d.local();
-    let peers = d.peers();
-    let standings = d.standings();
-
+/// What `PeerSampling` promises, for any implementation.
+fn peers_obey_the_contract<P: PeerSampling>(p: &P) {
+    let me = p.local();
+    let peers = p.peers();
     let peer_set: BTreeSet<Id> = peers.iter().copied().collect();
     assert_eq!(peer_set.len(), peers.len(), "a peer is listed once: {peers:?}");
     assert!(!peer_set.contains(&me), "a node is not its own peer");
+}
+
+/// Everything the traits promise, for any implementation.
+fn obeys_the_contract<D: FailureDetector>(d: &D) {
+    peers_obey_the_contract(d);
+    let me = d.local();
+    let peers = d.peers();
+    let peer_set: BTreeSet<Id> = peers.iter().copied().collect();
+    let standings = d.standings();
 
     let known: BTreeSet<Id> = standings.iter().map(|&(n, _)| n).collect();
     assert_eq!(
@@ -126,5 +133,64 @@ fn swim_probes_the_suspect_and_drops_the_dead_and_the_departed() {
             standings.contains(&(node, standing)),
             "{node:?} is still reported as {standing:?}: {standings:?}"
         );
+    }
+}
+
+// --- a second implementation: HyParView ------------------------------------
+//
+// It makes no verdicts, so it is held to `PeerSampling` alone, which is the point of
+// the split. The node is the service's, driven through its own handlers.
+
+mod hyparview {
+    use super::*;
+    use jetstream_distributed::hyparview::service::{ExecParams, Message, Node};
+
+    const PARAMS: ExecParams = ExecParams {
+        active_cap: 2,
+        passive_cap: 2,
+        arwl: 3,
+        prwl: 1,
+    };
+
+    fn node() -> Node {
+        Node::new(Id(ME), PARAMS, 7)
+    }
+
+    #[test]
+    fn a_node_that_has_heard_of_nobody_obeys_the_contract() {
+        let n = node();
+        peers_obey_the_contract(&n);
+        assert!(n.peers().is_empty());
+    }
+
+    #[test]
+    fn a_node_with_a_full_view_obeys_the_contract() {
+        let n = node();
+        // More joiners than the view holds: each beyond the second demotes a peer.
+        for id in 2..=6 {
+            n.handle(Id(id), Message::Join);
+            peers_obey_the_contract(&n);
+        }
+        assert_eq!(n.peers().len(), 2, "the view is full and no fuller");
+    }
+
+    #[test]
+    fn a_node_that_contacts_itself_obeys_the_contract() {
+        let n = node();
+        n.handle(Id(ME), Message::Join);
+        n.handle(Id(ME), Message::Neighbor);
+        n.join_via(Id(ME));
+        peers_obey_the_contract(&n);
+        assert!(n.peers().is_empty());
+    }
+
+    #[test]
+    fn a_dropped_link_leaves_the_peers() {
+        let n = node();
+        n.handle(Id(2), Message::Join);
+        n.handle(Id(2), Message::Disconnect);
+        peers_obey_the_contract(&n);
+        assert!(n.peers().is_empty());
+        assert_eq!(n.passive(), vec![Id(2)], "a dropped link is kept in reserve");
     }
 }

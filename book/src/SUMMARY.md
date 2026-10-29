@@ -14,6 +14,7 @@
 - [Composed: the two as one machine](composed.md)
 - [Raft: buying the atomic registry](raft.md)
 - [SWIM: membership by merge](swim.md)
+- [HyParView: who to talk to](hyparview.md)
 - [The actor: a journal fenced by ownership](actor.md)
 - [The mailbox: getting messages to the actor](mailbox.md)
 
@@ -31,6 +32,7 @@
 - [Raft: the same statement, bought by counting](reference/raft.md)
 - [Actor: a journal fenced by ownership](reference/actor.md)
 - [SWIM: gossip membership](reference/swim.md)
+- [HyParView: two small views](reference/hyparview.md)
 - [Protocol: the shape every model has](reference/protocol.md)
 - [The protocol as a Jetstream service](reference/services.md)
 - [Network resiliency: the model, run for real](reference/simulation.md)

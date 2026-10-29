@@ -17,6 +17,7 @@ cargo doc --no-deps --lib --examples    # must be clean
 verus --crate-type=lib src/lib.rs       # the proofs (needs the pinned Verus)
 cargo verus verify --no-default-features
 python3 -I .github/scripts/check-book.py # the book's links and anchors, and the README's pointer
+python3 -I .github/scripts/check-modules.py # no module cycle; standalone modules stay standalone
 mdbook build book                       # the book (mdBook 0.5.4; CI pins and checksums it)
 ```
 
@@ -41,6 +42,10 @@ name carries the suffix. `src/**/steps_v.rs`, `exec_v.rs`, `registry_v.rs`,
 * **No escape hatches in `src/`.** `assume`, `admit`, `axiom`, `external_body` and
   friends are rejected by CI. The one documented exception is the vendored
   `pmemlog` (`vendor/README.md`).
+* **Standalone modules stay standalone, and nothing depends on itself.** `ownership`,
+  `raft`, `raymond` and `swim` import only `id` and the shape modules (`protocol`, `temporal`,
+  `compose`, `membership`), and no two modules depend on each other. `python3 -I .github/scripts/check-modules.py` holds it, and CI runs it first.
+  To give a standalone module a dependency, edit `STANDALONE` there in the same change.
 * **Nothing vendored is edited.** `vendor/verified-storage` and `vendor/kverus` are
   verbatim copies of upstream at a pinned commit, and CI diffs them. To change one,
   re-vendor from upstream and update the pin in the workflow and in the README that

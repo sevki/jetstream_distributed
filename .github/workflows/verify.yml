@@ -305,7 +305,7 @@ jobs:
   # stops one appearing; three had gone unnoticed (`compute`/`scheduling`, and
   # `ownership` with `raymond` and `composed`) before this existed. It reads the
   # `crate::...` imports and fails on a cycle, or on a standalone module (ownership,
-  # raft, swim) depending on anything but `id` and the shape modules. It needs no
+  # raft, raymond, swim) depending on anything but `id` and the shape modules. It needs no
   # toolchain, only Python, so it is the cheapest job here and fails first.
   modules:
     name: Module layering

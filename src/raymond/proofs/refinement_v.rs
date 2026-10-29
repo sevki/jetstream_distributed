@@ -28,7 +28,6 @@ use vstd::prelude::*;
 
 use crate::id::Id;
 
-use crate::ownership::model::*;
 use crate::raymond::model::*;
 use crate::raymond::steps::*;
 

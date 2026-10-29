@@ -1,10 +1,11 @@
 //! Raymond's distributed mutual-exclusion algorithm, as a *routing* layer.
 //!
-//! This module is deliberately independent of [`crate::ownership::spec`]: Raymond
-//! decides **where the token is and how requests find it**, not **who is
-//! allowed to mutate**. The two are glued together by the `couples` predicate
-//! at the bottom of this file, and the glue is what makes it impossible for a
-//! routing decision to manufacture authority.
+//! This module is independent of the ownership protocol, and says so by importing
+//! nothing of it: Raymond decides **where the token is and how requests find it**,
+//! not **who is allowed to mutate**. The two are glued together by the `couples`
+//! predicate, which is defined with the composed machine
+//! ([`crate::composed::model::couples`]) because it is about both, and the glue is
+//! what makes it impossible for a routing decision to manufacture authority.
 //!
 //! State per node:
 //!
@@ -37,9 +38,6 @@ use vstd::prelude::*;
 
 use crate::id::Id;
 
-use crate::ownership::fencing::*;
-use crate::ownership::model::*;
-use crate::ownership::spec::*;
 
 verus! {
 
@@ -75,7 +73,7 @@ pub struct Raymond {
     /// theorems prove it inert. Here, a node whose privilege was seized keeps
     /// *believing* it holds the privilege, and the theorems prove that inert
     /// too - see [`is_stale_holder`] and
-    /// `crate::raymond::proofs::routing_layer::theorem_stale_holder_confers_no_authority`.
+    /// `crate::composed::proofs::couples::theorem_stale_holder_confers_no_authority`.
     pub privilege: Id,
 }
 
@@ -90,7 +88,7 @@ pub open spec fn believes_holds(r: Raymond, n: Id) -> bool {
 
 /// `n` **actually** holds the privilege.
 ///
-/// This is the predicate [`couples`] is written against, so authority over the
+/// This is the predicate [`crate::composed::model::couples`] is written against, so authority over the
 /// actor tracks the real privilege and never a node's belief about it.
 pub open spec fn has_token(r: Raymond, n: Id) -> bool {
     r.nodes.contains(n) && r.privilege == n
@@ -240,8 +238,8 @@ pub open spec fn holder_iter(r: Raymond, n: Id, k: nat) -> Id
 /// holder inside its critical section is a state this model can write down -
 /// which is the point. What it costs is Raymond-level mutual exclusion during
 /// the window before reconciliation; what it does not cost is ownership safety,
-/// because [`couples`] is written against authority. See
-/// `crate::raymond::proofs::routing_layer::theorem_stale_holder_confers_no_authority`.
+/// because [`crate::composed::model::couples`] is written against authority. See
+/// `crate::composed::proofs::couples::theorem_stale_holder_confers_no_authority`.
 pub open spec fn ray_using_implies_belief(r: Raymond) -> bool {
     forall|n: Id| #[trigger] r.nodes.contains(n) && r.using[n] ==> believes_holds(r, n)
 }
@@ -503,7 +501,7 @@ pub open spec fn ray_init(r: Raymond, root: Id) -> bool {
 /// believed violated the uniqueness invariant outright. The invariant held
 /// because the dangerous state could not be written down. Splitting belief from
 /// authority is what makes it writable, and
-/// `crate::raymond::proofs::routing_layer::theorem_stale_holder_confers_no_authority` is what
+/// `crate::composed::proofs::couples::theorem_stale_holder_confers_no_authority` is what
 /// makes it harmless.
 pub open spec fn ray_seize(pre: Raymond, post: Raymond, from: Id, to: Id) -> bool {
     &&& has_token(pre, from)
@@ -589,20 +587,6 @@ pub open spec fn ray_run(tr: Seq<Raymond>, labels: Seq<RayStep>) -> bool {
 pub open spec fn ray_reachable_from(pre: Raymond, post: Raymond) -> bool {
     exists|tr: Seq<Raymond>|
         #[trigger] ray_segment(tr) && tr[0] == pre && tr[tr.len() - 1] == post
-}
-
-// ---------------------------------------------------------------------------
-// Coupling to the ownership layer
-// ---------------------------------------------------------------------------
-
-/// The glue between the two layers: **anybody with mutable authority over the
-/// actor must be the node that currently possesses the Raymond token.**
-///
-/// Note the direction. The routing layer does not *grant* authority; it only
-/// constrains who could possibly have it. Authority still comes exclusively
-/// from the ownership state and its epoch.
-pub open spec fn couples(r: Raymond, s: OwnershipState) -> bool {
-    forall|n: Id, e: Epoch| #[trigger] may_mutate(s, n, e) ==> has_token(r, n)
 }
 
 /// Raymond's routing layer as a [`Protocol`]. The root is the configuration: it is chosen before a run and is not part of what a step changes.

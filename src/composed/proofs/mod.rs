@@ -2,6 +2,8 @@
 
 #[path = "coupling_v.rs"]
 pub mod coupling;
+#[path = "couples_v.rs"]
+pub mod couples;
 #[path = "epoch_v.rs"]
 pub mod epoch;
 #[path = "exec_v.rs"]

@@ -46,7 +46,7 @@ python3 -I .github/scripts/check-modules.py
 ```
 
 It reads the `crate::...` imports and fails on a **cycle** between modules, or when a
-**standalone** module (`ownership`, `raft`, `swim`) depends on anything but `id` and the
+**standalone** module (`ownership`, `raft`, `raymond`, `swim`) depends on anything but `id` and the
 modules that only describe shapes (`protocol`, `temporal`, `compose`, `membership`). A cycle compiles, so nothing else would notice one: three went unnoticed
 until it was looked for. The check asserts that a few edges it knows are true are found,
 so a pattern that stops matching fails loudly and does not report "no cycle". Making a

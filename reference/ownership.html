@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-3f518ccd.js";
+            window.path_to_searchindex_js = "../searchindex-320f979e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-65b1449c.js"></script>
@@ -394,7 +394,7 @@ verifying, the build fails.</p>
 <tr><td>P6</td><td><strong>An epoch determines its owner</strong> — any two points of an execution owned at the same epoch have the same owner</td><td><code>ownership::proofs::properties::theorem_epoch_determines_owner</code></td><td>valid execution</td></tr>
 <tr><td>P7</td><td><strong>Staleness is permanent</strong> — a fenced-out node can never be fenced back in by waiting</td><td><code>ownership::proofs::properties::theorem_stale_stays_stale</code></td><td>valid execution</td></tr>
 <tr><td>P8</td><td><strong>No authority without a capability</strong> — a node that may mutate provably holds an issued token for exactly that <code>(actor, epoch)</code></td><td><code>ownership::proofs::properties::theorem_no_authority_without_token</code></td><td>reachability</td></tr>
-<tr><td>P9</td><td><strong>Epoch monotonicity survives composition</strong></td><td><code>ownership::proofs::properties::theorem_composed_epoch_monotone</code></td><td>none</td></tr>
+<tr><td>P9</td><td><strong>Epoch monotonicity survives composition</strong></td><td><code>composed::proofs::epoch::theorem_composed_epoch_monotone</code></td><td>none</td></tr>
 <tr><td>R9</td><td><strong>The privilege is never lost</strong> — every Raymond transition leaves <code>privilege</code> pointing at a node</td><td><code>raymond::proofs::routing_layer::lemma_ray_token_exists_init</code>, <code>lemma_ray_token_exists_step</code></td><td>Raymond invariant</td></tr>
 <tr><td>R10</td><td><strong>Raymond critical sections are exclusive — while nobody’s belief is stale.</strong> The hypothesis is not a weakening; it is the algorithm’s real scope. Raymond’s mutual exclusion rests on every node agreeing where the privilege is, and a seizure breaks that until the seized node reconciles</td><td><code>raymond::proofs::routing_layer::theorem_ray_critical_section_is_exclusive</code></td><td>Raymond invariant, <code>ray_no_stale_holders</code></td></tr>
 <tr><td>R10a</td><td><strong>At most one node is <em>authorised</em> to be in its critical section</strong>, with no side conditions: the authorised occupant is the privilege holder, and there is one of those by construction. This is the part of R10 that survives a seizure</td><td><code>raymond::proofs::routing_layer::theorem_authorised_critical_section_is_exclusive</code></td><td>Raymond invariant</td></tr>

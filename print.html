@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-320f979e.js";
+            window.path_to_searchindex_js = "searchindex-15e4d56c.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-65b1449c.js"></script>
+        <script src="toc-20c669f1.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -363,6 +363,12 @@ discipline keeps each safe:</p>
 <p>A node cannot fence itself. A partitioned owner accepts its own stale epoch, and the
 rejection that matters happens at the resource. Every chapter that follows leans on
 this.</p>
+<h3 id="hyparview-unconnected-so-far"><a class="header" href="#hyparview-unconnected-so-far">HyParView: unconnected, so far</a></h3>
+<p><a href="#hyparview-who-to-talk-to">HyParView</a> answers a different question from SWIM (<em>who should I gossip
+with?</em>, with no verdict on anyone) and is built beside it. Nothing consumes it, and
+nothing in the code relates it to SWIM beyond both being membership. It is one node’s
+views and handlers; the property that makes a cluster of them an overlay (symmetric
+active views) is not claimed.</p>
 <h2 id="what-is-not-related-yet"><a class="header" href="#what-is-not-related-yet">What is not related yet</a></h2>
 <p>Said plainly, because a map that implies edges that do not exist is worse than none:</p>
 <ul>
@@ -875,6 +881,44 @@ moved. That is the ownership epoch’s job.</li>
 <p>The SWIM rows are in the Reference’s
 <a href="#swim-gossip-membership-bought-by-merge-rather-than-majority">SWIM section</a>.</p>
 <p>Next: <a href="#the-actor-a-journal-fenced-by-ownership">the actor</a>, which sits on ownership.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="hyparview-who-to-talk-to"><a class="header" href="#hyparview-who-to-talk-to">HyParView: who to talk to</a></h1>
+<p><a href="#swim-membership-by-merge">SWIM</a> answers <em>is each member up?</em> by keeping a record and a verdict on every
+member. HyParView answers a different question, <em>who should I talk to?</em>, and keeps no
+table of the cluster to do it. A node holds two small sets:</p>
+<ul>
+<li>an <strong>active view</strong>, a handful of peers it gossips with. Links in it are meant to be
+two-sided: if <code>a</code> is in <code>b</code>’s active view, <code>b</code> is in <code>a</code>’s;</li>
+<li>a <strong>passive view</strong>, a larger reserve of nodes it has heard of and could promote when an
+active peer is lost.</li>
+</ul>
+<p>Nothing here judges anyone alive or dead. A peer leaves the active view because a link
+closed or a slot was needed, not because it was suspected.</p>
+<pre><code class="language-text"> Join(new) ──► contact adds `new` to its active view
+              (demoting one peer to passive if full),
+              and walks ForwardJoin(new, ttl) to its other active peers
+ ForwardJoin ► at the end of the walk, adds `new` to active and asks it to reciprocate;
+              before the end, passes the walk on, noting `new` in passive at ttl = prwl
+ Disconnect ──► the peer leaves active and goes to passive
+ Neighbor ────► the peer joins active (always granted, here)
+</code></pre>
+<h2 id="what-is-built"><a class="header" href="#what-is-built">What is built</a></h2>
+<p>This is the first piece, built the way SWIM was: <strong>one node’s views and the four handlers
+that maintain them</strong>, with the model, an executable table, and the proof that the table
+is the model. What the proofs say is a node’s views stay trustworthy under any message,
+in any order, any number of times: it is never its own peer, a peer is in one view and
+not both, and both views stay within their capacities. The paper leaves “drop a random
+peer” to the node; the model leaves it as a choice, so any way of choosing is correct,
+and the random choice is the caller’s.</p>
+<h2 id="what-is-not"><a class="header" href="#what-is-not">What is not</a></h2>
+<p>No shuffle (which refreshes the passive view), no promotion on failure (which refills a
+vacated active slot), and nothing about several nodes together: <strong>symmetry of active
+views is the paper’s central property and is not claimed here</strong>, because the model is one
+node. The <a href="#hyparview-two-small-views">Reference</a> has the rows and the full list.</p>
+<p>Nothing consumes HyParView yet. It is written to sit beside SWIM behind the same
+<code>membership::PeerSampling</code> contract, so that a consumer can depend on the contract and
+not on either.</p>
+<p>Next: <a href="#the-mailbox-getting-messages-to-the-actor">the mailbox</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="the-actor-a-journal-fenced-by-ownership"><a class="header" href="#the-actor-a-journal-fenced-by-ownership">The actor: a journal fenced by ownership</a></h1>
 <p>A single-process actor is single-threaded by construction, so it never has to say what
@@ -3540,6 +3584,57 @@ fallback (<code>ping_req</code>), and no piggyback <em>budget</em>: a node sends
 hands it. That loop — pick a peer, note its incarnation, wait out a timeout, call <code>suspect</code> with the incarnation it noted — is where
 timing lives, and nothing in <code>swim::model</code> says anything about timing.</p>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="hyparview-two-small-views"><a class="header" href="#hyparview-two-small-views">HyParView: two small views</a></h1>
+<p><a href="#hyparview-who-to-talk-to">HyParView</a> keeps no table of the cluster. A node holds an <strong>active
+view</strong> (the peers it gossips with, at most <code>active_cap</code>) and a <strong>passive view</strong> (a
+reserve of nodes it has heard of, at most <code>passive_cap</code>), and nothing else. This page
+is what is claimed about the node that holds them, and what is not.</p>
+<p>It is <strong>one node</strong>, and it is the first piece, built the way <a href="#swim-gossip-membership-bought-by-merge-rather-than-majority">SWIM</a> was: the
+four handlers that build and prune the active view, with the model, the executable
+table and the refinement between them. <code>src/hyparview/model_t.rs</code> is the model,
+<code>src/hyparview/exec_v.rs</code> the table, and <code>src/hyparview/proofs/invariant_v.rs</code> the
+theorems.</p>
+<h2 id="what-is-proved-1"><a class="header" href="#what-is-proved-1">What is proved</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ID</th><th>Claim</th><th>Theorem</th><th>Assumes</th></tr>
+</thead>
+<tbody>
+<tr><td>H1</td><td><strong>Adding to the passive view keeps the views well-formed</strong> and leaves the active view alone. A node never holds itself; a peer already active, already passive or equal to the node is not added; a full view evicts one entry to make room</td><td><code>hyparview::proofs::invariant::lemma_passive_added_keeps_views_ok</code></td><td>well-formed views</td></tr>
+<tr><td>H2</td><td><strong>Adding to the active view keeps the views well-formed</strong>, makes the peer active (unless it is the node itself or the view has no room at all), takes it out of the passive view (a promotion, not a copy), and when the view is full demotes exactly one active peer, which is no longer active</td><td><code>hyparview::proofs::invariant::lemma_active_added_keeps_views_ok</code></td><td>well-formed views</td></tr>
+<tr><td>H3</td><td><strong>Every handler keeps the views well-formed</strong>: no node is its own peer in either view, no peer is in both views, and both are within their capacities. For <code>Join</code>, <code>ForwardJoin</code>, <code>Disconnect</code> and <code>Neighbor</code>, from any well-formed state, with any choice of the peer to demote, the entry to evict and the next hop, and so on any replay of any message in any order, including a <code>ForwardJoin</code> that arrives from a node that is no longer an active peer (the model ignores it: no change, nothing sent)</td><td><code>hyparview::proofs::invariant::theorem_every_step_keeps_the_views_well_formed</code>, <code>lemma_init_is_well_formed</code></td><td>none beyond a well-formed start</td></tr>
+<tr><td>H4</td><td><strong>The executable table is the model.</strong> <code>HvTable::add_passive</code> and <code>add_active</code> are the model’s <code>passive_added</code> and <code>active_added</code>. Each handler (<code>join</code>, <code>forward_join</code>, <code>disconnect</code>, <code>neighbor</code>) returns the messages to send such that, <strong>for any history of earlier messages</strong>, the table’s change together with those messages is a step of the model. The choices are arguments, and any value is a correct choice</td><td><code>hyparview::exec::HvTable::{add_passive, add_active, join, forward_join, disconnect, neighbor}</code> (their contracts)</td><td>the table is well-formed, which every method preserves</td></tr>
+<tr><td>H5</td><td><strong>The table keeps its views well-formed</strong>: if the views were well-formed before a handler, they are after, and so by H3 and H4 from an empty table onward</td><td>the same handlers’ contracts, with H3</td><td>none</td></tr>
+<tr><td>H6</td><td><strong>The model is a <code>Protocol</code></strong> whose <code>next</code> is the model’s <code>hv_next</code></td><td><code>protocol_agreement::lemma_hyparview_next_agrees</code></td><td>none</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="what-is-not-claimed-2"><a class="header" href="#what-is-not-claimed-2">What is not claimed</a></h2>
+<ul>
+<li><strong>Symmetry of active views.</strong> The paper’s central property is that if <code>a</code> is in
+<code>b</code>’s active view then <code>b</code> is in <code>a</code>’s. That is a property of how <em>several</em> nodes are
+connected, and this model is one node. It is not stated here and is not proved.
+The <code>Neighbor</code> request that a terminal <code>ForwardJoin</code> sends is the mechanism that
+makes links two-sided, and what it sends is proved (H4); that the other end acts on it
+is the network’s.</li>
+<li><strong>Connectivity, or a random sample.</strong> Nothing here says the overlay stays connected,
+or that a node’s peers are uniformly random. The picks are arguments, so how random
+they are is the caller’s.</li>
+<li><strong>Shuffle, and promotion on failure.</strong> Not built. Without them a passive view only
+ever receives what forwarded joins and demotions give it, and a vacated active slot is
+not refilled. Promotion is what would use a failure detector’s verdict, and nothing
+here has one.</li>
+<li><strong><code>Neighbor</code> is always granted.</strong> The paper’s low-priority request, which an
+active-full node refuses and answers, is part of promotion and so not here.</li>
+<li><strong>A <code>ForwardJoin</code> that ends a walk sends <code>Neighbor</code> to the newcomer.</strong> The paper
+leaves the two-sidedness of the link to the connection that carries the walk; the
+model says it as a message so that it has a name and is replay-safe.</li>
+<li><strong>The network.</strong> <code>sent</code> only grows and a message may be delivered any number of
+times, so the handlers are proved safe on replays. Delivery itself, authentication of
+who is speaking, and the lock around a table are the service’s, which is plain Rust.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="protocol-the-shape-every-model-has"><a class="header" href="#protocol-the-shape-every-model-has">Protocol: the shape every model has</a></h1>
 <p>Every model in this crate is a labelled-step state machine: a state, a label for each
 kind of step, an initial predicate, and a relation saying which labelled steps are
@@ -3551,14 +3646,14 @@ associated <code>Config</code>, <code>State</code> and <code>Step</code>, an <co
 <code>next</code> that is “some step”. Each model implements it at the bottom of its own
 <code>model_t.rs</code>. The agreement lemmas (<code>src/protocol_v.rs</code>, verified) pin each instance
 to the model it describes.</p>
-<h2 id="what-is-proved-1"><a class="header" href="#what-is-proved-1">What is proved</a></h2>
+<h2 id="what-is-proved-2"><a class="header" href="#what-is-proved-2">What is proved</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>ID</th><th>Claim</th><th>Theorem</th><th>Assumes</th></tr>
 </thead>
 <tbody>
-<tr><td>P1</td><td><strong>Each instance’s <code>next</code> is its model’s <code>next</code></strong>, in both directions, for ownership, Raft, Raymond, SWIM, the actor, the mailbox and the composed machine. A theorem about a model and the same theorem about its <code>Protocol</code> are the same theorem</td><td><code>protocol_agreement::lemma_ownership_next_agrees</code>, <code>lemma_raft_next_agrees</code>, <code>lemma_raymond_next_agrees</code>, <code>lemma_swim_next_agrees</code>, <code>lemma_actor_next_agrees</code>, <code>lemma_mailbox_next_agrees</code>, <code>lemma_composed_next_agrees</code></td><td>none</td></tr>
+<tr><td>P1</td><td><strong>Each instance’s <code>next</code> is its model’s <code>next</code></strong>, in both directions, for ownership, Raft, Raymond, SWIM, HyParView, the actor, the mailbox and the composed machine. A theorem about a model and the same theorem about its <code>Protocol</code> are the same theorem</td><td><code>protocol_agreement::lemma_ownership_next_agrees</code>, <code>lemma_raft_next_agrees</code>, <code>lemma_raymond_next_agrees</code>, <code>lemma_swim_next_agrees</code>, <code>lemma_hyparview_next_agrees</code>, <code>lemma_actor_next_agrees</code>, <code>lemma_mailbox_next_agrees</code>, <code>lemma_composed_next_agrees</code></td><td>none</td></tr>
 <tr><td>P2</td><td><strong>The instances’ <code>init</code> is the model’s <code>init</code></strong>, at the configuration the model has (Raymond’s root; <code>()</code> elsewhere). By definition today, stated so that a later change to an instance cannot drift from the model</td><td><code>protocol_agreement::lemma_init_agrees</code></td><td>none</td></tr>
 <tr><td>P3</td><td><strong>A mailbox run in the crate’s existing sense is a run of the mailbox <code>Protocol</code></strong>, so <code>protocol::runs_of</code> and the statement the mailbox’s liveness proof is built on are the same notion</td><td><code>protocol_agreement::lemma_mailbox_run_is_a_run_of_the_protocol</code></td><td><code>mb_run(ex)</code></td></tr>
 </tbody>
@@ -4835,6 +4930,10 @@ attribute.</p>
 │   │       ├── scenario_v.rs     a run in which an election actually happens
 │   │       ├── store_v.rs        recovery is exact; a crash can only rewind
 │   │       └── wire_v.rs         cut the bytes anywhere; a record prefix comes back
+│   ├── hyparview/          membership by two small views: one node, so far
+│   │   ├── model_t.rs      the views, the four handlers, the messages they send
+│   │   ├── exec_v.rs       HvTable: the views as verified code; each handler is a step of the model
+│   │   └── proofs/invariant_v.rs   the views stay bounded, disjoint, free of the node itself
 │   └── swim/               gossip membership: merge, not majority
 │       ├── model_t.rs      the record, the merge rule, one transition
 │       ├── steps_v.rs      the merge and the refutation as executable u64 functions

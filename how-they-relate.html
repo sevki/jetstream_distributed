@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-320f979e.js";
+            window.path_to_searchindex_js = "searchindex-15e4d56c.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-65b1449c.js"></script>
+        <script src="toc-20c669f1.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -311,6 +311,12 @@ discipline keeps each safe:</p>
 <p>A node cannot fence itself. A partitioned owner accepts its own stale epoch, and the
 rejection that matters happens at the resource. Every chapter that follows leans on
 this.</p>
+<h3 id="hyparview-unconnected-so-far"><a class="header" href="#hyparview-unconnected-so-far">HyParView: unconnected, so far</a></h3>
+<p><a href="hyparview.html">HyParView</a> answers a different question from SWIM (<em>who should I gossip
+with?</em>, with no verdict on anyone) and is built beside it. Nothing consumes it, and
+nothing in the code relates it to SWIM beyond both being membership. It is one node’s
+views and handlers; the property that makes a cluster of them an overlay (symmetric
+active views) is not claimed.</p>
 <h2 id="what-is-not-related-yet"><a class="header" href="#what-is-not-related-yet">What is not related yet</a></h2>
 <p>Said plainly, because a map that implies edges that do not exist is worse than none:</p>
 <ul>

@@ -43,7 +43,7 @@
 //! # Identity
 //!
 //! Every command names the acting node (`me`, `node`), as an argument. The
-//! coordinator takes it from the connection ([`Context::remote`] against its roster)
+//! coordinator takes it from the connection (by asking its [`Identity`](crate::identity::Identity))
 //! before it builds the command, and `apply` believes it. A command that arrives
 //! from anywhere else (a log, a peer) carries an identity somebody else vouched for,
 //! which is [#66](https://github.com/sevki/jetstream_distributed/issues/66)'s question.

@@ -45,8 +45,15 @@ authenticated identity and is `None` over plain TCP — jetstream's own comment
 says a plain stream authenticates nothing. The authenticated forms are a TLS
 certificate or an iroh `NodeId`, and `NodeId`'s value is private with no
 accessor outside `jetstream_rpc`, so neither is usable yet. The service
-therefore identifies a caller by address, against a roster fixed at
-construction. **An address is not a credential.** In a simulated network nothing
+therefore identifies a caller by address, against a table fixed at
+construction. **An address is not a credential.** That is stated once, in the
+`identity` module, and every service (ownership, Raft, Raymond, the composed
+coordinator, the actor host) asks an `Identity` who is calling instead of holding a
+table of its own; the composed coordinator and the actor host build one and hand the
+same one to the layers they build, so those cannot disagree about which address is which
+node. The table is `identity::Roster`, which is one `Identity`; TLS identity would be
+another, and no service would change. SWIM is not on it yet: its node takes the sender
+in the message, which is a separate question. In a simulated network nothing
 can spoof one; on a real network it is worth very little. Replacing it with TLS
 identity is the first thing to do, and what does not change when it is replaced
 is the shape: identity arrives with the connection, never in an argument.
@@ -233,7 +240,7 @@ same thing as naming the acting node: it is checked against the mailbox, so a
 message that was never sent is refused rather than believed.
 
 An append reads the registry (is this host the owner at this epoch?) and writes the
-journal, so the registry is **built inside `Host::new`** from the one roster and
+journal, so the registry is **built inside `Host::new`** from the one identity and
 every method takes a **gate** first — the same construction, for the same reason, as
 `composed::service`. The fence is asked first and about the registry's own record
 (`Registry::may_write`, which is `may_write_step`, which is `can_mutate`), so a host

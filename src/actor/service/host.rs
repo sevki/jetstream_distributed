@@ -2,16 +2,15 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 
 use crate::id::Id;
+use crate::identity::{Identity, IntoIdentity};
 use super::refusal::{refuse, refuse_err, refuse_no};
 use super::{Actor, Closed, Receipt, Record, Snapshot, MAX_BODY, MAX_READ};
 use crate::actor::model::Envelope;
 use crate::actor::steps::{accept_step, apply_step, send_step};
 use crate::ownership::service::{EpochFloor, Event as OwnershipEvent, Offer, Ownership, Registry};
-use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
 
 /// What the host accepted, in the order it accepted it.
@@ -56,24 +55,25 @@ pub struct Host {
     /// (immediate) `await`s, hence an async mutex.
     gate: Arc<tokio::sync::Mutex<()>>,
     inner: Arc<Mutex<Inner>>,
-    /// Connection address to node number. The stated assumption; see the module
-    /// docs.
-    roster: Arc<HashMap<IpAddr, Id>>,
+    /// Which node is calling. The stated assumption; see the module docs and
+    /// [`crate::identity`]. The same one the registry holds.
+    identity: Arc<dyn Identity>,
 }
 
 impl Host {
-    /// An actor offered to `first_owner`, over the nodes on `roster`.
+    /// An actor offered to `first_owner`, over the nodes `identity` knows.
     ///
-    /// The ownership registry is built here, from the one roster and the given
+    /// The ownership registry is built here, from the one identity and the given
     /// epoch floor, and nothing outside can hold it: every method of the
     /// `Ownership` trait takes `&self`, so a handle to the registry would be a
     /// handle to `write`, bypassing the gate. See the module docs.
     pub fn new(
-        roster: HashMap<IpAddr, Id>,
+        identity: impl IntoIdentity,
         first_owner: Id,
         floor: Arc<dyn EpochFloor>,
     ) -> io::Result<Self> {
-        let registry = Registry::new(roster.clone(), first_owner, floor)?;
+        let identity = identity.into_identity();
+        let registry = Registry::new(identity.clone(), first_owner, floor)?;
         Ok(Host {
             registry,
             gate: Arc::new(tokio::sync::Mutex::new(())),
@@ -85,7 +85,7 @@ impl Host {
                 state: 0,
                 log: Vec::new(),
             })),
-            roster: Arc::new(roster),
+            identity,
         })
     }
 
@@ -123,14 +123,9 @@ impl Host {
     }
 
     fn caller(&self, ctx: &Context) -> Result<Id> {
-        match ctx.remote() {
-            Some(RemoteAddr::IpAddr(addr)) => self
-                .roster
-                .get(addr)
-                .copied()
-                .ok_or_else(|| refuse_no("unknown caller")),
-            _ => Err(refuse_no("unknown caller")),
-        }
+        self.identity
+            .caller(ctx)
+            .ok_or_else(|| refuse_no("unknown caller"))
     }
 }
 

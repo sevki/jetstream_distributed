@@ -71,6 +71,8 @@ pub mod compute;
 pub mod hyparview;
 pub mod id;
 #[cfg(feature = "service")]
+pub mod identity;
+#[cfg(feature = "service")]
 pub mod monitoring;
 pub mod ownership;
 pub mod raft;

@@ -8,6 +8,8 @@ jetstream_distributed/
 ├── fuzz/                   the coverage-guided front end to the protocol-line search (its own workspace, nightly)
 ├── src/
 │   ├── lib.rs
+│   ├── identity/           who is calling: the Identity every service asks, and Roster, a table from address to node   [feature = "service"]
+│   │   └── mod.rs
 │   ├── protocol_t.rs       the Protocol trait: the labelled-step shape every model has
 │   ├── protocol_v.rs       each model's instance is its model (next, init); the mailbox run is a run of the protocol
 │   ├── temporal_t.rs       leads-to, weak fairness and WF1: what a liveness proof is stated in
@@ -131,6 +133,7 @@ jetstream_distributed/
 │   ├── actor_mailbox.rs        A calls B through a mailbox, backpressure, abort and close [feature = "service"]
 │   ├── raymond_routing.rs      the textbook request path, and every refusal [feature = "service"]
 │   ├── raymond_turmoil.rs      the same path across hosts, on a simulated network [feature = "service"]
+│   ├── identity.rs             services ask an Identity, not a table; a composition shares one [feature = "service"]
 │   ├── composed_handover.rs    the coupling: no move while held, no acquire without it [feature = "service"]
 │   ├── composed_turmoil.rs     the privilege moves only after the release, across hosts [feature = "service"]
 │   ├── swim_membership.rs      the merge rule in every order, and the refutation [feature = "service"]

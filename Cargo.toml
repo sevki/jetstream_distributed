@@ -247,6 +247,11 @@ path = "tests/raymond_turmoil.rs"
 required-features = ["service"]
 
 [[test]]
+name = "identity"
+path = "tests/identity.rs"
+required-features = ["service"]
+
+[[test]]
 name = "composed_handover"
 path = "tests/composed_handover.rs"
 required-features = ["service"]

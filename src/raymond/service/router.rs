@@ -2,14 +2,13 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
-use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 
 use super::refusal::{refuse, refuse_err, refuse_no};
 use super::{Routing, Standing};
 use crate::id::Id;
+use crate::identity::{Identity, IntoIdentity};
 use crate::raymond::exec::RayTable;
-use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
 
 /// What the router did, for an audit and for tests that check the *path* a
@@ -61,9 +60,9 @@ struct Inner {
 #[derive(Clone)]
 pub struct Router {
     inner: Arc<Mutex<Inner>>,
-    /// Connection address to node number. The stated assumption; see the module
-    /// docs.
-    roster: Arc<HashMap<IpAddr, Id>>,
+    /// Which node is calling, and which nodes there are. The stated assumption;
+    /// see the module docs and [`crate::identity`].
+    identity: Arc<dyn Identity>,
 }
 
 impl Router {
@@ -76,11 +75,12 @@ impl Router {
     /// one side of the root satisfies "exactly one root" and is not a Raymond
     /// state (`ray_acyclic`).
     pub fn new(
-        roster: HashMap<IpAddr, Id>,
+        identity: impl IntoIdentity,
         root: Id,
         parent: HashMap<Id, Id>,
     ) -> io::Result<Self> {
-        let nodes: HashSet<Id> = roster.values().copied().collect();
+        let identity = identity.into_identity();
+        let nodes: HashSet<Id> = identity.nodes().into_iter().collect();
         let bad = |why: String| Err(io::Error::new(io::ErrorKind::InvalidInput, why));
         if !nodes.contains(&root) {
             return bad(format!("root {root} is not on the roster"));
@@ -125,18 +125,20 @@ impl Router {
                 table,
                 log: Vec::new(),
             })),
-            roster: Arc::new(roster),
+            identity,
         })
     }
 
     /// Every node points straight at `root`.
-    pub fn star(roster: HashMap<IpAddr, Id>, root: Id) -> io::Result<Self> {
-        let parent = roster
-            .values()
-            .filter(|&&n| n != root)
-            .map(|&n| (n, root))
+    pub fn star(identity: impl IntoIdentity, root: Id) -> io::Result<Self> {
+        let identity = identity.into_identity();
+        let parent = identity
+            .nodes()
+            .into_iter()
+            .filter(|&n| n != root)
+            .map(|n| (n, root))
             .collect();
-        Router::new(roster, root, parent)
+        Router::new(identity, root, parent)
     }
 
     /// Where the privilege actually is.
@@ -237,14 +239,9 @@ impl Router {
     }
 
     fn caller(&self, ctx: &Context) -> Result<Id> {
-        match ctx.remote() {
-            Some(RemoteAddr::IpAddr(addr)) => self
-                .roster
-                .get(addr)
-                .copied()
-                .ok_or_else(|| refuse_no("unknown caller")),
-            _ => Err(refuse_no("unknown caller")),
-        }
+        self.identity
+            .caller(ctx)
+            .ok_or_else(|| refuse_no("unknown caller"))
     }
 
 }

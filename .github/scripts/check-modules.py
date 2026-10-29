@@ -11,7 +11,7 @@ checks, without building or a network:
 * **No cycle.** No two modules depend on each other, directly or through others.
 * **Standalone modules stay standalone.** The modules in `STANDALONE` may depend
   only on `VOCABULARY`: `id` and the modules that only describe shapes (the
-  `protocol` every model fills in, `temporal`, the `compose` and `membership`
+  `protocol` every model fills in, `temporal`, the `compose`, `membership` and `identity`
   contracts). Adding an edge from one of them to anything else fails here, which is
   the point: that is a decision, and it is made by editing these sets in the same
   change, where a reviewer sees it.
@@ -40,7 +40,7 @@ STANDALONE = {"ownership", "raft", "raymond", "swim"}
 
 # `id`, and the modules that only describe shapes and import no protocol. A name
 # here that is not (yet) a module of `src/lib.rs` is fine; one that is must obey.
-VOCABULARY = {"id", "protocol", "temporal", "compose", "membership"}
+VOCABULARY = {"id", "protocol", "temporal", "compose", "membership", "identity"}
 
 # Edges that are true today and that the extraction must find. If one of these
 # stops being true, edit it out here; if the check stops finding one that is true,

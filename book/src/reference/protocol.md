@@ -16,7 +16,7 @@ to the model it describes.
 
 | ID | Claim | Theorem | Assumes |
 | --- | --- | --- | --- |
-| P1 | **Each instance's `next` is its model's `next`**, in both directions, for ownership, Raft, Raymond, SWIM, the actor, the mailbox and the composed machine. A theorem about a model and the same theorem about its `Protocol` are the same theorem | `protocol_agreement::lemma_ownership_next_agrees`, `lemma_raft_next_agrees`, `lemma_raymond_next_agrees`, `lemma_swim_next_agrees`, `lemma_actor_next_agrees`, `lemma_mailbox_next_agrees`, `lemma_composed_next_agrees` | none |
+| P1 | **Each instance's `next` is its model's `next`**, in both directions, for ownership, Raft, Raymond, SWIM, HyParView, the actor, the mailbox and the composed machine. A theorem about a model and the same theorem about its `Protocol` are the same theorem | `protocol_agreement::lemma_ownership_next_agrees`, `lemma_raft_next_agrees`, `lemma_raymond_next_agrees`, `lemma_swim_next_agrees`, `lemma_hyparview_next_agrees`, `lemma_actor_next_agrees`, `lemma_mailbox_next_agrees`, `lemma_composed_next_agrees` | none |
 | P2 | **The instances' `init` is the model's `init`**, at the configuration the model has (Raymond's root; `()` elsewhere). By definition today, stated so that a later change to an instance cannot drift from the model | `protocol_agreement::lemma_init_agrees` | none |
 | P3 | **A mailbox run in the crate's existing sense is a run of the mailbox `Protocol`**, so `protocol::runs_of` and the statement the mailbox's liveness proof is built on are the same notion | `protocol_agreement::lemma_mailbox_run_is_a_run_of_the_protocol` | `mb_run(ex)` |
 

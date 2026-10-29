@@ -34,7 +34,7 @@
 //! privilege. So every method takes one **gate** first, and the two layers
 //! underneath it are never shared with anything else. That is enforced rather
 //! than asked for: [`Coordinator::new`] builds both layers itself, from one
-//! roster, and exposes only read-only views of them. Handing in a `Registry` and
+//! identity, and exposes only read-only views of them. Handing in a `Registry` and
 //! a `Router` would let a caller keep them, and every method of their service
 //! traits takes `&self` — it could pass the privilege while authority sat at the
 //! old owner. It would also let the layers disagree about which address is which
@@ -51,13 +51,17 @@
 //!
 //! # The assumption this rests on, stated
 //!
-//! The same one the other services state: a caller is identified by
-//! [`Context::remote`] against a roster fixed at construction, and an address is
-//! not a credential.
+//! The same one the other services state, and now stated once, in
+//! [`crate::identity`]: a caller is identified by asking an
+//! [`Identity`](crate::identity::Identity), which for a [`Roster`](crate::identity::Roster)
+//! is [`Context::remote`] looked up in a table fixed at construction, and an address
+//! is not a credential.
 
+mod command;
 mod coordinator;
 mod refusal;
 
+pub use command::{apply, Command, Reply};
 pub use coordinator::{Coordinator, Event};
 
 use crate::ownership::service::Offer;

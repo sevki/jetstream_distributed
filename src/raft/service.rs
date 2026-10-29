@@ -21,8 +21,8 @@
 //! identity from a field an attacker fills in.
 //!
 //! The same caveat applies with the same force. [`Context::peer`] is `None`
-//! over plain TCP, so identity here is an **address** checked against a roster
-//! fixed at construction. An address is not a credential. In a simulated
+//! over plain TCP, so identity here is an **address** checked against a table fixed
+//! at construction, behind [`crate::identity::Identity`]. An address is not a credential. In a simulated
 //! network nothing can spoof one; on a real network it is worth very little,
 //! and replacing it with TLS identity is the first thing to do.
 //!
@@ -95,15 +95,14 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, Write as _};
-use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::id::Id;
+use crate::identity::{Identity, IntoIdentity};
 use crate::raft::store::{apply_record, replay_exec, ExecEntry, ExecRecord};
 use crate::raft::exec::{Counted, ElectRefusal, ElectionCore, VoteOutcome};
 use crate::raft::steps::{is_majority, RaftRefusal};
-use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
 
 /// The reply to a vote request.
@@ -828,9 +827,9 @@ struct Inner {
 #[derive(Clone)]
 pub struct Peer {
     inner: Arc<Mutex<Inner>>,
-    /// Connection address to server number. The stated assumption; see the
-    /// module docs.
-    roster: Arc<HashMap<IpAddr, Id>>,
+    /// Which server is calling, and which servers there are. The stated
+    /// assumption; see the module docs and [`crate::identity`].
+    identity: Arc<dyn Identity>,
     /// This server's own number.
     me: Id,
     store: Arc<dyn Durable>,
@@ -847,12 +846,13 @@ impl Peer {
     /// which is the same defect the ownership registry had when `new` took its
     /// epoch from the caller, and it breaks the same guarantee.
     pub fn new(
-        roster: HashMap<IpAddr, Id>,
+        identity: impl IntoIdentity,
         me: Id,
         store: Arc<dyn Durable>,
         entries: Arc<dyn LogStore>,
     ) -> io::Result<Self> {
-        if !roster.values().any(|&n| n == me) {
+        let identity = identity.into_identity();
+        if !identity.knows(me) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("server {me} is not on the roster"),
@@ -873,7 +873,7 @@ impl Peer {
                 match_len: HashMap::new(),
                 log: Vec::new(),
             })),
-            roster: Arc::new(roster),
+            identity,
             me,
             store,
             entries,
@@ -906,19 +906,16 @@ impl Peer {
     /// moment one server is reachable at two addresses, which is an ordinary
     /// thing for a server to be.
     fn members(&self) -> u64 {
-        self.roster.values().copied().collect::<HashSet<Id>>().len() as u64
+        self.identity.nodes().into_iter().collect::<HashSet<Id>>().len() as u64
     }
 
     fn is_member(&self, n: Id) -> bool {
-        self.roster.values().any(|&v| v == n)
+        self.identity.knows(n)
     }
 
     /// Which server is calling, from the connection rather than the request.
     fn caller(&self, ctx: &Context) -> Option<Id> {
-        match ctx.remote() {
-            Some(RemoteAddr::IpAddr(addr)) => self.roster.get(addr).copied(),
-            _ => None,
-        }
+        self.identity.caller(ctx)
     }
 
     /// Write the decision down before acting on it.

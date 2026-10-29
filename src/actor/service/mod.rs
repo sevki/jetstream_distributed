@@ -37,7 +37,7 @@
 //! close: the registry answers "yes, you own it", a handover completes, and the
 //! append lands in a journal the host no longer has the right to write. So every
 //! method takes one **gate** first, and the registry is built inside
-//! [`Host::new`] from the one roster and exposed only through read-only views —
+//! [`Host::new`] from the one identity and exposed only through read-only views —
 //! the same construction, for the same reasons, as `composed::service`.
 //!
 //! # What goes on the wire, and what does not
@@ -57,9 +57,11 @@
 //!
 //! # The assumption this rests on, stated
 //!
-//! The same one the other services state: a caller is identified by
-//! [`Context::remote`] against a roster fixed at construction, and an address is
-//! not a credential.
+//! The same one the other services state, and now stated once, in
+//! [`crate::identity`]: a caller is identified by asking an
+//! [`Identity`](crate::identity::Identity), which for a [`Roster`](crate::identity::Roster)
+//! is [`Context::remote`] looked up in a table fixed at construction, and an address
+//! is not a credential.
 
 mod host;
 mod mailbox;

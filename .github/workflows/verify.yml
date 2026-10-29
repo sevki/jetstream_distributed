@@ -567,6 +567,7 @@ jobs:
             --test raymond_routing \
             --test raymond_turmoil \
             --test composed_handover \
+            --test identity \
             --test composed_turmoil \
             --test actor_journal \
             --test actor_turmoil \

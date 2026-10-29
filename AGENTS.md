@@ -44,7 +44,7 @@ name carries the suffix. `src/**/steps_v.rs`, `exec_v.rs`, `registry_v.rs`,
   `pmemlog` (`vendor/README.md`).
 * **Standalone modules stay standalone, and nothing depends on itself.** `ownership`,
   `raft`, `raymond` and `swim` import only `id` and the shape modules (`protocol`, `temporal`,
-  `compose`, `membership`), and no two modules depend on each other. `python3 -I .github/scripts/check-modules.py` holds it, and CI runs it first.
+  `compose`, `membership`, `identity`), and no two modules depend on each other. `python3 -I .github/scripts/check-modules.py` holds it, and CI runs it first.
   To give a standalone module a dependency, edit `STANDALONE` there in the same change.
 * **Nothing vendored is edited.** `vendor/verified-storage` and `vendor/kverus` are
   verbatim copies of upstream at a pinned commit, and CI diffs them. To change one,

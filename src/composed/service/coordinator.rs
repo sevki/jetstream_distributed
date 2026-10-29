@@ -2,18 +2,16 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 
+use super::command::{apply, Command, Reply};
 use super::refusal::{refuse, refuse_no};
 use super::Composed;
-use crate::composed::exec::{
-    acquire_under_token, pass_token, reconcile, seize_token, ComposedError,
-};
+use crate::composed::exec::ComposedError;
 use crate::ownership::service::{EpochFloor, Event as OwnershipEvent, Offer, Ownership, Registry};
 use crate::raymond::service::{Event as RoutingEvent, Router, Routing, Standing};
-use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use crate::id::{Id, IdSet};
+use crate::identity::{Identity, IntoIdentity};
 use jetstream::prelude::*;
 
 /// What the coordinator did on its own account. The layers keep their own logs.
@@ -58,11 +56,12 @@ pub struct Coordinator {
     /// async mutex.
     gate: Arc<tokio::sync::Mutex<()>>,
     debts: Arc<Mutex<Debts>>,
-    roster: Arc<HashMap<IpAddr, Id>>,
+    /// The one identity both layers were built from.
+    identity: Arc<dyn Identity>,
 }
 
 impl Coordinator {
-    /// Build both layers from **one** roster and compose them.
+    /// Build both layers from **one** identity and compose them.
     ///
     /// The ownership actor starts offered to `first_owner`, and the privilege
     /// starts at `root` with `parent[n]` the next hop from every other node
@@ -73,19 +72,20 @@ impl Coordinator {
     /// only sound if nothing else can touch either: a caller holding the
     /// `Registry` or `Router` could route a waiter and pass the privilege while
     /// authority sat at the old owner, bypassing the gate and `pass_token_step`
-    /// both. And three rosters supplied separately can disagree about which
-    /// address is which node, so the coordinator would check one node's
+    /// both. And three identities supplied separately can disagree about which
+    /// connection is which node, so the coordinator would check one node's
     /// privilege and then grant authority to another with the same `Context`.
-    /// One roster, owned here, closes both.
+    /// One identity, built once and handed to both layers, closes both.
     pub fn new(
-        roster: HashMap<IpAddr, Id>,
+        identity: impl IntoIdentity,
         first_owner: Id,
         floor: Arc<dyn EpochFloor>,
         root: Id,
         parent: HashMap<Id, Id>,
     ) -> io::Result<Self> {
-        let registry = Registry::new(roster.clone(), first_owner, floor)?;
-        let router = Router::new(roster.clone(), root, parent)?;
+        let identity = identity.into_identity();
+        let registry = Registry::new(identity.clone(), first_owner, floor)?;
+        let router = Router::new(identity.clone(), root, parent)?;
         Ok(Coordinator {
             registry,
             router,
@@ -94,24 +94,26 @@ impl Coordinator {
                 seized: IdSet::new(),
                 log: Vec::new(),
             })),
-            roster: Arc::new(roster),
+            identity,
         })
     }
 
     /// As [`Coordinator::new`], with every other node pointing straight at
     /// `root`.
     pub fn star(
-        roster: HashMap<IpAddr, Id>,
+        identity: impl IntoIdentity,
         first_owner: Id,
         floor: Arc<dyn EpochFloor>,
         root: Id,
     ) -> io::Result<Self> {
-        let parent = roster
-            .values()
-            .filter(|&&n| n != root)
-            .map(|&n| (n, root))
+        let identity = identity.into_identity();
+        let parent = identity
+            .nodes()
+            .into_iter()
+            .filter(|&n| n != root)
+            .map(|n| (n, root))
             .collect();
-        Coordinator::new(roster, first_owner, floor, root, parent)
+        Coordinator::new(identity, first_owner, floor, root, parent)
     }
 
     /// Where the privilege actually is.
@@ -173,17 +175,10 @@ impl Coordinator {
     /// reconciliation.
     pub async fn seize_token(&self, to: Id) -> Result<Id> {
         let _gate = self.gate.lock().await;
-        // The step, across both layers and the debts, is
-        // `crate::composed::exec::seize_token`: `cs_seize_token`, checked.
-        self.registry.with_state(|own, _| {
-            self.router.with_state(|ray, ray_log| {
-                let mut d = self.debts.lock().expect("debts lock");
-                let from = seize_token(own, ray, &mut d.seized, to).map_err(refuse_composed)?;
-                ray_log.push(RoutingEvent::Seized { to });
-                d.log.push(Event::Seized { from, to });
-                Ok(from)
-            })
-        })
+        match self.run(Command::Seize { to })? {
+            Reply::Seized { from } => Ok(from),
+            other => unreachable!("Seize answered {other:?}"),
+        }
     }
 
     /// The coordinator forcing progress on the ownership layer: revoke, reassign
@@ -193,15 +188,43 @@ impl Coordinator {
         self.registry.force(next)
     }
 
+    /// Run one coupling step on the two layers and the debts, and record it in the
+    /// logs it belongs to. The caller holds the gate.
+    ///
+    /// The step is [`apply`], which is the verified function of the command's name;
+    /// what is left here is taking the locks, in the order the coordinator always
+    /// has (registry, router, debts), and the audit trail.
+    fn run(&self, command: Command) -> Result<Reply> {
+        self.registry.with_state(|own, own_log| {
+            self.router.with_state(|ray, ray_log| {
+                let mut d = self.debts.lock().expect("debts lock");
+                let reply = apply(own, ray, &mut d.seized, command).map_err(refuse_composed)?;
+                match (command, reply) {
+                    (Command::Seize { to }, Reply::Seized { from }) => {
+                        ray_log.push(RoutingEvent::Seized { to });
+                        d.log.push(Event::Seized { from, to });
+                    }
+                    (Command::Pass { me }, Reply::Passed { head }) => {
+                        ray_log.push(RoutingEvent::Passed { from: me, to: head });
+                    }
+                    (Command::Acquire { node, epoch }, Reply::Acquired) => {
+                        own_log.push(OwnershipEvent::Acquired { node, epoch });
+                    }
+                    (Command::Reconcile { node }, Reply::Reconciled) => {
+                        ray_log.push(RoutingEvent::Reconciled { node });
+                        d.log.push(Event::Reconciled { node });
+                    }
+                    (command, reply) => unreachable!("{command:?} answered {reply:?}"),
+                }
+                Ok(reply)
+            })
+        })
+    }
+
     fn caller(&self, ctx: &Context) -> Result<Id> {
-        match ctx.remote() {
-            Some(RemoteAddr::IpAddr(addr)) => self
-                .roster
-                .get(addr)
-                .copied()
-                .ok_or_else(|| refuse_no("unknown caller")),
-            _ => Err(refuse_no("unknown caller")),
-        }
+        self.identity
+            .caller(ctx)
+            .ok_or_else(|| refuse_no("unknown caller"))
     }
 }
 
@@ -216,13 +239,7 @@ impl Composed for Coordinator {
         let node = self.caller(&ctx)?;
         // `cs_acquire_under_token`: the ownership layer's acquire, for the node
         // holding the privilege.
-        self.registry.with_state(|own, own_log| {
-            self.router.with_state(|ray, _| {
-                acquire_under_token(own, ray, node, epoch).map_err(refuse_composed)?;
-                own_log.push(OwnershipEvent::Acquired { node, epoch });
-                Ok(())
-            })
-        })
+        self.run(Command::Acquire { node, epoch }).map(|_| ())
     }
 
     async fn write(&self, ctx: Context, epoch: u64) -> Result<u64> {
@@ -277,26 +294,16 @@ impl Composed for Coordinator {
         // than whichever routing guard happens to fail too; and receiving the
         // privilege *is* the node learning the truth, so any reconciliation it
         // owed is settled by the handover itself.
-        self.registry.with_state(|own, _| {
-            self.router.with_state(|ray, ray_log| {
-                let mut d = self.debts.lock().expect("debts lock");
-                let head = pass_token(own, ray, &mut d.seized, me).map_err(refuse_composed)?;
-                ray_log.push(RoutingEvent::Passed { from: me, to: head });
-                Ok(head)
-            })
-        })
+        match self.run(Command::Pass { me })? {
+            Reply::Passed { head } => Ok(head),
+            other => unreachable!("Pass answered {other:?}"),
+        }
     }
 
     async fn reconcile(&self, ctx: Context) -> Result<()> {
         let _gate = self.gate.lock().await;
         let node = self.caller(&ctx)?;
         // `cs_reconcile`: a node that owes one and really is stale.
-        self.router.with_state(|ray, ray_log| {
-            let mut d = self.debts.lock().expect("debts lock");
-            reconcile(ray, &mut d.seized, node).map_err(refuse_composed)?;
-            ray_log.push(RoutingEvent::Reconciled { node });
-            d.log.push(Event::Reconciled { node });
-            Ok(())
-        })
+        self.run(Command::Reconcile { node }).map(|_| ())
     }
 }

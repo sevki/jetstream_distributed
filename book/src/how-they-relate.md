@@ -139,6 +139,14 @@ A node cannot fence itself. A partitioned owner accepts its own stale epoch, and
 rejection that matters happens at the resource. Every chapter that follows leans on
 this.
 
+### HyParView: unconnected, so far
+
+[HyParView](hyparview.md) answers a different question from SWIM (*who should I gossip
+with?*, with no verdict on anyone) and is built beside it. Nothing consumes it, and
+nothing in the code relates it to SWIM beyond both being membership. It is one node's
+views and handlers; the property that makes a cluster of them an overlay (symmetric
+active views) is not claimed.
+
 ## What is not related yet
 
 Said plainly, because a map that implies edges that do not exist is worse than none:

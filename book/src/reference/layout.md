@@ -45,6 +45,7 @@ jetstream_distributed/
 │   │   ├── exec_v.rs       the four coupled steps over the layers' records, and the debts
 │   │   ├── service/        the two layers behind one coordinator [feature = "service"]
 │   │   │   ├── mod.rs      the Composed trait: ownership + routing + the coupling
+│   │   │   ├── command.rs  the coupling's four steps as data, and `apply`, the dispatch to the verified steps
 │   │   │   ├── coordinator.rs  both layers, and the gate that serialises them
 │   │   │   └── refusal.rs  the refusals, in the line protocol's alphabet
 │   │   └── proofs/{coupling_v.rs, scenario_v.rs, refinement_v.rs, exec_v.rs}

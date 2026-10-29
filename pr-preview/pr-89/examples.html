@@ -1,0 +1,1103 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Usage examples - jetstream_distributed</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="How the protocols in jetstream_distributed relate: what each one buys, what it assumes, and what is proved, tested or only intended.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex-458af43b.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-20c669f1.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">jetstream_distributed</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/sevki/jetstream_distributed" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/sevki/jetstream_distributed/edit/main/book/src/examples.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="usage-examples"><a class="header" href="#usage-examples">Usage examples</a></h1>
+<p>Five small programs, each runnable, each asserting what it shows. The code on this page
+is <strong>included from the files themselves</strong> when the book is built, so it cannot drift from
+what compiles: <code>cargo test</code> builds every example, and CI runs them.</p>
+<pre><code class="language-text">cargo run --example ownership_handover
+cargo run --example swim_membership
+cargo run --example swim_node
+cargo run --example actor_hosting
+cargo run --example actor_basic
+</code></pre>
+<p>They are ordered the way the book is: the base first, then what sits on it. Each
+example is about <em>using</em> a piece, so for why it is shaped that way read the chapter
+named above it.</p>
+<h2 id="handing-an-actor-from-one-node-to-another"><a class="header" href="#handing-an-actor-from-one-node-to-another">Handing an actor from one node to another</a></h2>
+<p>Chapter: <a href="ownership.html">Ownership</a>.</p>
+<p><code>A</code> owns an actor at epoch 41 and writes. <code>A</code> agrees to hand it to <code>B</code>, which burns the
+epoch at once, so <code>A</code>’s next write at 41 is refused <code>FENCED</code>. <code>B</code> takes the actor at 42.</p>
+<p>Things to notice:</p>
+<ul>
+<li><strong>No call names the acting node.</strong> Who is calling is the <code>Context</code>, which a transport
+fills in. Here it is built by hand (<code>from</code>) because there is no network; over a real
+connection nothing else changes.</li>
+<li><strong>The refusal comes from the registry, not from <code>A</code>.</strong> <code>A</code> still believes it holds 41.</li>
+<li><strong>The floor.</strong> <code>MemoryFloor::at(40)</code> seeds the durable record of the highest epoch used,
+which is what keeps a restart from rewinding the actor.</li>
+</ul>
+<pre><code class="language-rust ignore">//! The headline story, in process: a handover that fences the outgoing owner.
+//!
+//! `A` owns an actor at epoch 41 and writes. `A` agrees to hand it to `B`, which burns
+//! the epoch at once. `A`, not yet knowing, writes again at 41 and is **fenced**. `B`
+//! takes the actor at 42 and writes.
+//!
+//! That one refusal is what the protocol exists for. The registry is called directly
+//! here, with no network, so the example is the shortest possible account of it. Over a
+//! real connection nothing changes except where the caller's identity comes from:
+//! [`Context::remote`] is filled in by the transport, never taken from an argument, and
+//! the registry maps that address to a node through a roster fixed at construction.
+//!
+//! Run it with `cargo run --example ownership_handover`.
+
+use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr};
+use std::sync::Arc;
+
+use jetstream::prelude::jetstream_rpc::context::{Context, RemoteAddr};
+use jetstream::prelude::*;
+use jetstream_distributed::id::Id;
+use jetstream_distributed::ownership::service::{MemoryFloor, Offer, Ownership, Registry};
+
+const ADDR_A: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+const ADDR_B: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
+const A: Id = Id(0);
+const B: Id = Id(1);
+
+/// The context a call from `addr` carries: what a transport would fill in.
+fn from(addr: IpAddr) -&gt; Context {
+    Context::new(Some(RemoteAddr::IpAddr(addr)), None)
+}
+
+#[tokio::main]
+async fn main() -&gt; Result&lt;()&gt; {
+    // Who is which node, by address, and where the epochs start. The floor is a
+    // durable record of the highest epoch the registry has used, which is what keeps
+    // a restart from rewinding the actor; seeding it at 40 makes the first epoch 41.
+    let roster = HashMap::from([(ADDR_A, A), (ADDR_B, B)]);
+    let registry = Registry::new(roster, A, Arc::new(MemoryFloor::at(40)))?;
+
+    // The actor is offered to A at 41, and A takes it and writes.
+    assert_eq!(registry.poll(from(ADDR_A)).await?, Offer::Grant(41));
+    registry.acquire(from(ADDR_A), 41).await?;
+    assert_eq!(registry.write(from(ADDR_A), 41).await?, 1);
+    println!("A owns the actor at epoch 41 and wrote");
+
+    // A agrees to hand it to B. The epoch is burned from this moment, so A is already
+    // fenced out, whether or not it has been told.
+    registry.begin_transfer(from(ADDR_A), B).await?;
+
+    // The refusal this protocol exists for. A still believes it holds epoch 41; the
+    // registry knows better, and says so in its own word.
+    let fenced = registry.write(from(ADDR_A), 41).await.unwrap_err();
+    assert_eq!(fenced.code(), Some("FENCED"));
+    println!("A's write at the burned epoch 41 was refused: FENCED");
+
+    // A is told to stop, and acknowledges at the transfer's epoch.
+    assert_eq!(registry.poll(from(ADDR_A)).await?, Offer::Revoke(42));
+    registry.release(from(ADDR_A), 42).await?;
+
+    // Only now is the actor on offer to B, at the new epoch.
+    assert_eq!(registry.poll(from(ADDR_B)).await?, Offer::Grant(42));
+    registry.acquire(from(ADDR_B), 42).await?;
+    assert_eq!(registry.write(from(ADDR_B), 42).await?, 2);
+    println!("B took the actor at epoch 42 and wrote");
+
+    // The audit log is what the test oracles read, and it records the refusal.
+    for event in registry.log() {
+        println!("  {event:?}");
+    }
+    Ok(())
+}</code></pre>
+<h2 id="a-nodes-view-of-a-failure"><a class="header" href="#a-nodes-view-of-a-failure">A node’s view of a failure</a></h2>
+<p>Chapter: <a href="swim.html">SWIM</a>.</p>
+<p>A node suspects a peer because its own probe failed, then declares it dead when the
+suspicion times out. A weaker report cannot undo that; a higher incarnation can, which is
+how a peer refutes an accusation.</p>
+<p>Things to notice:</p>
+<ul>
+<li><strong><code>suspect</code> and <code>declare_dead</code> are methods on the node and not on the wire.</strong> What
+arrives from outside is a batch of <code>Update</code>s, merged by <code>apply</code>.</li>
+<li><strong>The incarnation is an argument.</strong> It is the one the node had when the probe began, so a
+refutation that lands mid-probe cannot be accused after the fact.</li>
+<li><strong>Applying a message twice changes nothing</strong>, which is the property that lets gossip be
+delivered at least once and in any order.</li>
+</ul>
+<pre><code class="language-rust ignore">//! A SWIM node's view of a failure, and of being wrongly accused.
+//!
+//! A [`Node`] keeps one record per member: an incarnation number and a status. Two
+//! records are compared by a key, a higher incarnation always winning and, at equal
+//! incarnations, the more-dead status winning. Everything below is that one rule
+//! applied to whichever record arrived.
+//!
+//! Suspecting a peer and declaring it dead are things a node does about *its own* view,
+//! because its own probe failed, so they are methods on the node and not on the wire.
+//! What does arrive from outside is a batch of [`Update`]s, merged by [`Node::apply`].
+//!
+//! Run it with `cargo run --example swim_membership`.
+
+use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr};
+
+use jetstream_distributed::id::Id;
+use jetstream_distributed::swim::service::{Liveness, Node, Update};
+
+const ME: Id = Id(1);
+const PEER: Id = Id(2);
+
+fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    // Who is a member, by address. A node off the roster cannot be built.
+    let roster = HashMap::from([
+        (IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), ME),
+        (IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)), PEER),
+    ]);
+    let node = Node::new(roster, ME)?;
+
+    // Everyone starts alive at incarnation 0. Nothing is read from disk.
+    assert_eq!(
+        node.record(PEER),
+        Some(Update {
+            node: PEER,
+            incarnation: 0,
+            status: Liveness::Alive
+        })
+    );
+
+    // A probe of the peer failed: believe it suspect, at the incarnation the node had
+    // recorded when the probe began. That is an argument and not re-read, because a
+    // probe is slow and a refutation can land while it is in flight.
+    assert!(node.suspect(PEER, 0)?);
+    println!("peer is suspect: {:?}", node.record(PEER).unwrap().status);
+
+    // The suspicion timed out. This only takes effect if the peer is still suspect at
+    // the incarnation the timer was started for.
+    assert!(node.declare_dead(PEER, 0)?);
+    println!("peer is dead:    {:?}", node.record(PEER).unwrap().status);
+
+    // A weaker report does not undo a death: alive at the same incarnation loses.
+    node.apply(&amp;[Update {
+        node: PEER,
+        incarnation: 0,
+        status: Liveness::Alive,
+    }])?;
+    assert_eq!(node.record(PEER).unwrap().status, Liveness::Dead);
+
+    // Only a higher incarnation does. This is the refutation the peer makes when it
+    // hears it is accused: alive at one incarnation above the accusation.
+    node.apply(&amp;[Update {
+        node: PEER,
+        incarnation: 1,
+        status: Liveness::Alive,
+    }])?;
+    let record = node.record(PEER).unwrap();
+    assert_eq!((record.incarnation, record.status), (1, Liveness::Alive));
+    println!(
+        "peer refuted:    incarnation {} {:?}",
+        record.incarnation, record.status
+    );
+
+    // Applying the same message twice changes nothing the second time, which is what
+    // lets gossip survive being delivered at least once and in any order.
+    let again = [Update {
+        node: PEER,
+        incarnation: 1,
+        status: Liveness::Alive,
+    }];
+    node.apply(&amp;again)?;
+    node.apply(&amp;again)?;
+    assert_eq!(node.record(PEER).unwrap().incarnation, 1);
+    Ok(())
+}</code></pre>
+<h2 id="a-swim-cluster-that-members-join-and-leave"><a class="header" href="#a-swim-cluster-that-members-join-and-leave">A SWIM cluster that members join and leave</a></h2>
+<p>Chapter: <a href="swim.html">SWIM</a>.</p>
+<p>The previous example calls the node’s methods by hand. This one is the loop around it: a
+listener that serves <code>ping</code> and <code>sync</code>, a join through a seed, a probe that pings one peer
+a second and piggybacks its whole view, a suspicion when a ping fails, a timer that turns
+an unrefuted suspicion into death, and a way to leave. Run three of them; the second and
+third join through a seed:</p>
+<pre><code class="language-text">cargo run --example swim_node -- run 1
+cargo run --example swim_node -- run 2 1
+cargo run --example swim_node -- run 3 2
+</code></pre>
+<p>Type <code>leave</code> in one terminal and the others record a <strong>departure</strong>, not a failure.
+Press Ctrl-C in another and they suspect it, then declare it <strong>dead</strong>. Start it again and it
+comes back at incarnation 1: its first caller tells it the cluster has it as gone, that
+out-ranks its record, and it answers with a higher incarnation. With no arguments the
+example does all of that in one process and asserts it, which is what CI runs.</p>
+<p>Things to notice:</p>
+<ul>
+<li><strong>A join is a <code>sync</code> with a seed.</strong> There is no join call. The seed’s admission policy lets
+the address in, its reply is the whole table, and the others hear of the newcomer by
+gossip. Node 3 above never calls node 1 to join.</li>
+<li><strong>Who may join is a policy, and this example’s is open.</strong> Every loopback address
+<code>127.0.0.1</code> to <code>127.0.0.250</code> is a member. A real deployment writes a stricter one; SWIM
+does not say who should be admitted. The member number comes from the policy and the
+connection, never from the request.</li>
+<li><strong>Leaving and dying are different records.</strong> <code>leave</code> writes <code>Left</code>, which out-ranks a
+failure verdict at the same incarnation, so a suspicion timer already running cannot
+turn a departure into a death. A node that is stopped without leaving is simply dead.</li>
+<li><strong>The timing is this file’s choice and nothing is proved about it.</strong> The merge rule, the
+departure’s precedence, the refutation and the refusal of strangers are the verified and
+tested parts. When to probe, whom, and how long to wait are plain Rust.</li>
+<li><strong>No indirect ping</strong>, and members are never forgotten: a departed member’s record is kept,
+and counts against the bound on members.</li>
+<li><strong>Identity is the connection’s source address.</strong> Each member binds <code>127.0.0.&lt;id&gt;</code> and
+connects from it. That works on Linux; on another OS give each member its own host. An
+address is not a credential, and where a member lives is the deployment’s mapping, not
+something SWIM gossips.</li>
+</ul>
+<pre><code class="language-rust ignore">//! A SWIM node you can run as a process, in a cluster that members join and leave.
+//!
+//! [`Node`] is a table that obeys the merge rule and answers its peers; it has no
+//! clock and no socket. What turns it into a member of a cluster is the part this
+//! file writes, in plain Rust that Verus never sees and that nothing here proves:
+//!
+//! * **join**: start knowing only yourself, and `sync` with a seed. The seed's
+//!   admission policy lets your address in as a member, and its reply is the whole
+//!   cluster. The seed tells the others by gossip; you never call them to join;
+//! * **serve**: accept a connection, hand it to the generated `MembershipService`;
+//! * **probe**: every period, `ping` one peer, piggybacking this node's whole view;
+//! * **suspect**: a ping that fails or times out makes the node believe the peer
+//!   suspect, at the incarnation it had recorded *when the probe began*;
+//! * **declare dead**: a suspicion that is not refuted within its timeout becomes
+//!   death, but only if the peer is still suspect at that incarnation;
+//! * **leave**: record yourself `Left` and tell every peer. A node that is stopped
+//!   without doing so is, to the cluster, a node that died.
+//!
+//! The merge rule, the departure's precedence over a failure verdict, the
+//! refutation and the refusal of strangers are the verified and tested parts.
+//! *When* to probe, whom, and how long to wait are this file's choices, and
+//! `crate::swim::model` says nothing about timing. There is no indirect ping
+//! (`ping_req`): a peer that this node alone cannot reach is suspected on this
+//! node's word.
+//!
+//! **Who may join is a policy, and this example's is open**: `127.0.0.&lt;k&gt;` for
+//! `k` in `1..=250` is member `k`, and anyone who can reach a seed from such an
+//! address is in. A real deployment writes a stricter one. Members are addressed
+//! by loopback address because a node knows its caller by address; each listens
+//! on port 9100 of its own address and connects from it. That works on Linux,
+//! where all of `127.0.0.0/8` is loopback; elsewhere, give each member its own
+//! host instead.
+//!
+//! Run a cluster in three terminals; the second and third join through a seed:
+//!
+//! ```text
+//! cargo run --example swim_node -- run 1
+//! cargo run --example swim_node -- run 2 1
+//! cargo run --example swim_node -- run 3 2
+//! ```
+//!
+//! Type `leave` in one to see the others record a departure. Press Ctrl-C in
+//! another to see them suspect it and declare it dead. Start it again and watch it
+//! be told what it was and outrank that. With no arguments the example does all of
+//! that inside one process and asserts it: `cargo run --example swim_node`.
+
+use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::time::{Duration, Instant};
+
+use jetstream::prelude::jetstream_rpc::session::{Session, SingleLaneSession};
+use jetstream::prelude::*;
+use jetstream_distributed::id::Id;
+use jetstream_distributed::swim::service::{
+    Admission, Liveness, Membership, Node, Update,
+    membership_protocol::{MembershipChannel, MembershipService},
+};
+use tokio::net::{TcpListener, TcpSocket};
+use tokio::task::JoinHandle;
+
+const PORT: u16 = 9100;
+
+/// The timings. Nothing proved depends on them.
+#[derive(Clone, Copy)]
+struct Timing {
+    /// How often this node pings one peer.
+    probe_every: Duration,
+    /// How long a call may take before the peer is suspected.
+    probe_timeout: Duration,
+    /// How long a suspicion stands before it becomes death.
+    suspicion: Duration,
+}
+
+const LIVE: Timing = Timing {
+    probe_every: Duration::from_secs(1),
+    probe_timeout: Duration::from_millis(500),
+    suspicion: Duration::from_secs(5),
+};
+
+const FAST: Timing = Timing {
+    probe_every: Duration::from_millis(40),
+    probe_timeout: Duration::from_millis(100),
+    suspicion: Duration::from_millis(200),
+};
+
+fn addr_of(member: u128) -&gt; IpAddr {
+    IpAddr::V4(Ipv4Addr::new(127, 0, 0, member as u8))
+}
+
+/// Who may join: this example lets in any loopback address `127.0.0.1` to
+/// `127.0.0.250`, as the member with that last number.
+fn policy() -&gt; Admission {
+    std::sync::Arc::new(|a| match a {
+        IpAddr::V4(v4) =&gt; match v4.octets() {
+            [127, 0, 0, k @ 1..=250] =&gt; Some(Id(k as u128)),
+            _ =&gt; None,
+        },
+        IpAddr::V6(_) =&gt; None,
+    })
+}
+
+/// Answer pings and syncs on `127.0.0.&lt;me&gt;:9100` for as long as the task lives.
+async fn serve(node: Node, me: u128) -&gt; std::io::Result&lt;()&gt; {
+    let listener = TcpListener::bind(SocketAddr::new(addr_of(me), PORT)).await?;
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let node = node.clone();
+        tokio::spawn(async move {
+            // The session reads the peer's address off the stream, and `Node`
+            // admits or refuses it: that is where "who is calling" comes from.
+            let session = SingleLaneSession::&lt;MembershipChannel, _, _&gt;::service_io(stream);
+            let Ok(lane) = Session::&lt;MembershipChannel&gt;::accept_lane(&amp;session).await else {
+                return;
+            };
+            let mut service = MembershipService { inner: node };
+            let _ = jetstream_rpc::server::run(&amp;mut service, lane).await;
+        });
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Call {
+    /// SWIM's ping, with the view piggybacked.
+    Ping,
+    /// Push/pull: send the view, get the peer's whole table back. How a node joins.
+    Sync,
+}
+
+/// One call to `peer`, made from this member's own address, carrying `view`.
+async fn call(
+    me: u128,
+    peer: u128,
+    kind: Call,
+    view: Vec&lt;Update&gt;,
+    within: Duration,
+) -&gt; Result&lt;Vec&lt;Update&gt;&gt; {
+    let call = async {
+        // Bind the source so the peer sees `127.0.0.&lt;me&gt;` and applies its policy to it.
+        let socket = TcpSocket::new_v4()?;
+        socket.bind(SocketAddr::new(addr_of(me), 0))?;
+        let stream = socket.connect(SocketAddr::new(addr_of(peer), PORT)).await?;
+        // The session owns the lane's I/O, so it outlives the channel.
+        let session = SingleLaneSession::&lt;MembershipChannel, _, _&gt;::client_io(stream);
+        let lane = Session::&lt;MembershipChannel&gt;::open_lane(&amp;session).await?;
+        let channel = MembershipChannel::new(64, Box::new(lane));
+        channel.negotiate_version(u32::MAX).await?;
+        match kind {
+            Call::Ping =&gt; channel.ping(Context::default(), view).await,
+            Call::Sync =&gt; channel.sync(Context::default(), view).await,
+        }
+    };
+    match tokio::time::timeout(within, call).await {
+        Ok(reply) =&gt; reply,
+        Err(_) =&gt; Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "call timed out").into()),
+    }
+}
+
+/// The members this node would probe: everyone it has heard of except itself and
+/// those that left. A member declared dead is still probed, because it may come back.
+fn peers(node: &amp;Node, me: u128) -&gt; Vec&lt;u128&gt; {
+    node.view()
+        .into_iter()
+        .filter(|u| u.node.0 != me &amp;&amp; u.status != Liveness::Left)
+        .map(|u| u.node.0)
+        .collect()
+}
+
+/// Join through `seed`, then probe whoever the cluster turns out to hold, forever.
+async fn probe(node: Node, me: u128, seed: Option&lt;u128&gt;, timing: Timing, verbose: bool) {
+    // A join is a sync with the seed; its reply is the cluster. The seed may not be
+    // up yet, so keep asking.
+    if let Some(seed) = seed {
+        loop {
+            match call(me, seed, Call::Sync, node.view(), timing.probe_timeout).await {
+                Ok(table) =&gt; {
+                    if let Err(e) = node.apply(&amp;table) {
+                        eprintln!("[{me}] refused the seed's table: {e}");
+                    }
+                    break;
+                }
+                Err(e) =&gt; {
+                    if verbose {
+                        eprintln!("[{me}] cannot reach seed {seed} yet ({e})");
+                    }
+                    tokio::time::sleep(timing.probe_every).await;
+                }
+            }
+        }
+    }
+    let mut seen = node.log().len();
+    let mut turn = 0usize;
+    loop {
+        tokio::time::sleep(timing.probe_every).await;
+        let peers = peers(&amp;node, me);
+        if peers.is_empty() {
+            continue;
+        }
+        let peer = peers[turn % peers.len()];
+        turn += 1;
+        // The incarnation this node holds *now*, before the ping: a refutation
+        // may land while the ping is in flight, and the accusation must not
+        // outlive it.
+        let held = node.record(Id(peer)).expect("a member").incarnation;
+        match call(me, peer, Call::Ping, node.view(), timing.probe_timeout).await {
+            // The ack is the peer's own word about everyone the ping mentioned,
+            // including itself: the evidence that it is up.
+            Ok(ack) =&gt; {
+                if let Err(e) = node.apply(&amp;ack) {
+                    eprintln!("[{me}] refused a reply from {peer}: {e}");
+                }
+            }
+            Err(e) =&gt; {
+                if node.suspect(Id(peer), held).unwrap_or(false) &amp;&amp; verbose {
+                    eprintln!("[{me}] ping to {peer} failed ({e}); suspecting it");
+                }
+                let node = node.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(timing.suspicion).await;
+                    // A no-op unless the peer is still suspect at `held`.
+                    let _ = node.declare_dead(Id(peer), held);
+                });
+            }
+        }
+        if verbose {
+            let log = node.log();
+            for event in &amp;log[seen..] {
+                eprintln!("[{me}] {event:?}");
+            }
+            seen = log.len();
+        }
+    }
+}
+
+/// Start member `me`: a fresh node that knows only itself, serving and probing,
+/// and joining through `seed` if there is one.
+fn start(
+    me: u128,
+    seed: Option&lt;u128&gt;,
+    timing: Timing,
+    verbose: bool,
+) -&gt; (Node, Vec&lt;JoinHandle&lt;()&gt;&gt;) {
+    // A node starts at incarnation 0 and keeps nothing on disk. A restart is
+    // corrected by the first peer that tells it what the cluster thinks of it.
+    let node = Node::admitting(HashMap::from([(addr_of(me), Id(me))]), Id(me), policy())
+        .expect("on its own roster");
+    let server = {
+        let node = node.clone();
+        tokio::spawn(async move {
+            if let Err(e) = serve(node, me).await {
+                eprintln!("[{me}] cannot serve on 127.0.0.{me}:{PORT}: {e}");
+            }
+        })
+    };
+    let prober = tokio::spawn(probe(node.clone(), me, seed, timing, verbose));
+    (node, vec![server, prober])
+}
+
+/// Leave: record the departure and tell every peer this node knows of.
+async fn leave(node: &amp;Node, me: u128, timing: Timing) {
+    let said = node.leave();
+    for peer in peers(node, me) {
+        // A peer that cannot be reached is told by gossip from one that can.
+        let _ = call(me, peer, Call::Ping, vec![said], timing.probe_timeout).await;
+    }
+}
+
+fn status(node: &amp;Node, of: u128) -&gt; Option&lt;Liveness&gt; {
+    node.record(Id(of)).map(|u| u.status)
+}
+
+async fn until(what: &amp;str, mut ready: impl FnMut() -&gt; bool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !ready() {
+        assert!(Instant::now() &lt; deadline, "timed out waiting for {what}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+fn stop(tasks: &amp;[JoinHandle&lt;()&gt;]) {
+    for task in tasks {
+        task.abort();
+    }
+}
+
+/// Members join through different seeds, one leaves, one is stopped, and the
+/// one that left comes back.
+async fn demonstrate() {
+    // 1 starts alone; 2 joins through 1; 3 joins through 2, whose reply is how 3
+    // learns of 1. 1 learns of 3 by gossip from 2.
+    let (n1, _t1) = start(1, None, FAST, false);
+    let (n2, t2) = start(2, Some(1), FAST, false);
+    let (n3, t3) = start(3, Some(2), FAST, false);
+    until("every member to know every other, alive", || {
+        [(&amp;n1, 2), (&amp;n1, 3), (&amp;n2, 3), (&amp;n3, 1)]
+            .iter()
+            .all(|(n, of)| status(n, *of) == Some(Liveness::Alive))
+    })
+    .await;
+    println!("three members joined through two seeds, and all know each other");
+
+    // 3 leaves, and says so. The others record a departure, not a failure.
+    leave(&amp;n3, 3, FAST).await;
+    until("1 and 2 to record 3 as having left", || {
+        status(&amp;n1, 3) == Some(Liveness::Left) &amp;&amp; status(&amp;n2, 3) == Some(Liveness::Left)
+    })
+    .await;
+    stop(&amp;t3);
+    // A suspicion that was already running for 3 would have no effect: wait it out.
+    tokio::time::sleep(FAST.suspicion * 2).await;
+    assert_eq!(status(&amp;n1, 3), Some(Liveness::Left), "left, and not dead");
+    println!("member 3 left: members 1 and 2 recorded a departure, not a failure");
+
+    // 2 is stopped without leaving. To the cluster that is a failure.
+    stop(&amp;t2);
+    until("1 to declare 2 dead", || {
+        status(&amp;n1, 2) == Some(Liveness::Dead)
+    })
+    .await;
+    println!("member 2 stopped without leaving: member 1 declared it dead");
+
+    // 3 starts again, as a new process would: incarnation 0, no memory. It joins
+    // through 1, which holds it as having left, and says so in its reply; that
+    // out-ranks 3's own record, so 3 answers with a higher incarnation.
+    let (n3, _t3) = start(3, Some(1), FAST, false);
+    until("1 to see 3 alive again", || {
+        status(&amp;n1, 3) == Some(Liveness::Alive)
+    })
+    .await;
+    let back = n1.record(Id(3)).unwrap();
+    assert!(back.incarnation &gt;= 1, "back only at a higher incarnation");
+    assert!(n3.record(Id(3)).unwrap().incarnation &gt;= 1);
+    println!(
+        "member 3 rejoined: alive again at incarnation {}",
+        back.incarnation
+    );
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
+    let args: Vec&lt;String&gt; = std::env::args().skip(1).collect();
+    let args: Vec&lt;&amp;str&gt; = args.iter().map(String::as_str).collect();
+    let (me, seed) = match args[..] {
+        [] =&gt; return demonstrate().await,
+        ["run", me] =&gt; (me, None),
+        ["run", me, seed] =&gt; (me, Some(seed)),
+        _ =&gt; {
+            eprintln!("usage: swim_node [run &lt;id&gt; [&lt;seed id&gt;]]");
+            std::process::exit(2);
+        }
+    };
+    let me: u128 = me.parse().expect("a member number");
+    let seed: Option&lt;u128&gt; = seed.map(|s| s.parse().expect("a member number"));
+    assert!((1..=250).contains(&amp;me), "1 &lt;= id &lt;= 250");
+
+    let (node, tasks) = start(me, seed, LIVE, true);
+    eprintln!("[{me}] member {me} on 127.0.0.{me}:{PORT}; type `leave` to leave");
+
+    // Typing `leave` leaves. A closed stdin does nothing: only a person saying so
+    // is a departure.
+    let (told, mut leaving) = tokio::sync::oneshot::channel::&lt;()&gt;();
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        while std::io::stdin().read_line(&amp;mut line).is_ok_and(|n| n &gt; 0) {
+            if line.trim() == "leave" {
+                let _ = told.send(());
+                return;
+            }
+            line.clear();
+        }
+    });
+
+    let mut shown = Vec::new();
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(LIVE.probe_every * 2) =&gt; {}
+            Ok(()) = &amp;mut leaving =&gt; {
+                leave(&amp;node, me, LIVE).await;
+                eprintln!("[{me}] left, and told the cluster");
+                return;
+            }
+        }
+        let view = node.view();
+        if view != shown {
+            let line: Vec&lt;String&gt; = view
+                .iter()
+                .map(|u| format!("{}:{:?}@{}", u.node.0, u.status, u.incarnation))
+                .collect();
+            println!("[{me}] view: {}", line.join(" "));
+            shown = view;
+        }
+        if tasks.iter().any(|t| t.is_finished()) {
+            std::process::exit(1);
+        }
+    }
+}</code></pre>
+<h2 id="hosting-an-actor-under-a-fence"><a class="header" href="#hosting-an-actor-under-a-fence">Hosting an actor under a fence</a></h2>
+<p>Chapters: <a href="services.html">Services over Jetstream</a> and <a href="actor.html">the actor</a>.</p>
+<p>A supervisor hosts an ordinary service behind a mailbox. The fence is the question “may
+this host still act for its actor?”. When it closes, the next request is answered <code>FENCED</code>
+without reaching the actor. Draining then drops the service and leaves the mailbox
+answering.</p>
+<p>Things to notice:</p>
+<ul>
+<li><strong>The actor is a plain trait implementation.</strong> It has no idea it has a mailbox, a fence
+or a supervisor.</li>
+<li><strong><code>spawn</code> requires a fence.</strong> There is no way to host an actor that cannot be told it
+lost.</li>
+<li><strong>The caller gets an ordinary generated channel.</strong> It cannot tell a local actor from a
+remote one.</li>
+<li><strong>In a deployment the fence is the ownership registry’s <code>may_write(host, epoch)</code>.</strong> That
+wiring is not built; the example uses a flag in its place.</li>
+</ul>
+<pre><code class="language-rust ignore">//! Hosting an actor under a fence, calling it, and draining it.
+//!
+//! A [`LocalSupervisor`] hosts actors on one node, each behind its own mailbox. The
+//! actor is an ordinary service; it is handed a [`Fence`](jetstream_distributed::actor::service::Fence), which is the question "may
+//! this host still act for its actor?". In a deployment the fence is the ownership
+//! registry's `may_write(host, epoch)`. Here it is a flag, so the example can close it.
+//!
+//! What it shows, in order: an actor is hosted and called; the fence closes and the
+//! next request is refused `FENCED` without reaching the actor; the actor is drained
+//! and its service dropped; and discovery stops pointing at it.
+//!
+//! Run it with `cargo run --example actor_hosting`.
+
+use std::num::NonZeroU32;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+use jetstream::prelude::*;
+use jetstream_distributed::actor::service::{
+    ActorRef, Capacity, LocalSupervisor, Status, Supervisor,
+};
+use jetstream_distributed::id::Id;
+use jetstream_distributed::scheduling::discovery::{Discovery, DiscoveryError};
+
+use counter_protocol::{CounterChannel, CounterService};
+
+/// How many requests the actor's mailbox holds before a sender has to wait.
+const ROOM: Capacity = Capacity::Bounded(NonZeroU32::new(16).unwrap());
+
+/// This node, and the actor it hosts. Both are plain [`Id`]s.
+const ME: Id = Id(1);
+const COUNTER: Id = Id(42);
+
+#[service]
+trait Counter {
+    /// How many calls the counter has handled, counting this one.
+    async fn next(&amp;self, ctx: Context) -&gt; Result&lt;u64&gt;;
+}
+
+#[derive(Default)]
+struct CounterImpl(AtomicU64);
+
+impl Counter for CounterImpl {
+    async fn next(&amp;self, _ctx: Context) -&gt; Result&lt;u64&gt; {
+        Ok(self.0.fetch_add(1, Ordering::SeqCst) + 1)
+    }
+}
+
+#[tokio::main]
+async fn main() -&gt; Result&lt;()&gt; {
+    let supervisor = LocalSupervisor::new(ME);
+
+    // The fence starts open. Anything `Fn() -&gt; bool` is a fence.
+    let owner = Arc::new(AtomicBool::new(true));
+    let fence = {
+        let owner = owner.clone();
+        move || owner.load(Ordering::SeqCst)
+    };
+
+    // Host the actor. `spawn` requires a fence: a host with no way to be told it
+    // lost the actor is not something the supervisor will run.
+    supervisor
+        .spawn::&lt;CounterChannel, _, _&gt;(
+            COUNTER,
+            ROOM,
+            CounterService {
+                inner: CounterImpl::default(),
+            },
+            fence,
+        )
+        .await?;
+    assert_eq!(supervisor.status(COUNTER), Status::Running);
+
+    // Call it. A transport onto the actor's mailbox becomes an ordinary generated
+    // channel, so the caller cannot tell it from a remote one.
+    let transport = supervisor
+        .transport::&lt;CounterChannel&gt;(COUNTER, Context::default())
+        .await?;
+    let counter = CounterChannel::new(64, transport);
+    counter.negotiate_version(u32::MAX).await?;
+    assert_eq!(counter.next(Context::default()).await?, 1);
+    assert_eq!(counter.next(Context::default()).await?, 2);
+    println!("hosted and called: the counter is at 2");
+
+    // Discovery, asked about this actor, names this node.
+    assert_eq!(supervisor.discover(ActorRef(COUNTER)).await, Ok(vec![ME]));
+
+    // The actor's epoch moves on: ownership passed to another host. The fence
+    // closes, and the next request is refused without reaching the actor.
+    owner.store(false, Ordering::SeqCst);
+    let refused = counter.next(Context::default()).await.unwrap_err();
+    assert_eq!(refused.code(), Some("FENCED"));
+    println!("fence closed: the next call was answered FENCED");
+
+    // Drain it. A handler that was running would be finished, not cancelled; here
+    // there is none. The service is dropped and the mailbox stays, answering FENCED.
+    supervisor.drain(COUNTER).await?;
+    assert_eq!(supervisor.status(COUNTER), Status::Retired);
+    assert_eq!(
+        supervisor.discover(ActorRef(COUNTER)).await,
+        Err(DiscoveryError::NotFound),
+        "a retired actor is not where a caller should go"
+    );
+    println!("drained: the actor is retired and no longer discoverable here");
+    Ok(())
+}</code></pre>
+<h2 id="two-actors-one-calling-the-other"><a class="header" href="#two-actors-one-calling-the-other">Two actors, one calling the other</a></h2>
+<p>Chapter: <a href="mailbox.html">The mailbox</a>.</p>
+<p><code>A</code> holds a channel to <code>B</code> and calls it. <code>A</code> is generic over what <code>B</code> is, so it cannot
+tell a mailbox from anything else that speaks the protocol.</p>
+<pre><code class="language-rust ignore">//! Two actors, each behind its own mailbox.
+//!
+//! `ActorAImpl` calls `ActorB` as `self.b.b(ctx).await`. The `B` it holds is a
+//! generated channel whose transport is a [`Session`] on `B`'s mailbox, and `B`'s
+//! implementation is served from the other end by [`serve`], one request at a
+//! time. `ActorAImpl` is generic over `B: ActorB` and cannot tell. `main` reaches
+//! `A` the same way, through `A`'s mailbox.
+
+use std::num::NonZeroU32;
+
+use jetstream::prelude::*;
+use jetstream_distributed::actor::service::{Capacity, Delivery, Mailbox, Session, serve};
+
+use actora_protocol::{ActorAChannel, ActorAService};
+use actorb_protocol::{ActorBChannel, ActorBService};
+
+/// How many messages each mailbox holds before a sender has to wait. Always the
+/// caller's to say.
+const MAILBOX: Capacity = Capacity::Bounded(NonZeroU32::new(16).unwrap());
+
+#[service]
+trait ActorA {
+    async fn a(&amp;self, ctx: Context) -&gt; Result&lt;()&gt;;
+}
+
+#[service]
+trait ActorB {
+    async fn b(&amp;self, ctx: Context) -&gt; Result&lt;()&gt;;
+}
+
+struct ActorAImpl&lt;B&gt; {
+    b: B,
+}
+
+impl&lt;B&gt; ActorA for ActorAImpl&lt;B&gt;
+where
+    B: ActorB + Send + Sync,
+{
+    async fn a(&amp;self, ctx: Context) -&gt; Result&lt;()&gt; {
+        eprintln!("A: calling B");
+        self.b.b(ctx).await?;
+        eprintln!("A: B answered");
+        Ok(())
+    }
+}
+
+struct ActorBImpl;
+
+impl ActorB for ActorBImpl {
+    async fn b(&amp;self, _ctx: Context) -&gt; Result&lt;()&gt; {
+        eprintln!("B: handling a call");
+        Ok(())
+    }
+}
+
+#[tokio::main]
+async fn main() -&gt; Result&lt;()&gt; {
+    // B, behind its mailbox.
+    let b_mailbox = Mailbox::&lt;Delivery&lt;ActorBChannel&gt;&gt;::new(MAILBOX);
+    let mut b = ActorBService { inner: ActorBImpl };
+    tokio::spawn({
+        let mailbox = b_mailbox.clone();
+        async move { serve(mailbox, &amp;mut b).await }
+    });
+    let b_channel = ActorBChannel::new(64, Box::new(Session::new(b_mailbox, Context::default())));
+    b_channel.negotiate_version(u32::MAX).await?;
+
+    // A, holding a channel to B, behind its own mailbox.
+    let a_mailbox = Mailbox::&lt;Delivery&lt;ActorAChannel&gt;&gt;::new(MAILBOX);
+    let mut a = ActorAService {
+        inner: ActorAImpl { b: b_channel },
+    };
+    tokio::spawn({
+        let mailbox = a_mailbox.clone();
+        async move { serve(mailbox, &amp;mut a).await }
+    });
+    let a_channel = ActorAChannel::new(64, Box::new(Session::new(a_mailbox, Context::default())));
+    a_channel.negotiate_version(u32::MAX).await?;
+
+    for _ in 0..2 {
+        a_channel.a(Context::default()).await?;
+    }
+    Ok(())
+}</code></pre>
+<h2 id="longer-examples-are-the-tests"><a class="header" href="#longer-examples-are-the-tests">Longer examples are the tests</a></h2>
+<p>The tests are real programs too, and a good deal longer. They are the better reading
+once the examples above make sense, because each one is a story with an expected ending:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>To see</th><th>Read</th></tr>
+</thead>
+<tbody>
+<tr><td>A handover across simulated hosts, with the audit log</td><td><code>tests/ownership_handover.rs</code></td></tr>
+<tr><td>A restart that must not rewind the actor</td><td><code>tests/ownership_durability.rs</code></td></tr>
+<tr><td>A split vote that still elects one leader</td><td><code>tests/raft_election.rs</code></td></tr>
+<tr><td>A suspicion crossing a healed partition and being refuted</td><td><code>tests/swim_turmoil.rs</code></td></tr>
+<tr><td>An actor changing hosts with nothing lost or repeated</td><td><code>tests/actor_turmoil.rs</code></td></tr>
+<tr><td>A cooperative drain, including a handler that panics</td><td><code>tests/actor_drain.rs</code></td></tr>
+<tr><td>The privilege that will not move while the actor is held</td><td><code>tests/composed_handover.rs</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>They are plain Rust that Verus never sees. What they check is tested, not proved; see
+<a href="evidence.html">Evidence</a>.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="actor-system.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="reference/ownership.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="actor-system.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="reference/ownership.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-09f2665d.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-609e4cb8.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

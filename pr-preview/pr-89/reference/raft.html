@@ -1,0 +1,761 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Raft: the same statement, bought by counting - jetstream_distributed</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="How the protocols in jetstream_distributed relate: what each one buys, what it assumes, and what is proved, tested or only intended.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-e96d0476.css">
+        <link rel="stylesheet" href="../css/chrome-d279d366.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-458af43b.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-20c669f1.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">jetstream_distributed</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/sevki/jetstream_distributed" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/sevki/jetstream_distributed/edit/main/book/src/reference/raft.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="raft-the-same-statement-bought-by-counting"><a class="header" href="#raft-the-same-statement-bought-by-counting">Raft: the same statement, bought by counting</a></h1>
+<p>The failure-model table’s first row is the strongest assumption this repository
+makes — <strong>ownership records are updated atomically</strong> — and it says outright that
+a real deployment has to buy that from consensus, or from a store with
+compare-and-swap. <code>src/raft/</code> is the first half of buying it.</p>
+<p>Raft’s <strong>Election Safety</strong> is the exclusivity theorem with two words changed,
+and it is bought a completely different way:</p>
+<pre><code class="language-text">ownership:  at most one authoritative owner per epoch, because a single
+            atomic registry hands the epoch out
+raft:       at most one leader per term, because any two quorums share a
+            voter and a voter votes once per term
+</code></pre>
+<p>The difference is worth dwelling on, because it is the whole reason both are
+here. <code>ownership::proofs::exclusivity</code> is <strong>structural</strong>: <code>may_mutate</code> is true in
+exactly one shape, <code>Owned { owner, epoch }</code>, so two owners is not a state the
+model can represent, and all the work is in showing the transitions never reach
+a bad one. In <code>raft::model</code> nothing is structural. A <code>Cluster</code> can perfectly well
+hold two servers both believing they lead term 7 — that state is representable,
+and ruling it out is a <strong>counting</strong> argument over a set that no single
+participant can see. Side by side, the two say what a coordinator costs.</p>
+<p>The argument is three sentences (C1–C3), and the interesting clause is the one
+that is <em>not</em> in it. <code>inv_vote_implies_term</code> (C4) says a cast vote is never
+ahead of its voter’s term, and without it the induction fails at the most
+ordinary step in the protocol: a server timing out into term <code>t + 1</code> votes for
+itself there, and only this clause rules out an earlier vote of its own already
+sitting in that term.</p>
+<h2 id="the-log-and-the-line-between-modelled-and-proved"><a class="header" href="#the-log-and-the-line-between-modelled-and-proved">The log, and the line between modelled and proved</a></h2>
+<p>The model has a log. <code>tr_client_request</code> stamps an entry with its leader’s term,
+<code>tr_append_entries</code> carries one entry under the consistency check and truncates
+whatever diverged, <code>tr_advance_commit</code> advances the commit point under figure
+8’s restriction, and <code>tr_grant_vote</code> carries the <code>lastLogIndex</code>/<code>lastLogTerm</code>
+up-to-date comparison. All four are in <code>raft_next</code>, so every run of
+<code>raft_reachable</code> may use them and every theorem above holds across them.</p>
+<p>C12–C19 are what follows from a <em>single step</em> — a leader only appends, a follower
+agrees before it accepts, an entry is copied rather than invented, a commit needs
+a majority of the committing leader’s own term. <strong>Log Matching is proved too</strong>
+(C26), and getting there needed something the model did not have.</p>
+<blockquote>
+<p>Ruling out a second entry at the same <code>(index, term)</code> is a fact about the
+<strong>run’s history</strong>, not about any one state. At <code>tr_client_request</code> the leader
+appends at the end of its own log, and nothing in the <em>state</em> says no leader of
+that term ever appended at that index before.</p>
+</blockquote>
+<p>So <code>Cluster</code> carries ghost fields — four of them now, and each exists because
+some question about the <em>run</em> has no answer in any single state. <code>led</code>, every
+<code>(server, term)</code> ever led; <code>created</code>, every entry any leader ever made, keyed by
+the slot naming it and recording its value <strong>and the term of the entry before
+it</strong>; <code>committed</code> (C44–C47), every entry any leader ever committed, because
+<code>Server::commit</code> is a count that <em>retreats</em>; and <code>voted_with</code> (C49–C50), every
+vote together with the voter’s log as it stood when the vote was cast, because
+<code>tr_grant_vote</code>’s guard compares against a log that has since moved on.
+<code>created</code>’s second component is what makes Log Matching an induction rather than
+a wish. That second
+component is what makes Log Matching an induction rather than a wish: two
+servers whose entries at an index carry the same term are reading the same slot,
+so they agree on the value <em>and</em> on the recorded predecessor, which is the same
+question one index down. Repeat to zero.</p>
+<p><strong>Two moments are worth pointing at.</strong> At <code>tr_become_leader</code> the freshness clause
+(C24) holds because a term being won now has never been led — that is C22, and
+the middle of its chain is a fact about a server that may have stepped down long
+ago, which is where the history earns its keep. And at <code>tr_append_entries</code> the
+record survives because the follower’s entry at <code>prefix - 1</code> has the same term as
+the leader’s: that is the <strong>consistency check</strong>, already in the protocol since
+the log went in, and it turns out to be exactly the guard the proof wants rather
+than something added for it (C25).</p>
+<p><strong>The ghost state is not an escape hatch, and that is a theorem</strong> (C21): for any
+history whatsoever — all four records, not merely the two this section
+introduces — every step still fires from the same real state and lands in the
+same real state. A guard that read the history could not satisfy that. The fields
+are written and never read, which is what makes them auxiliary variables in the
+standard sense.</p>
+<p><strong>Leader Completeness is still not proved</strong>, and the sections that follow are the
+six pushes that narrowed the gap rather than six restatements of it. Read them
+in order: C39–C43 the ground it stands on, C44–C47 what was committed, C49–C50
+what a vote was a judgement of, C51–C52 what the summary that vote judged was a
+summary <em>of</em>, C53–C54 why the entry was still there to be judged. By the end,
+<strong>State Machine Safety holds with one hypothesis</strong> (C46), all three of the
+induction’s steps are theorems about the same objects, and only the induction
+that assembles them is missing.</p>
+<p>The fourth record is the last one. C51 needed no fifth, because the thing it
+wanted — the candidate’s log at the moment it asked — is recoverable from a field
+that was already there: <code>messages</code> never shrinks, so <strong>the network is a history
+variable too</strong>, and the link could be proved instead of recorded.</p>
+<p>A follower here will still truncate entries it had committed, which is faithful
+Raft — the protection against that is supposed to come from the election
+restriction, and the election restriction is now half a theorem (C43) rather than
+an absence.</p>
+<h2 id="the-ground-that-induction-has-to-stand-on-c39c43"><a class="header" href="#the-ground-that-induction-has-to-stand-on-c39c43">The ground that induction has to stand on (C39–C43)</a></h2>
+<p><code>src/raft/proofs/terms_v.rs</code> is not that induction. It is the part of it that can
+be proved without any new ghost state, and each piece is a theorem rather than a
+step of a larger argument that only makes sense once the argument exists.</p>
+<p><strong>The one to read is C41.</strong> A follower that already agrees with the leader at
+index <code>i</code> keeps its entry at <code>i</code> — and the proof splits on where the leader is
+writing. If the leader writes at or below <code>i</code>, Log Matching says the two logs
+agree at <em>that</em> index too, so the conditional in <code>appended_log</code> fires and the
+follower’s log is not touched at all. If it writes above <code>i</code>, the truncation is
+above <code>i</code>. Either way the entry stays.</p>
+<p>That is the first commit on this branch earning something it was not made for.
+The conditional truncation went in because an unconditional one described a step
+the service would not take; it turns out to be what makes this theorem true, and
+this theorem is what rules out a committed entry vanishing from a voter’s log
+between the commit and the next election. Under an unconditional truncation a
+duplicate <code>AppendEntries</code> for an early index deletes the entry, and the
+induction has no base.</p>
+<p><strong>C43 is the other half that is provable now</strong>: a voter holding any entry of term
+<code>T</code> refuses every candidate whose last term is below <code>T</code>, so the vote cannot be
+granted at all. With C40 that is one line, and it is exactly half of what Leader
+Completeness needs — a candidate cannot win on a log that is <em>behind on terms</em>.</p>
+<p><strong>What is still missing is the other case</strong>, and it is worth being precise about
+which one. When the candidate’s last term is at or <em>above</em> the voter’s, C43 says
+nothing: the candidate is not refused, and the committed entry has to be shown
+present in its log by a different argument — its own last entry was created by
+some leader of a term between the commit’s and this election’s, and a strong
+induction over terms says that leader already held the entry. Three things that
+argument needs and this repository does not have:</p>
+<ul>
+<li>a <strong>record of what was committed</strong>. <code>commit</code> is a count per server and says
+nothing about which entry a quorum once held.</li>
+<li>a <strong>record of the voter’s log at the moment of the vote</strong>, because
+<code>tr_grant_vote</code> compares against a log that has since moved on.</li>
+<li>the <strong>strong induction over terms</strong> itself — the part of Raft that took Verdi
+a person-scale Coq development.</li>
+</ul>
+<p>C42 and C43 are the two lemmas that induction will call. The induction is not
+written, and nothing here pretends otherwise.</p>
+<h2 id="what-was-committed-as-a-fact-that-survives-the-state-c44c47"><a class="header" href="#what-was-committed-as-a-fact-that-survives-the-state-c44c47">What was committed, as a fact that survives the state (C44–C47)</a></h2>
+<p>The first of those three missing pieces is now there. <code>Cluster</code> carries a third
+ghost field, <code>committed</code>, written at <code>tr_advance_commit</code> and never removed from,
+and <code>src/raft/proofs/commit_v.rs</code> is what it buys.</p>
+<p><strong>Why the state could not say it.</strong> <code>Server::commit</code> is a count on one server,
+and two things are wrong with it as the subject of a safety property. It says
+<em>how much</em> is committed, not <em>what</em> — and Leader Completeness is a claim about a
+particular entry at a particular index. And <strong>it retreats</strong>: C38 proves exactly
+when, and proves that when it does, a committed entry was deleted. After that
+retreat nothing anywhere in the state records that the entry was ever committed,
+so a theorem about committed entries has nothing left to quantify over in the one
+state where it matters most.</p>
+<p><strong>The ghost field is still not an escape hatch</strong>, and still as a theorem rather
+than a promise: C21’s <code>theorem_history_does_not_gate_the_protocol</code> now quantifies
+over all three histories, so for <em>any</em> <code>created</code>, <code>led</code> and <code>committed</code>
+whatsoever every step is available from the same real state and lands in the same
+real state.</p>
+<p><strong>The record is a recursion, not a comprehension</strong>, and the reason is worth
+recording because it is not a matter of taste. In the pinned vstd, <code>Set</code> is the
+<strong>finite</strong> set type — <code>ISet</code> is the unrestricted one — so <code>Set::new(|k| ..)</code>
+returns <code>Option&lt;Set&lt;A&gt;&gt;</code>, <code>None</code> when the predicate picks out infinitely many
+elements. The obvious comprehension would therefore have to discharge finiteness
+at every use. Built up one index at a time, <code>committed_by</code> is finite
+<em>structurally</em>, with nothing to discharge, and the price — membership is no
+longer syntactic — is paid once by <code>lemma_committed_by_members</code>.</p>
+<p><strong>C46 is the one to read</strong>, and it is worth being exact about what it does and
+does not say. State Machine Safety is <em>“if two servers apply the entry at index
+<code>i</code>, they apply the same one”</em>. C46 is that sentence with <strong>one hypothesis
+added</strong>: that the two commits agree on the entry’s <em>term</em>. So the whole of the
+remaining risk is concentrated into a single question — can two leaders commit
+entries of different terms at one index? — and that question is Leader
+Completeness.</p>
+<p>See how little is left over. The value half is free: one <code>(term, index)</code> names
+one act of creation by one leader, which Election Safety (C13) and the creation
+record (C22) give unconditionally. Nothing about <strong>values</strong>, <strong>quorums</strong> or
+<strong>counting</strong> is missing. What is missing is the argument that a later leader’s log
+cannot carry a different term at an index a quorum has already agreed on, and
+that argument has three steps:</p>
+<ol>
+<li>the leader of term <code>T'</code> won a quorum in <code>T'</code>, and that quorum meets the
+commit-time quorum of <strong>C45</strong> in some voter;</li>
+<li>that voter still held the entry when it voted;</li>
+<li>so the candidate’s log was at least as up to date as a log holding that entry,
+and <strong>C43</strong> closes the case where its last term is <em>behind</em>.</li>
+</ol>
+<p><strong>Step 2 is conditional, and its condition is the induction itself</strong> — an
+earlier version of this section said step 2 was already a theorem, citing C42,
+and that was wrong in a way worth keeping on the record. C42 carries a
+hypothesis: the replicating leader must <em>already agree</em> with the voter at that
+index. Discharging that for every intervening leader <strong>is</strong> Leader Completeness
+at the intervening terms. <strong>C48</strong> is the run-level form, and it puts the
+condition in the signature rather than in a paragraph, so it cannot be read as
+free-standing again.</p>
+<p>So: step 1 is a theorem; step 2 is a theorem <strong>with a hypothesis the induction
+discharges</strong>; step 3 is half a theorem, because the case where the candidate’s
+last term is at or above the voter’s needs the induction hypothesis at the
+intermediate term.</p>
+<h2 id="all-three-records-are-now-in-place--and-the-induction-still-is-not-c49c50"><a class="header" href="#all-three-records-are-now-in-place--and-the-induction-still-is-not-c49c50">All three records are now in place — and the induction still is not (C49–C50)</a></h2>
+<p>The third, <code>Cluster::voted_with</code>, records every vote with <strong>the voter’s log as it
+stood when the vote was cast</strong> and the candidate summary it was judged against.
+<code>tr_grant_vote</code>’s guard is a comparison at an instant, and by the time anything
+asks what it was, the voter’s log has moved on.</p>
+<p>C49 promotes that guard from a side-condition on one transition to a fact about
+every reachable state, and adds the clause that makes quantifying over the record
+mean anything: <strong>every vote is on it</strong>, self-votes included. C50 spends it —
+quorum intersection that hands back not just a shared voter but <em>what that voter
+saw</em>.</p>
+<p>It is worth being exact about why this is not the induction. Every theorem here
+is about <strong>one state</strong>. The induction relates a commit in term <code>T</code> to an election
+in a later term <code>T'</code>, and it has to compare the quorum that held the entry at
+commit time with the quorum that voted at election time <strong>across the run between
+them</strong> — which is C48’s job, and C48’s hypothesis is discharged only by the
+induction hypothesis at the intervening terms.</p>
+<p>So the materials are all here and the argument that assembles them is not. That
+is a smaller gap than it was three pushes ago, and it is still a gap.</p>
+<h2 id="so-the-materials-are-all-here--they-were-not-and-c52-is-the-one-that-was-missing"><a class="header" href="#so-the-materials-are-all-here--they-were-not-and-c52-is-the-one-that-was-missing"><del>So the materials are all here</del> — they were not, and C52 is the one that was missing</a></h2>
+<p>That sentence stood for one push, and it was wrong in a way worth keeping rather
+than editing away, because it is the third time the same mistake has been made in
+this README and the first time it was found by reading the <em>signatures</em> instead of
+the prose.</p>
+<p>C50 ends with <code>at_least_as_up_to_date(ct, ci, lg)</code>. Read it: <code>ct</code> and <code>ci</code> are
+<strong>two numbers</strong>. They came off a <code>RequestVote</code>, and nothing in C50, or anywhere
+before it, said they had anything to do with the winner’s log. So the induction’s
+third step — <em>the winner’s log dominates what the voter had</em> — was not a theorem
+here; what was a theorem was <em>the winner’s summary dominates what the voter had</em>,
+and a summary is a pair of integers that arrived over the network. As far as the
+machine-checked content went, a candidate could have been elected on a summary it
+made up.</p>
+<p><strong>C51 closes it without a fifth ghost record.</strong> The first four exist because the
+state throws information away. This one does not need to, because <code>messages</code>
+never shrinks: the <code>RequestVote</code> the candidate sent is still there, carrying the
+summary, so the link is provable. Both writing transitions make the first clause
+true by construction — <code>tr_timeout</code> sends the message it records, and
+<code>tr_grant_vote</code> is <em>guarded</em> by the message whose summary it copies — and the
+second clause holds because nothing that can change a server’s log leaves it a
+candidate: <code>tr_append_entries</code> demotes its receiver and <code>tr_client_request</code> needs
+a leader.</p>
+<p>The clause that looks like bookkeeping is the one doing the work. <em>A <code>RequestVote</code>
+never names a term its sender has not reached</em> is what makes the snapshot clause
+inductive, and the case it settles is <code>tr_timeout</code> itself: a server stepping up to
+<code>t</code> becomes a candidate of <code>t</code>, so every <code>RequestVote</code> for <code>(t, n)</code> on the wire
+now has to summarise its new log. The one it just sent does. An <strong>older</strong> one
+would not have to, and would sink the invariant — and there is none, because a
+server enters a term once. That last sentence is the whole of the third clause.</p>
+<p><strong>C52 is C50 restated about a log</strong>, at <code>tr_become_leader</code> — the last instant at
+which the winner is still a candidate, and so the last instant at which its
+summary is its log. Afterwards the log grows and the <code>RequestVote</code> is spent, which
+is faithful rather than a limitation.</p>
+<p>What is <em>still</em> missing is the induction’s second step, unchanged: the voter has
+to have still held the entry when it voted, which is C48 and its hypothesis. The
+difference C52 makes is that when that lands there is now something for it to
+meet — a statement about the new leader’s log rather than about two integers.</p>
+<h2 id="the-second-step-and-the-difference-between-a-translation-and-a-paragraph-c53c54"><a class="header" href="#the-second-step-and-the-difference-between-a-translation-and-a-paragraph-c53c54">The second step, and the difference between a translation and a paragraph (C53–C54)</a></h2>
+<p>The previous section ends “what is still missing is the induction’s second step,
+unchanged”. That is what C53 and C54 close, and the way they close it is the part
+worth reading.</p>
+<p><strong>C48 was never wrong; it was in the wrong language.</strong> It says an entry survives a
+run whenever every leader replicating to its holder already agrees with it there,
+and its hypothesis is a quantifier over <em>steps</em>. The induction hypothesis is a
+statement about <em>leaders of terms</em>: every leader of a term between the commit and
+the election holds the entry. Those are not the same sentence, and for two pushes
+this document bridged them with the words “C48’s hypothesis is discharged only by
+the induction hypothesis at the intervening terms” — which is true, and is a
+claim about a translation rather than a translation.</p>
+<p><strong>C53 is the translation, and it turns on a guard.</strong> <code>tr_append_entries</code> is the
+only transition that can shorten a log, and it requires the leader’s
+<code>current_term</code> to <em>equal</em> the follower’s. So if a server is known to be at term
+<code>T</code> or beyond, only a leader at <code>T</code> or beyond can write to it. And a member of a
+commit’s quorum <em>is</em> at <code>T</code> or beyond, because figure 8’s restriction says the
+last entry of the committed prefix carries the committing leader’s own term, the
+quorum member holds that prefix, and no entry’s term exceeds its holder’s.</p>
+<p>That is three short steps, and the middle one is where the figure-8 guard earns
+something it is not usually credited with. It is normally explained as ruling out
+a specific counterexample — a leader committing an old entry on a bare majority.
+Here it is what makes “the quorum is at term <code>T</code>” true, and without that the
+reduction from steps to leaders does not exist.</p>
+<p><strong>C54 is C48 restated in the induction’s own words.</strong> <code>replicators_hold</code> is the
+tight form — every standing leader that could replicate to the holder right now —
+and it carries no term bound, because persistence does not need one;
+<code>leaders_within_hold</code> is what the induction supplies, Leader Completeness over the
+closed range <code>[t0, t1]</code>; and <code>theorem_a_commit_quorum_still_holds_it</code> composes
+that with the commit-time quorum. The hypothesis is still a hypothesis — an
+intervening leader that does <em>not</em> hold the entry will truncate it away, which is
+faithful Raft — but it is now the induction hypothesis rather than something a
+sentence asserts is equivalent to it.</p>
+<p><strong>The upper bound is there because the first version did not have it.</strong> <code>@codex</code>
+found that, and the finding is the most interesting thing in the push. Strong
+induction on the election’s term <code>T</code> supplies Leader Completeness for terms
+<em>below</em> <code>T</code>; a predicate reading “every standing leader of a term at or past <code>t0</code>”
+demands it for terms <strong>above</strong> <code>T</code> too. Those leaders exist — nothing in this
+model orders terms cluster-wide, since <code>tr_grant_vote</code> only requires the request’s
+term to be at least the voter’s own, so a leader of a far higher term can be
+running elsewhere while a delayed campaign at <code>T</code> is still collecting votes. They
+are <em>harmless</em>, because <code>tr_append_entries</code> needs equal terms and so they cannot
+reach a voter at a lower term. But the old predicate demanded they hold the entry
+anyway, and C54 could not have been discharged from the induction hypothesis
+without assuming Leader Completeness at terms the induction had not reached.</p>
+<p>A hypothesis stronger than the argument needs is not a safe over-approximation
+when the hypothesis is what somebody else has to supply. That is the general form
+of the lesson, and it is the fourth time on this branch that the machine-checked
+content was fine and the <em>claim about</em> it was not.</p>
+<p><strong>Where the two bounds come from is asymmetric, and worth reading.</strong> The lower one
+is established at the window’s start — C53 puts the quorum at <code>T</code> or beyond, and
+terms never fall. The upper one is established at the window’s <strong>end</strong>: in the use
+the induction will make of this, the window closes when the voter grants its vote
+in term <code>t1</code>, and <code>tr_grant_vote</code> requires the request’s term to be at least the
+voter’s own, so the voter is at <code>t1</code> or below <em>then</em> — and monotonicity carries it
+backwards over the whole window. The upper bound is not an extra assumption about
+the run; it is the vote.</p>
+<p><strong>And the <code>t1</code> endpoint is an open obligation</strong>, stated in the theorem’s own docs
+rather than deferred to a paragraph: the range is closed, so the induction needs
+its case at <code>t1</code> before it may use C54 at <code>t1</code>, and a leader of <code>t1</code> <em>can</em> exist
+before this voter has voted in <code>t1</code>, because winning <code>t1</code> needs <em>a</em> quorum and not
+this one. Either the induction establishes <code>t1</code> first, or it restricts the window
+to end strictly before any leader of <code>t1</code> exists. This push does not settle which.</p>
+<p><strong>So all three steps now speak about the same objects</strong> — an entry, an index, a
+term, a log:</p>
+<ol>
+<li>a quorum held the entry at commit time (<strong>C45</strong>);</li>
+<li>a member of that quorum still held it when it voted (<strong>C54</strong>, given Leader
+Completeness at the intervening terms);</li>
+<li>the winner’s own log dominates that voter’s (<strong>C52</strong>).</li>
+</ol>
+<p>What is left is a strong induction over terms and nothing else. That is a claim
+about shape, and it is worth being explicit that it is not a claim that the
+induction is proved. It is not. But the previous four sections each ended by
+naming a missing <em>object</em> — a record, a link, a translation — and this one does
+not: there is no missing object, only the argument.</p>
+<p><strong>C38 is what that gap costs, stated concretely.</strong> Because the model may not
+assume that state unreachable, it has to handle it, and handling it means a
+follower’s commit index can retreat — one Raft property given up to keep
+another. C38 confines the retreat to exactly the state Leader Completeness would
+rule out, so the gap has a boundary and a name rather than being a general
+caveat. Closing that proof closes this too.</p>
+<p><strong>There is no reconfiguration</strong>, deliberately: membership is fixed and no
+transition changes it. Joint consensus is a separate protocol with its own
+well-known unsafety, and modelling it half-way would be worse than not modelling
+it.</p>
+<h2 id="a-log-that-truncates-on-a-device-that-cannot"><a class="header" href="#a-log-that-truncates-on-a-device-that-cannot">A log that truncates, on a device that cannot</a></h2>
+<p>Raft’s log shrinks. Figure 2’s rule 3 deletes a conflicting entry and everything
+after it, and <code>appended_log</code> is that rule. Every durable log worth trusting
+<em>grows</em>: <code>vendor/verified-storage/pmemlog</code>’s abstract state offers <code>append</code> and <code>advance_head</code> —
+put bytes on the end, or forget bytes from the front — and nothing that takes
+the tail back.</p>
+<p>That is not a gap in the vendored crate. It is what makes a crash-consistent log
+cheap: an append that either happened or did not is one write, while a tail that
+moves backwards is a state the device has to be able to be caught in the middle
+of.</p>
+<p><code>src/raft/store_v.rs</code> reconciles them in four lines of idea:</p>
+<ol>
+<li>the device holds a sequence of <code>Record</code>s, and only ever grows;</li>
+<li>a truncation is a <em>record</em>, <code>Record::Truncate { len }</code>, appended like any other;</li>
+<li>the log is <code>replay</code> of the records, computed on recovery;</li>
+<li>therefore the physical log is append-only and the logical log truncates.</li>
+</ol>
+<p>C27–C31 are what that buys. The one to read first is <strong>C27</strong>, and it is worth
+reading for how boring its proof is: the recovery case of “memory agrees with
+the device” is discharged by the transition’s own definition, because
+<code>store_recover</code> <em>defines</em> the recovered log as <code>replay</code> of what survived. A
+design where recovery has to reconcile two sources is a design where that proof
+is the hard one. Here there is one source.</p>
+<p><strong>C29 is where the protocol and the storage layer turn out to want the same
+thing.</strong> Accepting a replicated entry costs two records when the entry at
+<code>prefix</code> conflicts, and <strong>zero</strong> when it does not — the no-conflict branch
+writes nothing at all. That branch exists because of C25: the conditional
+truncation is what keeps the creation record true, and it is what makes Log
+Matching provable. It is also, it turns out, what makes the common case — a
+duplicate or reordered <code>AppendEntries</code>, which under heartbeats is most of them —
+a read and no write. The check that makes the protocol safe is the check that
+makes the steady state free.</p>
+<h3 id="the-commit-point-and-the-one-raft-property-this-model-gives-up"><a class="header" href="#the-commit-point-and-the-one-raft-property-this-model-gives-up">The commit point, and the one Raft property this model gives up</a></h3>
+<p>Raft’s commit index is monotone. This model’s is not, in exactly one case, and
+the case is worth understanding because it is the shape of what is still
+missing.</p>
+<p><code>accepted_commit</code> clamps the commit index to the length of the log. A follower
+with <code>commit = 5</code> told to replace the entry at index 0 ends with a one-entry
+log, and something has to give: either its commit point still says 5 — naming
+four entries that no longer exist — or it retreats to 1. <strong>This model
+retreats.</strong> A commit point past the end of the log is a state no later reader
+can make sense of, since every query about what has been applied reads off the
+end; a commit point that went backwards is a broken promise, but a readable one,
+and the breach is visible rather than latent.</p>
+<p>An earlier version of this comment claimed <em>both</em> “never backwards” and “never
+past the end of the log”, which cannot both hold. That was a review finding and
+it was correct.</p>
+<p>What replaced it is <strong>C38</strong>, which says precisely when the retreat happens:
+commit is monotone whenever the truncation point is at or above it — every step
+of a healthy cluster — and when it retreats, the leader asked the follower to
+delete an entry it had <strong>committed</strong>. Not “commit might go backwards sometimes”,
+but <em>“commit goes backwards only in the state whose unreachability is the
+missing theorem”</em>.</p>
+<p>That missing theorem is Leader Completeness. When it lands, C38’s hypothesis
+becomes vacuous and monotonicity becomes unconditional. Until then the model may
+not treat the case as unreachable — so it handles it, and says how.</p>
+<h3 id="the-byte-layer-and-the-theorem-it-exists-for"><a class="header" href="#the-byte-layer-and-the-theorem-it-exists-for">The byte layer, and the theorem it exists for</a></h3>
+<p>C27–C31 are about <em>records</em>; pmemlog appends <em>bytes</em>. <code>src/raft/wire_v.rs</code> is the
+layer between, and it exists to make one statement provable.</p>
+<p>C28 says a crash leaves a prefix of the <strong>records</strong>. A device leaves a prefix of
+the <strong>bytes</strong>, and a byte prefix can cut a record in half. Without a theorem
+joining the two, C28’s hypothesis is an assumption about how writes land wearing
+the clothes of a definition.</p>
+<p><strong>C32 is that theorem</strong>: for every <code>k</code> at all — not multiples of seventeen —
+<code>parse(encode(rs).take(k)) == rs.take(k / 17)</code>. The tear may land in the middle
+of a <code>u64</code>. That is what the fixed width buys, and it is why the format is
+seventeen flat bytes rather than a length prefix or a varint: a log whose
+recovery depends on the parser being clever is a log whose recovery has a bug in
+it. There is no checksum here either, because pmemlog CRCs what it stores and a
+second one at this layer would add bytes and no guarantee.</p>
+<p>The chain is then: a device keeps a byte prefix (C32) → that is a record prefix
+(C28) → <code>replay</code> of a record prefix is a log the store had (C27). No step asks
+the device for more than <em>“you keep a prefix of what I wrote”</em>.</p>
+<h3 id="the-line-a-crash-may-not-cross"><a class="header" href="#the-line-a-crash-may-not-cross">The line a crash may not cross</a></h3>
+<p>C27 and C28 as first written said <em>“a crash keeps a prefix”</em> — which permits
+the <strong>empty</strong> prefix. After any completed append, a restart could discard every
+record the store had reported durable, including entries a leader committed on
+the strength of that acknowledgement. That is strictly weaker than the device
+underneath: pmemlog’s append shows a crash either the log before it or the log
+after it and nothing older. A layer whose whole job is to be no weaker than
+pmemlog was weaker than pmemlog, and no test caught it because every crash the
+suite simulates happens to be an honest one.</p>
+<p><code>Store</code> carries <code>durable</code>, and the model now separates <strong>what the device
+offers</strong> — <code>store_write</code>, one record on the device with the line unmoved, and
+<code>store_sync</code>, the only thing that moves it — from <strong>what a caller gets</strong>:
+<code>store_append</code> and <code>store_truncate</code>, durable before they return, which is what
+<code>LogStore</code> already promised in prose. <code>theorem_an_append_is_a_write_then_a_sync</code>
+is the proof that the promise is kept by the two primitives and not by a third
+thing the model invented.</p>
+<p><strong>C35 is the theorem that buys.</strong> Read the second clause: the line never
+retreats <em>and</em> everything below it is unchanged record for record. A store that
+kept the right <em>number</em> of records while rewriting one of them would satisfy the
+first and fail the second. And read the third statement in it, which is where
+this module meets Raft’s commit rule — a follower that answers <code>Accepted</code> has
+written the entry down, so a leader counting that answer toward a majority is
+counting something that cannot be taken back. Remove the durability hypothesis
+and the conclusion fails immediately; that is what it is there to show.</p>
+<h3 id="compaction-has-a-middle-state"><a class="header" href="#compaction-has-a-middle-state">Compaction has a middle state</a></h3>
+<p><code>theorem_compaction_replays_the_same</code> says <code>replay(compacted(log)) == log</code>,
+which is true and licenses nothing. It covers the case where the rewrite has
+<strong>already</strong> replaced what came before — the case that needs no proof. The
+procedure is two steps on an append-only device, write the new generation and
+then reclaim the old one, and a crash between them leaves
+<code>old_records ++ compacted(log)</code>, which replays to <code>log + log</code>. Every entry
+twice.</p>
+<p><code>compaction_batch</code> is a leading <code>Truncate { len: 0 }</code> and then the log, and that
+marker is what makes the staged generation <strong>self-sufficient</strong>: it clears
+whatever preceded it, so the device replays to <code>log</code> with the old records still
+there and to <code>log</code> once they are gone. Both crash views agree, which is what
+turns the reclaim from a change into a no-op (C36).</p>
+<p>It has to land atomically, and that is not a preference. A crash <em>inside</em> the
+batch leaves the marker — which has already cleared everything — plus a
+<em>prefix</em> of the log, so recovery produces a shorter log than the store had.
+<strong>C36b proves the rewind is exact</strong>: a crash after <code>k</code> of the batch’s entries
+recovers exactly <code>k</code>, because a partial batch is not arbitrary damage, it is the
+compaction of a shorter log. Data loss on an operation whose entire purpose is
+to change nothing.</p>
+<p>So the batch is one <code>store_write_batch</code>: on pmemlog a single <code>append</code>, whose
+crash view is the log before it or the log after it and nothing between. <strong>That
+is the one property of the device this design asks for and cannot itself
+check</strong>, and it is the property pmemlog was built to have. <code>RecordLogStore</code>
+installs the batch in one step; <code>a_batch_written_one_record_at_a_time_would_rewind_the_log</code>
+walks every cut inside it and checks the real <code>compact</code> produces none of them.</p>
+<p>This was a review finding and it was a bug in the <em>code</em>, not the model: the
+executable store appended the batch a record at a time under a doc comment
+saying it must not. The model had no word for “atomically”, which is why the
+two could drift with nothing to catch it — <code>store_write_batch</code> is that word.</p>
+<p>Two limitations, stated rather than assumed away:</p>
+<ul>
+<li><strong>The 64-bit boundary.</strong> <code>Record</code>’s fields are <code>nat</code>, because the model’s
+terms are unbounded and a model that caps them has an overflow bug the
+protocol does not. Bytes are not unbounded. <code>records_fit</code> is therefore a
+<strong>guard on the write transitions and a clause of the store invariant</strong>, not
+merely a precondition on C32 and C33 — stated only on the theorems it would
+filter which theorems may be <em>invoked</em> while leaving the unencodable state
+reachable, so the store half and the wire half could not be composed at all
+(C37). A cluster reaching term 2^64 now has a store that cannot advance,
+rather than one that silently writes the wrong record.</li>
+<li><del><strong>The device grows even when the log does not</strong>, because nothing schedules
+compaction</del> — <strong>closed.</strong> A follower thrashing between two leaders writes a
+record per round, and <code>worth_compacting</code> now fires at
+<code>records &gt; 2 * (entries + 1)</code>: amortised O(1), with the bound asserted every
+round over sixty rounds of the worst shape. C31 says the rewrite is sound;
+<code>compact_if_worthwhile</code> is what makes it happen.</li>
+<li><strong>Nothing in <code>src/</code> depends on <code>vendor/verified-storage/pmemlog</code> yet</strong>, and the reason is no
+longer “the executable layer does not exist” — <code>replay_exec</code>, <code>encode_exec</code>
+and <code>parse_exec</code> do. What is missing is a <strong>device</strong>, and the obstacle there is
+not an interface but a crash model: pmemlog’s <code>persistence_chunk_size</code> is 8 and
+a write must be safe for <em>any subset</em> of 8-byte chunks having flushed, which
+<strong>POSIX does not promise</strong> for a write crossing a chunk. An <code>fsync</code>-per-write
+file would not satisfy it. That needs a target platform — real PM, <code>O_DIRECT</code>
+with aligned single-sector writes, or an explicitly weaker documented device.
+Until one exists, pmemlog’s two corruption assumptions are not assumptions of
+anything proved here.</li>
+</ul>
+<h2 id="the-consensus-service"><a class="header" href="#the-consensus-service">The consensus service</a></h2>
+<p><strong>The election record is verified code; the log, the commit point and the shell
+are not (CE1–CE2).</strong> <code>Peer</code> keeps an <code>exec::ElectionCore</code> behind its lock — role,
+term, whom it voted for, and the votes it has counted — and <code>stand_for_election</code>,
+the vote handling in <code>request_vote</code>, <code>step_down_to</code>, <code>yield_at</code> and the tally in
+<code>count_ballot</code> all go through it, so each is the model’s step by contract and each
+refusal a step the model could not take. What is not proved: the log and the
+up-to-date comparison (an argument to the core), the commit point and replication
+progress (<code>record_match</code> and the figure-8 rule are plain Rust), the roster, the
+lock, the audit log, and the durable store — the core calls <code>persist</code> with the term
+and vote before it moves, and that order is the code’s, not a theorem.</p>
+<p><code>src/raft/service.rs</code> serves it: <code>request_vote</code> with the up-to-date comparison,
+<code>append_entries</code> with the consistency check and the truncation, <code>heartbeat</code>,
+<code>standing</code>. As in the ownership service, <strong>no method takes a server number</strong> —
+the candidate asking for a vote is whoever opened the connection — and that
+matters more here, because a protocol whose entire safety argument is “a server
+votes once per term” is exactly the one you do not want taking the voter’s or the
+candidate’s identity from a field. Standing for election, tallying, taking a
+term, appending a command and advancing the commit point are inherent methods
+rather than RPCs, for the reason <code>force</code> is inherent on the ownership registry: a
+peer that could trigger them could keep the cluster in a permanent election, or
+declare somebody’s entry committed.</p>
+<p>The log itself is a <strong>trait</strong>, <code>LogStore</code>, with <code>MemoryLogStore</code> as the mock the
+tests run against. A real log is a file with a format, an fsync policy and a
+truncation story, none of which belongs in the protocol; the protocol’s own
+behaviour is exactly what you want to exercise without a disk in the way.</p>
+<p><strong>Replies are protocol steps too.</strong> Raft’s term rule is about <em>“RPC request or
+response”</em>, and a <code>Ballot::Refused(2)</code> reaching a term-1 candidate carries the
+same news as an inbound request would. <code>count_ballot</code>, <code>observe_standing</code> and
+<code>observe_appended</code> are that side of it, and they take the reply itself rather
+than a summary: there is no way into a candidate’s tally except by handing over a
+<code>Ballot::Granted</code> for the term being stood in. A method taking only <code>(peer, term)</code> would let a caller count a peer that refused — a majority assembled out of
+nothing, and a leader the model never elected.</p>
+<p><strong>And the same durability finding, arrived at from the other end.</strong> Raft’s own
+figure 2 requires <code>currentTerm</code> and <code>votedFor</code> on stable storage <em>before
+responding to RPCs</em>. That is the requirement the ownership registry’s epoch floor
+turned out to have, and it is load-bearing for the same reason: a server that
+grants a vote, replies, restarts having forgotten, and grants again has voted
+twice in one term — two candidates can then each hold a majority, and Election
+Safety is gone. Not because the proof is wrong, but because <code>already_voted</code> was
+reported <code>false</code> when the model’s <code>has_voted</code> was true. <code>tests/raft_election.rs</code>
+runs that in both directions: a restarted voter that refuses the second request,
+and a forgetful one that grants it and elects two leaders.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../reference/raymond.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../reference/actor.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../reference/raymond.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../reference/actor.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-609e4cb8.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

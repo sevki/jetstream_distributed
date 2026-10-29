@@ -39,6 +39,20 @@ A third job, `pmemlog proof check`, verifies the vendored persistent-memory log
 (`vendor/verified-storage/pmemlog`) the same way, and checks that the vendored tree is
 byte-for-byte Microsoft's at the pinned commit. See [`vendor/README.md`](https://github.com/sevki/jetstream_distributed/blob/main/vendor/README.md).
 
+A fourth job, `Module layering`, needs no toolchain at all:
+
+```bash
+python3 -I .github/scripts/check-modules.py
+```
+
+It reads the `crate::...` imports and fails on a **cycle** between modules, or when a
+**standalone** module (`ownership`, `raft`, `swim`) depends on anything but `id` and the
+modules that only describe shapes (`protocol`, `temporal`, `compose`, `membership`). A cycle compiles, so nothing else would notice one: three went unnoticed
+until it was looked for. The check asserts that a few edges it knows are true are found,
+so a pattern that stops matching fails loudly and does not report "no cycle". Making a
+standalone module depend on something is a decision, and it is made by editing the
+`STANDALONE` set in that script in the same change.
+
 The services and the simulated-network tests are not verified, only run:
 
 ```bash

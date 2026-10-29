@@ -10,7 +10,7 @@ use crate::compute::{Instant, Job, Resources};
 use crate::scheduling::discovery::{Discovery, DiscoveryError};
 use crate::scheduling::lava::{LifetimePredictor, Scheduler};
 use crate::scheduling::placement::{Placement, PlacementError};
-use crate::swim::service::{Liveness, Node, Update};
+use crate::membership::{FailureDetector, Liveness};
 use crate::{
     actor::{
         service::{Actor, Receipt, Record, Snapshot},
@@ -58,12 +58,15 @@ where
         }
     }
 
-    /// Bring placement and discovery up to date with what `node` believes about
-    /// its members, and give back the jobs of the hosts that left, as
+    /// Bring placement and discovery up to date with what `detector` believes
+    /// about its members, and give back the jobs of the hosts that left, as
     /// [`QuicDirectory::observe`] does. Call it as often as membership should
     /// be looked at; looking twice at the same view does nothing the second time.
-    pub fn watch(&mut self, node: &Node) -> Vec<Job<F>> {
-        self.directory.observe(node.view())
+    ///
+    /// Any [`FailureDetector`] will do: this is written against the contract, not
+    /// against SWIM's `Node`, which is one implementation of it.
+    pub fn watch(&mut self, detector: &impl FailureDetector) -> Vec<Job<F>> {
+        self.directory.observe(detector.standings())
     }
 
     /// Give each address `timeout` to complete the handshake instead of the
@@ -298,8 +301,8 @@ where
         Ok(jobs)
     }
 
-    /// Bring this directory up to date with a membership `view`: the records
-    /// [`Node::view`] gives, or any others.
+    /// Bring this directory up to date with a membership `view`: the pairs
+    /// [`FailureDetector::standings`] gives, or any others.
     ///
     /// A `Suspect` host is [held back](Self::host_suspected), a `Dead` or `Left`
     /// one has [left](Self::host_left), and an `Alive` one is [back](Self::host_back).
@@ -312,9 +315,9 @@ where
     ///
     /// Returns the jobs of the hosts that left in this view, for the caller to
     /// place again or not.
-    pub fn observe(&mut self, view: impl IntoIterator<Item = Update>) -> Vec<Job<F>> {
+    pub fn observe(&mut self, view: impl IntoIterator<Item = (Id, Liveness)>) -> Vec<Job<F>> {
         let mut left = Vec::new();
-        for Update { node, status, .. } in view {
+        for (node, status) in view {
             // A host in `hosts` is in the scheduler: `add_host` puts it in both,
             // so none of the calls below can name an unknown one.
             if !self.hosts.contains_key(&node) {
@@ -446,6 +449,7 @@ mod tests {
     use crate::scheduling::lava::{EmpiricalLifetime, EmpiricalPredictor};
 
     use super::*;
+    use crate::swim::service::{Node, Update};
     use ping_protocol::{PingChannel, PingService};
 
     #[service]
@@ -813,12 +817,8 @@ mod tests {
         directory
     }
 
-    fn say(node: Id, status: Liveness) -> Update {
-        Update {
-            node,
-            incarnation: 0,
-            status,
-        }
+    fn say(node: Id, status: Liveness) -> (Id, Liveness) {
+        (node, status)
     }
 
     fn is_schedulable(

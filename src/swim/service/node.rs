@@ -4,8 +4,9 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
 use super::refusal::{refuse, refuse_err, refuse_no};
-use super::{Liveness, MAX_UPDATES, Membership, Update};
+use super::{Liveness, MAX_UPDATES, Swim, Update};
 use crate::id::Id;
+use crate::membership::{FailureDetector, PeerSampling};
 use crate::swim::exec::SwimTable;
 use crate::swim::steps::{ExecRecord, ExecStatus, key_geq_exec};
 use jetstream::prelude::*;
@@ -296,7 +297,7 @@ impl Node {
 ///
 /// The sender is an argument, taken from the message, and these take no `Context`
 /// and do no I/O, so they need no transport to be driven or tested. The
-/// [`Membership`] service below is these, behind the generated protocol.
+/// [`Swim`] service below is these, behind the generated protocol.
 impl Node {
     /// SWIM's ping from `from`, with the dissemination piggybacked: merge
     /// `updates`, and answer with this node's records for every member they
@@ -326,13 +327,43 @@ impl Node {
 ///
 /// (`Node::ping` and `Node::sync` above take precedence in a method call; the
 /// service's own, with a `Context`, are reached through the generated channel or
-/// as `Membership::ping(&node, ctx, from, updates)`.)
-impl Membership for Node {
+/// as `Swim::ping(&node, ctx, from, updates)`.)
+impl Swim for Node {
     async fn ping(&self, _ctx: Context, from: Id, updates: Vec<Update>) -> Result<Vec<Update>> {
         Node::ping(self, from, &updates)
     }
 
     async fn sync(&self, _ctx: Context, from: Id, updates: Vec<Update>) -> Result<Vec<Update>> {
         Node::sync(self, from, &updates)
+    }
+}
+
+/// SWIM as a [`PeerSampling`]: the members it would still probe and gossip with.
+impl PeerSampling for Node {
+    fn local(&self) -> Id {
+        self.me
+    }
+
+    /// Every member except this node whose standing is `Alive` or `Suspect`.
+    ///
+    /// A suspect member is still probed (that is how a wrong suspicion gets
+    /// refuted), so it is a peer; a `Dead` or `Left` one is not.
+    fn peers(&self) -> Vec<Id> {
+        self.standings()
+            .into_iter()
+            .filter(|&(n, s)| n != self.me && matches!(s, Liveness::Alive | Liveness::Suspect))
+            .map(|(n, _)| n)
+            .collect()
+    }
+}
+
+/// SWIM as a [`FailureDetector`]: the table, read as standings.
+impl FailureDetector for Node {
+    fn standing(&self, node: Id) -> Option<Liveness> {
+        self.record(node).map(|u| u.status)
+    }
+
+    fn standings(&self) -> Vec<(Id, Liveness)> {
+        self.view().into_iter().map(|u| (u.node, u.status)).collect()
     }
 }

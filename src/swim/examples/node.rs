@@ -8,7 +8,7 @@
 //!   as the sender. The seed takes you in as a member, and its reply is the whole
 //!   cluster. The seed tells the others by gossip; you never call them to join;
 //! * **serve**: accept a connection and hand it to the generated
-//!   `MembershipService`;
+//!   `SwimService`;
 //! * **probe**: every period, `ping` one peer, piggybacking this node's whole view;
 //! * **suspect**: a ping that fails or times out makes the node believe the peer
 //!   suspect, at the incarnation it had recorded *when the probe began*;
@@ -51,8 +51,8 @@ use jetstream::prelude::jetstream_rpc::session::{Session, SingleLaneSession};
 use jetstream::prelude::*;
 use jetstream_distributed::id::Id;
 use jetstream_distributed::swim::service::{
-    Liveness, Membership, Node, Update,
-    membership_protocol::{MembershipChannel, MembershipService},
+    Liveness, Swim, Node, Update,
+    swim_protocol::{SwimChannel, SwimService},
 };
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
@@ -94,11 +94,11 @@ async fn serve(node: Node, me: u128) -> std::io::Result<()> {
         let node = node.clone();
         tokio::spawn(async move {
             // Who is calling is in each message. Nothing here checks it.
-            let session = SingleLaneSession::<MembershipChannel, _, _>::service_io(stream);
-            let Ok(lane) = Session::<MembershipChannel>::accept_lane(&session).await else {
+            let session = SingleLaneSession::<SwimChannel, _, _>::service_io(stream);
+            let Ok(lane) = Session::<SwimChannel>::accept_lane(&session).await else {
                 return;
             };
-            let mut service = MembershipService { inner: node };
+            let mut service = SwimService { inner: node };
             let _ = jetstream_rpc::server::run(&mut service, lane).await;
         });
     }
@@ -123,9 +123,9 @@ async fn call(
     let call = async {
         let stream = TcpStream::connect(SocketAddr::new(addr_of(peer), PORT)).await?;
         // The session owns the lane's I/O, so it outlives the channel.
-        let session = SingleLaneSession::<MembershipChannel, _, _>::client_io(stream);
-        let lane = Session::<MembershipChannel>::open_lane(&session).await?;
-        let channel = MembershipChannel::new(64, Box::new(lane));
+        let session = SingleLaneSession::<SwimChannel, _, _>::client_io(stream);
+        let lane = Session::<SwimChannel>::open_lane(&session).await?;
+        let channel = SwimChannel::new(64, Box::new(lane));
         channel.negotiate_version(u32::MAX).await?;
         match kind {
             Call::Ping => channel.ping(Context::default(), Id(me), view).await,

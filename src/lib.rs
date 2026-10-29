@@ -26,6 +26,9 @@
 //! * [`actor`]     — a distributed actor: a journal fenced by ownership, so one
 //!   host at a time, each message once, in order, and state that
 //!   survives a handover.
+//! * [`membership`] — what a consumer of any membership protocol reads (who the
+//!   peers are; for a failure detector, each member's standing), written once so
+//!   that it does not name SWIM. `service` feature.
 //! * [`swim`]      — gossip membership, which buys neither exclusivity nor
 //!   agreement, and promises only that disagreements resolve.
 //! * [`protocol`]  — not an algorithm: the labelled-step shape every model above
@@ -67,6 +70,8 @@ pub mod composed;
 pub mod compute;
 // Vivaldi coordinates need `rand` and a wire format, so they are with the services.
 pub mod id;
+#[cfg(feature = "service")]
+pub mod membership;
 #[cfg(feature = "service")]
 pub mod monitoring;
 pub mod ownership;

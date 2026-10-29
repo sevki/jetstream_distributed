@@ -58,7 +58,9 @@ the old address is answered `FENCED`.
 
 ## Membership as a hint
 
-[SWIM](swim.md) tells the directory which hosts look gone:
+[SWIM](swim.md) tells the directory which hosts look gone. The directory reads
+any `membership::FailureDetector` (`QuicActorSystem::watch(&detector)`), not SWIM's
+`Node` in particular; SWIM is the one implementation today.
 
 | Membership says | The directory |
 | --- | --- |

@@ -99,7 +99,7 @@ network-timing piece that is still future work.
 
 `src/swim/service/` serves the protocol over
 [Jetstream](https://github.com/sevki/jetstream) RPC: `#[service] trait
-Membership` with `ping` and `sync`, implemented by a `Node` whose table is
+Swim` with `ping` and `sync`, implemented by a `Node` whose table is
 written in exactly one place, by `exec::SwimTable::hear` — the verified table, whose
 merge is `steps::merge_step` (S10–S12).
 
@@ -111,6 +111,33 @@ dissemination riding on it); `sync` answers with the whole table
 missed). As in the other two services, **no method takes the sender's number**:
 who is calling is the `Context`, and an `Update`'s `node` field names the
 member being spoken *about*, which has to be content.
+
+### What a consumer reads is not SWIM's wire protocol
+
+`Swim` is how SWIM nodes talk to each other. What a *consumer* of membership reads
+(the placement layer in the QUIC system, say) is a different and smaller thing, and
+it is written once, in `src/membership/`, so that it does not name SWIM:
+
+* `membership::PeerSampling`: `local()` and `peers()`, the members this node would
+  exchange gossip with. Never itself, never repeated. This is the part any
+  membership protocol offers, including one with a partial view and no verdicts.
+* `membership::FailureDetector`: a `PeerSampling` that also gives each member heard
+  of a `Liveness` (`Alive`, `Suspect`, `Dead`, `Left`), through `standing(node)` and
+  `standings()`. This is what SWIM adds.
+
+`Node` implements both. For SWIM, `peers()` is every member but itself that is
+`Alive` or `Suspect` (a suspect member is still probed, which is how a wrong
+suspicion is refuted), and `standings()` keeps the dead and the departed as well,
+because a consumer acting on a departure has to hear it. `QuicActorSystem::watch`
+takes any `FailureDetector`.
+
+**Not proved.** This layer is plain Rust. Verus checks the merge rule and the
+executable steps (S1–S14), not what `peers` and `standings` return. What the traits
+promise is held by `tests/membership_contract.rs`, whose checks are written against
+the traits and so apply unchanged to any other implementation. There is no spec-level
+view of a protocol's state yet: it is defined against the first property that reads
+it, and with SWIM the only implementation the shared part could not be told apart from
+SWIM's own.
 
 **Suspecting, declaring dead and refuting are not on the wire**, for the reason
 Raft's `stand_for_election` is not on its: they are things a node does about its

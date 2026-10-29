@@ -1,8 +1,6 @@
 //! The node: a table that obeys the merge rule, and answers its peers.
 
-use std::collections::{BTreeSet, HashMap};
-use std::io;
-use std::net::IpAddr;
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
 use super::refusal::{refuse, refuse_err, refuse_no};
@@ -10,7 +8,6 @@ use super::{Liveness, MAX_UPDATES, Membership, Update};
 use crate::id::Id;
 use crate::swim::exec::SwimTable;
 use crate::swim::steps::{ExecRecord, ExecStatus, key_geq_exec};
-use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;
 
 /// What a node did, for an audit and for tests that check *why* a record is
@@ -30,52 +27,10 @@ pub enum Event {
     Departed { incarnation: u64 },
 }
 
-/// Who may join: from a caller's address, the member number that address is
-/// admitted as, or `None` to refuse it.
-///
-/// The member number comes out of the policy and never out of the request, so
-/// a caller cannot name itself: whoever writes the policy decides what an
-/// address is allowed to be, and the connection supplies the address.
-///
-/// The policy is called with the node's lock held, once per call from an address
-/// the node has not admitted. It must be quick and must not call back into the
-/// node, or the node stalls.
-///
-/// A member that has left or been declared dead may come back from a different
-/// address, and the new one replaces the old; a member that is live may not be
-/// given a second address.
-pub type Admission = Arc<dyn Fn(IpAddr) -> Option<Id> + Send + Sync>;
-
-/// Who is calling, and what accepting the request would change about who is known.
-enum Caller {
-    /// An address already admitted.
-    Known,
-    /// A new address the policy lets in as `id`, replacing `replaces` (the old
-    /// addresses of a member that has left or died).
-    Admit {
-        addr: IpAddr,
-        id: Id,
-        replaces: Vec<IpAddr>,
-    },
-}
-
-impl Caller {
-    /// The member this request would add, if it is a new one.
-    fn admitting(&self) -> Option<Id> {
-        match self {
-            Caller::Known => None,
-            Caller::Admit { id, .. } => Some(*id),
-        }
-    }
-}
-
 struct Inner {
-    /// Connection address to member number: the members that have been
-    /// admitted. Grows when [`Admission`] lets a new address in.
-    addrs: HashMap<IpAddr, Id>,
-    /// Every member number this node knows of, itself included: those with an
-    /// address above, and those only heard about. Never shrinks, so a departed
-    /// member's record is kept and goes on out-ranking stale reports of it.
+    /// Every member number this node knows of, itself included: those that have
+    /// called, and those only heard about. Never shrinks, so a departed member's
+    /// record is kept and goes on out-ranking stale reports of it.
     members: BTreeSet<Id>,
     /// One record per member that has ever been heard about. A member with no
     /// entry is exactly a member at its fresh record — the model's `record_of`
@@ -88,9 +43,6 @@ struct Inner {
 #[derive(Clone)]
 pub struct Node {
     inner: Arc<Mutex<Inner>>,
-    /// Who else may join, if anyone. `None` is a closed cluster: the members
-    /// are exactly the ones this node was built with.
-    admission: Option<Admission>,
     /// This node's own number.
     me: Id,
 }
@@ -106,72 +58,23 @@ fn same(a: ExecRecord, b: ExecRecord) -> bool {
 }
 
 impl Node {
-    /// A node that knows nobody yet but its roster.
+    /// A node that knows only itself.
     ///
-    /// Every member starts at its fresh record. Nothing is read from disk; see
-    /// "What a node does not need to write down" in the module docs.
+    /// Everyone else is learned: a member is whoever a message says is sending
+    /// it, and whoever a member says exists (see [`Node::ping`] and
+    /// [`Node::apply`]). Every member starts at its fresh record. Nothing is read
+    /// from disk; see "What a node does not need to write down" in the module docs.
     ///
-    /// The cluster is closed: no address off this roster can ever join. For one
-    /// that grows, see [`Node::admitting`].
-    pub fn new(roster: HashMap<IpAddr, Id>, me: Id) -> io::Result<Self> {
-        Self::build(roster, me, None)
-    }
-
-    /// A node whose cluster can grow: `roster` is who it starts with, and
-    /// `admission` decides who else may join.
-    ///
-    /// A caller whose address is not yet known is put to `admission`; if that
-    /// names a member number the caller is admitted, and from then on is known
-    /// by address like any other member. There is no join call: a join is the
-    /// first `ping` or `sync` from an address the policy lets in, and the
-    /// `sync` reply is how the newcomer learns who else is there.
-    ///
-    /// Admission is a *policy*, not a protocol. SWIM says nothing about who may
-    /// be in the cluster, and a policy that admits every address makes every
-    /// address a member, with the standing the module docs describe.
-    pub fn admitting(
-        roster: HashMap<IpAddr, Id>,
-        me: Id,
-        admission: Admission,
-    ) -> io::Result<Self> {
-        Self::build(roster, me, Some(admission))
-    }
-
-    fn build(
-        roster: HashMap<IpAddr, Id>,
-        me: Id,
-        admission: Option<Admission>,
-    ) -> io::Result<Self> {
-        if !roster.values().any(|&n| n == me) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("node {me} is not on the roster"),
-            ));
-        }
-        // A `sync` reply is the whole table, and the node that asked feeds it
-        // through `apply`, which refuses more than `MAX_UPDATES` entries. A
-        // roster bigger than that could never complete its own push/pull, so it
-        // is refused here rather than discovered there.
-        let members: BTreeSet<Id> = roster.values().copied().collect();
-        if members.len() > MAX_UPDATES {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "{} members exceed the {MAX_UPDATES}-update message limit",
-                    members.len()
-                ),
-            ));
-        }
-        Ok(Node {
+    /// Who may call is not the node's to say, and it does not check.
+    pub fn new(me: Id) -> Self {
+        Node {
             inner: Arc::new(Mutex::new(Inner {
-                addrs: roster,
-                members,
+                members: BTreeSet::from([me]),
                 table: SwimTable::new(),
                 log: Vec::new(),
             })),
-            admission,
             me,
-        })
+        }
     }
 
     /// This node's own number.
@@ -273,8 +176,9 @@ impl Node {
     ///
     /// Public so a node can be fed what it learned by other means — a pull it
     /// made itself, a reply it was handed — through the same door a peer's
-    /// message uses. Atomic: a batch naming a non-member is refused whole, so a
-    /// half-applied message is not a state this node can be in.
+    /// message uses. Atomic: a batch that would take the node past [`MAX_UPDATES`]
+    /// members is refused whole, so a half-applied message is not a state this
+    /// node can be in.
     pub fn apply(&self, updates: &[Update]) -> Result<()> {
         let mut g = self.inner.lock().expect("node lock");
         self.apply_locked(&mut g, updates, None)
@@ -283,6 +187,11 @@ impl Node {
     /// `caller` is a member being admitted by this very request, if any: counted
     /// against the bound and added with the others, so that a request refused for
     /// being over the bound admits nobody.
+    ///
+    /// A node takes the word of a member about who else exists, the same trust it
+    /// already gives a member's word about anyone's status, and bounds how many it
+    /// will hold. Who may *be* a member is not decided here: it is decided by
+    /// whoever identified the caller.
     fn apply_locked(&self, g: &mut Inner, updates: &[Update], caller: Option<Id>) -> Result<()> {
         if updates.len() > MAX_UPDATES {
             return Err(refuse_err("too many updates in one message"));
@@ -293,78 +202,14 @@ impl Node {
             .chain(caller)
             .filter(|n| !g.members.contains(n))
             .collect();
-        if !strangers.is_empty() {
-            // A closed cluster has no members it was not built with. An open one
-            // takes the word of a member about who else exists, the same trust it
-            // already gives a member's word about anyone's status, and bounds how
-            // many it will hold.
-            if self.admission.is_none() {
-                return Err(refuse_err("an update names a node that is not a member"));
-            }
-            if g.members.len() + strangers.len() > MAX_UPDATES {
-                return Err(refuse_err("too many members"));
-            }
-            g.members.extend(strangers);
+        if g.members.len() + strangers.len() > MAX_UPDATES {
+            return Err(refuse_err("too many members"));
         }
+        g.members.extend(strangers);
         for u in updates {
             self.merge_one(g, *u)?;
         }
         Ok(())
-    }
-
-    /// Which member is calling, from the connection rather than the request.
-    ///
-    /// An address this node has seen is the member it was admitted as. A new one
-    /// is put to the [`Admission`] policy, if there is one, and admitted if the
-    /// policy names a member number for it and there is room. Everything else is
-    /// a stranger.
-    ///
-    /// Reads only. Admitting is [`Node::accept`], called once the request has been
-    /// applied, so a request that is refused leaves no new member or address behind.
-    fn caller(&self, g: &Inner, ctx: &Context) -> Option<Caller> {
-        let Some(RemoteAddr::IpAddr(addr)) = ctx.remote() else {
-            return None;
-        };
-        if g.addrs.contains_key(addr) {
-            return Some(Caller::Known);
-        }
-        let id = (self.admission.as_ref()?)(*addr)?;
-        let held: Vec<IpAddr> = g
-            .addrs
-            .iter()
-            .filter(|&(_, &m)| m == id)
-            .map(|(&a, _)| a)
-            .collect();
-        // A member number that already has an address does not get a second one
-        // while it is live: that would let a new address speak as an old member.
-        // One that has left or been declared dead may come back from somewhere
-        // else, which is the usual case for a restarted host, and the new address
-        // replaces the old. (A member only heard about, with no address yet, is
-        // admitted at its first call.)
-        if !held.is_empty()
-            && !matches!(g.table.get(id).status, ExecStatus::Left | ExecStatus::Dead)
-        {
-            return None;
-        }
-        if !g.members.contains(&id) && g.members.len() >= MAX_UPDATES {
-            return None;
-        }
-        Some(Caller::Admit {
-            addr: *addr,
-            id,
-            replaces: held,
-        })
-    }
-
-    /// The request from `caller` was applied: record the address it spoke from.
-    fn accept(&self, g: &mut Inner, caller: Caller) {
-        if let Caller::Admit { addr, id, replaces } = caller {
-            for old in replaces {
-                g.addrs.remove(&old);
-            }
-            g.addrs.insert(addr, id);
-            g.members.insert(id);
-        }
     }
 
     fn view_locked(&self, g: &Inner) -> Vec<Update> {
@@ -447,24 +292,47 @@ impl Node {
     }
 }
 
-impl Membership for Node {
-    async fn ping(&self, ctx: Context, updates: Vec<Update>) -> Result<Vec<Update>> {
+/// What the node does when a peer calls.
+///
+/// The sender is an argument, taken from the message, and these take no `Context`
+/// and do no I/O, so they need no transport to be driven or tested. The
+/// [`Membership`] service below is these, behind the generated protocol.
+impl Node {
+    /// SWIM's ping from `from`, with the dissemination piggybacked: merge
+    /// `updates`, and answer with this node's records for every member they
+    /// mentioned, plus its own.
+    ///
+    /// `from` is a member from now on, if it was not: calling is how a node joins.
+    /// A request refused for being over the bound admits nobody.
+    pub fn ping(&self, from: Id, updates: &[Update]) -> Result<Vec<Update>> {
         let mut g = self.inner.lock().expect("node lock");
-        let Some(caller) = self.caller(&g, &ctx) else {
-            return Err(refuse_no("unknown caller"));
-        };
-        self.apply_locked(&mut g, &updates, caller.admitting())?;
-        self.accept(&mut g, caller);
-        Ok(self.ack(&g, &updates))
+        self.apply_locked(&mut g, updates, Some(from))?;
+        Ok(self.ack(&g, updates))
     }
 
-    async fn sync(&self, ctx: Context, updates: Vec<Update>) -> Result<Vec<Update>> {
+    /// Push/pull from `from`: merge `updates`, and answer with the whole table.
+    ///
+    /// Admits `from` as [`Node::ping`] does, and the reply is how a newcomer
+    /// learns who else is there.
+    pub fn sync(&self, from: Id, updates: &[Update]) -> Result<Vec<Update>> {
         let mut g = self.inner.lock().expect("node lock");
-        let Some(caller) = self.caller(&g, &ctx) else {
-            return Err(refuse_no("unknown caller"));
-        };
-        self.apply_locked(&mut g, &updates, caller.admitting())?;
-        self.accept(&mut g, caller);
+        self.apply_locked(&mut g, updates, Some(from))?;
         Ok(self.view_locked(&g))
+    }
+}
+
+/// The node, served. The sender is the one the message names; the `Context` is
+/// not read.
+///
+/// (`Node::ping` and `Node::sync` above take precedence in a method call; the
+/// service's own, with a `Context`, are reached through the generated channel or
+/// as `Membership::ping(&node, ctx, from, updates)`.)
+impl Membership for Node {
+    async fn ping(&self, _ctx: Context, from: Id, updates: Vec<Update>) -> Result<Vec<Update>> {
+        Node::ping(self, from, &updates)
+    }
+
+    async fn sync(&self, _ctx: Context, from: Id, updates: Vec<Update>) -> Result<Vec<Update>> {
+        Node::sync(self, from, &updates)
     }
 }

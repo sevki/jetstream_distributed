@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-15e4d56c.js";
+            window.path_to_searchindex_js = "../searchindex-b1e27bc3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-20c669f1.js"></script>
@@ -344,6 +344,38 @@ seizing from a holder that is merely unreachable — the wrongly-suspected node 
 real coordinator cannot tell from a dead one — is inside the fragment. And a
 standalone <code>Router</code> never creates a stale holder; seizure is the composed
 machine’s step, because the revocation that justifies it is visible there.</p>
+<p><strong>The coupling’s steps are data, and the coordinator runs them through one function.</strong>
+<code>composed::service::Command</code> is <code>Seize { to }</code>, <code>Pass { me }</code>, <code>Acquire { node, epoch }</code>
+and <code>Reconcile { node }</code>: the model’s <code>SeizeToken</code>, <code>PassToken</code>, <code>AcquireUnderToken</code> and
+<code>Reconcile</code> with the acting node written in. <code>apply</code> is a dispatch to the verified
+function of the same name (<code>exec::seize_token</code>, <code>pass_token</code>, <code>acquire_under_token</code>,
+<code>reconcile</code>), and every coupling method of the <code>Coordinator</code> builds a command and runs it
+through <code>apply</code>; what is left in the coordinator is taking the locks and writing the
+audit logs. This is a change of shape, not of behaviour, and the composed tests pass
+unchanged. <code>apply</code> is plain Rust: each arm is a verified function, and that the arm
+matches the command is read, not checked by Verus.</p>
+<p><strong>What it is for, and what it is not.</strong> A closure run under a lock cannot be proposed to
+a log, replayed, or applied on another machine; a command can. That is the first thing a
+replicated coordinator would need, and <strong>nothing here is replicated</strong>: the coordinator
+does not survive the loss of its process, as before. Four things are open, and are the
+reason there is no trait for “something that applies commands” yet (it is extracted when
+a second implementation exists, <a href="https://github.com/sevki/jetstream_distributed/issues/77">#77</a>):</p>
+<ul>
+<li><strong>The unit of replication is the composed state.</strong> The coupling reads both layers in one
+decision, so under replication the two layers’ records and the debts would have to be
+one replicated state with one log; two logs would make the coupling non-atomic, which is
+the race the gate closes today.</li>
+<li><strong>Only the coupling’s four steps are commands.</strong> The single-layer calls the coordinator
+carries (<code>write</code>, <code>begin_transfer</code>, <code>release</code>, the routing calls) are still methods on
+<code>Registry</code> and <code>Router</code>, each with its own log and, for the registry, its epoch floor.
+The model’s <code>Own</code> and <code>Ray</code> labels are their commands, and a replicated registry needs
+them as such.</li>
+<li><strong>Durability.</strong> <code>Registry</code>’s epoch floor is a separate durability concern today; a
+replicated log would replace it, and nothing says here that the two are equivalent.</li>
+<li><strong>Reads and identity.</strong> <code>poll</code>, <code>standing</code>, the logs and <code>well_formed</code> need a stated
+consistency, and a command that did not come from the connection carries an identity
+somebody else vouched for (<a href="https://github.com/sevki/jetstream_distributed/issues/66">#66</a>).</li>
+</ul>
 <p><code>tests/raymond_routing.rs</code> runs the textbook request path (<code>D -&gt; B -&gt; A -&gt; C</code> and
 the privilege back) and every refusal; <code>tests/composed_handover.rs</code> checks the
 refusals that make the composition mean something — the privilege will not move

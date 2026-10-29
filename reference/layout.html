@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-15e4d56c.js";
+            window.path_to_searchindex_js = "../searchindex-b1e27bc3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-20c669f1.js"></script>
@@ -225,6 +225,7 @@
 │   │   ├── exec_v.rs       the four coupled steps over the layers' records, and the debts
 │   │   ├── service/        the two layers behind one coordinator [feature = "service"]
 │   │   │   ├── mod.rs      the Composed trait: ownership + routing + the coupling
+│   │   │   ├── command.rs  the coupling's four steps as data, and `apply`, the dispatch to the verified steps
 │   │   │   ├── coordinator.rs  both layers, and the gate that serialises them
 │   │   │   └── refusal.rs  the refusals, in the line protocol's alphabet
 │   │   └── proofs/{coupling_v.rs, epoch_v.rs, scenario_v.rs, refinement_v.rs, exec_v.rs}

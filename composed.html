@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-15e4d56c.js";
+            window.path_to_searchindex_js = "searchindex-b1e27bc3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-20c669f1.js"></script>
@@ -242,7 +242,10 @@ hypothesis for the steps that name a node that is not the caller. Seizing from a
 that is merely unreachable is inside the fragment, because <code>SeizeToken</code> has no liveness
 guard on the node it takes the privilege from.</li>
 <li><strong>Both layers live behind one gate in one process.</strong> The <code>Coordinator</code> serialises
-them because the coupling reads both. It checks the rules; it does not distribute them.</li>
+them because the coupling reads both. It checks the rules; it does not distribute them.
+The coupling’s four steps are now data (<code>Command</code>, run through <code>apply</code>), which is what a
+replicated coordinator would need first; what it would need after that is in the
+<a href="reference/services.html#raymond-and-the-composed-machine">Reference</a>.</li>
 <li><strong>The nodes involved must be live for a recipient or a seizure target.</strong> The service’s
 identity lookup speaks only for the <em>caller</em>, and a recipient of a passed privilege is
 not a caller, so nothing in the service establishes that for them.</li>

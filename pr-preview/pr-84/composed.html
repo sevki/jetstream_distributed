@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d1424e7b.js";
+            window.path_to_searchindex_js = "searchindex-b95bc2c8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-20c669f1.js"></script>
@@ -233,6 +233,14 @@ correct”, and <code>reconcile</code> is what clears it.</p>
 <code>acquire_under_token</code>, <code>reconcile</code>) are verified code whose contracts are the composed
 model’s steps. The coupling guards agree with the model in both directions, and a step
 a layer already proved is carried without a second proof.</p>
+<h2 id="it-is-an-instance-of-a-general-composition"><a class="header" href="#it-is-an-instance-of-a-general-composition">It is an instance of a general composition</a></h2>
+<p><code>model_t.rs</code> writes this machine by hand, and it stays the model every theorem here is
+stated against. It is also an instance of the general one: a product of two protocols
+under a coupling (<code>compose::Product</code>, <code>compose::Coupling</code>), where ownership and Raymond
+are the two protocols and the guards above are the coupling. The Reference
+(<a href="reference/protocol.html#composition">P4–P8</a>) proves the two are the same machine and
+states what the general theorem adds. A pairing the book lists as not built would be
+written as another coupling, not as another module like this one.</p>
 <h2 id="what-is-not-claimed"><a class="header" href="#what-is-not-claimed">What is not claimed</a></h2>
 <ul>
 <li><strong>The composed service refines the crash-free executions only.</strong> The composed model

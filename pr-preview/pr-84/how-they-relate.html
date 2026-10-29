@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d1424e7b.js";
+            window.path_to_searchindex_js = "searchindex-b95bc2c8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-20c669f1.js"></script>
@@ -221,7 +221,7 @@ difference matters, and the rest of this page is mostly about it.</p>
 <tr><th>Relationship</th><th>Built?</th></tr>
 </thead>
 <tbody>
-<tr><td>Raymond is tied to ownership by <code>couples</code>, and the two are one machine in Composed</td><td>Yes. <code>composed</code> imports both, and the coupling is a guard, not an assumption</td></tr>
+<tr><td>Raymond is tied to ownership by <code>couples</code> (defined with Composed, so neither imports the other), and the two are one machine in Composed</td><td>Yes. <code>composed</code> imports both, and the coupling is a guard, not an assumption</td></tr>
 <tr><td>The actor’s journal is fenced by ownership</td><td>Yes. <code>as_accept</code> requires the ownership layer’s <code>can_mutate</code> at the epoch the host presents</td></tr>
 <tr><td>The mailbox sits in front of the actor</td><td>In the model, yes. <code>Host</code>, the journal service, is not behind it yet; see <a href="mailbox.html">the mailbox</a></td></tr>
 <tr><td>Raft buys the atomic registry</td><td><strong>No.</strong> Nothing outside <code>src/raft/</code> imports Raft. The registry is a process-local record</td></tr>

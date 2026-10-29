@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-d1424e7b.js";
+            window.path_to_searchindex_js = "../searchindex-b95bc2c8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-20c669f1.js"></script>
@@ -219,6 +219,45 @@ per protocol, and each needs its own fairness assumption.</li>
 <li><strong>Nothing about the services.</strong> The <code>service</code> code is plain Rust and does not
 implement <code>Protocol</code>; it calls the verified step functions, which the refinement
 rows in the per-protocol chapters tie to the models.</li>
+</ul>
+<h2 id="composition"><a class="header" href="#composition">Composition</a></h2>
+<p><code>compose::Product&lt;A, B, K&gt;</code> (<code>src/compose_t.rs</code>, trusted) is two protocols and the way
+they meet. Its state is both parts’ states and the coupling’s own (the <em>glue</em>); its
+steps are <code>A</code> moving alone, <code>B</code> moving alone, or a <strong>joint</strong> step that belongs to
+neither, defined by the coupling <code>K: Coupling&lt;A, B&gt;</code>. The coupling is the only place the
+two meet: a guard on a part’s step may read the other part and the glue, and the glue
+may change when a part moves, but a part never moves the other.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ID</th><th>Claim</th><th>Theorem</th><th>Assumes</th></tr>
+</thead>
+<tbody>
+<tr><td>P4</td><td><strong>Safety composes.</strong> If <code>A</code> and <code>B</code> are <code>Safe</code> (an invariant their initial states satisfy and their steps keep) and <code>K</code> is a <code>SafeCoupling</code> (its own invariant <code>coupled</code> holds initially, and is kept by every step of the product, given both parts’ invariants; and a joint step also keeps both parts’), then every initial state of the product satisfies <code>A::inv /\ B::inv /\ coupled</code>, and every step keeps all three. The product is itself <code>Safe</code>, so it can be a part of a larger one</td><td><code>compose_safety::theorem_a_composition_starts_safe</code>, <code>theorem_a_composition_stays_safe</code></td><td>the coupling’s two obligations, <code>coupled_at_init</code> and <code>coupled_after</code></td></tr>
+<tr><td>P5</td><td><strong>Ownership and Raymond are <code>Safe</code></strong>, by the theorems they already had: ownership’s <code>inv</code> is established by <code>lemma_init_inv</code> and kept by <code>lemma_step_preserves_inv</code>; Raymond’s <code>ray_inv</code> by <code>theorem_ray_init_inv</code> and <code>lemma_ray_step_preserves_inv</code></td><td><code>ownership::proofs::safe</code>, <code>raymond::proofs::safe</code> (instances; the lemmas they call are the ones named)</td><td>none</td></tr>
+<tr><td>P6</td><td><strong>The composed machine is the product of ownership and Raymond</strong>: <code>composed_step</code> is the product’s step under a label, and every product step is a <code>composed_step</code>, so <code>composed_next</code> is the product’s <code>next</code>. <code>Own</code>, <code>AcquireUnderToken</code> are <code>Left</code>; <code>Ray</code>, <code>PassToken</code> are <code>Right</code> (<code>PassToken</code> is Raymond’s <code>AssignPrivilege</code>); <code>SeizeToken</code>, <code>Reconcile</code> are <code>Joint</code>, the coordinator’s steps that edit Raymond’s state without being a Raymond step</td><td><code>composed::proofs::product::lemma_composed_step_is_a_product_step</code>, <code>lemma_product_step_is_a_composed_step</code>, <code>theorem_composed_next_is_the_product_next</code></td><td>none</td></tr>
+<tr><td>P7</td><td><strong>The composed machine’s initial states are the product’s</strong>, at some Raymond root</td><td><code>composed::proofs::product::theorem_composed_init_is_the_product_init</code></td><td>none</td></tr>
+<tr><td>P8</td><td><strong>The ownership/Raymond coupling is a <code>SafeCoupling</code>.</strong> Its <code>coupled</code> is what <code>composed_inv</code> says beyond each layer’s own invariant (the actor exists, <code>couples</code>, the two layers share their nodes, every stale holder owes a reconciliation), and both obligations are discharged by the composed machine’s own theorems (the C-rows) through P6</td><td><code>composed::proofs::product</code> (the <code>SafeCoupling</code> instance), from <code>composed::proofs::coupling::lemma_composed_init_inv</code>, <code>theorem_composed_step_preserves_inv</code></td><td>the C-rows</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="what-composition-does-not-say"><a class="header" href="#what-composition-does-not-say">What composition does not say</a></h2>
+<ul>
+<li><strong>The coupling may be wrong.</strong> A coupling too strong to be useful is safe vacuously.
+P4 is why a composition needs only its coupling proved; it is not a check that the
+coupling lets the interesting things happen. For the composed machine that check is
+its scenarios (<code>composed::proofs::scenario</code>). A new composition needs its own.</li>
+<li><strong>One instance so far.</strong> <code>Coupling</code> was written against the one composition the crate
+has, and it fits that one exactly (P6). Whether it fits the next (Raft with
+ownership, the mailbox with <code>Host</code>) is what building them will show; nothing here
+claims it already does.</li>
+<li><strong>The composed model is not rewritten.</strong> It stays hand-written and every theorem in
+its chapter stays stated against it. P6 is the bridge, not a replacement.</li>
+<li><strong>No liveness.</strong> Fairness does not compose by this argument; each composition that
+wants a liveness theorem states its own.</li>
+<li><strong>No services.</strong> This is the machine. How a composed <em>service</em> is assembled from two
+services is a separate question: the <code>#[service]</code> macro takes a trait, not a pair of
+them, so the composed service’s trait is still written out.</li>
 </ul>
 
                     </main>

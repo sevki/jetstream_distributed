@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d1424e7b.js";
+            window.path_to_searchindex_js = "searchindex-b95bc2c8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-20c669f1.js"></script>
@@ -273,7 +273,7 @@ difference matters, and the rest of this page is mostly about it.</p>
 <tr><th>Relationship</th><th>Built?</th></tr>
 </thead>
 <tbody>
-<tr><td>Raymond is tied to ownership by <code>couples</code>, and the two are one machine in Composed</td><td>Yes. <code>composed</code> imports both, and the coupling is a guard, not an assumption</td></tr>
+<tr><td>Raymond is tied to ownership by <code>couples</code> (defined with Composed, so neither imports the other), and the two are one machine in Composed</td><td>Yes. <code>composed</code> imports both, and the coupling is a guard, not an assumption</td></tr>
 <tr><td>The actor’s journal is fenced by ownership</td><td>Yes. <code>as_accept</code> requires the ownership layer’s <code>can_mutate</code> at the epoch the host presents</td></tr>
 <tr><td>The mailbox sits in front of the actor</td><td>In the model, yes. <code>Host</code>, the journal service, is not behind it yet; see <a href="#the-mailbox-getting-messages-to-the-actor">the mailbox</a></td></tr>
 <tr><td>Raft buys the atomic registry</td><td><strong>No.</strong> Nothing outside <code>src/raft/</code> imports Raft. The registry is a process-local record</td></tr>
@@ -608,7 +608,8 @@ at <em>send</em> time, so a request can be delivered after the token has moved. 
 phrased against the live pointer would drop it silently, and “arbitrary delay” would
 have been claimed but not modelled.</p>
 <h2 id="how-it-is-tied-to-ownership"><a class="header" href="#how-it-is-tied-to-ownership">How it is tied to ownership</a></h2>
-<p>One predicate:</p>
+<p>One predicate, defined with the composed machine (it is about both layers, so Raymond
+imports nothing of ownership):</p>
 <pre><code class="language-text">couples(r, s) = every node that may mutate in s holds the privilege in r
 </code></pre>
 <p>Routing never grants authority; it only constrains who could have it. That is why a
@@ -690,6 +691,14 @@ correct”, and <code>reconcile</code> is what clears it.</p>
 <code>acquire_under_token</code>, <code>reconcile</code>) are verified code whose contracts are the composed
 model’s steps. The coupling guards agree with the model in both directions, and a step
 a layer already proved is carried without a second proof.</p>
+<h2 id="it-is-an-instance-of-a-general-composition"><a class="header" href="#it-is-an-instance-of-a-general-composition">It is an instance of a general composition</a></h2>
+<p><code>model_t.rs</code> writes this machine by hand, and it stays the model every theorem here is
+stated against. It is also an instance of the general one: a product of two protocols
+under a coupling (<code>compose::Product</code>, <code>compose::Coupling</code>), where ownership and Raymond
+are the two protocols and the guards above are the coupling. The Reference
+(<a href="#composition">P4–P8</a>) proves the two are the same machine and
+states what the general theorem adds. A pairing the book lists as not built would be
+written as another coupling, not as another module like this one.</p>
 <h2 id="what-is-not-claimed"><a class="header" href="#what-is-not-claimed">What is not claimed</a></h2>
 <ul>
 <li><strong>The composed service refines the crash-free executions only.</strong> The composed model
@@ -2388,11 +2397,11 @@ verifying, the build fails.</p>
 <tr><td>P6</td><td><strong>An epoch determines its owner</strong> — any two points of an execution owned at the same epoch have the same owner</td><td><code>ownership::proofs::properties::theorem_epoch_determines_owner</code></td><td>valid execution</td></tr>
 <tr><td>P7</td><td><strong>Staleness is permanent</strong> — a fenced-out node can never be fenced back in by waiting</td><td><code>ownership::proofs::properties::theorem_stale_stays_stale</code></td><td>valid execution</td></tr>
 <tr><td>P8</td><td><strong>No authority without a capability</strong> — a node that may mutate provably holds an issued token for exactly that <code>(actor, epoch)</code></td><td><code>ownership::proofs::properties::theorem_no_authority_without_token</code></td><td>reachability</td></tr>
-<tr><td>P9</td><td><strong>Epoch monotonicity survives composition</strong></td><td><code>ownership::proofs::properties::theorem_composed_epoch_monotone</code></td><td>none</td></tr>
+<tr><td>P9</td><td><strong>Epoch monotonicity survives composition</strong></td><td><code>composed::proofs::epoch::theorem_composed_epoch_monotone</code></td><td>none</td></tr>
 <tr><td>R9</td><td><strong>The privilege is never lost</strong> — every Raymond transition leaves <code>privilege</code> pointing at a node</td><td><code>raymond::proofs::routing_layer::lemma_ray_token_exists_init</code>, <code>lemma_ray_token_exists_step</code></td><td>Raymond invariant</td></tr>
 <tr><td>R10</td><td><strong>Raymond critical sections are exclusive — while nobody’s belief is stale.</strong> The hypothesis is not a weakening; it is the algorithm’s real scope. Raymond’s mutual exclusion rests on every node agreeing where the privilege is, and a seizure breaks that until the seized node reconciles</td><td><code>raymond::proofs::routing_layer::theorem_ray_critical_section_is_exclusive</code></td><td>Raymond invariant, <code>ray_no_stale_holders</code></td></tr>
 <tr><td>R10a</td><td><strong>At most one node is <em>authorised</em> to be in its critical section</strong>, with no side conditions: the authorised occupant is the privilege holder, and there is one of those by construction. This is the part of R10 that survives a seizure</td><td><code>raymond::proofs::routing_layer::theorem_authorised_critical_section_is_exclusive</code></td><td>Raymond invariant</td></tr>
-<tr><td>R13</td><td><strong>A stale holder confers no authority.</strong> A node that believes it holds the privilege, does not, and may still be inside its critical section, still cannot mutate the actor — <code>couples</code> is written against possession, not belief. The routing counterpart of 6b, and what survives imperfect failure detection</td><td><code>raymond::proofs::routing_layer::theorem_stale_holder_confers_no_authority</code></td><td>the coupling</td></tr>
+<tr><td>R13</td><td><strong>A stale holder confers no authority.</strong> A node that believes it holds the privilege, does not, and may still be inside its critical section, still cannot mutate the actor — <code>couples</code> is written against possession, not belief. The routing counterpart of 6b, and what survives imperfect failure detection</td><td><code>composed::proofs::couples::theorem_stale_holder_confers_no_authority</code></td><td>the coupling</td></tr>
 <tr><td>R14</td><td><strong>Reconciliation repairs the belief</strong>: the stale holder drops it, leaves the critical section it thought it was in, and re-points at the real holder</td><td><code>raymond::proofs::routing_layer::lemma_reconcile_preserves_inv</code></td><td>Raymond invariant</td></tr>
 <tr><td>R11</td><td><strong>The holder pointers are acyclic</strong> — part of <code>ray_inv</code>, preserved by every transition. A handover rewrites two pointers and needs a new rank (the old one shifted up by one, new root at zero); a seizure only makes the new holder point at itself, which <em>removes</em> a constraint, so the old rank still works</td><td><code>raymond::proofs::routing_layer::lemma_frame_acyclic</code>, <code>lemma_repoint_acyclic</code></td><td>Raymond invariant</td></tr>
 <tr><td>R12</td><td><strong>Every node reaches the privilege holder by following holder pointers</strong> — what makes “requests travel hop-by-hop towards the token” a checked claim. Two hypotheses, both load-bearing: R11 says the walk terminates rather than circling, and <code>ray_no_stale_holders</code> says it terminates at the real holder rather than at somebody who merely thinks so. The second was free when authority <em>was</em> belief; it is not free now, and it should not be — after a seizure a node whose belief-path leads to the seized holder genuinely cannot route to the privilege</td><td><code>raymond::proofs::routing_layer::theorem_every_node_reaches_the_token</code></td><td>Raymond invariant, <code>ray_no_stale_holders</code></td></tr>
@@ -2470,9 +2479,9 @@ verifying, the build fails.</p>
 <tr><td>S5</td><td><strong>A fabricated <code>Released</code> is inert.</strong> <code>HandleRevoke</code> lets any live node manufacture a <code>Released</code> from any <code>Revoke</code> ever sent, however old. <code>CompleteRelease</code> is the only step that consumes one, and it re-reads the actor’s current state, so if it fires the actor is <code>Transferring</code> right now and the network holds the <code>Released</code> naming exactly that handover’s <code>from</code> and <code>new_epoch</code></td><td><code>ownership::proofs::adversarial::theorem_complete_release_needs_the_matching_released</code></td><td>none</td></tr>
 <tr><td>S6</td><td><strong>A fabricated <code>Released</code> cannot steer a handover.</strong> The resulting epoch is read from the live <code>Transferring</code> record, not from the message</td><td><code>ownership::proofs::adversarial::theorem_complete_release_outcome_is_fixed_by_state</code></td><td>none</td></tr>
 <tr><td>R1</td><td><strong>Raymond: exactly one valid privilege</strong> - now <em>structural</em>: <code>Raymond::privilege</code> is one node id, so uniqueness needs no invariant. It used to be inductive, and that was exactly what made a returning stale holder unrepresentable</td><td><code>raymond::proofs::routing_layer::theorem_ray_exactly_one_token</code>, <code>theorem_ray_at_most_one_token</code>, preserved by <code>lemma_ray_step_preserves_inv</code></td><td>Raymond invariant</td></tr>
-<tr><td>R2</td><td><strong>Raymond: holder/routing changes cannot manufacture ownership</strong></td><td><code>raymond::proofs::routing_layer::theorem_routing_cannot_manufacture_ownership</code></td><td>Raymond invariant, coupling</td></tr>
+<tr><td>R2</td><td><strong>Raymond: holder/routing changes cannot manufacture ownership</strong></td><td><code>composed::proofs::couples::theorem_routing_cannot_manufacture_ownership</code></td><td>Raymond invariant, coupling</td></tr>
 <tr><td>R3</td><td><strong>Raymond: duplicate/reordered requests cannot create a second owner</strong></td><td><code>raymond::proofs::routing_layer::theorem_duplicate_requests_are_safe</code></td><td>Raymond invariant</td></tr>
-<tr><td>R4</td><td><strong>Raymond: token transfer preserves ownership safety</strong></td><td><code>composed::proofs::coupling::lemma_composed_pass_token_preserves_inv</code> (and, as a layer-local lemma, <code>raymond::proofs::routing_layer::theorem_token_transfer_preserves_ownership_safety</code>)</td><td>none — in the composed machine the release-before-transfer condition is a <em>guard</em>, not an assumption</td></tr>
+<tr><td>R4</td><td><strong>Raymond: token transfer preserves ownership safety</strong></td><td><code>composed::proofs::coupling::lemma_composed_pass_token_preserves_inv</code> (and, as a layer-local lemma, <code>composed::proofs::couples::theorem_token_transfer_preserves_ownership_safety</code>)</td><td>none — in the composed machine the release-before-transfer condition is a <em>guard</em>, not an assumption</td></tr>
 <tr><td>R5</td><td><strong>Composed exclusivity</strong>: in every reachable composed state at most one node may mutate the actor, and it is the node holding the token</td><td><code>composed::proofs::coupling::theorem_composed_exclusivity</code></td><td>composed reachability</td></tr>
 <tr><td>C0</td><td><strong>Non-degeneracy</strong>: a composed state in which a node is <em>actually inside</em> the critical section is reachable from <code>composed_init</code>. The contract exports the run: three labels, <code>RequestCs</code> / <code>EnterCs</code> / <code>ExitCs</code>, with <code>using</code> false at indices 0, 1 and 3 and true at 2 — so the node inside got there by entering, and the exit leaves the state it entered</td><td><code>composed::proofs::scenario::scenario_composed_critical_section</code></td><td><code>A != B</code></td></tr>
 <tr><td>C0a</td><td>(Step-level lemma backing C0) <code>EnterCs</code>/<code>ExitCs</code> are legal <code>ComposedStep::Ray</code> transitions and preserve the composed invariant</td><td><code>composed::proofs::coupling::theorem_composed_admits_critical_section</code>, <code>..._exit</code></td><td>composed invariant holds before the step</td></tr>
@@ -2726,7 +2735,10 @@ the reverse of the request path:</p>
 <pre><code class="language-text">request:  D -&gt; B -&gt; A -&gt; C[token]
 token:    C -&gt; A -&gt; B -&gt; D
 </code></pre>
-<p>Routing and ownership are glued by one predicate:</p>
+<p>Routing and ownership are glued by one predicate. It is about both layers, so it is
+defined with the composed machine (<code>composed::model::couples</code>), and the Raymond
+layer imports nothing of ownership; the theorems that use it on its own are in
+<code>composed::proofs::couples</code>:</p>
 <pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>spec fn couples(r: Raymond, s: OwnershipState) -&gt; bool {
@@ -3695,6 +3707,45 @@ per protocol, and each needs its own fairness assumption.</li>
 <li><strong>Nothing about the services.</strong> The <code>service</code> code is plain Rust and does not
 implement <code>Protocol</code>; it calls the verified step functions, which the refinement
 rows in the per-protocol chapters tie to the models.</li>
+</ul>
+<h2 id="composition"><a class="header" href="#composition">Composition</a></h2>
+<p><code>compose::Product&lt;A, B, K&gt;</code> (<code>src/compose_t.rs</code>, trusted) is two protocols and the way
+they meet. Its state is both parts’ states and the coupling’s own (the <em>glue</em>); its
+steps are <code>A</code> moving alone, <code>B</code> moving alone, or a <strong>joint</strong> step that belongs to
+neither, defined by the coupling <code>K: Coupling&lt;A, B&gt;</code>. The coupling is the only place the
+two meet: a guard on a part’s step may read the other part and the glue, and the glue
+may change when a part moves, but a part never moves the other.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ID</th><th>Claim</th><th>Theorem</th><th>Assumes</th></tr>
+</thead>
+<tbody>
+<tr><td>P4</td><td><strong>Safety composes.</strong> If <code>A</code> and <code>B</code> are <code>Safe</code> (an invariant their initial states satisfy and their steps keep) and <code>K</code> is a <code>SafeCoupling</code> (its own invariant <code>coupled</code> holds initially, and is kept by every step of the product, given both parts’ invariants; and a joint step also keeps both parts’), then every initial state of the product satisfies <code>A::inv /\ B::inv /\ coupled</code>, and every step keeps all three. The product is itself <code>Safe</code>, so it can be a part of a larger one</td><td><code>compose_safety::theorem_a_composition_starts_safe</code>, <code>theorem_a_composition_stays_safe</code></td><td>the coupling’s two obligations, <code>coupled_at_init</code> and <code>coupled_after</code></td></tr>
+<tr><td>P5</td><td><strong>Ownership and Raymond are <code>Safe</code></strong>, by the theorems they already had: ownership’s <code>inv</code> is established by <code>lemma_init_inv</code> and kept by <code>lemma_step_preserves_inv</code>; Raymond’s <code>ray_inv</code> by <code>theorem_ray_init_inv</code> and <code>lemma_ray_step_preserves_inv</code></td><td><code>ownership::proofs::safe</code>, <code>raymond::proofs::safe</code> (instances; the lemmas they call are the ones named)</td><td>none</td></tr>
+<tr><td>P6</td><td><strong>The composed machine is the product of ownership and Raymond</strong>: <code>composed_step</code> is the product’s step under a label, and every product step is a <code>composed_step</code>, so <code>composed_next</code> is the product’s <code>next</code>. <code>Own</code>, <code>AcquireUnderToken</code> are <code>Left</code>; <code>Ray</code>, <code>PassToken</code> are <code>Right</code> (<code>PassToken</code> is Raymond’s <code>AssignPrivilege</code>); <code>SeizeToken</code>, <code>Reconcile</code> are <code>Joint</code>, the coordinator’s steps that edit Raymond’s state without being a Raymond step</td><td><code>composed::proofs::product::lemma_composed_step_is_a_product_step</code>, <code>lemma_product_step_is_a_composed_step</code>, <code>theorem_composed_next_is_the_product_next</code></td><td>none</td></tr>
+<tr><td>P7</td><td><strong>The composed machine’s initial states are the product’s</strong>, at some Raymond root</td><td><code>composed::proofs::product::theorem_composed_init_is_the_product_init</code></td><td>none</td></tr>
+<tr><td>P8</td><td><strong>The ownership/Raymond coupling is a <code>SafeCoupling</code>.</strong> Its <code>coupled</code> is what <code>composed_inv</code> says beyond each layer’s own invariant (the actor exists, <code>couples</code>, the two layers share their nodes, every stale holder owes a reconciliation), and both obligations are discharged by the composed machine’s own theorems (the C-rows) through P6</td><td><code>composed::proofs::product</code> (the <code>SafeCoupling</code> instance), from <code>composed::proofs::coupling::lemma_composed_init_inv</code>, <code>theorem_composed_step_preserves_inv</code></td><td>the C-rows</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="what-composition-does-not-say"><a class="header" href="#what-composition-does-not-say">What composition does not say</a></h2>
+<ul>
+<li><strong>The coupling may be wrong.</strong> A coupling too strong to be useful is safe vacuously.
+P4 is why a composition needs only its coupling proved; it is not a check that the
+coupling lets the interesting things happen. For the composed machine that check is
+its scenarios (<code>composed::proofs::scenario</code>). A new composition needs its own.</li>
+<li><strong>One instance so far.</strong> <code>Coupling</code> was written against the one composition the crate
+has, and it fits that one exactly (P6). Whether it fits the next (Raft with
+ownership, the mailbox with <code>Host</code>) is what building them will show; nothing here
+claims it already does.</li>
+<li><strong>The composed model is not rewritten.</strong> It stays hand-written and every theorem in
+its chapter stays stated against it. P6 is the bridge, not a replacement.</li>
+<li><strong>No liveness.</strong> Fairness does not compose by this argument; each composition that
+wants a liveness theorem states its own.</li>
+<li><strong>No services.</strong> This is the machine. How a composed <em>service</em> is assembled from two
+services is a separate question: the <code>#[service]</code> macro takes a trait, not a pair of
+them, so the composed service’s trait is still written out.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="the-protocol-as-a-jetstream-service"><a class="header" href="#the-protocol-as-a-jetstream-service">The protocol as a Jetstream service</a></h1>
@@ -4864,6 +4915,8 @@ attribute.</p>
 │   ├── membership/         what a consumer of any membership protocol reads   [feature = "service"]
 │   │   └── mod.rs          Liveness, PeerSampling, FailureDetector (SWIM implements both)
 │   ├── protocol_t.rs       the Protocol trait: the labelled-step shape every model has
+│   ├── compose_t.rs        Safe, Product and Coupling: two protocols and the way they meet
+│   ├── compose_v.rs        a product of safe protocols under a safe coupling is safe
 │   ├── protocol_v.rs       each model's instance is its model (next, init); the mailbox run is a run of the protocol
 │   ├── temporal_t.rs       leads-to, weak fairness and WF1: what a liveness proof is stated in
 │   ├── ownership/          exclusive mutable ownership with epoch fencing
@@ -4882,6 +4935,7 @@ attribute.</p>
 │   │       ├── fencing_v.rs      claims 2, 3, 5
 │   │       ├── transfer_v.rs     claim 4
 │   │       ├── tokens_v.rs       claim 6
+│   │       ├── safe_v.rs         ownership as a Safe protocol, for composition
 │   │       ├── adversarial_v.rs  concrete adversarial executions
 │   │       ├── refinement_v.rs   steps_v.rs agrees with the model's tr_* transitions
 │   │       └── registry_v.rs     the registry's record, grants included, takes the model's steps
@@ -4893,7 +4947,7 @@ attribute.</p>
 │   │   │   ├── mod.rs      the Routing trait and what a node can see of itself
 │   │   │   ├── router.rs   the whole routing record, behind one lock
 │   │   │   └── refusal.rs  the refusals, in the line protocol's alphabet
-│   │   └── proofs/{routing_layer_v.rs, routing_run_v.rs, refinement_v.rs}
+│   │   └── proofs/{routing_layer_v.rs, routing_run_v.rs, refinement_v.rs, safe_v.rs}
 │   ├── composed/           ownership and Raymond as one machine
 │   │   ├── model_t.rs      the coupling enforced by guards, not assumed
 │   │   ├── steps_v.rs      the coupling guards as executable functions
@@ -4902,7 +4956,7 @@ attribute.</p>
 │   │   │   ├── mod.rs      the Composed trait: ownership + routing + the coupling
 │   │   │   ├── coordinator.rs  both layers, and the gate that serialises them
 │   │   │   └── refusal.rs  the refusals, in the line protocol's alphabet
-│   │   └── proofs/{coupling_v.rs, scenario_v.rs, refinement_v.rs, exec_v.rs}
+│   │   └── proofs/{coupling_v.rs, couples_v.rs, epoch_v.rs, product_v.rs, scenario_v.rs, refinement_v.rs, exec_v.rs}
 │   ├── actor/              a distributed actor: a journal fenced by ownership
 │   │   ├── model_t.rs      envelopes, the journal, send / accept, the fold that is the state
 │   │   ├── steps_v.rs      accept, send and the behaviour as executable u64 functions
@@ -5085,6 +5139,16 @@ and the proof build should not pull Jetstream and tokio in.</p>
 <p>A third job, <code>pmemlog proof check</code>, verifies the vendored persistent-memory log
 (<code>vendor/verified-storage/pmemlog</code>) the same way, and checks that the vendored tree is
 byte-for-byte Microsoft’s at the pinned commit. See <a href="https://github.com/sevki/jetstream_distributed/blob/main/vendor/README.md"><code>vendor/README.md</code></a>.</p>
+<p>A fourth job, <code>Module layering</code>, needs no toolchain at all:</p>
+<pre><code class="language-bash">python3 -I .github/scripts/check-modules.py
+</code></pre>
+<p>It reads the <code>crate::...</code> imports and fails on a <strong>cycle</strong> between modules, or when a
+<strong>standalone</strong> module (<code>ownership</code>, <code>raft</code>, <code>raymond</code>, <code>swim</code>) depends on anything but <code>id</code> and the
+modules that only describe shapes (<code>protocol</code>, <code>temporal</code>, <code>compose</code>, <code>membership</code>). A cycle compiles, so nothing else would notice one: three went unnoticed
+until it was looked for. The check asserts that a few edges it knows are true are found,
+so a pattern that stops matching fails loudly and does not report “no cycle”. Making a
+standalone module depend on something is a decision, and it is made by editing the
+<code>STANDALONE</code> set in that script in the same change.</p>
 <p>The services and the simulated-network tests are not verified, only run:</p>
 <pre><code class="language-bash">cargo test                          # the services, tests/, and the unit tests
 cargo run --example actor_basic     # two actors behind mailboxes

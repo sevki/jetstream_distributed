@@ -12,7 +12,6 @@ use jetstream::prelude::*;
 // A job, or anything that does compute, e.g. a VM, container, v8 isolate, or
 // interpreter, is named by an `Id`.
 pub use crate::id::Id;
-use crate::scheduling;
 
 /// CPU, held as millicores: 1000 of them are one core.
 ///
@@ -214,5 +213,3 @@ pub struct Job<F> {
     pub started_at: Instant,
     pub features: F,
 }
-
-impl<F: 'static> scheduling::Resource for Job<F> {}

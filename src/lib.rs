@@ -21,6 +21,9 @@
 //! * [`raymond`]   — Raymond's mutual-exclusion routing layer.
 //! * [`composed`]  — the two above as one machine, with the coupling between
 //!   them proved rather than assumed.
+//! * [`compose`]   — not an algorithm: what composing two of them is, in general (a
+//!   product under a coupling), and [`compose_safety`], why safety composes.
+//!   [`composed`] is the first instance.
 //! * [`raft`]      — consensus, where exclusivity is bought by counting
 //!   instead of by assuming an atomic registry.
 //! * [`actor`]     — a distributed actor: a journal fenced by ownership, so one
@@ -83,6 +86,10 @@ pub mod raft;
 pub mod raymond;
 pub mod scheduling;
 pub mod swim;
+#[path = "compose_t.rs"]
+pub mod compose;
+#[path = "compose_v.rs"]
+pub mod compose_safety;
 #[path = "protocol_t.rs"]
 pub mod protocol;
 #[path = "protocol_v.rs"]

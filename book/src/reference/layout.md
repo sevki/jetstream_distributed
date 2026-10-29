@@ -11,6 +11,8 @@ jetstream_distributed/
 │   ├── membership/         what a consumer of any membership protocol reads   [feature = "service"]
 │   │   └── mod.rs          Liveness, PeerSampling, FailureDetector (SWIM implements both)
 │   ├── protocol_t.rs       the Protocol trait: the labelled-step shape every model has
+│   ├── compose_t.rs        Safe, Product and Coupling: two protocols and the way they meet
+│   ├── compose_v.rs        a product of safe protocols under a safe coupling is safe
 │   ├── protocol_v.rs       each model's instance is its model (next, init); the mailbox run is a run of the protocol
 │   ├── temporal_t.rs       leads-to, weak fairness and WF1: what a liveness proof is stated in
 │   ├── ownership/          exclusive mutable ownership with epoch fencing
@@ -29,6 +31,7 @@ jetstream_distributed/
 │   │       ├── fencing_v.rs      claims 2, 3, 5
 │   │       ├── transfer_v.rs     claim 4
 │   │       ├── tokens_v.rs       claim 6
+│   │       ├── safe_v.rs         ownership as a Safe protocol, for composition
 │   │       ├── adversarial_v.rs  concrete adversarial executions
 │   │       ├── refinement_v.rs   steps_v.rs agrees with the model's tr_* transitions
 │   │       └── registry_v.rs     the registry's record, grants included, takes the model's steps
@@ -40,7 +43,7 @@ jetstream_distributed/
 │   │   │   ├── mod.rs      the Routing trait and what a node can see of itself
 │   │   │   ├── router.rs   the whole routing record, behind one lock
 │   │   │   └── refusal.rs  the refusals, in the line protocol's alphabet
-│   │   └── proofs/{routing_layer_v.rs, routing_run_v.rs, refinement_v.rs}
+│   │   └── proofs/{routing_layer_v.rs, routing_run_v.rs, refinement_v.rs, safe_v.rs}
 │   ├── composed/           ownership and Raymond as one machine
 │   │   ├── model_t.rs      the coupling enforced by guards, not assumed
 │   │   ├── steps_v.rs      the coupling guards as executable functions
@@ -49,7 +52,7 @@ jetstream_distributed/
 │   │   │   ├── mod.rs      the Composed trait: ownership + routing + the coupling
 │   │   │   ├── coordinator.rs  both layers, and the gate that serialises them
 │   │   │   └── refusal.rs  the refusals, in the line protocol's alphabet
-│   │   └── proofs/{coupling_v.rs, scenario_v.rs, refinement_v.rs, exec_v.rs}
+│   │   └── proofs/{coupling_v.rs, couples_v.rs, epoch_v.rs, product_v.rs, scenario_v.rs, refinement_v.rs, exec_v.rs}
 │   ├── actor/              a distributed actor: a journal fenced by ownership
 │   │   ├── model_t.rs      envelopes, the journal, send / accept, the fold that is the state
 │   │   ├── steps_v.rs      accept, send and the behaviour as executable u64 functions

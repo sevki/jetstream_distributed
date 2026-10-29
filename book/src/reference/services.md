@@ -177,6 +177,39 @@ real coordinator cannot tell from a dead one — is inside the fragment. And a
 standalone `Router` never creates a stale holder; seizure is the composed
 machine's step, because the revocation that justifies it is visible there.
 
+**The coupling's steps are data, and the coordinator runs them through one function.**
+`composed::service::Command` is `Seize { to }`, `Pass { me }`, `Acquire { node, epoch }`
+and `Reconcile { node }`: the model's `SeizeToken`, `PassToken`, `AcquireUnderToken` and
+`Reconcile` with the acting node written in. `apply` is a dispatch to the verified
+function of the same name (`exec::seize_token`, `pass_token`, `acquire_under_token`,
+`reconcile`), and every coupling method of the `Coordinator` builds a command and runs it
+through `apply`; what is left in the coordinator is taking the locks and writing the
+audit logs. This is a change of shape, not of behaviour, and the composed tests pass
+unchanged. `apply` is plain Rust: each arm is a verified function, and that the arm
+matches the command is read, not checked by Verus.
+
+**What it is for, and what it is not.** A closure run under a lock cannot be proposed to
+a log, replayed, or applied on another machine; a command can. That is the first thing a
+replicated coordinator would need, and **nothing here is replicated**: the coordinator
+does not survive the loss of its process, as before. Four things are open, and are the
+reason there is no trait for "something that applies commands" yet (it is extracted when
+a second implementation exists, [#77](https://github.com/sevki/jetstream_distributed/issues/77)):
+
+* **The unit of replication is the composed state.** The coupling reads both layers in one
+  decision, so under replication the two layers' records and the debts would have to be
+  one replicated state with one log; two logs would make the coupling non-atomic, which is
+  the race the gate closes today.
+* **Only the coupling's four steps are commands.** The single-layer calls the coordinator
+  carries (`write`, `begin_transfer`, `release`, the routing calls) are still methods on
+  `Registry` and `Router`, each with its own log and, for the registry, its epoch floor.
+  The model's `Own` and `Ray` labels are their commands, and a replicated registry needs
+  them as such.
+* **Durability.** `Registry`'s epoch floor is a separate durability concern today; a
+  replicated log would replace it, and nothing says here that the two are equivalent.
+* **Reads and identity.** `poll`, `standing`, the logs and `well_formed` need a stated
+  consistency, and a command that did not come from the connection carries an identity
+  somebody else vouched for ([#66](https://github.com/sevki/jetstream_distributed/issues/66)).
+
 `tests/raymond_routing.rs` runs the textbook request path (`D -> B -> A -> C` and
 the privilege back) and every refusal; `tests/composed_handover.rs` checks the
 refusals that make the composition mean something — the privilege will not move

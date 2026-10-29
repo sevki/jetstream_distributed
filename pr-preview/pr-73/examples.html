@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-14a98615.js";
+            window.path_to_searchindex_js = "searchindex-f2c0f8fb.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-07e7f656.js"></script>
+        <script src="toc-65b1449c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -810,7 +810,7 @@ wiring is not built; the example uses a flag in its place.</li>
 <pre><code class="language-rust ignore">//! Hosting an actor under a fence, calling it, and draining it.
 //!
 //! A [`LocalSupervisor`] hosts actors on one node, each behind its own mailbox. The
-//! actor is an ordinary service; it is handed a [`Fence`], which is the question "may
+//! actor is an ordinary service; it is handed a [`Fence`](jetstream_distributed::actor::service::Fence), which is the question "may
 //! this host still act for its actor?". In a deployment the fence is the ownership
 //! registry's `may_write(host, epoch)`. Here it is a flag, so the example can close it.
 //!

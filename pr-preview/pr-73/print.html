@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-14a98615.js";
+            window.path_to_searchindex_js = "searchindex-f2c0f8fb.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-07e7f656.js"></script>
+        <script src="toc-65b1449c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -1908,7 +1908,7 @@ wiring is not built; the example uses a flag in its place.</li>
 <pre><code class="language-rust ignore">//! Hosting an actor under a fence, calling it, and draining it.
 //!
 //! A [`LocalSupervisor`] hosts actors on one node, each behind its own mailbox. The
-//! actor is an ordinary service; it is handed a [`Fence`], which is the question "may
+//! actor is an ordinary service; it is handed a [`Fence`](jetstream_distributed::actor::service::Fence), which is the question "may
 //! this host still act for its actor?". In a deployment the fence is the ownership
 //! registry's `may_write(host, epoch)`. Here it is a flag, so the example can close it.
 //!
@@ -3546,6 +3546,47 @@ fallback (<code>ping_req</code>), and no piggyback <em>budget</em>: a node sends
 hands it. That loop — pick a peer, note its incarnation, wait out a timeout, call <code>suspect</code> with the incarnation it noted — is where
 timing lives, and nothing in <code>swim::model</code> says anything about timing.</p>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="protocol-the-shape-every-model-has"><a class="header" href="#protocol-the-shape-every-model-has">Protocol: the shape every model has</a></h1>
+<p>Every model in this crate is a labelled-step state machine: a state, a label for each
+kind of step, an initial predicate, and a relation saying which labelled steps are
+allowed. Each module spelled that differently (<code>init</code>/<code>next</code>, <code>raft_init</code>/<code>raft_next</code>,
+<code>ray_init</code>/<code>ray_next</code>, <code>swim_init</code>, <code>actor_init</code>, <code>mb_init</code>, <code>composed_init</code>), so
+nothing in the types said what a protocol is.</p>
+<p><code>protocol::Protocol</code> (<code>src/protocol_t.rs</code>, trusted) is that shape, written once: an
+associated <code>Config</code>, <code>State</code> and <code>Step</code>, an <code>init</code>, a <code>step</code>, and a provided
+<code>next</code> that is “some step”. Each model implements it at the bottom of its own
+<code>model_t.rs</code>. The agreement lemmas (<code>src/protocol_v.rs</code>, verified) pin each instance
+to the model it describes.</p>
+<h2 id="what-is-proved-1"><a class="header" href="#what-is-proved-1">What is proved</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ID</th><th>Claim</th><th>Theorem</th><th>Assumes</th></tr>
+</thead>
+<tbody>
+<tr><td>P1</td><td><strong>Each instance’s <code>next</code> is its model’s <code>next</code></strong>, in both directions, for ownership, Raft, Raymond, SWIM, the actor, the mailbox and the composed machine. A theorem about a model and the same theorem about its <code>Protocol</code> are the same theorem</td><td><code>protocol_agreement::lemma_ownership_next_agrees</code>, <code>lemma_raft_next_agrees</code>, <code>lemma_raymond_next_agrees</code>, <code>lemma_swim_next_agrees</code>, <code>lemma_actor_next_agrees</code>, <code>lemma_mailbox_next_agrees</code>, <code>lemma_composed_next_agrees</code></td><td>none</td></tr>
+<tr><td>P2</td><td><strong>The instances’ <code>init</code> is the model’s <code>init</code></strong>, at the configuration the model has (Raymond’s root; <code>()</code> elsewhere). By definition today, stated so that a later change to an instance cannot drift from the model</td><td><code>protocol_agreement::lemma_init_agrees</code></td><td>none</td></tr>
+<tr><td>P3</td><td><strong>A mailbox run in the crate’s existing sense is a run of the mailbox <code>Protocol</code></strong>, so <code>protocol::runs_of</code> and the statement the mailbox’s liveness proof is built on are the same notion</td><td><code>protocol_agreement::lemma_mailbox_run_is_a_run_of_the_protocol</code></td><td><code>mb_run(ex)</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="what-this-does-not-say"><a class="header" href="#what-this-does-not-say">What this does not say</a></h2>
+<ul>
+<li><strong>It is a shape, not a relationship.</strong> No theorem here relates two protocols. In
+particular the composed machine’s <code>Protocol</code> instance is written by hand; it is
+<em>not</em> derived from the ownership and Raymond instances. Deriving it is the generic
+composition tracked in <a href="https://github.com/sevki/jetstream_distributed/issues/67">#67</a>.</li>
+<li><strong>There is no observable view.</strong> What a consumer of a protocol may read (a
+membership protocol’s peers, a log’s committed prefix) is defined alongside the
+first property that reads it, in the membership contract (<a href="https://github.com/sevki/jetstream_distributed/issues/65">#65</a>).</li>
+<li><strong>No liveness for the other protocols.</strong> <code>runs_of</code> exists, but only the mailbox
+states a liveness theorem against it (P3). Giving the others one is separate work
+per protocol, and each needs its own fairness assumption.</li>
+<li><strong>Nothing about the services.</strong> The <code>service</code> code is plain Rust and does not
+implement <code>Protocol</code>; it calls the verified step functions, which the refinement
+rows in the per-protocol chapters tie to the models.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="the-protocol-as-a-jetstream-service"><a class="header" href="#the-protocol-as-a-jetstream-service">The protocol as a Jetstream service</a></h1>
 <p><strong>Every algorithm in this repository has a service</strong>, and each is a <code>#[service] trait</code> over Jetstream RPC implemented by a type that holds the algorithm’s state
 behind one lock and calls the algorithm’s verified step functions:</p>
@@ -3701,8 +3742,9 @@ moving, stranding authority at a node that no longer holds the privilege.</p>
 <p><strong>What the composed service does not claim.</strong> The composed <em>model</em> guards some
 steps on <code>own.live</code>, which is ground truth — whether a node has crashed is not
 something any process can evaluate. The service has no <code>Crash</code> or <code>Recover</code>, so
-it refines the composed machine’s <strong>crash-free</strong> executions, where every liveness
-guard is vacuously true; C8 states <code>live.contains(..)</code> as a hypothesis rather than
+the steps it calls refine the composed machine’s <strong>crash-free</strong> executions, where
+every liveness guard is vacuously true (the service around those steps is plain
+Rust and tested); C8 states <code>live.contains(..)</code> as a hypothesis rather than
 dropping it. That cut does not lose the case the machine exists for:
 <code>SeizeToken</code> has no liveness guard on the node it takes the privilege <em>from</em>, so
 seizing from a holder that is merely unreachable — the wrongly-suspected node a
@@ -4711,6 +4753,8 @@ attribute.</p>
 │   ├── lib.rs
 │   ├── membership/         what a consumer of any membership protocol reads   [feature = "service"]
 │   │   └── mod.rs          Liveness, PeerSampling, FailureDetector (SWIM implements both)
+│   ├── protocol_t.rs       the Protocol trait: the labelled-step shape every model has
+│   ├── protocol_v.rs       each model's instance is its model (next, init); the mailbox run is a run of the protocol
 │   ├── temporal_t.rs       leads-to, weak fairness and WF1: what a liveness proof is stated in
 │   ├── ownership/          exclusive mutable ownership with epoch fencing
 │   │   ├── model_t.rs      state space + transition relation (no specification)

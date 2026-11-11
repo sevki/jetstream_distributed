@@ -23,6 +23,7 @@
 //! statement about termination, which the paper makes with probability one and this
 //! crate has no probability to state.
 
+#[allow(clippy::new_without_default)]
 #[path = "isr_v.rs"]
 pub mod isr;
 #[path = "isr_t.rs"]

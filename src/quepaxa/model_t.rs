@@ -28,7 +28,12 @@
 //!
 //! The two guarantees `tcast` gives are exactly what [`QpStep::Round`] states of
 //! its witnesses: a replica hears from a majority, and the set it is handed back
-//! as `P'` (or `U`) is contained in every replica's `E` (or `C`). Nothing else
+//! as `P'` (or `U`) is contained in every replica's `E` (or `C`). In the paper's
+//! words (section 4.1.1), each replica `i` receives `R_i`, which "includes the
+//! inputs from a majority of replicas", and `B_i`, which "is the proposal set input
+//! `P_j` of some replica `j`, not necessarily the same as `i`, such that for all
+//! replicas `k`, `P_j ⊆ R_k`". The guarantee is stated per receiver `i`, so each
+//! replica's relay satisfies it, which is what [`round_ok`] asks. Nothing else
 //! about the network is assumed: *which* majority each replica heard from, and
 //! which relay it was handed, are the label's data, so every way of choosing them
 //! is a step. The priorities are the label's data too, and any assignment is a

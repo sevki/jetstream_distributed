@@ -37,6 +37,32 @@ pub proof fn lemma_the_live_replicas_are_a_majority(s: QpState)
     lemma_len_subset(s.crashed, s.replicas);
 }
 
+/// **The initial states exist.** Without this, every safety theorem would be about a
+/// machine that cannot start.
+pub proof fn lemma_the_initial_states_exist(replicas: Set<Id>)
+    requires
+        replicas.len() > 0,
+    ensures
+        exists|s: QpState| qp_init(replicas, s),
+{
+    let s = QpState {
+        replicas,
+        pref: Map::<Id, nat>::new(replicas, |i: Id| 0nat),
+        crashed: Set::<Id>::empty(),
+        decided: Map::<Id, nat>::empty(),
+        inputs: Set::<nat>::empty().insert(0nat),
+    };
+    let r0 = replicas.choose();
+    assert(replicas.contains(r0));
+    assert forall|v: nat| #[trigger] s.inputs.contains(v) <==> exists|i: Id|
+        replicas.contains(i) && s.pref[i] == v by {
+        if v == 0 {
+            assert(s.pref[r0] == 0);
+        }
+    }
+    assert(qp_init(replicas, s));
+}
+
 /// If everyone heard from all of `l` in `tcast 2`, and what each of them heard in
 /// `tcast 1` is `l`, then `E_i` is `l`.
 proof fn lemma_full_e(l: Set<Id>, heard1: Map<Id, Set<Id>>, heard2: Map<Id, Set<Id>>, i: Id)

@@ -17,17 +17,20 @@ register's specification, `src/quepaxa/isr_v.rs` the register, and
 The rows in the first group are about the abstract algorithm. Its two assumptions are the
 two guarantees `tcast` gives (`quepaxa::model::round_ok`): every live replica hears from a
 majority of the live replicas in each of three steps, and the set relayed in `tcast 2`
-(`tcast 3`) is inside every live replica's existent (common) set. And fewer than half of
+(`tcast 3`) is inside every live replica's existent (common) set. The paper (section 4.1.1)
+states the second as: `B_i` "is the proposal set input `P_j` of some replica `j`, not
+necessarily the same as `i`, such that for all replicas `k`, `P_j ⊆ R_k`", for each
+receiver `i`; `round_ok` asks that of every live replica's relay. And fewer than half of
 the replicas have crashed.
 
 | ID | Claim | Theorem | Assumes |
 | --- | --- | --- | --- |
 | Q1 | **Agreement.** In every reachable state, no two replicas have decided differently. The chain `U_i ⊆ C_j ⊆ E_k` for all `i`, `j`, `k` makes a deciding replica's best proposal the best of *every* replica's common set, so every live replica prefers that value next, and no later round proposes another | `quepaxa::proofs::agreement::theorem_agreement` | `round_ok` for every round; fewer than half crashed |
-| Q2 | **A decision is everyone's best common proposal.** If replica `i` decides, then for every live replica `j` the best proposal of `C_j` is the one `i` decided on. The heart of Q1 | `quepaxa::proofs::agreement::lemma_a_decision_is_everyones_best_common` | `round_ok` |
+| Q2 | **A decision is everyone's best common proposal.** If replica `i` decides, then for every live replica `j` the best proposal of `C_j` is the one `i` decided on. The heart of Q1 | `quepaxa::proofs::agreement::lemma_a_decision_is_everyones_best_common` | `round_ok`, the invariant (so the sets are non-empty), and that `i` decides |
 | Q3 | **Validity.** At every point of every execution, whatever a replica has decided is a value some replica began with | `quepaxa::proofs::agreement::theorem_validity` | none beyond Q1's |
 | Q4 | **A decision is locked in.** Once any replica has decided, every replica that has not crashed prefers the decided value, so no later round proposes another | `quepaxa::proofs::agreement::theorem_a_decision_is_locked_in` | none beyond Q1's |
 | Q5 | **The invariant is inductive.** Every step, a crash or a round, preserves it, and the initial states satisfy it, so every reachable state does. Q1, Q3 and Q4 are consequences | `quepaxa::proofs::agreement::lemma_step_preserves_inv`, `lemma_init_satisfies_inv`, `theorem_every_reachable_state_satisfies_the_invariant` | none beyond Q1's |
-| Q6 | **The model is not vacuous.** From any state the invariant allows there is a step, and in a round where every replica hears from every live replica *every live replica decides*. The safety proof is not holding because nothing can ever decide | `quepaxa::proofs::scenario::theorem_a_round_with_full_information_decides` | the invariant |
+| Q6 | **The model is not vacuous.** The initial states exist, and from any state the invariant allows there *exists* a round, the one in which every replica hears from every live replica, in which every live replica decides. The safety proof is not holding because nothing can ever decide. It is one witness: it does not show a round in which some replica does not decide, or a crash step | `quepaxa::proofs::scenario::lemma_the_initial_states_exist`, `theorem_a_round_with_full_information_decides` | the invariant |
 | Q7 | **The abstract model is a `Protocol`** whose `next` is the model's `qp_next` | `protocol_agreement::lemma_quepaxa_next_agrees` | none |
 
 The remaining rows are about the recorder's register.
@@ -35,8 +38,8 @@ The remaining rows are about the recorder's register.
 | ID | Claim | Theorem | Assumes |
 | --- | --- | --- | --- |
 | Q8 | **The constant-space register is the specified one.** `Isr::record`, four integers, leaves the register standing for the history the specification (the paper's Algorithm 2, one entry per step ever seen) would produce, and answers exactly what the specification answers, **for any history the register stands for**. Discarding old steps loses nothing a reply depends on | `quepaxa::isr::Isr::record`, `Isr::new` (their contracts) | the register stands for the history, which `new` establishes and `record` preserves |
-| Q9 | **The step never goes backward**, and **a step the register has left behind is frozen**: recording anything at any step leaves the first value and the aggregate of every step below the current one as they were, so a later request cannot change what an earlier reply was built from | `quepaxa::proofs::isr::theorem_the_step_never_decreases`, `theorem_a_step_left_behind_is_frozen` | none |
-| Q10 | **An aggregate only grows**, and **a value recorded at the current step is in its aggregate**, so the best value a recorder has been given at a step is never missing from, or lowered in, what it reports for it | `quepaxa::proofs::isr::theorem_an_aggregate_never_shrinks`, `theorem_a_recorded_value_is_in_the_aggregate` | none |
+| Q9 | **The step never goes backward**, and **a step the register has left behind is frozen**: recording anything at any step leaves the first value and the aggregate of every step below the current one as they were, so a later request cannot change what an earlier reply was built from | `quepaxa::proofs::isr::theorem_the_step_never_decreases`, `theorem_a_step_left_behind_is_frozen` | the step in question is below the current one (for the frozen row) |
+| Q10 | **An aggregate only grows**, and **a value recorded at the current step is in its aggregate**, so the best value a recorder has been given at a step is never missing from, or lowered in, what it reports for it | `quepaxa::proofs::isr::theorem_an_aggregate_never_shrinks`, `theorem_a_recorded_value_is_in_the_aggregate` | the step recorded at is not below the current one (for the second row). Both rows are about the **specification**, and reach the four-integer register only through Q8's relation |
 
 ## What is not claimed
 

@@ -1,13 +1,18 @@
 //! **What the register keeps true**, stated of the specification
-//! ([`crate::quepaxa::isr_spec`]) and so, by [`crate::quepaxa::isr`]'s refinement,
-//! of the constant-space register a recorder runs.
+//! ([`crate::quepaxa::isr_spec`]), which keeps the whole history.
+//!
+//! These are facts about the *history*, which the constant-space register
+//! ([`crate::quepaxa::isr`]) does not hold. They reach it only through the
+//! refinement: it stands for such a history ([`Isr::related`](crate::quepaxa::isr::Isr::related))
+//! and answers what the history answers, so a reply built from a frozen step is a reply
+//! built from a value that cannot have changed.
 //!
 //! QuePaxa's safety argument leans on a recorder's replies not moving under a
-//! proposer's feet. These are the three facts it leans on, none of which mentions
+//! proposer's feet. These are the facts it would lean on, none of which mentions
 //! a proposer: a recorder's step never goes backward; a step the recorder has left
-//! behind is **frozen**, first value and aggregate alike, so a later request can
-//! never change what an earlier reply was built from; and an aggregate only ever
-//! grows, so the best proposal a recorder has seen at a step never gets worse.
+//! behind is **frozen**, first value and aggregate alike; and an aggregate only ever
+//! grows, so the best proposal a recorder has seen at a step never gets worse. The
+//! argument that uses them is the paper's concrete protocol's, and is not here.
 #![allow(unused_imports)]
 
 use vstd::prelude::*;

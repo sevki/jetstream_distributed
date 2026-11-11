@@ -51,7 +51,7 @@ Two pieces:
   *interval summary register* and answers proposers' requests from it. The paper specifies
   it as if it kept its whole history, then observes four integers suffice. Both are here,
   and the four-integer one is verified to answer exactly what the history-keeping one
-  answers, for any history (Q8). A step the register has left behind never changes, and an
+  answers, for any history the register stands for (Q8). A step the register has left behind never changes, and an
   aggregate never shrinks (Q9, Q10), which is what keeps a recorder's replies from moving
   under a proposer.
 

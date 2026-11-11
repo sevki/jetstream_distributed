@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-5a7c2e79.js";
+            window.path_to_searchindex_js = "../searchindex-deda213d.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-7400ad57.js"></script>
+        <script src="../toc-01df8fb4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -190,7 +190,7 @@ behind one lock and calls the algorithm’s verified step functions:</p>
 </thead>
 <tbody>
 <tr><td>ownership</td><td><code>Ownership</code></td><td><code>Registry</code></td><td><code>ownership::steps</code></td><td><code>force</code> — the coordinator’s own transition</td></tr>
-<tr><td>Raft</td><td><code>Consensus</code></td><td><code>Peer</code></td><td><code>raft::steps</code></td><td>standing for election, tallying votes, taking a term</td></tr>
+<tr><td>Raft</td><td><code>RaftRpc</code></td><td><code>Peer</code></td><td><code>raft::steps</code></td><td>standing for election, tallying votes, taking a term</td></tr>
 <tr><td>SWIM</td><td><code>Membership</code></td><td><code>Node</code></td><td><code>swim::steps</code></td><td>suspecting, declaring dead, refuting</td></tr>
 <tr><td>Raymond</td><td><code>Routing</code></td><td><code>Router</code></td><td><code>raymond::steps</code></td><td>— (every method acts on the caller’s own entries)</td></tr>
 <tr><td>composed</td><td><code>Composed</code></td><td><code>Coordinator</code></td><td><code>composed::steps</code></td><td>seizing the privilege</td></tr>

@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-5a7c2e79.js";
+            window.path_to_searchindex_js = "searchindex-deda213d.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-7400ad57.js"></script>
+        <script src="toc-01df8fb4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -3376,18 +3376,31 @@ Safety is gone. Not because the proof is wrong, but because <code>already_voted<
 reported <code>false</code> when the model’s <code>has_voted</code> was true. <code>tests/raft_election.rs</code>
 runs that in both directions: a restarted voter that refuses the second request,
 and a forgetful one that grants it and elects two leaders.</p>
+<p><strong>The driver that was left to the caller is now written, and it is plain Rust.</strong> The wire
+trait is <code>RaftRpc</code>; <code>raft::replicated::RaftLog</code> holds a <code>Peer</code> and a handle to each other
+server and implements the crate’s one consensus interface,
+<a href="#consensus-one-interface-tested-of-each-protocol"><code>ReplicatedLog</code></a>: <code>propose</code> appends at the leader, replicates one entry at a
+time with the prefix backing off on a refusal, and returns once the commit point passes the
+slot. Every decision is still <code>Peer</code>’s; what <code>RaftLog</code> adds is the order calls are made in,
+a per-call timeout, and a heartbeat that carries the commit point, and <strong>none of that is
+proved</strong>. There is no election timer (<code>elect</code> is what one would call), and only the leader
+proposes, so <code>propose</code> elsewhere returns <code>NotPlaced</code>. The evidence is the shared contract
+(C1 in <a href="#consensus-one-interface-tested-of-each-protocol">Consensus</a>), not a theorem about Raft’s State Machine Safety, which
+remains unproved.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="quepaxa-consensus-without-timeouts-1"><a class="header" href="#quepaxa-consensus-without-timeouts-1">QuePaxa: consensus without timeouts</a></h1>
 <p><a href="#quepaxa-consensus-without-timeouts">QuePaxa</a> (Tennage, Băsescu, Kokoris-Kogias, Syta, Jovanovic, Estrada-Galiñanes
 and Ford, SOSP 2023) is a consensus protocol whose liveness does not rest on timeouts. This
 page is what is claimed about the part that is built, and what is not.</p>
 <p>What is built is <strong>the paper’s abstract algorithm over an ideal threshold broadcast, with
-its safety proved, and the recorder’s register in constant space, verified against its
-specification.</strong> What is <strong>not</strong> built is the concrete protocol that is supposed to provide
-that broadcast, so every safety row below is <em>conditional on the broadcast’s two
-guarantees</em>. <code>src/quepaxa/model_t.rs</code> is the abstract model, <code>src/quepaxa/isr_t.rs</code> the
-register’s specification, <code>src/quepaxa/isr_v.rs</code> the register, and
-<code>src/quepaxa/proofs/</code> the theorems.</p>
+its safety proved; the recorder’s register in constant space and the packing of a proposal,
+verified; and the concrete protocol (proposer, recorder, a Jetstream service) as plain Rust
+that is tested, not proved.</strong> Nothing connects the concrete protocol to the abstract model
+by proof, so every safety row below is <em>conditional on the broadcast’s two guarantees</em>, and
+the concrete protocol is covered only by Q12. <code>src/quepaxa/model_t.rs</code> is the abstract
+model, <code>src/quepaxa/isr_t.rs</code> the register’s specification, <code>src/quepaxa/isr_v.rs</code> the
+register, <code>src/quepaxa/proposal_v.rs</code> the packing, <code>src/quepaxa/proofs/</code> the theorems and
+<code>src/quepaxa/service/</code> the concrete protocol.</p>
 <h2 id="what-is-proved-1"><a class="header" href="#what-is-proved-1">What is proved</a></h2>
 <p>The rows in the first group are about the abstract algorithm. Its two assumptions are the
 two guarantees <code>tcast</code> gives (<code>quepaxa::model::round_ok</code>): every live replica hears from a
@@ -3426,16 +3439,27 @@ the replicas have crashed.</p>
 </tbody>
 </table>
 </div>
+<p>The last two rows are about the concrete protocol.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ID</th><th>Claim</th><th>Evidence</th><th>Assumes</th></tr>
+</thead>
+<tbody>
+<tr><td>Q11</td><td><strong>A proposal packs into one integer in which larger is better.</strong> <code>pack</code> puts priority, proposer and value into a <code>u128</code>; comparing packed integers is comparing <code>(priority, proposer, value)</code> lexicographically, <code>unpack</code> inverts <code>pack</code>, and the leader’s priority outranks every random one. This is what lets a register that only keeps a <code>max</code> aggregate proposals</td><td><code>quepaxa::proposal::lemma_pack_order</code>, <code>lemma_split_is_inverse</code>, <code>lemma_the_leader_outranks</code> (verified)</td><td>none</td></tr>
+<tr><td>Q12</td><td><strong>The concrete protocol decides one value per slot, in the runs tried.</strong> Proposers run the paper’s Algorithm 4 (propose, spread, decide, adopt, catch up) against recorders; the shared contract in <a href="#consensus-one-interface-tested-of-each-protocol">C1</a> holds of a <code>QuePaxaLog</code> under lost calls, crashed minorities and five proposers at once, and on a simulated network. <strong>Tested, not proved:</strong> no theorem connects it to Q1 to Q6, and Appendix B’s argument that it provides <code>tcast</code> is not formalised</td><td><code>tests/consensus_contract.rs</code>, <code>tests/quepaxa_proposer.rs</code>, <code>tests/quepaxa_turmoil.rs</code></td><td>the failure model below; <strong>a proposer index proposes one value per slot, one slot at a time</strong>, which <code>Proposer</code> enforces and a test (<code>a_proposer_puts_one_value_in_a_slot</code>) guards, found when two values at one slot decided differently</td></tr>
+</tbody>
+</table>
+</div>
 <h2 id="what-is-not-claimed-2"><a class="header" href="#what-is-not-claimed-2">What is not claimed</a></h2>
 <ul>
-<li><strong>That the concrete protocol provides <code>tcast</code>.</strong> This is the claim that matters and the
-one that is not here. The paper’s concrete protocol (its Algorithm 4: proposers that
-spread proposals to recorders, read back summaries, and catch up when a recorder is
-ahead) is supposed to give each replica the three <code>tcast</code> outputs with the two
-guarantees. The paper argues that in its Appendix B. Nothing here models proposers or
-asynchronous messages, so <strong>Q1 to Q6 say the idea is sound, not that any
-implementation of it is.</strong> Q8 to Q10 are what a recorder does, and they are the part
-of that argument a recorder’s behaviour supplies.</li>
+<li><strong>That the concrete protocol provides <code>tcast</code>, by proof.</strong> This is the claim that matters
+and the one that is not here. The paper’s concrete protocol (its Algorithm 4) is built in
+<code>src/quepaxa/service/</code>, but it is plain Rust, and the argument in the paper’s Appendix B
+that it gives each replica the three <code>tcast</code> outputs with the two guarantees is not
+formalised. <strong>Q1 to Q6 say the idea is sound; Q12 says the implementation behaved in the
+runs tried.</strong> Q8 to Q10 are what a recorder does, and they are the part of that argument
+a recorder’s behaviour supplies.</li>
 <li><strong>Termination, in any form but one.</strong> The paper’s liveness is that the protocol decides
 with probability one, under an adversarial scheduler, in under two rounds in
 expectation. This model has no probability. Q6 is only that a round with full
@@ -3445,20 +3469,59 @@ liveness theorem.</li>
 chooses correctly. That priorities are random, drawn independently and from a large
 enough range that a tie is negligible, is what makes termination likely and is not
 modelled. Ties here are broken by the proposer’s id.</li>
-<li><strong>The leader fast path and the hedging schedule.</strong> The designated leader’s one-round-trip
-decision, the delays that let later proposers wait, and the multi-armed-bandit choice of
-leader are optimisations of when things happen. None of it is modelled.</li>
-<li><strong>State machine replication.</strong> This is one decision for one slot. The log of slots, batching,
-pipelining and what a submitter sees are not built.</li>
+<li><strong>The leader fast path and the hedging schedule, in the model.</strong> The designated leader’s
+one-round-trip decision and the hedge delay exist in the concrete protocol and are
+exercised by the tests; neither is modelled, and the multi-armed-bandit choice of leader
+is not built.</li>
+<li><strong>State machine replication, beyond a log of slots.</strong> <code>QuePaxaLog</code> runs one instance per
+slot and exposes them as a <a href="#consensus-one-interface-tested-of-each-protocol"><code>ReplicatedLog</code></a>. Batching, pipelining,
+garbage collection of old slots (a recorder’s registers are capped, not collected) and
+state transfer are not built.</li>
 <li><strong>The failure model beyond crashes.</strong> Replicas crash and never return, fewer than half of
 them. A replica that crashes in the middle of a <code>tcast</code> is the same as one that crashes
 after it, because a replica heard from by only some is just a replica some majorities
 contain. Byzantine replicas, reconfiguration and recovery are out of scope.</li>
-<li><strong>The packing of a proposal.</strong> The register aggregates <code>u128</code> values with <code>max</code>. The
-concrete protocol packs a proposal’s priority, proposer and value into one so that the
-larger integer is the better proposal; that packing is not here.</li>
-<li><strong>Any service, or a consumer.</strong> Nothing outside <code>src/quepaxa/</code> uses it, and there is no
-Jetstream service. It is not connected to <a href="#ownership-the-model-and-its-claims">ownership</a>’s registry.</li>
+<li><strong>Identity beyond the connection’s address.</strong> A recorder accepts a call from an address
+on its roster and refuses any other; the roster is an assumption, as Raft’s is. Nothing
+authenticates the address.</li>
+<li><strong>A consumer.</strong> Nothing but the tests uses <code>QuePaxaLog</code>. It is not connected to
+<a href="#ownership-the-model-and-its-claims">ownership</a>’s registry.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="consensus-one-interface-tested-of-each-protocol"><a class="header" href="#consensus-one-interface-tested-of-each-protocol">Consensus: one interface, tested of each protocol</a></h1>
+<p><a href="#raft-the-same-statement-bought-by-counting">Raft</a> and <a href="#quepaxa-consensus-without-timeouts-1">QuePaxa</a> reach agreement in unrelated ways. A consumer
+should depend on neither, so <code>src/consensus/mod.rs</code> defines <strong>one interface,
+<code>ReplicatedLog</code>: a log that every replica agrees on.</strong> <code>propose(value)</code> returns the slot
+the value was decided at, <code>decided(slot)</code> what was decided there, <code>committed()</code> how many
+slots are decided with no gaps. Both protocols implement it: <code>quepaxa::service::QuePaxaLog</code>
+and <code>raft::replicated::RaftLog</code>. Raft’s own wire trait is <code>RaftRpc</code>; it is the protocol’s
+messages and not a second consensus interface.</p>
+<p>This page says what is claimed about the interface, which is <strong>tested and not proved</strong>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ID</th><th>Claim</th><th>Evidence</th><th>Assumes</th></tr>
+</thead>
+<tbody>
+<tr><td>C1</td><td><strong>Six properties hold of every implementation:</strong> agreement (two replicas that report a slot report the same value), validity (a decided value was proposed), a decision is visible to the replica that returned it <em>as it returns</em>, two different values never share a slot, <code>committed</code> is a prefix of decided slots, and a decision never changes</td><td><code>tests/consensus_contract.rs</code>: <code>obeys_the_contract</code>, written against the trait and run on both, with no failure, with calls lost (up to 45% for Raft), with a crashed minority and with five proposers at once</td><td>crash-stop with fewer than half failed; the in-process fault injection in the test</td></tr>
+<tr><td>C2</td><td><strong>A cluster in which nothing fails does decide</strong>, on both. Termination is <strong>not</strong> part of the contract: an implementation may refuse (<code>ProposeError</code>), and whether it eventually succeeds is each protocol’s own claim</td><td>the same tests</td><td>as C1</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="what-is-not-claimed-3"><a class="header" href="#what-is-not-claimed-3">What is not claimed</a></h2>
+<ul>
+<li><strong>No theorem.</strong> The two protocols prove different things of different models: Raft’s
+Election Safety and Log Matching are proved and its Leader Completeness and State
+Machine Safety are not; QuePaxa’s agreement is proved over an ideal broadcast. There is no
+specification both instantiate, because a shared theorem would have to hide that.</li>
+<li><strong>That the tests can catch what they do not check.</strong> A mutant of <code>RaftLog</code> that returned
+from <code>propose</code> before the entry was committed survived the contract until the
+visible-as-it-returns check was added to <code>propose_somewhere</code>; the check is now there. Other
+mutants may survive.</li>
+<li><strong>Raft’s timing.</strong> <code>RaftLog</code> gives up on a follower after a per-call timeout and has no
+election timer: <code>elect</code> is what a timeout would call, and nothing calls it. QuePaxa has no
+timeouts at all. Neither’s liveness is proved.</li>
+<li><strong>Values are <code>u64</code></strong>, a batch id or a command handle; what it means is the consumer’s.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="actor-a-journal-fenced-by-ownership"><a class="header" href="#actor-a-journal-fenced-by-ownership">Actor: a journal fenced by ownership</a></h1>
@@ -3762,7 +3825,7 @@ theorems.</p>
 </tbody>
 </table>
 </div>
-<h2 id="what-is-not-claimed-3"><a class="header" href="#what-is-not-claimed-3">What is not claimed</a></h2>
+<h2 id="what-is-not-claimed-4"><a class="header" href="#what-is-not-claimed-4">What is not claimed</a></h2>
 <ul>
 <li><strong>Symmetry of active views.</strong> The paper’s central property is that if <code>a</code> is in
 <code>b</code>’s active view then <code>b</code> is in <code>a</code>’s. That is a property of how <em>several</em> nodes are
@@ -3838,7 +3901,7 @@ behind one lock and calls the algorithm’s verified step functions:</p>
 </thead>
 <tbody>
 <tr><td>ownership</td><td><code>Ownership</code></td><td><code>Registry</code></td><td><code>ownership::steps</code></td><td><code>force</code> — the coordinator’s own transition</td></tr>
-<tr><td>Raft</td><td><code>Consensus</code></td><td><code>Peer</code></td><td><code>raft::steps</code></td><td>standing for election, tallying votes, taking a term</td></tr>
+<tr><td>Raft</td><td><code>RaftRpc</code></td><td><code>Peer</code></td><td><code>raft::steps</code></td><td>standing for election, tallying votes, taking a term</td></tr>
 <tr><td>SWIM</td><td><code>Membership</code></td><td><code>Node</code></td><td><code>swim::steps</code></td><td>suspecting, declaring dead, refuting</td></tr>
 <tr><td>Raymond</td><td><code>Routing</code></td><td><code>Router</code></td><td><code>raymond::steps</code></td><td>— (every method acts on the caller’s own entries)</td></tr>
 <tr><td>composed</td><td><code>Composed</code></td><td><code>Coordinator</code></td><td><code>composed::steps</code></td><td>seizing the privilege</td></tr>

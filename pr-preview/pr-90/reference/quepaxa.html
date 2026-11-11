@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-5a7c2e79.js";
+            window.path_to_searchindex_js = "../searchindex-deda213d.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-7400ad57.js"></script>
+        <script src="../toc-01df8fb4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -185,12 +185,14 @@
 and Ford, SOSP 2023) is a consensus protocol whose liveness does not rest on timeouts. This
 page is what is claimed about the part that is built, and what is not.</p>
 <p>What is built is <strong>the paper’s abstract algorithm over an ideal threshold broadcast, with
-its safety proved, and the recorder’s register in constant space, verified against its
-specification.</strong> What is <strong>not</strong> built is the concrete protocol that is supposed to provide
-that broadcast, so every safety row below is <em>conditional on the broadcast’s two
-guarantees</em>. <code>src/quepaxa/model_t.rs</code> is the abstract model, <code>src/quepaxa/isr_t.rs</code> the
-register’s specification, <code>src/quepaxa/isr_v.rs</code> the register, and
-<code>src/quepaxa/proofs/</code> the theorems.</p>
+its safety proved; the recorder’s register in constant space and the packing of a proposal,
+verified; and the concrete protocol (proposer, recorder, a Jetstream service) as plain Rust
+that is tested, not proved.</strong> Nothing connects the concrete protocol to the abstract model
+by proof, so every safety row below is <em>conditional on the broadcast’s two guarantees</em>, and
+the concrete protocol is covered only by Q12. <code>src/quepaxa/model_t.rs</code> is the abstract
+model, <code>src/quepaxa/isr_t.rs</code> the register’s specification, <code>src/quepaxa/isr_v.rs</code> the
+register, <code>src/quepaxa/proposal_v.rs</code> the packing, <code>src/quepaxa/proofs/</code> the theorems and
+<code>src/quepaxa/service/</code> the concrete protocol.</p>
 <h2 id="what-is-proved"><a class="header" href="#what-is-proved">What is proved</a></h2>
 <p>The rows in the first group are about the abstract algorithm. Its two assumptions are the
 two guarantees <code>tcast</code> gives (<code>quepaxa::model::round_ok</code>): every live replica hears from a
@@ -229,16 +231,27 @@ the replicas have crashed.</p>
 </tbody>
 </table>
 </div>
+<p>The last two rows are about the concrete protocol.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ID</th><th>Claim</th><th>Evidence</th><th>Assumes</th></tr>
+</thead>
+<tbody>
+<tr><td>Q11</td><td><strong>A proposal packs into one integer in which larger is better.</strong> <code>pack</code> puts priority, proposer and value into a <code>u128</code>; comparing packed integers is comparing <code>(priority, proposer, value)</code> lexicographically, <code>unpack</code> inverts <code>pack</code>, and the leader’s priority outranks every random one. This is what lets a register that only keeps a <code>max</code> aggregate proposals</td><td><code>quepaxa::proposal::lemma_pack_order</code>, <code>lemma_split_is_inverse</code>, <code>lemma_the_leader_outranks</code> (verified)</td><td>none</td></tr>
+<tr><td>Q12</td><td><strong>The concrete protocol decides one value per slot, in the runs tried.</strong> Proposers run the paper’s Algorithm 4 (propose, spread, decide, adopt, catch up) against recorders; the shared contract in <a href="consensus.html">C1</a> holds of a <code>QuePaxaLog</code> under lost calls, crashed minorities and five proposers at once, and on a simulated network. <strong>Tested, not proved:</strong> no theorem connects it to Q1 to Q6, and Appendix B’s argument that it provides <code>tcast</code> is not formalised</td><td><code>tests/consensus_contract.rs</code>, <code>tests/quepaxa_proposer.rs</code>, <code>tests/quepaxa_turmoil.rs</code></td><td>the failure model below; <strong>a proposer index proposes one value per slot, one slot at a time</strong>, which <code>Proposer</code> enforces and a test (<code>a_proposer_puts_one_value_in_a_slot</code>) guards, found when two values at one slot decided differently</td></tr>
+</tbody>
+</table>
+</div>
 <h2 id="what-is-not-claimed"><a class="header" href="#what-is-not-claimed">What is not claimed</a></h2>
 <ul>
-<li><strong>That the concrete protocol provides <code>tcast</code>.</strong> This is the claim that matters and the
-one that is not here. The paper’s concrete protocol (its Algorithm 4: proposers that
-spread proposals to recorders, read back summaries, and catch up when a recorder is
-ahead) is supposed to give each replica the three <code>tcast</code> outputs with the two
-guarantees. The paper argues that in its Appendix B. Nothing here models proposers or
-asynchronous messages, so <strong>Q1 to Q6 say the idea is sound, not that any
-implementation of it is.</strong> Q8 to Q10 are what a recorder does, and they are the part
-of that argument a recorder’s behaviour supplies.</li>
+<li><strong>That the concrete protocol provides <code>tcast</code>, by proof.</strong> This is the claim that matters
+and the one that is not here. The paper’s concrete protocol (its Algorithm 4) is built in
+<code>src/quepaxa/service/</code>, but it is plain Rust, and the argument in the paper’s Appendix B
+that it gives each replica the three <code>tcast</code> outputs with the two guarantees is not
+formalised. <strong>Q1 to Q6 say the idea is sound; Q12 says the implementation behaved in the
+runs tried.</strong> Q8 to Q10 are what a recorder does, and they are the part of that argument
+a recorder’s behaviour supplies.</li>
 <li><strong>Termination, in any form but one.</strong> The paper’s liveness is that the protocol decides
 with probability one, under an adversarial scheduler, in under two rounds in
 expectation. This model has no probability. Q6 is only that a round with full
@@ -248,20 +261,23 @@ liveness theorem.</li>
 chooses correctly. That priorities are random, drawn independently and from a large
 enough range that a tie is negligible, is what makes termination likely and is not
 modelled. Ties here are broken by the proposer’s id.</li>
-<li><strong>The leader fast path and the hedging schedule.</strong> The designated leader’s one-round-trip
-decision, the delays that let later proposers wait, and the multi-armed-bandit choice of
-leader are optimisations of when things happen. None of it is modelled.</li>
-<li><strong>State machine replication.</strong> This is one decision for one slot. The log of slots, batching,
-pipelining and what a submitter sees are not built.</li>
+<li><strong>The leader fast path and the hedging schedule, in the model.</strong> The designated leader’s
+one-round-trip decision and the hedge delay exist in the concrete protocol and are
+exercised by the tests; neither is modelled, and the multi-armed-bandit choice of leader
+is not built.</li>
+<li><strong>State machine replication, beyond a log of slots.</strong> <code>QuePaxaLog</code> runs one instance per
+slot and exposes them as a <a href="consensus.html"><code>ReplicatedLog</code></a>. Batching, pipelining,
+garbage collection of old slots (a recorder’s registers are capped, not collected) and
+state transfer are not built.</li>
 <li><strong>The failure model beyond crashes.</strong> Replicas crash and never return, fewer than half of
 them. A replica that crashes in the middle of a <code>tcast</code> is the same as one that crashes
 after it, because a replica heard from by only some is just a replica some majorities
 contain. Byzantine replicas, reconfiguration and recovery are out of scope.</li>
-<li><strong>The packing of a proposal.</strong> The register aggregates <code>u128</code> values with <code>max</code>. The
-concrete protocol packs a proposal’s priority, proposer and value into one so that the
-larger integer is the better proposal; that packing is not here.</li>
-<li><strong>Any service, or a consumer.</strong> Nothing outside <code>src/quepaxa/</code> uses it, and there is no
-Jetstream service. It is not connected to <a href="ownership.html">ownership</a>’s registry.</li>
+<li><strong>Identity beyond the connection’s address.</strong> A recorder accepts a call from an address
+on its roster and refuses any other; the roster is an assumption, as Raft’s is. Nothing
+authenticates the address.</li>
+<li><strong>A consumer.</strong> Nothing but the tests uses <code>QuePaxaLog</code>. It is not connected to
+<a href="ownership.html">ownership</a>’s registry.</li>
 </ul>
 
                     </main>
@@ -272,7 +288,7 @@ Jetstream service. It is not connected to <a href="ownership.html">ownership</a>
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../reference/actor.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../reference/consensus.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -286,7 +302,7 @@ Jetstream service. It is not connected to <a href="ownership.html">ownership</a>
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../reference/actor.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../reference/consensus.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

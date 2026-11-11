@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-5a7c2e79.js";
+            window.path_to_searchindex_js = "../searchindex-deda213d.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-7400ad57.js"></script>
+        <script src="../toc-01df8fb4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -701,6 +701,17 @@ Safety is gone. Not because the proof is wrong, but because <code>already_voted<
 reported <code>false</code> when the model’s <code>has_voted</code> was true. <code>tests/raft_election.rs</code>
 runs that in both directions: a restarted voter that refuses the second request,
 and a forgetful one that grants it and elects two leaders.</p>
+<p><strong>The driver that was left to the caller is now written, and it is plain Rust.</strong> The wire
+trait is <code>RaftRpc</code>; <code>raft::replicated::RaftLog</code> holds a <code>Peer</code> and a handle to each other
+server and implements the crate’s one consensus interface,
+<a href="consensus.html"><code>ReplicatedLog</code></a>: <code>propose</code> appends at the leader, replicates one entry at a
+time with the prefix backing off on a refusal, and returns once the commit point passes the
+slot. Every decision is still <code>Peer</code>’s; what <code>RaftLog</code> adds is the order calls are made in,
+a per-call timeout, and a heartbeat that carries the commit point, and <strong>none of that is
+proved</strong>. There is no election timer (<code>elect</code> is what one would call), and only the leader
+proposes, so <code>propose</code> elsewhere returns <code>NotPlaced</code>. The evidence is the shared contract
+(C1 in <a href="consensus.html">Consensus</a>), not a theorem about Raft’s State Machine Safety, which
+remains unproved.</p>
 
                     </main>
 

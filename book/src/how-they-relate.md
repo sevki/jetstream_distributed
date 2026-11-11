@@ -147,11 +147,21 @@ nothing in the code relates it to SWIM beyond both being membership. It is one n
 views and handlers; the property that makes a cluster of them an overlay (symmetric
 active views) is not claimed.
 
+### QuePaxa: unconnected, so far
+
+[QuePaxa](quepaxa.md) is a second answer to what [Raft](raft.md) answers: agreement among
+replicas, without a leader timeout in the liveness argument. It is built beside Raft and
+nothing relates them in the code, nor does anything consume it. What is built is its
+abstract algorithm over an ideal broadcast, with safety proved, and the recorder's register
+verified; the concrete protocol that is supposed to provide the broadcast is not, so the
+safety proof is conditional on a property nothing here derives.
+
 ## What is not related yet
 
 Said plainly, because a map that implies edges that do not exist is worse than none:
 
 - **Raft and ownership are not connected.** Nothing runs the registry on a replicated log.
+  QuePaxa is not connected to ownership either.
 - **Raymond and the composed services keep the global record in one process.** They
   check the rules; they do not distribute them.
 - **`Host`, the journal service, does not sit behind the mailbox**, though the mailbox

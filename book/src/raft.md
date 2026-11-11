@@ -90,4 +90,5 @@ consensus is proved, and the two do not yet touch.
 The Raft rows (C1 onward) are in the Reference's
 [Raft section](reference/raft.md#raft-the-same-statement-bought-by-counting).
 
-Next: [SWIM](swim.md), which does not try to agree on anything.
+Next: [QuePaxa](quepaxa.md), which reaches the same kind of agreement without leaning on a
+timeout.

@@ -28,6 +28,8 @@
 //!   survives a handover.
 //! * [`hyparview`] — membership by two small views (who to gossip with), not a
 //!   table of the cluster: one node, so far, with its handlers proved.
+//! * [`quepaxa`]   — consensus without timeouts: a randomised asynchronous
+//!   algorithm, so far the abstract one and its safety.
 //! * [`swim`]      — gossip membership, which buys neither exclusivity nor
 //!   agreement, and promises only that disagreements resolve.
 //! * [`protocol`]  — not an algorithm: the labelled-step shape every model above
@@ -73,6 +75,7 @@ pub mod id;
 #[cfg(feature = "service")]
 pub mod monitoring;
 pub mod ownership;
+pub mod quepaxa;
 pub mod raft;
 pub mod raymond;
 pub mod scheduling;

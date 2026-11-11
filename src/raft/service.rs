@@ -556,7 +556,7 @@ impl LogStore for RecordLogStore {
 /// peer declare somebody leader. They are inherent methods on [`Peer`], for the
 /// same reason `force` is inherent on the ownership registry.
 #[service(uses(super::{Appended, Ballot, LogEntry, Standing}))]
-pub trait Consensus {
+pub trait RaftRpc {
     /// `RequestVote`. The candidate is the caller.
     ///
     /// `last_term` and `last_index` are the candidate's log summary, and the
@@ -1306,7 +1306,7 @@ impl Peer {
     }
 }
 
-impl Consensus for Peer {
+impl RaftRpc for Peer {
     async fn request_vote(
         &self,
         ctx: Context,

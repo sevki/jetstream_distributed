@@ -35,4 +35,6 @@ pub mod store;
 pub mod wire;
 
 #[cfg(feature = "service")]
+pub mod replicated;
+#[cfg(feature = "service")]
 pub mod service;

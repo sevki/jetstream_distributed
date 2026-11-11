@@ -30,3 +30,7 @@ pub mod isr_spec;
 #[path = "model_t.rs"]
 pub mod model;
 pub mod proofs;
+#[path = "proposal_v.rs"]
+pub mod proposal;
+#[cfg(feature = "service")]
+pub mod service;

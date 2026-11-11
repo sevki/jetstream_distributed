@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-5a3542fc.js";
+            window.path_to_searchindex_js = "searchindex-5a7c2e79.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7400ad57.js"></script>
@@ -839,7 +839,7 @@ live replica decides.</li>
 <em>interval summary register</em> and answers proposers’ requests from it. The paper specifies
 it as if it kept its whole history, then observes four integers suffice. Both are here,
 and the four-integer one is verified to answer exactly what the history-keeping one
-answers, for any history (Q8). A step the register has left behind never changes, and an
+answers, for any history the register stands for (Q8). A step the register has left behind never changes, and an
 aggregate never shrinks (Q9, Q10), which is what keeps a recorder’s replies from moving
 under a proposer.</li>
 </ul>
@@ -3392,7 +3392,10 @@ register’s specification, <code>src/quepaxa/isr_v.rs</code> the register, and
 <p>The rows in the first group are about the abstract algorithm. Its two assumptions are the
 two guarantees <code>tcast</code> gives (<code>quepaxa::model::round_ok</code>): every live replica hears from a
 majority of the live replicas in each of three steps, and the set relayed in <code>tcast 2</code>
-(<code>tcast 3</code>) is inside every live replica’s existent (common) set. And fewer than half of
+(<code>tcast 3</code>) is inside every live replica’s existent (common) set. The paper (section 4.1.1)
+states the second as: <code>B_i</code> “is the proposal set input <code>P_j</code> of some replica <code>j</code>, not
+necessarily the same as <code>i</code>, such that for all replicas <code>k</code>, <code>P_j ⊆ R_k</code>”, for each
+receiver <code>i</code>; <code>round_ok</code> asks that of every live replica’s relay. And fewer than half of
 the replicas have crashed.</p>
 <div class="table-wrapper">
 <table>
@@ -3401,11 +3404,11 @@ the replicas have crashed.</p>
 </thead>
 <tbody>
 <tr><td>Q1</td><td><strong>Agreement.</strong> In every reachable state, no two replicas have decided differently. The chain <code>U_i ⊆ C_j ⊆ E_k</code> for all <code>i</code>, <code>j</code>, <code>k</code> makes a deciding replica’s best proposal the best of <em>every</em> replica’s common set, so every live replica prefers that value next, and no later round proposes another</td><td><code>quepaxa::proofs::agreement::theorem_agreement</code></td><td><code>round_ok</code> for every round; fewer than half crashed</td></tr>
-<tr><td>Q2</td><td><strong>A decision is everyone’s best common proposal.</strong> If replica <code>i</code> decides, then for every live replica <code>j</code> the best proposal of <code>C_j</code> is the one <code>i</code> decided on. The heart of Q1</td><td><code>quepaxa::proofs::agreement::lemma_a_decision_is_everyones_best_common</code></td><td><code>round_ok</code></td></tr>
+<tr><td>Q2</td><td><strong>A decision is everyone’s best common proposal.</strong> If replica <code>i</code> decides, then for every live replica <code>j</code> the best proposal of <code>C_j</code> is the one <code>i</code> decided on. The heart of Q1</td><td><code>quepaxa::proofs::agreement::lemma_a_decision_is_everyones_best_common</code></td><td><code>round_ok</code>, the invariant (so the sets are non-empty), and that <code>i</code> decides</td></tr>
 <tr><td>Q3</td><td><strong>Validity.</strong> At every point of every execution, whatever a replica has decided is a value some replica began with</td><td><code>quepaxa::proofs::agreement::theorem_validity</code></td><td>none beyond Q1’s</td></tr>
 <tr><td>Q4</td><td><strong>A decision is locked in.</strong> Once any replica has decided, every replica that has not crashed prefers the decided value, so no later round proposes another</td><td><code>quepaxa::proofs::agreement::theorem_a_decision_is_locked_in</code></td><td>none beyond Q1’s</td></tr>
 <tr><td>Q5</td><td><strong>The invariant is inductive.</strong> Every step, a crash or a round, preserves it, and the initial states satisfy it, so every reachable state does. Q1, Q3 and Q4 are consequences</td><td><code>quepaxa::proofs::agreement::lemma_step_preserves_inv</code>, <code>lemma_init_satisfies_inv</code>, <code>theorem_every_reachable_state_satisfies_the_invariant</code></td><td>none beyond Q1’s</td></tr>
-<tr><td>Q6</td><td><strong>The model is not vacuous.</strong> From any state the invariant allows there is a step, and in a round where every replica hears from every live replica <em>every live replica decides</em>. The safety proof is not holding because nothing can ever decide</td><td><code>quepaxa::proofs::scenario::theorem_a_round_with_full_information_decides</code></td><td>the invariant</td></tr>
+<tr><td>Q6</td><td><strong>The model is not vacuous.</strong> The initial states exist, and from any state the invariant allows there <em>exists</em> a round, the one in which every replica hears from every live replica, in which every live replica decides. The safety proof is not holding because nothing can ever decide. It is one witness: it does not show a round in which some replica does not decide, or a crash step</td><td><code>quepaxa::proofs::scenario::lemma_the_initial_states_exist</code>, <code>theorem_a_round_with_full_information_decides</code></td><td>the invariant</td></tr>
 <tr><td>Q7</td><td><strong>The abstract model is a <code>Protocol</code></strong> whose <code>next</code> is the model’s <code>qp_next</code></td><td><code>protocol_agreement::lemma_quepaxa_next_agrees</code></td><td>none</td></tr>
 </tbody>
 </table>
@@ -3418,8 +3421,8 @@ the replicas have crashed.</p>
 </thead>
 <tbody>
 <tr><td>Q8</td><td><strong>The constant-space register is the specified one.</strong> <code>Isr::record</code>, four integers, leaves the register standing for the history the specification (the paper’s Algorithm 2, one entry per step ever seen) would produce, and answers exactly what the specification answers, <strong>for any history the register stands for</strong>. Discarding old steps loses nothing a reply depends on</td><td><code>quepaxa::isr::Isr::record</code>, <code>Isr::new</code> (their contracts)</td><td>the register stands for the history, which <code>new</code> establishes and <code>record</code> preserves</td></tr>
-<tr><td>Q9</td><td><strong>The step never goes backward</strong>, and <strong>a step the register has left behind is frozen</strong>: recording anything at any step leaves the first value and the aggregate of every step below the current one as they were, so a later request cannot change what an earlier reply was built from</td><td><code>quepaxa::proofs::isr::theorem_the_step_never_decreases</code>, <code>theorem_a_step_left_behind_is_frozen</code></td><td>none</td></tr>
-<tr><td>Q10</td><td><strong>An aggregate only grows</strong>, and <strong>a value recorded at the current step is in its aggregate</strong>, so the best value a recorder has been given at a step is never missing from, or lowered in, what it reports for it</td><td><code>quepaxa::proofs::isr::theorem_an_aggregate_never_shrinks</code>, <code>theorem_a_recorded_value_is_in_the_aggregate</code></td><td>none</td></tr>
+<tr><td>Q9</td><td><strong>The step never goes backward</strong>, and <strong>a step the register has left behind is frozen</strong>: recording anything at any step leaves the first value and the aggregate of every step below the current one as they were, so a later request cannot change what an earlier reply was built from</td><td><code>quepaxa::proofs::isr::theorem_the_step_never_decreases</code>, <code>theorem_a_step_left_behind_is_frozen</code></td><td>the step in question is below the current one (for the frozen row)</td></tr>
+<tr><td>Q10</td><td><strong>An aggregate only grows</strong>, and <strong>a value recorded at the current step is in its aggregate</strong>, so the best value a recorder has been given at a step is never missing from, or lowered in, what it reports for it</td><td><code>quepaxa::proofs::isr::theorem_an_aggregate_never_shrinks</code>, <code>theorem_a_recorded_value_is_in_the_aggregate</code></td><td>the step recorded at is not below the current one (for the second row). Both rows are about the <strong>specification</strong>, and reach the four-integer register only through Q8’s relation</td></tr>
 </tbody>
 </table>
 </div>

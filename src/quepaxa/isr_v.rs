@@ -60,10 +60,35 @@ impl Isr {
         &&& forall|x: nat| x > h.s ==> hget(h.f, x) == 0 && hget(h.a, x) == 0
     }
 
+    /// This register stands for *some* history. What a service can know without
+    /// carrying a ghost history around: a register made by [`Isr::new`] and only ever
+    /// recorded into by [`Isr::record_now`] always does.
+    pub open spec fn standing(&self) -> bool {
+        exists|h: IsrHistory| self.related(h)
+    }
+
+    /// **Record `v` at step `s`, and answer**, for a caller that holds no ghost history.
+    ///
+    /// The register keeps standing for some history, and answers with its own current
+    /// step, first value and prior aggregate. That the history it stands for is the one
+    /// the specification produces, and that the answer is the specification's, is
+    /// [`Isr::record`]'s contract, which this calls.
+    pub fn record_now(&mut self, s: u64, v: u128) -> (reply: (u64, u128, u128))
+        requires
+            old(self).standing(),
+        ensures
+            final(self).standing(),
+            reply == (final(self).s, final(self).fc, final(self).ap),
+    {
+        let ghost h = choose|h: IsrHistory| self.related(h);
+        self.record(s, v, Ghost(h))
+    }
+
     /// A register nothing has been recorded in.
     pub fn new() -> (r: Isr)
         ensures
             r.related(isr_empty()),
+            r.standing(),
     {
         let r = Isr { s: 0, fc: 0, ac: 0, ap: 0 };
         proof {

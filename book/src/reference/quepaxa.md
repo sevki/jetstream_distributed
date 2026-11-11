@@ -5,12 +5,14 @@ and Ford, SOSP 2023) is a consensus protocol whose liveness does not rest on tim
 page is what is claimed about the part that is built, and what is not.
 
 What is built is **the paper's abstract algorithm over an ideal threshold broadcast, with
-its safety proved, and the recorder's register in constant space, verified against its
-specification.** What is **not** built is the concrete protocol that is supposed to provide
-that broadcast, so every safety row below is *conditional on the broadcast's two
-guarantees*. `src/quepaxa/model_t.rs` is the abstract model, `src/quepaxa/isr_t.rs` the
-register's specification, `src/quepaxa/isr_v.rs` the register, and
-`src/quepaxa/proofs/` the theorems.
+its safety proved; the recorder's register in constant space and the packing of a proposal,
+verified; and the concrete protocol (proposer, recorder, a Jetstream service) as plain Rust
+that is tested, not proved.** Nothing connects the concrete protocol to the abstract model
+by proof, so every safety row below is *conditional on the broadcast's two guarantees*, and
+the concrete protocol is covered only by Q12. `src/quepaxa/model_t.rs` is the abstract
+model, `src/quepaxa/isr_t.rs` the register's specification, `src/quepaxa/isr_v.rs` the
+register, `src/quepaxa/proposal_v.rs` the packing, `src/quepaxa/proofs/` the theorems and
+`src/quepaxa/service/` the concrete protocol.
 
 ## What is proved
 
@@ -41,16 +43,22 @@ The remaining rows are about the recorder's register.
 | Q9 | **The step never goes backward**, and **a step the register has left behind is frozen**: recording anything at any step leaves the first value and the aggregate of every step below the current one as they were, so a later request cannot change what an earlier reply was built from | `quepaxa::proofs::isr::theorem_the_step_never_decreases`, `theorem_a_step_left_behind_is_frozen` | the step in question is below the current one (for the frozen row) |
 | Q10 | **An aggregate only grows**, and **a value recorded at the current step is in its aggregate**, so the best value a recorder has been given at a step is never missing from, or lowered in, what it reports for it | `quepaxa::proofs::isr::theorem_an_aggregate_never_shrinks`, `theorem_a_recorded_value_is_in_the_aggregate` | the step recorded at is not below the current one (for the second row). Both rows are about the **specification**, and reach the four-integer register only through Q8's relation |
 
+The last two rows are about the concrete protocol.
+
+| ID | Claim | Evidence | Assumes |
+| --- | --- | --- | --- |
+| Q11 | **A proposal packs into one integer in which larger is better.** `pack` puts priority, proposer and value into a `u128`; comparing packed integers is comparing `(priority, proposer, value)` lexicographically, `unpack` inverts `pack`, and the leader's priority outranks every random one. This is what lets a register that only keeps a `max` aggregate proposals | `quepaxa::proposal::lemma_pack_order`, `lemma_split_is_inverse`, `lemma_the_leader_outranks` (verified) | none |
+| Q12 | **The concrete protocol decides one value per slot, in the runs tried.** Proposers run the paper's Algorithm 4 (propose, spread, decide, adopt, catch up) against recorders; the shared contract in [C1](consensus.md) holds of a `QuePaxaLog` under lost calls, crashed minorities and five proposers at once, and on a simulated network. **Tested, not proved:** no theorem connects it to Q1 to Q6, and Appendix B's argument that it provides `tcast` is not formalised | `tests/consensus_contract.rs`, `tests/quepaxa_proposer.rs`, `tests/quepaxa_turmoil.rs` | the failure model below; **a proposer index proposes one value per slot, one slot at a time**, which `Proposer` enforces and a test (`a_proposer_puts_one_value_in_a_slot`) guards, found when two values at one slot decided differently |
+
 ## What is not claimed
 
-* **That the concrete protocol provides `tcast`.** This is the claim that matters and the
-  one that is not here. The paper's concrete protocol (its Algorithm 4: proposers that
-  spread proposals to recorders, read back summaries, and catch up when a recorder is
-  ahead) is supposed to give each replica the three `tcast` outputs with the two
-  guarantees. The paper argues that in its Appendix B. Nothing here models proposers or
-  asynchronous messages, so **Q1 to Q6 say the idea is sound, not that any
-  implementation of it is.** Q8 to Q10 are what a recorder does, and they are the part
-  of that argument a recorder's behaviour supplies.
+* **That the concrete protocol provides `tcast`, by proof.** This is the claim that matters
+  and the one that is not here. The paper's concrete protocol (its Algorithm 4) is built in
+  `src/quepaxa/service/`, but it is plain Rust, and the argument in the paper's Appendix B
+  that it gives each replica the three `tcast` outputs with the two guarantees is not
+  formalised. **Q1 to Q6 say the idea is sound; Q12 says the implementation behaved in the
+  runs tried.** Q8 to Q10 are what a recorder does, and they are the part of that argument
+  a recorder's behaviour supplies.
 * **Termination, in any form but one.** The paper's liveness is that the protocol decides
   with probability one, under an adversarial scheduler, in under two rounds in
   expectation. This model has no probability. Q6 is only that a round with full
@@ -60,17 +68,20 @@ The remaining rows are about the recorder's register.
   chooses correctly. That priorities are random, drawn independently and from a large
   enough range that a tie is negligible, is what makes termination likely and is not
   modelled. Ties here are broken by the proposer's id.
-* **The leader fast path and the hedging schedule.** The designated leader's one-round-trip
-  decision, the delays that let later proposers wait, and the multi-armed-bandit choice of
-  leader are optimisations of when things happen. None of it is modelled.
-* **State machine replication.** This is one decision for one slot. The log of slots, batching,
-  pipelining and what a submitter sees are not built.
+* **The leader fast path and the hedging schedule, in the model.** The designated leader's
+  one-round-trip decision and the hedge delay exist in the concrete protocol and are
+  exercised by the tests; neither is modelled, and the multi-armed-bandit choice of leader
+  is not built.
+* **State machine replication, beyond a log of slots.** `QuePaxaLog` runs one instance per
+  slot and exposes them as a [`ReplicatedLog`](consensus.md). Batching, pipelining,
+  garbage collection of old slots (a recorder's registers are capped, not collected) and
+  state transfer are not built.
 * **The failure model beyond crashes.** Replicas crash and never return, fewer than half of
   them. A replica that crashes in the middle of a `tcast` is the same as one that crashes
   after it, because a replica heard from by only some is just a replica some majorities
   contain. Byzantine replicas, reconfiguration and recovery are out of scope.
-* **The packing of a proposal.** The register aggregates `u128` values with `max`. The
-  concrete protocol packs a proposal's priority, proposer and value into one so that the
-  larger integer is the better proposal; that packing is not here.
-* **Any service, or a consumer.** Nothing outside `src/quepaxa/` uses it, and there is no
-  Jetstream service. It is not connected to [ownership](ownership.md)'s registry.
+* **Identity beyond the connection's address.** A recorder accepts a call from an address
+  on its roster and refuses any other; the roster is an assumption, as Raft's is. Nothing
+  authenticates the address.
+* **A consumer.** Nothing but the tests uses `QuePaxaLog`. It is not connected to
+  [ownership](ownership.md)'s registry.

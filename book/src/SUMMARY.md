@@ -32,6 +32,7 @@
 - [The Raymond layer](reference/raymond.md)
 - [Raft: the same statement, bought by counting](reference/raft.md)
 - [QuePaxa: consensus without timeouts](reference/quepaxa.md)
+- [Consensus: one interface, tested of each protocol](reference/consensus.md)
 - [Actor: a journal fenced by ownership](reference/actor.md)
 - [SWIM: gossip membership](reference/swim.md)
 - [HyParView: two small views](reference/hyparview.md)

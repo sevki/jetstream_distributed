@@ -21,6 +21,11 @@ use jetstream_distributed::quepaxa::service::proposer::Config;
 use jetstream_distributed::quepaxa::service::{
     Proposer, QuePaxaLog, Recorder, RecorderNode, Reply,
 };
+use jetstream_distributed::id::Id;
+use jetstream_distributed::raft::replicated::RaftLog;
+use jetstream_distributed::raft::service::{
+    Appended, Ballot, LogEntry, MemoryLog, MemoryLogStore, Peer, RaftRpc, Standing,
+};
 use rand::RngExt as _;
 use rand::SeedableRng as _;
 
@@ -38,7 +43,17 @@ async fn propose_somewhere<L: ReplicatedLog>(
     for attempt in 0..400 {
         let who = (prefer + attempt) % replicas.len();
         match replicas[who].propose(value).await {
-            Ok(decision) => return (who, decision),
+            Ok(decision) => {
+                // 3, at the moment it matters: a decision is visible to the replica
+                // that returned it as soon as it returns, not eventually.
+                assert_eq!(
+                    replicas[who].decided(decision.slot).await,
+                    Some(decision.value),
+                    "replica {who} returned slot {} and did not know it yet",
+                    decision.slot
+                );
+                return (who, decision);
+            }
             // Not this one's to propose: try the next.
             Err(ProposeError::NotPlaced(_)) => {}
             // Could not tell. The value may even have been decided; asking again is
@@ -335,5 +350,148 @@ async fn quepaxa_obeys_the_contract_with_a_crashed_minority() {
 async fn quepaxa_obeys_the_contract_with_five_replicas_all_proposing() {
     for seed in 0..10 {
         obeys_the_contract(quepaxa_cluster(5, &[], 100, seed), 5, 3).await;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Raft
+// ---------------------------------------------------------------------------
+
+/// A Raft server in this process, reached through a link that can fail, as the member
+/// at `from`. The server's state is shared with its own `RaftLog`.
+struct RaftLink {
+    node: Peer,
+    from: IpAddr,
+    faults: Arc<Faults>,
+}
+
+impl RaftLink {
+    fn ctx(&self) -> Context {
+        Context::new(Some(RemoteAddr::IpAddr(self.from)), None)
+    }
+}
+
+impl RaftRpc for RaftLink {
+    async fn request_vote(
+        &self,
+        _ctx: Context,
+        term: u64,
+        last_term: u64,
+        last_index: u64,
+    ) -> Result<Ballot> {
+        self.faults.gate().await?;
+        self.node
+            .request_vote(self.ctx(), term, last_term, last_index)
+            .await
+    }
+
+    async fn append_entries(
+        &self,
+        _ctx: Context,
+        term: u64,
+        prefix: u64,
+        prev_term: u64,
+        entry: LogEntry,
+        leader_commit: u64,
+    ) -> Result<Appended> {
+        self.faults.gate().await?;
+        self.node
+            .append_entries(self.ctx(), term, prefix, prev_term, entry, leader_commit)
+            .await
+    }
+
+    async fn heartbeat(&self, _ctx: Context, term: u64, leader_commit: u64) -> Result<Standing> {
+        self.faults.gate().await?;
+        self.node.heartbeat(self.ctx(), term, leader_commit).await
+    }
+
+    async fn standing(&self, _ctx: Context) -> Result<Standing> {
+        self.faults.gate().await?;
+        self.node.standing(self.ctx()).await
+    }
+}
+
+/// `n` Raft servers, server 0 elected leader of its term. `crashed` servers never
+/// answer anyone. Every link has `loss` chance in a thousand of losing a call.
+async fn raft_cluster(
+    n: usize,
+    crashed: &[usize],
+    loss: u32,
+    seed: u64,
+) -> Vec<Arc<RaftLog<RaftLink>>> {
+    let roster: HashMap<IpAddr, Id> = (0..n).map(|i| (member(i), Id(i as u128))).collect();
+    let peers: Vec<Peer> = (0..n)
+        .map(|i| {
+            Peer::new(
+                roster.clone(),
+                Id(i as u128),
+                Arc::new(MemoryLog::new()),
+                Arc::new(MemoryLogStore::new()),
+            )
+            .expect("on the roster")
+        })
+        .collect();
+    let logs: Vec<Arc<RaftLog<RaftLink>>> = (0..n)
+        .map(|i| {
+            let others = (0..n)
+                .filter(|&j| j != i)
+                .map(|j| {
+                    let faults = Faults::new(seed * 1000 + (i * n + j) as u64, loss);
+                    if crashed.contains(&j) {
+                        faults.crashed.store(true, Ordering::SeqCst);
+                    }
+                    (
+                        Id(j as u128),
+                        RaftLink {
+                            node: peers[j].clone(),
+                            from: member(i),
+                            faults,
+                        },
+                    )
+                })
+                .collect();
+            Arc::new(
+                RaftLog::new(peers[i].clone(), others)
+                    .with_rpc_timeout(std::time::Duration::from_millis(20)),
+            )
+        })
+        .collect();
+    // Server 0 stands until it wins: under loss, a round of votes may not reach a majority.
+    for _ in 0..50 {
+        if logs[0].elect().await.expect("elect") {
+            return logs;
+        }
+    }
+    panic!("server 0 never won an election");
+}
+
+#[tokio::test]
+async fn raft_obeys_the_contract_when_nothing_fails() {
+    for seed in 0..5 {
+        obeys_the_contract(raft_cluster(3, &[], 0, seed).await, 3, 4).await;
+    }
+}
+
+#[tokio::test]
+async fn raft_obeys_the_contract_when_calls_are_lost() {
+    for seed in 0..15 {
+        obeys_the_contract(raft_cluster(3, &[], 150, seed).await, 3, 3).await;
+    }
+}
+
+#[tokio::test]
+async fn raft_obeys_the_contract_with_a_crashed_minority() {
+    for seed in 0..5 {
+        obeys_the_contract(raft_cluster(3, &[2], 0, seed).await, 2, 4).await;
+    }
+    for seed in 0..5 {
+        obeys_the_contract(raft_cluster(5, &[3, 4], 100, seed).await, 3, 3).await;
+    }
+}
+
+#[tokio::test]
+async fn raft_obeys_the_contract_when_most_calls_are_lost() {
+    for seed in 0..15 {
+        obeys_the_contract(raft_cluster(3, &[], 450, seed).await, 3, 3).await;
     }
 }

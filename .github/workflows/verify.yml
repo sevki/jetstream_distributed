@@ -545,6 +545,9 @@ jobs:
             --test raft_wire \
             --test raft_log \
             --test raft_store \
+            --test quepaxa_proposer \
+            --test quepaxa_turmoil \
+            --test consensus_contract \
             --test swim_membership \
             --test swim_dynamic \
             --test swim_turmoil \

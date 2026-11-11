@@ -119,7 +119,7 @@ pub enum Outcome {
 pub fn outgoing(state: &State, recorders: usize, rng: &mut impl rand::Rng) -> Vec<u128> {
     (0..recorders)
         .map(|_| {
-            if state.step % 4 == 0 && (state.step > 4 || !state.leader) {
+            if state.step.is_multiple_of(4) && (state.step > 4 || !state.leader) {
                 let mut p = unpack(state.proposal);
                 p.priority = rng.random_range(1..LEADER);
                 pack(p)

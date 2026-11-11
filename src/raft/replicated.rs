@@ -23,7 +23,7 @@
 //! * **Only the leader proposes.** `propose` on a server that does not lead returns
 //!   [`ProposeError::NotPlaced`], and a caller tries another. This is Raft's own shape
 //!   and the contract allows it.
-//! * **Entries are replicated one at a time**, as [`Consensus::append_entries`] defines
+//! * **Entries are replicated one at a time**, as [`RaftRpc::append_entries`] defines
 //!   it, with the leader backing off one entry on each refusal. Slow, and exactly the
 //!   protocol's.
 //! * **Crash-stop.** A [`Peer`] recovers its term and vote from its [`Durable`](super::service::Durable)
@@ -36,7 +36,7 @@ use std::time::Duration;
 use jetstream::prelude::futures::future::join_all;
 use jetstream::prelude::*;
 
-use super::service::{Appended, Consensus, LogEntry, Peer};
+use super::service::{Appended, LogEntry, Peer, RaftRpc};
 use crate::consensus::{Decision, ProposeError, ReplicatedLog};
 use crate::id::Id;
 
@@ -57,7 +57,7 @@ pub struct RaftLog<C> {
     next: Mutex<HashMap<Id, u64>>,
 }
 
-impl<C: Consensus + Send + Sync> RaftLog<C> {
+impl<C: RaftRpc + Send + Sync> RaftLog<C> {
     /// `peer` is this server; `others` reaches every other server.
     pub fn new(peer: Peer, others: Vec<(Id, C)>) -> Self {
         RaftLog {
@@ -220,7 +220,7 @@ fn down(e: Error) -> ProposeError {
 }
 
 #[async_trait]
-impl<C: Consensus + Send + Sync> ReplicatedLog for RaftLog<C> {
+impl<C: RaftRpc + Send + Sync> ReplicatedLog for RaftLog<C> {
     async fn propose(&self, value: u64) -> std::result::Result<Decision, ProposeError> {
         if !self.leads() {
             return Err(ProposeError::NotPlaced("not the leader".into()));

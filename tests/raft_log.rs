@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use jetstream_distributed::id::Id;
 use jetstream_distributed::raft::service::{
-    Acceptance, Appended, Ballot, Consensus, LogEntry, LogStore, MemoryLog, MemoryLogStore, Peer, Standing,
+    Acceptance, Appended, Ballot, LogEntry, LogStore, MemoryLog, MemoryLogStore, Peer, RaftRpc, Standing,
 };
 use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use jetstream::prelude::*;

@@ -15,7 +15,7 @@ use std::sync::{Arc, OnceLock};
 use jetstream::prelude::*;
 use jetstream_distributed::quepaxa::service::proposer::Config;
 use jetstream_distributed::quepaxa::service::{
-    Proposer, Recorder, RecorderNode,
+    Proposer, RecorderNode,
     recorder_protocol::{RecorderChannel, RecorderService},
 };
 use jetstream_rpc::session::{Session, SingleLaneSession};

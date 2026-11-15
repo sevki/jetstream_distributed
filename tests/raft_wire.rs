@@ -21,8 +21,8 @@ use std::sync::{Arc, OnceLock};
 
 use jetstream_distributed::id::Id;
 use jetstream_distributed::raft::service::{
-    consensus_protocol::{ConsensusChannel, ConsensusService},
-    Acceptance, Appended, Ballot, Consensus, LogEntry, MemoryLog, MemoryLogStore, Peer, Standing,
+    raftrpc_protocol::{RaftRpcChannel, RaftRpcService},
+    Acceptance, Appended, Ballot, LogEntry, MemoryLog, MemoryLogStore, Peer, RaftRpc, Standing,
 };
 use jetstream::prelude::*;
 use jetstream_rpc::session::{Session, SingleLaneSession};
@@ -61,11 +61,11 @@ macro_rules! connect {
         let stream = TcpStream::connect(($host, PORT))
             .await
             .expect("the peer is listening");
-        let $session = SingleLaneSession::<ConsensusChannel, _, _>::client_io(stream);
-        let lane = Session::<ConsensusChannel>::open_lane(&$session)
+        let $session = SingleLaneSession::<RaftRpcChannel, _, _>::client_io(stream);
+        let lane = Session::<RaftRpcChannel>::open_lane(&$session)
             .await
             .expect("the one lane is available");
-        let $channel = ConsensusChannel::new(64, Box::new(lane));
+        let $channel = RaftRpcChannel::new(64, Box::new(lane));
         // "Must be called after `new()` and before any RPC calls", per the
         // generated client.
         $channel
@@ -93,12 +93,12 @@ macro_rules! serve {
                 let peer = peer.clone();
                 tokio::spawn(async move {
                     let session =
-                        SingleLaneSession::<ConsensusChannel, _, _>::service_io(stream);
-                    let Ok(lane) = Session::<ConsensusChannel>::accept_lane(&session).await
+                        SingleLaneSession::<RaftRpcChannel, _, _>::service_io(stream);
+                    let Ok(lane) = Session::<RaftRpcChannel>::accept_lane(&session).await
                     else {
                         return;
                     };
-                    let mut service = ConsensusService { inner: peer };
+                    let mut service = RaftRpcService { inner: peer };
                     let _ = jetstream_rpc::server::run(&mut service, lane).await;
                 });
             }

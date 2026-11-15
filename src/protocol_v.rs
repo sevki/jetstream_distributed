@@ -21,9 +21,11 @@ use vstd::prelude::*;
 use crate::actor::mailbox::model::*;
 use crate::actor::model::*;
 use crate::composed::model::*;
+use crate::hyparview::model::*;
 use crate::id::Id;
 use crate::ownership::model as ownership_model;
 use crate::protocol::*;
+use crate::quepaxa::model::*;
 use crate::raft::model::*;
 use crate::raymond::model::*;
 use crate::swim::model as swim_model;
@@ -126,6 +128,34 @@ pub proof fn lemma_composed_next_agrees(pre: Composed, post: Composed)
     if composed_next(pre, post) {
         let l = choose|l: ComposedStep| #[trigger] composed_step(pre, post, l);
         assert(ComposedProtocol::step(pre, post, l));
+    }
+}
+
+pub proof fn lemma_hyparview_next_agrees(pre: HvNode, post: HvNode)
+    ensures
+        HyParViewProtocol::next(pre, post) <==> hv_next(pre, post),
+{
+    if HyParViewProtocol::next(pre, post) {
+        let l = choose|l: HvStep| #[trigger] HyParViewProtocol::step(pre, post, l);
+        assert(hv_step(pre, post, l));
+    }
+    if hv_next(pre, post) {
+        let l = choose|l: HvStep| #[trigger] hv_step(pre, post, l);
+        assert(HyParViewProtocol::step(pre, post, l));
+    }
+}
+
+pub proof fn lemma_quepaxa_next_agrees(pre: QpState, post: QpState)
+    ensures
+        QuePaxaAbstract::next(pre, post) <==> qp_next(pre, post),
+{
+    if QuePaxaAbstract::next(pre, post) {
+        let l = choose|l: QpStep| #[trigger] QuePaxaAbstract::step(pre, post, l);
+        assert(qp_step(pre, post, l));
+    }
+    if qp_next(pre, post) {
+        let l = choose|l: QpStep| #[trigger] qp_step(pre, post, l);
+        assert(QuePaxaAbstract::step(pre, post, l));
     }
 }
 

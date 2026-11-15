@@ -51,7 +51,8 @@ have been claimed but not modelled.
 
 ## How it is tied to ownership
 
-One predicate:
+One predicate, defined with the composed machine (it is about both layers, so Raymond
+imports nothing of ownership):
 
 ```text
 couples(r, s) = every node that may mutate in s holds the privilege in r

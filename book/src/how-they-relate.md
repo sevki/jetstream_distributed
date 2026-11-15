@@ -41,7 +41,7 @@ difference matters, and the rest of this page is mostly about it.
 
 | Relationship | Built? |
 | --- | --- |
-| Raymond is tied to ownership by `couples`, and the two are one machine in Composed | Yes. `composed` imports both, and the coupling is a guard, not an assumption |
+| Raymond is tied to ownership by `couples` (defined with Composed, so neither imports the other), and the two are one machine in Composed | Yes. `composed` imports both, and the coupling is a guard, not an assumption |
 | The actor's journal is fenced by ownership | Yes. `as_accept` requires the ownership layer's `can_mutate` at the epoch the host presents |
 | The mailbox sits in front of the actor | In the model, yes. `Host`, the journal service, is not behind it yet; see [the mailbox](mailbox.md) |
 | Raft buys the atomic registry | **No.** Nothing outside `src/raft/` imports Raft. The registry is a process-local record |

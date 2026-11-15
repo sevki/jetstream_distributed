@@ -48,7 +48,7 @@ jetstream_distributed/
 │   │   │   ├── command.rs  the coupling's four steps as data, and `apply`, the dispatch to the verified steps
 │   │   │   ├── coordinator.rs  both layers, and the gate that serialises them
 │   │   │   └── refusal.rs  the refusals, in the line protocol's alphabet
-│   │   └── proofs/{coupling_v.rs, epoch_v.rs, scenario_v.rs, refinement_v.rs, exec_v.rs}
+│   │   └── proofs/{coupling_v.rs, couples_v.rs, epoch_v.rs, scenario_v.rs, refinement_v.rs, exec_v.rs}
 │   ├── actor/              a distributed actor: a journal fenced by ownership
 │   │   ├── model_t.rs      envelopes, the journal, send / accept, the fold that is the state
 │   │   ├── steps_v.rs      accept, send and the behaviour as executable u64 functions

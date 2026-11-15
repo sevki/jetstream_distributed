@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-458af43b.js";
+            window.path_to_searchindex_js = "searchindex-1884bd22.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-20c669f1.js"></script>
+        <script src="toc-01df8fb4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -369,10 +369,18 @@ with?</em>, with no verdict on anyone) and is built beside it. Nothing consumes 
 nothing in the code relates it to SWIM beyond both being membership. It is one node’s
 views and handlers; the property that makes a cluster of them an overlay (symmetric
 active views) is not claimed.</p>
+<h3 id="quepaxa-unconnected-so-far"><a class="header" href="#quepaxa-unconnected-so-far">QuePaxa: unconnected, so far</a></h3>
+<p><a href="#quepaxa-consensus-without-timeouts">QuePaxa</a> is a second answer to what <a href="#raft-buying-the-atomic-registry">Raft</a> answers: agreement among
+replicas, without a leader timeout in the liveness argument. It is built beside Raft and
+nothing relates them in the code, nor does anything consume it. What is built is its
+abstract algorithm over an ideal broadcast, with safety proved, and the recorder’s register
+verified; the concrete protocol that is supposed to provide the broadcast is not, so the
+safety proof is conditional on a property nothing here derives.</p>
 <h2 id="what-is-not-related-yet"><a class="header" href="#what-is-not-related-yet">What is not related yet</a></h2>
 <p>Said plainly, because a map that implies edges that do not exist is worse than none:</p>
 <ul>
-<li><strong>Raft and ownership are not connected.</strong> Nothing runs the registry on a replicated log.</li>
+<li><strong>Raft and ownership are not connected.</strong> Nothing runs the registry on a replicated log.
+QuePaxa is not connected to ownership either.</li>
 <li><strong>Raymond and the composed services keep the global record in one process.</strong> They
 check the rules; they do not distribute them.</li>
 <li><strong><code>Host</code>, the journal service, does not sit behind the mailbox</strong>, though the mailbox
@@ -787,6 +795,63 @@ and no applied state: it proves the log, not what is applied from it.</li>
 consensus is proved, and the two do not yet touch.</p>
 <p>The Raft rows (C1 onward) are in the Reference’s
 <a href="#raft-the-same-statement-bought-by-counting">Raft section</a>.</p>
+<p>Next: <a href="#quepaxa-consensus-without-timeouts">QuePaxa</a>, which reaches the same kind of agreement without leaning on a
+timeout.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="quepaxa-consensus-without-timeouts"><a class="header" href="#quepaxa-consensus-without-timeouts">QuePaxa: consensus without timeouts</a></h1>
+<p><a href="#raft-buying-the-atomic-registry">Raft</a> gets one leader per term by counting votes, and replaces a dead leader by
+waiting for a timeout. The timeout is the weak point. Set it too short and a healthy
+leader is deposed, so progress stops while the cluster churns through elections. Set it
+too long and a dead leader costs seconds. An adversary who can slow the leader’s messages
+can keep a timeout-based protocol from deciding at all.</p>
+<p>QuePaxa (Tennage et al., SOSP 2023) is a consensus protocol with no timeout in its
+liveness argument. Its core is a randomised asynchronous algorithm in which several
+proposers may act at once and <strong>help each other instead of getting in each other’s way</strong>,
+so there is no view change to time out into. A designated leader still gets the usual
+one-round-trip decision when the network is kind. Timeouts are not what the protocol
+waits on; delays are only an optimisation for when to bother proposing.</p>
+<h2 id="the-round"><a class="header" href="#the-round">The round</a></h2>
+<p>Every round, each replica proposes its preferred value with a random priority. Replicas
+then spread proposals in three steps, each handing a replica a set built from what a
+majority told it:</p>
+<pre><code class="language-text">step 1:  P_i   the proposals i heard from some majority
+step 2:  E_i   the union of what a majority heard in step 1   "exists" for i
+step 3:  C_i   the union of what a majority learned in step 2 "common" for i
+         U_i   something every replica's C contains            "universal" for i
+</code></pre>
+<p>Each replica adopts the best proposal in its <code>C_i</code> as its preference for the next round,
+and <strong>decides</strong> if the best proposal it knows exists, <code>best(E_i)</code>, is also the best it
+knows is universal, <code>best(U_i)</code>.</p>
+<h2 id="why-it-is-safe-in-one-chain"><a class="header" href="#why-it-is-safe-in-one-chain">Why it is safe, in one chain</a></h2>
+<p>The two guarantees the broadcast gives (a replica hears from a majority, and the relayed
+set lands inside everyone’s next set) make <code>U_i ⊆ C_j ⊆ E_k</code> for every <code>i</code>, <code>j</code>, <code>k</code>. If
+<code>i</code> decides, its best proposal <code>b</code> is in <code>U_i</code>, so in every <code>C_j</code>, so in <code>E_i</code>. And <code>b</code> is
+the best of all of <code>E_i</code>, so it is the best of every <code>C_j</code>. <strong>Every replica adopts <code>b</code></strong>,
+every later round proposes only <code>b</code>’s value, and no later decision can differ. That chain
+is machine-checked: agreement, validity, and the fact that a decision is locked in
+(<a href="#what-is-proved-1">Reference</a>, Q1 to Q5).</p>
+<h2 id="what-is-built-and-what-is-not"><a class="header" href="#what-is-built-and-what-is-not">What is built, and what is not</a></h2>
+<p>Two pieces:</p>
+<ul>
+<li><strong>The abstract algorithm</strong> over an ideal broadcast, with its safety proved and a proof
+that the model is not vacuous: when every replica hears from every live replica, every
+live replica decides.</li>
+<li><strong>The recorder’s register.</strong> In the concrete protocol, recorders are passive: each keeps an
+<em>interval summary register</em> and answers proposers’ requests from it. The paper specifies
+it as if it kept its whole history, then observes four integers suffice. Both are here,
+and the four-integer one is verified to answer exactly what the history-keeping one
+answers, for any history the register stands for (Q8). A step the register has left behind never changes, and an
+aggregate never shrinks (Q9, Q10), which is what keeps a recorder’s replies from moving
+under a proposer.</li>
+</ul>
+<p><strong>Not built, and this is the claim that matters:</strong> the concrete protocol, the proposers
+that drive recorders and catch up when one is ahead. It is what is supposed to give the
+abstract algorithm its broadcast. So the safety proof here says the <em>idea</em> is sound, and
+does not say any implementation is. Also not built: termination (the paper proves it holds
+with probability one, and this crate has no probability), the leader’s fast path, the
+hedging schedule, a log of slots, and any service. Nothing uses QuePaxa, and it is not
+connected to <a href="#ownership-epochs-and-fencing">ownership</a>’s registry, which still assumes atomicity it does
+not get from any consensus.</p>
 <p>Next: <a href="#swim-membership-by-merge">SWIM</a>, which does not try to agree on anything.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="swim-membership-by-merge"><a class="header" href="#swim-membership-by-merge">SWIM: membership by merge</a></h1>
@@ -3315,6 +3380,153 @@ Safety is gone. Not because the proof is wrong, but because <code>already_voted<
 reported <code>false</code> when the model’s <code>has_voted</code> was true. <code>tests/raft_election.rs</code>
 runs that in both directions: a restarted voter that refuses the second request,
 and a forgetful one that grants it and elects two leaders.</p>
+<p><strong>The driver that was left to the caller is now written, and it is plain Rust.</strong> The wire
+trait is <code>RaftRpc</code>; <code>raft::replicated::RaftLog</code> holds a <code>Peer</code> and a handle to each other
+server and implements the crate’s one consensus interface,
+<a href="#consensus-one-interface-tested-of-each-protocol"><code>ReplicatedLog</code></a>: <code>propose</code> appends at the leader, replicates one entry at a
+time with the prefix backing off on a refusal, and returns once the commit point passes the
+slot. Every decision is still <code>Peer</code>’s; what <code>RaftLog</code> adds is the order calls are made in,
+a per-call timeout, and a heartbeat that carries the commit point, and <strong>none of that is
+proved</strong>. There is no election timer (<code>elect</code> is what one would call), and only the leader
+proposes, so <code>propose</code> elsewhere returns <code>NotPlaced</code>. The evidence is the shared contract
+(C1 in <a href="#consensus-one-interface-tested-of-each-protocol">Consensus</a>), not a theorem about Raft’s State Machine Safety, which
+remains unproved.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="quepaxa-consensus-without-timeouts-1"><a class="header" href="#quepaxa-consensus-without-timeouts-1">QuePaxa: consensus without timeouts</a></h1>
+<p><a href="#quepaxa-consensus-without-timeouts">QuePaxa</a> (Tennage, Băsescu, Kokoris-Kogias, Syta, Jovanovic, Estrada-Galiñanes
+and Ford, SOSP 2023) is a consensus protocol whose liveness does not rest on timeouts. This
+page is what is claimed about the part that is built, and what is not.</p>
+<p>What is built is <strong>the paper’s abstract algorithm over an ideal threshold broadcast, with
+its safety proved; the recorder’s register in constant space and the packing of a proposal,
+verified; and the concrete protocol (proposer, recorder, a Jetstream service) as plain Rust
+that is tested, not proved.</strong> Nothing connects the concrete protocol to the abstract model
+by proof, so every safety row below is <em>conditional on the broadcast’s two guarantees</em>, and
+the concrete protocol is covered only by Q12. <code>src/quepaxa/model_t.rs</code> is the abstract
+model, <code>src/quepaxa/isr_t.rs</code> the register’s specification, <code>src/quepaxa/isr_v.rs</code> the
+register, <code>src/quepaxa/proposal_v.rs</code> the packing, <code>src/quepaxa/proofs/</code> the theorems and
+<code>src/quepaxa/service/</code> the concrete protocol.</p>
+<h2 id="what-is-proved-1"><a class="header" href="#what-is-proved-1">What is proved</a></h2>
+<p>The rows in the first group are about the abstract algorithm. Its two assumptions are the
+two guarantees <code>tcast</code> gives (<code>quepaxa::model::round_ok</code>): every live replica hears from a
+majority of the live replicas in each of three steps, and the set relayed in <code>tcast 2</code>
+(<code>tcast 3</code>) is inside every live replica’s existent (common) set. The paper (section 4.1.1)
+states the second as: <code>B_i</code> “is the proposal set input <code>P_j</code> of some replica <code>j</code>, not
+necessarily the same as <code>i</code>, such that for all replicas <code>k</code>, <code>P_j ⊆ R_k</code>”, for each
+receiver <code>i</code>; <code>round_ok</code> asks that of every live replica’s relay. And fewer than half of
+the replicas have crashed.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ID</th><th>Claim</th><th>Theorem</th><th>Assumes</th></tr>
+</thead>
+<tbody>
+<tr><td>Q1</td><td><strong>Agreement.</strong> In every reachable state, no two replicas have decided differently. The chain <code>U_i ⊆ C_j ⊆ E_k</code> for all <code>i</code>, <code>j</code>, <code>k</code> makes a deciding replica’s best proposal the best of <em>every</em> replica’s common set, so every live replica prefers that value next, and no later round proposes another</td><td><code>quepaxa::proofs::agreement::theorem_agreement</code></td><td><code>round_ok</code> for every round; fewer than half crashed</td></tr>
+<tr><td>Q2</td><td><strong>A decision is everyone’s best common proposal.</strong> If replica <code>i</code> decides, then for every live replica <code>j</code> the best proposal of <code>C_j</code> is the one <code>i</code> decided on. The heart of Q1</td><td><code>quepaxa::proofs::agreement::lemma_a_decision_is_everyones_best_common</code></td><td><code>round_ok</code>, the invariant (so the sets are non-empty), and that <code>i</code> decides</td></tr>
+<tr><td>Q3</td><td><strong>Validity.</strong> At every point of every execution, whatever a replica has decided is a value some replica began with</td><td><code>quepaxa::proofs::agreement::theorem_validity</code></td><td>none beyond Q1’s</td></tr>
+<tr><td>Q4</td><td><strong>A decision is locked in.</strong> Once any replica has decided, every replica that has not crashed prefers the decided value, so no later round proposes another</td><td><code>quepaxa::proofs::agreement::theorem_a_decision_is_locked_in</code></td><td>none beyond Q1’s</td></tr>
+<tr><td>Q5</td><td><strong>The invariant is inductive.</strong> Every step, a crash or a round, preserves it, and the initial states satisfy it, so every reachable state does. Q1, Q3 and Q4 are consequences</td><td><code>quepaxa::proofs::agreement::lemma_step_preserves_inv</code>, <code>lemma_init_satisfies_inv</code>, <code>theorem_every_reachable_state_satisfies_the_invariant</code></td><td>none beyond Q1’s</td></tr>
+<tr><td>Q6</td><td><strong>The model is not vacuous.</strong> The initial states exist, and from any state the invariant allows there <em>exists</em> a round, the one in which every replica hears from every live replica, in which every live replica decides. The safety proof is not holding because nothing can ever decide. It is one witness: it does not show a round in which some replica does not decide, or a crash step</td><td><code>quepaxa::proofs::scenario::lemma_the_initial_states_exist</code>, <code>theorem_a_round_with_full_information_decides</code></td><td>the invariant</td></tr>
+<tr><td>Q7</td><td><strong>The abstract model is a <code>Protocol</code></strong> whose <code>next</code> is the model’s <code>qp_next</code></td><td><code>protocol_agreement::lemma_quepaxa_next_agrees</code></td><td>none</td></tr>
+</tbody>
+</table>
+</div>
+<p>The remaining rows are about the recorder’s register.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ID</th><th>Claim</th><th>Theorem</th><th>Assumes</th></tr>
+</thead>
+<tbody>
+<tr><td>Q8</td><td><strong>The constant-space register is the specified one.</strong> <code>Isr::record</code>, four integers, leaves the register standing for the history the specification (the paper’s Algorithm 2, one entry per step ever seen) would produce, and answers exactly what the specification answers, <strong>for any history the register stands for</strong>. Discarding old steps loses nothing a reply depends on</td><td><code>quepaxa::isr::Isr::record</code>, <code>Isr::new</code> (their contracts)</td><td>the register stands for the history, which <code>new</code> establishes and <code>record</code> preserves</td></tr>
+<tr><td>Q9</td><td><strong>The step never goes backward</strong>, and <strong>a step the register has left behind is frozen</strong>: recording anything at any step leaves the first value and the aggregate of every step below the current one as they were, so a later request cannot change what an earlier reply was built from</td><td><code>quepaxa::proofs::isr::theorem_the_step_never_decreases</code>, <code>theorem_a_step_left_behind_is_frozen</code></td><td>the step in question is below the current one (for the frozen row)</td></tr>
+<tr><td>Q10</td><td><strong>An aggregate only grows</strong>, and <strong>a value recorded at the current step is in its aggregate</strong>, so the best value a recorder has been given at a step is never missing from, or lowered in, what it reports for it</td><td><code>quepaxa::proofs::isr::theorem_an_aggregate_never_shrinks</code>, <code>theorem_a_recorded_value_is_in_the_aggregate</code></td><td>the step recorded at is not below the current one (for the second row). Both rows are about the <strong>specification</strong>, and reach the four-integer register only through Q8’s relation</td></tr>
+</tbody>
+</table>
+</div>
+<p>The last two rows are about the concrete protocol.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ID</th><th>Claim</th><th>Evidence</th><th>Assumes</th></tr>
+</thead>
+<tbody>
+<tr><td>Q11</td><td><strong>A proposal packs into one integer in which larger is better.</strong> <code>pack</code> puts priority, proposer and value into a <code>u128</code>; comparing packed integers is comparing <code>(priority, proposer, value)</code> lexicographically, <code>unpack</code> inverts <code>pack</code>, and the leader’s priority outranks every random one. This is what lets a register that only keeps a <code>max</code> aggregate proposals</td><td><code>quepaxa::proposal::lemma_pack_order</code>, <code>lemma_split_is_inverse</code>, <code>lemma_the_leader_outranks</code> (verified)</td><td>none</td></tr>
+<tr><td>Q12</td><td><strong>The concrete protocol decides one value per slot, in the runs tried.</strong> Proposers run the paper’s Algorithm 4 (propose, spread, decide, adopt, catch up) against recorders; the shared contract in <a href="#consensus-one-interface-tested-of-each-protocol">C1</a> holds of a <code>QuePaxaLog</code> under lost calls, crashed minorities and five proposers at once, and on a simulated network. <strong>Tested, not proved:</strong> no theorem connects it to Q1 to Q6, and Appendix B’s argument that it provides <code>tcast</code> is not formalised</td><td><code>tests/consensus_contract.rs</code>, <code>tests/quepaxa_proposer.rs</code>, <code>tests/quepaxa_turmoil.rs</code></td><td>the failure model below; <strong>a proposer index proposes one value per slot, one slot at a time</strong>, which <code>Proposer</code> enforces and a test (<code>a_proposer_puts_one_value_in_a_slot</code>) guards, found when two values at one slot decided differently</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="what-is-not-claimed-2"><a class="header" href="#what-is-not-claimed-2">What is not claimed</a></h2>
+<ul>
+<li><strong>That the concrete protocol provides <code>tcast</code>, by proof.</strong> This is the claim that matters
+and the one that is not here. The paper’s concrete protocol (its Algorithm 4) is built in
+<code>src/quepaxa/service/</code>, but it is plain Rust, and the argument in the paper’s Appendix B
+that it gives each replica the three <code>tcast</code> outputs with the two guarantees is not
+formalised. <strong>Q1 to Q6 say the idea is sound; Q12 says the implementation behaved in the
+runs tried.</strong> Q8 to Q10 are what a recorder does, and they are the part of that argument
+a recorder’s behaviour supplies.</li>
+<li><strong>Termination, in any form but one.</strong> The paper’s liveness is that the protocol decides
+with probability one, under an adversarial scheduler, in under two rounds in
+expectation. This model has no probability. Q6 is only that a round with full
+information decides, which shows the safety proof is not vacuous and is not the paper’s
+liveness theorem.</li>
+<li><strong>Priorities are the label’s data.</strong> Any assignment is a step, so every refinement
+chooses correctly. That priorities are random, drawn independently and from a large
+enough range that a tie is negligible, is what makes termination likely and is not
+modelled. Ties here are broken by the proposer’s id.</li>
+<li><strong>The leader fast path and the hedging schedule, in the model.</strong> The designated leader’s
+one-round-trip decision and the hedge delay exist in the concrete protocol and are
+exercised by the tests; neither is modelled, and the multi-armed-bandit choice of leader
+is not built.</li>
+<li><strong>State machine replication, beyond a log of slots.</strong> <code>QuePaxaLog</code> runs one instance per
+slot and exposes them as a <a href="#consensus-one-interface-tested-of-each-protocol"><code>ReplicatedLog</code></a>. Batching, pipelining,
+garbage collection of old slots (a recorder’s registers are capped, not collected) and
+state transfer are not built.</li>
+<li><strong>The failure model beyond crashes.</strong> Replicas crash and never return, fewer than half of
+them. A replica that crashes in the middle of a <code>tcast</code> is the same as one that crashes
+after it, because a replica heard from by only some is just a replica some majorities
+contain. Byzantine replicas, reconfiguration and recovery are out of scope.</li>
+<li><strong>Identity beyond the connection’s address.</strong> A recorder accepts a call from an address
+on its roster and refuses any other; the roster is an assumption, as Raft’s is. Nothing
+authenticates the address.</li>
+<li><strong>A consumer.</strong> Nothing but the tests uses <code>QuePaxaLog</code>. It is not connected to
+<a href="#ownership-the-model-and-its-claims">ownership</a>’s registry.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="consensus-one-interface-tested-of-each-protocol"><a class="header" href="#consensus-one-interface-tested-of-each-protocol">Consensus: one interface, tested of each protocol</a></h1>
+<p><a href="#raft-the-same-statement-bought-by-counting">Raft</a> and <a href="#quepaxa-consensus-without-timeouts-1">QuePaxa</a> reach agreement in unrelated ways. A consumer
+should depend on neither, so <code>src/consensus/mod.rs</code> defines <strong>one interface,
+<code>ReplicatedLog</code>: a log that every replica agrees on.</strong> <code>propose(value)</code> returns the slot
+the value was decided at, <code>decided(slot)</code> what was decided there, <code>committed()</code> how many
+slots are decided with no gaps. Both protocols implement it: <code>quepaxa::service::QuePaxaLog</code>
+and <code>raft::replicated::RaftLog</code>. Raft’s own wire trait is <code>RaftRpc</code>; it is the protocol’s
+messages and not a second consensus interface.</p>
+<p>This page says what is claimed about the interface, which is <strong>tested and not proved</strong>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>ID</th><th>Claim</th><th>Evidence</th><th>Assumes</th></tr>
+</thead>
+<tbody>
+<tr><td>C1</td><td><strong>Six properties hold of every implementation:</strong> agreement (two replicas that report a slot report the same value), validity (a decided value was proposed), a decision is visible to the replica that returned it <em>as it returns</em>, two different values never share a slot, <code>committed</code> is a prefix of decided slots, and a decision never changes</td><td><code>tests/consensus_contract.rs</code>: <code>obeys_the_contract</code>, written against the trait and run on both, with no failure, with calls lost (up to 45% for Raft), with a crashed minority and with five proposers at once</td><td>crash-stop with fewer than half failed; the in-process fault injection in the test</td></tr>
+<tr><td>C2</td><td><strong>A cluster in which nothing fails does decide</strong>, on both. Termination is <strong>not</strong> part of the contract: an implementation may refuse (<code>ProposeError</code>), and whether it eventually succeeds is each protocol’s own claim</td><td>the same tests</td><td>as C1</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="what-is-not-claimed-3"><a class="header" href="#what-is-not-claimed-3">What is not claimed</a></h2>
+<ul>
+<li><strong>No theorem.</strong> The two protocols prove different things of different models: Raft’s
+Election Safety and Log Matching are proved and its Leader Completeness and State
+Machine Safety are not; QuePaxa’s agreement is proved over an ideal broadcast. There is no
+specification both instantiate, because a shared theorem would have to hide that.</li>
+<li><strong>That the tests can catch what they do not check.</strong> A mutant of <code>RaftLog</code> that returned
+from <code>propose</code> before the entry was committed survived the contract until the
+visible-as-it-returns check was added to <code>propose_somewhere</code>; the check is now there. Other
+mutants may survive.</li>
+<li><strong>Raft’s timing.</strong> <code>RaftLog</code> gives up on a follower after a per-call timeout and has no
+election timer: <code>elect</code> is what a timeout would call, and nothing calls it. QuePaxa has no
+timeouts at all. Neither’s liveness is proved.</li>
+<li><strong>Values are <code>u64</code></strong>, a batch id or a command handle; what it means is the consumer’s.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="actor-a-journal-fenced-by-ownership"><a class="header" href="#actor-a-journal-fenced-by-ownership">Actor: a journal fenced by ownership</a></h1>
 <p>An actor in a single process is single-threaded by construction, so it never has
@@ -3601,7 +3813,7 @@ four handlers that build and prune the active view, with the model, the executab
 table and the refinement between them. <code>src/hyparview/model_t.rs</code> is the model,
 <code>src/hyparview/exec_v.rs</code> the table, and <code>src/hyparview/proofs/invariant_v.rs</code> the
 theorems.</p>
-<h2 id="what-is-proved-1"><a class="header" href="#what-is-proved-1">What is proved</a></h2>
+<h2 id="what-is-proved-2"><a class="header" href="#what-is-proved-2">What is proved</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -3617,7 +3829,7 @@ theorems.</p>
 </tbody>
 </table>
 </div>
-<h2 id="what-is-not-claimed-2"><a class="header" href="#what-is-not-claimed-2">What is not claimed</a></h2>
+<h2 id="what-is-not-claimed-4"><a class="header" href="#what-is-not-claimed-4">What is not claimed</a></h2>
 <ul>
 <li><strong>Symmetry of active views.</strong> The paper’s central property is that if <code>a</code> is in
 <code>b</code>’s active view then <code>b</code> is in <code>a</code>’s. That is a property of how <em>several</em> nodes are
@@ -3653,14 +3865,14 @@ associated <code>Config</code>, <code>State</code> and <code>Step</code>, an <co
 <code>next</code> that is “some step”. Each model implements it at the bottom of its own
 <code>model_t.rs</code>. The agreement lemmas (<code>src/protocol_v.rs</code>, verified) pin each instance
 to the model it describes.</p>
-<h2 id="what-is-proved-2"><a class="header" href="#what-is-proved-2">What is proved</a></h2>
+<h2 id="what-is-proved-3"><a class="header" href="#what-is-proved-3">What is proved</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>ID</th><th>Claim</th><th>Theorem</th><th>Assumes</th></tr>
 </thead>
 <tbody>
-<tr><td>P1</td><td><strong>Each instance’s <code>next</code> is its model’s <code>next</code></strong>, in both directions, for ownership, Raft, Raymond, SWIM, HyParView, the actor, the mailbox and the composed machine. A theorem about a model and the same theorem about its <code>Protocol</code> are the same theorem</td><td><code>protocol_agreement::lemma_ownership_next_agrees</code>, <code>lemma_raft_next_agrees</code>, <code>lemma_raymond_next_agrees</code>, <code>lemma_swim_next_agrees</code>, <code>lemma_hyparview_next_agrees</code>, <code>lemma_actor_next_agrees</code>, <code>lemma_mailbox_next_agrees</code>, <code>lemma_composed_next_agrees</code></td><td>none</td></tr>
+<tr><td>P1</td><td><strong>Each instance’s <code>next</code> is its model’s <code>next</code></strong>, in both directions, for ownership, Raft, Raymond, SWIM, HyParView, QuePaxa’s abstract algorithm, the actor, the mailbox and the composed machine. A theorem about a model and the same theorem about its <code>Protocol</code> are the same theorem</td><td><code>protocol_agreement::lemma_ownership_next_agrees</code>, <code>lemma_raft_next_agrees</code>, <code>lemma_raymond_next_agrees</code>, <code>lemma_swim_next_agrees</code>, <code>lemma_hyparview_next_agrees</code>, <code>lemma_quepaxa_next_agrees</code>, <code>lemma_actor_next_agrees</code>, <code>lemma_mailbox_next_agrees</code>, <code>lemma_composed_next_agrees</code></td><td>none</td></tr>
 <tr><td>P2</td><td><strong>The instances’ <code>init</code> is the model’s <code>init</code></strong>, at the configuration the model has (Raymond’s root; <code>()</code> elsewhere). By definition today, stated so that a later change to an instance cannot drift from the model</td><td><code>protocol_agreement::lemma_init_agrees</code></td><td>none</td></tr>
 <tr><td>P3</td><td><strong>A mailbox run in the crate’s existing sense is a run of the mailbox <code>Protocol</code></strong>, so <code>protocol::runs_of</code> and the statement the mailbox’s liveness proof is built on are the same notion</td><td><code>protocol_agreement::lemma_mailbox_run_is_a_run_of_the_protocol</code></td><td><code>mb_run(ex)</code></td></tr>
 </tbody>
@@ -3693,7 +3905,7 @@ behind one lock and calls the algorithm’s verified step functions:</p>
 </thead>
 <tbody>
 <tr><td>ownership</td><td><code>Ownership</code></td><td><code>Registry</code></td><td><code>ownership::steps</code></td><td><code>force</code> — the coordinator’s own transition</td></tr>
-<tr><td>Raft</td><td><code>Consensus</code></td><td><code>Peer</code></td><td><code>raft::steps</code></td><td>standing for election, tallying votes, taking a term</td></tr>
+<tr><td>Raft</td><td><code>RaftRpc</code></td><td><code>Peer</code></td><td><code>raft::steps</code></td><td>standing for election, tallying votes, taking a term</td></tr>
 <tr><td>SWIM</td><td><code>Membership</code></td><td><code>Node</code></td><td><code>swim::steps</code></td><td>suspecting, declaring dead, refuting</td></tr>
 <tr><td>Raymond</td><td><code>Routing</code></td><td><code>Router</code></td><td><code>raymond::steps</code></td><td>— (every method acts on the caller’s own entries)</td></tr>
 <tr><td>composed</td><td><code>Composed</code></td><td><code>Coordinator</code></td><td><code>composed::steps</code></td><td>seizing the privilege</td></tr>
@@ -4979,6 +5191,14 @@ attribute.</p>
 │   │       ├── scenario_v.rs     a run in which an election actually happens
 │   │       ├── store_v.rs        recovery is exact; a crash can only rewind
 │   │       └── wire_v.rs         cut the bytes anywhere; a record prefix comes back
+│   ├── quepaxa/            consensus without timeouts: the abstract algorithm and the recorder's register
+│   │   ├── model_t.rs      the abstract algorithm over an ideal threshold broadcast
+│   │   ├── isr_t.rs        the interval summary register as the paper specifies it (full history)
+│   │   ├── isr_v.rs        the same register in four integers, verified against it
+│   │   └── proofs/
+│   │       ├── agreement_v.rs  agreement, validity, and a decision locked in
+│   │       ├── isr_v.rs        a step left behind is frozen; an aggregate never shrinks
+│   │       └── scenario_v.rs   the model is not vacuous: a benign round decides
 │   ├── hyparview/          membership by two small views: one node, so far
 │   │   ├── model_t.rs      the views, the four handlers, the messages they send
 │   │   ├── exec_v.rs       HvTable: the views as verified code; each handler is a step of the model
@@ -5116,7 +5336,7 @@ byte-for-byte Microsoft’s at the pinned commit. See <a href="https://github.co
 </code></pre>
 <p>It reads the <code>crate::...</code> imports and fails on a <strong>cycle</strong> between modules, or when a
 <strong>standalone</strong> module (<code>ownership</code>, <code>raft</code>, <code>raymond</code>, <code>swim</code>) depends on anything but <code>id</code> and the
-modules that only describe shapes (<code>protocol</code>, <code>temporal</code>, <code>compose</code>, <code>membership</code>, <code>identity</code>). A cycle compiles, so nothing else would notice one: three went unnoticed
+modules that only describe shapes (<code>protocol</code>, <code>temporal</code>, <code>compose</code>, <code>membership</code>, <code>consensus</code>, <code>identity</code>). A cycle compiles, so nothing else would notice one: three went unnoticed
 until it was looked for. The check asserts that a few edges it knows are true are found,
 so a pattern that stops matching fails loudly and does not report “no cycle”. Making a
 standalone module depend on something is a decision, and it is made by editing the

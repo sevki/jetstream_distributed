@@ -301,6 +301,22 @@ jobs:
           fi
           echo "vendor/verified-storage matches upstream $upstream"
 
+  # The crate's module layering. A cycle between modules compiles, so nothing else
+  # stops one appearing; three had gone unnoticed (`compute`/`scheduling`, and
+  # `ownership` with `raymond` and `composed`) before this existed. It reads the
+  # `crate::...` imports and fails on a cycle, or on a standalone module (ownership,
+  # raft, swim) depending on anything but `id` and the shape modules. It needs no
+  # toolchain, only Python, so it is the cheapest job here and fails first.
+  modules:
+    name: Module layering
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No cycles, and standalone modules stay standalone
+        run: python3 -I .github/scripts/check-modules.py
+
   # The vendored KVerus skills, which `AGENTS.md` tells reviewers to follow. A
   # skill that has been quietly edited is an instruction nobody agreed to, so the
   # same rule as the storage layer applies: the tree here must be upstream's at

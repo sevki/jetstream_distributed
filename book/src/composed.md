@@ -59,6 +59,16 @@ The composed steps over both layers' records (`pass_token`, `seize_token`,
 model's steps. The coupling guards agree with the model in both directions, and a step
 a layer already proved is carried without a second proof.
 
+## It is an instance of a general composition
+
+`model_t.rs` writes this machine by hand, and it stays the model every theorem here is
+stated against. It is also an instance of the general one: a product of two protocols
+under a coupling (`compose::Product`, `compose::Coupling`), where ownership and Raymond
+are the two protocols and the guards above are the coupling. The Reference
+([P4–P8](reference/protocol.md#composition)) proves the two are the same machine and
+states what the general theorem adds. A pairing the book lists as not built would be
+written as another coupling, not as another module like this one.
+
 ## What is not claimed
 
 - **The composed service refines the crash-free executions only.** The composed model

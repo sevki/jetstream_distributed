@@ -29,7 +29,10 @@ request:  D -> B -> A -> C[token]
 token:    C -> A -> B -> D
 ```
 
-Routing and ownership are glued by one predicate:
+Routing and ownership are glued by one predicate. It is about both layers, so it is
+defined with the composed machine (`composed::model::couples`), and the Raymond
+layer imports nothing of ownership; the theorems that use it on its own are in
+`composed::proofs::couples`:
 
 ```rust
 spec fn couples(r: Raymond, s: OwnershipState) -> bool {

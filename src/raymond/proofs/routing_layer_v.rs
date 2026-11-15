@@ -1,9 +1,12 @@
 //! **Claim 7 - the Raymond routing layer.**
 //!
 //! * there is at most one valid token;
-//! * token transfer preserves ownership safety;
-//! * holder/routing changes cannot manufacture ownership;
 //! * duplicate/reordered requests cannot create a second owner.
+//!
+//! The claims that relate the token to *authority* (token transfer preserves
+//! ownership safety, routing cannot manufacture ownership, a stale holder confers
+//! none) are about both layers and live with the composed machine, in
+//! [`crate::composed::proofs::couples`]; this module imports nothing of ownership.
 //!
 //! Liveness is *not* claimed. See the book's Reference (`book/src/reference/raymond.md`).
 #![allow(unused_imports)]
@@ -12,9 +15,6 @@ use vstd::prelude::*;
 
 use crate::id::Id;
 
-use crate::ownership::fencing::*;
-use crate::ownership::model::*;
-use crate::ownership::spec::*;
 use crate::raymond::model::*;
 
 verus! {
@@ -96,29 +96,6 @@ pub proof fn lemma_token_preserving_steps_keep_holder(pre: Raymond, post: Raymon
             assert(false);
         },
     }
-}
-
-/// **Holder/routing changes cannot manufacture ownership.**
-///
-/// A routing step leaves the token where it is, therefore it leaves the
-/// coupling to the ownership layer intact: nobody gains authority by sending,
-/// forwarding, duplicating or reordering requests.
-pub proof fn theorem_routing_cannot_manufacture_ownership(
-    pre: Raymond,
-    post: Raymond,
-    s: RayStep,
-    own: OwnershipState,
-)
-    requires
-        ray_inv(pre),
-        ray_step(pre, post, s),
-        is_routing_step(s),
-        couples(pre, own),
-    ensures
-        couples(post, own),
-        forall|n: Id| #[trigger] has_token(post, n) <==> has_token(pre, n),
-{
-    lemma_routing_preserves_holder(pre, post, s);
 }
 
 /// **Duplicate and reordered requests cannot create a second owner.**
@@ -637,34 +614,6 @@ pub proof fn lemma_seize_preserves_inv(pre: Raymond, post: Raymond, from: Id, to
     assert(ray_ranked_by(post, rank));
 }
 
-/// **A stale holder confers no authority.**
-///
-/// The routing counterpart of `theorem_stale_token_confers_no_authority`, and
-/// the reason a seizure need not reach into the crashed node. `couples` is
-/// written against `has_token` - actual possession of the privilege - so a node
-/// that merely believes cannot be permitted to mutate, however firmly it
-/// believes and whatever it is doing in its critical section meanwhile.
-///
-/// This is what survives imperfect failure detection. It does not depend on the
-/// seized node being crashed, or on anything having cleared its state.
-pub proof fn theorem_stale_holder_confers_no_authority(
-    r: Raymond,
-    own: OwnershipState,
-    n: Id,
-    e: Epoch,
-)
-    requires
-        couples(r, own),
-        is_stale_holder(r, n),
-    ensures
-        !may_mutate(own, n, e),
-{
-    if may_mutate(own, n, e) {
-        assert(has_token(r, n));
-        assert(false);
-    }
-}
-
 /// **Reconciliation drops the stale belief**, and preserves the invariant.
 ///
 /// The node acts on its own state here, which is what makes this step
@@ -932,7 +881,7 @@ pub proof fn theorem_ray_exactly_one_token(r: Raymond)
 /// node it cannot reach, and this model now says so rather than hiding it by
 /// editing the absent node's state. What does *not* break in that window is
 /// ownership safety - see
-/// [`theorem_stale_holder_confers_no_authority`].
+/// [`crate::composed::proofs::couples::theorem_stale_holder_confers_no_authority`].
 pub proof fn theorem_ray_critical_section_is_exclusive(r: Raymond, n: Id, m: Id)
     requires
         ray_inv(r),
@@ -970,74 +919,6 @@ pub proof fn theorem_authorised_critical_section_is_exclusive(
         n == m,
 {
     theorem_ray_at_most_one_token(r, n, m);
-}
-
-/// **Privilege transfer preserves ownership safety.**
-///
-/// The privilege may only be passed on while the ownership layer is *not*
-/// `Owned` - that is, after the actor has been released. Under that condition
-/// the coupling survives the transfer, so afterwards still at most one node can
-/// possibly hold authority, and it is the new holder.
-pub proof fn theorem_token_transfer_preserves_ownership_safety(
-    pre: Raymond,
-    post: Raymond,
-    n: Id,
-    head: Id,
-    own: OwnershipState,
-)
-    requires
-        ray_inv(pre),
-        ray_assign_privilege(pre, post, n, head),
-        !is_owned(own),
-        couples(pre, own),
-    ensures
-        ray_inv(post),
-        couples(post, own),
-        has_token(post, head),
-        forall|m: Id| has_token(post, m) ==> m == head,
-{
-    lemma_assign_privilege_preserves_unique_token(pre, post, n, head);
-    assert forall|m: Id, e: Epoch| may_mutate(own, m, e) implies has_token(post, m) by {
-        assert(!is_owned(own));
-        assert(false);
-    }
-}
-
-/// Taking ownership while holding the privilege establishes the coupling: the
-/// only node that can mutate is exactly the privilege holder.
-pub proof fn theorem_acquire_under_token_establishes_coupling(r: Raymond, n: Id, e: Epoch)
-    requires
-        has_token(r, n),
-    ensures
-        couples(r, OwnershipState::Owned { owner: n, epoch: e }),
-{
-    assert forall|m: Id, x: Epoch|
-        may_mutate(OwnershipState::Owned { owner: n, epoch: e }, m, x) implies has_token(r, m) by {
-        assert(m == n);
-    }
-}
-
-/// **The composed safety property.** Under the coupling, two nodes permitted to
-/// mutate the actor are the same node, and that node actually holds the
-/// privilege - not merely believes it does.
-pub proof fn theorem_coupled_exclusivity(
-    r: Raymond,
-    own: OwnershipState,
-    n1: Id,
-    e1: Epoch,
-    n2: Id,
-    e2: Epoch,
-)
-    requires
-        couples(r, own),
-        may_mutate(own, n1, e1),
-        may_mutate(own, n2, e2),
-    ensures
-        n1 == n2,
-        e1 == e2,
-        has_token(r, n1),
-{
-    lemma_exclusive_owner(own, n1, e1, n2, e2);
 }
 
 } // verus!

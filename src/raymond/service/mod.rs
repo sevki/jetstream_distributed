@@ -47,9 +47,11 @@
 //!
 //! # The assumption this rests on, stated
 //!
-//! The same one the other services state: a caller is identified by
-//! [`Context::remote`] against a roster fixed at construction, and an address is
-//! not a credential.
+//! The same one the other services state, and now stated once, in
+//! [`crate::identity`]: a caller is identified by asking an
+//! [`Identity`](crate::identity::Identity), which for a [`Roster`](crate::identity::Roster)
+//! is [`Context::remote`] looked up in a table fixed at construction, and an address
+//! is not a credential.
 
 pub(crate) mod refusal;
 mod router;

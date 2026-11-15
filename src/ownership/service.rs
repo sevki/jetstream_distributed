@@ -34,8 +34,10 @@
 //! an iroh `NodeId`, and `NodeId`'s inner value is private with no accessor
 //! outside `jetstream_rpc`, so neither is usable here yet.
 //!
-//! So this service identifies a caller by [`Context::remote`] — its address —
-//! against a roster fixed at construction. **An address is not a credential.**
+//! So this service asks an [`Identity`] who is calling,
+//! and the one there is ([`Roster`](crate::identity::Roster)) looks the connection's
+//! address ([`Context::remote`]) up in a table fixed at construction. **An address
+//! is not a credential.** The assumption is stated once, in [`crate::identity`].
 //! In the simulated network it is as good as one, because turmoil assigns each
 //! host its own address and nothing can spoof it; on a real network it is worth
 //! very little. This is an explicit, documented part of the system model rather
@@ -78,19 +80,18 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write as _};
-use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::id::Id;
+use crate::identity::{Identity, IntoIdentity};
 use crate::ownership::registry::{BurnRefusal, RegistryCore, WriteOutcome};
 use crate::ownership::steps::{ExecOffer, ExecState, Refusal, may_write_step};
 use jetstream::prelude::*;
 // Not in the prelude's re-export list, and `jetstream_rpc` is not a direct
 // dependency of this crate — so it comes through the `pub extern crate` the
 // prelude publishes rather than as a top-level path.
-use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 
 /// What a poll is answered with: the three things the registry can have to say
 /// about a node's standing.
@@ -435,16 +436,16 @@ struct Inner {
 #[derive(Clone)]
 pub struct Registry {
     inner: Arc<Mutex<Inner>>,
-    /// Connection address to node number. See the module docs: this is the
-    /// stated assumption, and the first thing to replace with TLS identity.
-    roster: Arc<HashMap<IpAddr, Id>>,
+    /// Which node is calling, and which nodes there are. See the module docs: an
+    /// address is not a credential, and [`crate::identity`] is where that is stated.
+    identity: Arc<dyn Identity>,
     /// Where the epoch goes before it is used. See the module docs.
     floor: Arc<dyn EpochFloor>,
 }
 
 impl Registry {
-    /// A registry offering the actor to `first_owner`, with `roster` naming
-    /// which address is which node.
+    /// A registry offering the actor to `first_owner`, with `identity` saying
+    /// which connection is which node (a table from address to node number is one).
     ///
     /// **The starting epoch is read, not supplied.** It is one above the
     /// highest epoch `floor` has ever recorded, and that new epoch is recorded
@@ -457,16 +458,17 @@ impl Registry {
     /// a resource worth conserving: the model's are unbounded, and `u64`'s run
     /// out only after six hundred years of burning one a nanosecond.
     pub fn new(
-        roster: HashMap<IpAddr, Id>,
+        identity: impl IntoIdentity,
         first_owner: Id,
         floor: Arc<dyn EpochFloor>,
     ) -> io::Result<Self> {
+        let identity = identity.into_identity();
         // An actor held for a node that cannot connect is held for nobody, and
         // nothing later can repair it: `poll` only ever offers to `intended`.
         // The same defect `is_node` exists to stop in `force` and
         // `begin_transfer`, at the one place that was still setting `intended`
         // without asking.
-        if !roster.values().any(|&n| n == first_owner) {
+        if !identity.knows(first_owner) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("node {first_owner} is not on the roster"),
@@ -485,7 +487,7 @@ impl Registry {
                 core: RegistryCore::new(epoch, first_owner),
                 log: Vec::new(),
             })),
-            roster: Arc::new(roster),
+            identity,
             floor,
         })
     }
@@ -528,7 +530,7 @@ impl Registry {
     /// forced revoke could then hand the actor to a node that cannot take it,
     /// leaving it offered to nobody.
     fn is_node(&self, node: Id) -> bool {
-        self.roster.values().any(|&n| n == node)
+        self.identity.knows(node)
     }
 
     /// The audit log so far.
@@ -590,10 +592,7 @@ impl Registry {
     /// here — no argument claims a node — so this cannot disagree with the
     /// request the way the line protocol's connection could.
     fn caller(&self, ctx: &Context) -> Option<Id> {
-        match ctx.remote() {
-            Some(RemoteAddr::IpAddr(addr)) => self.roster.get(addr).copied(),
-            _ => None,
-        }
+        self.identity.caller(ctx)
     }
 
     /// `tr_revoke_owner`, `tr_reassign_unowned`, `tr_abort_transfer`: the

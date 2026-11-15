@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 
 use super::command::{apply, Command, Reply};
@@ -11,8 +10,8 @@ use super::Composed;
 use crate::composed::exec::ComposedError;
 use crate::ownership::service::{EpochFloor, Event as OwnershipEvent, Offer, Ownership, Registry};
 use crate::raymond::service::{Event as RoutingEvent, Router, Routing, Standing};
-use jetstream::prelude::jetstream_rpc::context::RemoteAddr;
 use crate::id::{Id, IdSet};
+use crate::identity::{Identity, IntoIdentity};
 use jetstream::prelude::*;
 
 /// What the coordinator did on its own account. The layers keep their own logs.
@@ -57,11 +56,12 @@ pub struct Coordinator {
     /// async mutex.
     gate: Arc<tokio::sync::Mutex<()>>,
     debts: Arc<Mutex<Debts>>,
-    roster: Arc<HashMap<IpAddr, Id>>,
+    /// The one identity both layers were built from.
+    identity: Arc<dyn Identity>,
 }
 
 impl Coordinator {
-    /// Build both layers from **one** roster and compose them.
+    /// Build both layers from **one** identity and compose them.
     ///
     /// The ownership actor starts offered to `first_owner`, and the privilege
     /// starts at `root` with `parent[n]` the next hop from every other node
@@ -72,19 +72,20 @@ impl Coordinator {
     /// only sound if nothing else can touch either: a caller holding the
     /// `Registry` or `Router` could route a waiter and pass the privilege while
     /// authority sat at the old owner, bypassing the gate and `pass_token_step`
-    /// both. And three rosters supplied separately can disagree about which
-    /// address is which node, so the coordinator would check one node's
+    /// both. And three identities supplied separately can disagree about which
+    /// connection is which node, so the coordinator would check one node's
     /// privilege and then grant authority to another with the same `Context`.
-    /// One roster, owned here, closes both.
+    /// One identity, built once and handed to both layers, closes both.
     pub fn new(
-        roster: HashMap<IpAddr, Id>,
+        identity: impl IntoIdentity,
         first_owner: Id,
         floor: Arc<dyn EpochFloor>,
         root: Id,
         parent: HashMap<Id, Id>,
     ) -> io::Result<Self> {
-        let registry = Registry::new(roster.clone(), first_owner, floor)?;
-        let router = Router::new(roster.clone(), root, parent)?;
+        let identity = identity.into_identity();
+        let registry = Registry::new(identity.clone(), first_owner, floor)?;
+        let router = Router::new(identity.clone(), root, parent)?;
         Ok(Coordinator {
             registry,
             router,
@@ -93,24 +94,26 @@ impl Coordinator {
                 seized: IdSet::new(),
                 log: Vec::new(),
             })),
-            roster: Arc::new(roster),
+            identity,
         })
     }
 
     /// As [`Coordinator::new`], with every other node pointing straight at
     /// `root`.
     pub fn star(
-        roster: HashMap<IpAddr, Id>,
+        identity: impl IntoIdentity,
         first_owner: Id,
         floor: Arc<dyn EpochFloor>,
         root: Id,
     ) -> io::Result<Self> {
-        let parent = roster
-            .values()
-            .filter(|&&n| n != root)
-            .map(|&n| (n, root))
+        let identity = identity.into_identity();
+        let parent = identity
+            .nodes()
+            .into_iter()
+            .filter(|&n| n != root)
+            .map(|n| (n, root))
             .collect();
-        Coordinator::new(roster, first_owner, floor, root, parent)
+        Coordinator::new(identity, first_owner, floor, root, parent)
     }
 
     /// Where the privilege actually is.
@@ -219,14 +222,9 @@ impl Coordinator {
     }
 
     fn caller(&self, ctx: &Context) -> Result<Id> {
-        match ctx.remote() {
-            Some(RemoteAddr::IpAddr(addr)) => self
-                .roster
-                .get(addr)
-                .copied()
-                .ok_or_else(|| refuse_no("unknown caller")),
-            _ => Err(refuse_no("unknown caller")),
-        }
+        self.identity
+            .caller(ctx)
+            .ok_or_else(|| refuse_no("unknown caller"))
     }
 }
 

@@ -7,7 +7,7 @@ behind one lock and calls the algorithm's verified step functions:
 | Algorithm | Trait | Implemented by | Executable steps | What the trait leaves off the wire |
 | --- | --- | --- | --- | --- |
 | ownership | `Ownership` | `Registry` | `ownership::steps` | `force` — the coordinator's own transition |
-| Raft | `Consensus` | `Peer` | `raft::steps` | standing for election, tallying votes, taking a term |
+| Raft | `RaftRpc` | `Peer` | `raft::steps` | standing for election, tallying votes, taking a term |
 | SWIM | `Membership` | `Node` | `swim::steps` | suspecting, declaring dead, refuting |
 | Raymond | `Routing` | `Router` | `raymond::steps` | — (every method acts on the caller's own entries) |
 | composed | `Composed` | `Coordinator` | `composed::steps` | seizing the privilege |

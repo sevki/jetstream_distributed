@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-6acd552d.js";
+            window.path_to_searchindex_js = "../searchindex-e254d2ec.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-65b1449c.js"></script>
+        <script src="../toc-01df8fb4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -217,7 +217,7 @@ byte-for-byte Microsoft’s at the pinned commit. See <a href="https://github.co
 </code></pre>
 <p>It reads the <code>crate::...</code> imports and fails on a <strong>cycle</strong> between modules, or when a
 <strong>standalone</strong> module (<code>ownership</code>, <code>raft</code>, <code>raymond</code>, <code>swim</code>) depends on anything but <code>id</code> and the
-modules that only describe shapes (<code>protocol</code>, <code>temporal</code>, <code>compose</code>, <code>membership</code>). A cycle compiles, so nothing else would notice one: three went unnoticed
+modules that only describe shapes (<code>protocol</code>, <code>temporal</code>, <code>compose</code>, <code>membership</code>, <code>consensus</code>). A cycle compiles, so nothing else would notice one: three went unnoticed
 until it was looked for. The check asserts that a few edges it knows are true are found,
 so a pattern that stops matching fails loudly and does not report “no cycle”. Making a
 standalone module depend on something is a decision, and it is made by editing the

@@ -55,9 +55,11 @@
 //! [`Context::remote`] against a roster fixed at construction, and an address is
 //! not a credential.
 
+mod command;
 mod coordinator;
 mod refusal;
 
+pub use command::{apply, Command, Reply};
 pub use coordinator::{Coordinator, Event};
 
 use crate::ownership::service::Offer;

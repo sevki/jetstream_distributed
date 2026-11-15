@@ -26,6 +26,13 @@
 //! * [`actor`]     — a distributed actor: a journal fenced by ownership, so one
 //!   host at a time, each message once, in order, and state that
 //!   survives a handover.
+//! * [`hyparview`] — membership by two small views (who to gossip with), not a
+//!   table of the cluster: one node, so far, with its handlers proved.
+//! * [`quepaxa`]   — consensus without timeouts: a randomised asynchronous
+//!   algorithm, its abstract form with safety proved, and a concrete protocol.
+//! * `consensus`   — not an algorithm: the one interface ([`ReplicatedLog`](consensus::ReplicatedLog))
+//!   that [`raft`] and [`quepaxa`] both implement, with the contract each is held to.
+//!   Behind the `service` feature.
 //! * [`swim`]      — gossip membership, which buys neither exclusivity nor
 //!   agreement, and promises only that disagreements resolve.
 //! * [`protocol`]  — not an algorithm: the labelled-step shape every model above
@@ -65,11 +72,16 @@
 pub mod actor;
 pub mod composed;
 pub mod compute;
+// A trait over Jetstream's `async_trait`, so it is with the services.
+#[cfg(feature = "service")]
+pub mod consensus;
 // Vivaldi coordinates need `rand` and a wire format, so they are with the services.
+pub mod hyparview;
 pub mod id;
 #[cfg(feature = "service")]
 pub mod monitoring;
 pub mod ownership;
+pub mod quepaxa;
 pub mod raft;
 pub mod raymond;
 pub mod scheduling;

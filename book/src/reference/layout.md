@@ -45,6 +45,7 @@ jetstream_distributed/
 │   │   ├── exec_v.rs       the four coupled steps over the layers' records, and the debts
 │   │   ├── service/        the two layers behind one coordinator [feature = "service"]
 │   │   │   ├── mod.rs      the Composed trait: ownership + routing + the coupling
+│   │   │   ├── command.rs  the coupling's four steps as data, and `apply`, the dispatch to the verified steps
 │   │   │   ├── coordinator.rs  both layers, and the gate that serialises them
 │   │   │   └── refusal.rs  the refusals, in the line protocol's alphabet
 │   │   └── proofs/{coupling_v.rs, epoch_v.rs, scenario_v.rs, refinement_v.rs, exec_v.rs}
@@ -98,6 +99,18 @@ jetstream_distributed/
 │   │       ├── scenario_v.rs     a run in which an election actually happens
 │   │       ├── store_v.rs        recovery is exact; a crash can only rewind
 │   │       └── wire_v.rs         cut the bytes anywhere; a record prefix comes back
+│   ├── quepaxa/            consensus without timeouts: the abstract algorithm and the recorder's register
+│   │   ├── model_t.rs      the abstract algorithm over an ideal threshold broadcast
+│   │   ├── isr_t.rs        the interval summary register as the paper specifies it (full history)
+│   │   ├── isr_v.rs        the same register in four integers, verified against it
+│   │   └── proofs/
+│   │       ├── agreement_v.rs  agreement, validity, and a decision locked in
+│   │       ├── isr_v.rs        a step left behind is frozen; an aggregate never shrinks
+│   │       └── scenario_v.rs   the model is not vacuous: a benign round decides
+│   ├── hyparview/          membership by two small views: one node, so far
+│   │   ├── model_t.rs      the views, the four handlers, the messages they send
+│   │   ├── exec_v.rs       HvTable: the views as verified code; each handler is a step of the model
+│   │   └── proofs/invariant_v.rs   the views stay bounded, disjoint, free of the node itself
 │   └── swim/               gossip membership: merge, not majority
 │       ├── model_t.rs      the record, the merge rule, one transition
 │       ├── steps_v.rs      the merge and the refutation as executable u64 functions

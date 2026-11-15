@@ -175,7 +175,8 @@ pub open spec fn is_neighbor_to(m: HvMsg, to: Id) -> bool {
 pub enum HvStep {
     /// A newcomer `new` contacted this node.
     Join { new: Id },
-    /// A walk of `new`'s join, `ttl` hops left, arrived from active peer `sender`.
+    /// A walk of `new`'s join, `ttl` hops left, arrived from `sender`. A walk from a
+    /// node that is not an active peer (a replay after it was dropped) is ignored.
     ForwardJoin { new: Id, ttl: nat, sender: Id },
     /// `peer` dropped the link.
     Disconnect { peer: Id },
@@ -224,9 +225,9 @@ pub open spec fn hv_join(pre: HvNode, post: HvNode, new: Id) -> bool {
 /// passive view when the walk has reached `prwl`.
 pub open spec fn hv_forward_join(pre: HvNode, post: HvNode, new: Id, ttl: nat, sender: Id) -> bool {
     &&& same_node(pre, post)
-    &&& pre.active.contains(sender)
-    &&& if new == pre.me {
-        // A walk that has come back to the newcomer is ignored.
+    &&& if new == pre.me || !pre.active.contains(sender) {
+        // A walk that has come back to the newcomer is ignored, and so is one from a
+        // node that is not an active peer (a replay after that peer was dropped).
         post.active == pre.active && post.passive == pre.passive && post.sent == pre.sent
     } else if ttl == 0 || pre.active.remove(sender).len() == 0 {
         exists|dropped: Option<Id>, w: Views|

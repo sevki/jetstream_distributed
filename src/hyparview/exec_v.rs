@@ -840,8 +840,11 @@ impl HvTable {
 }
 
 impl HvTable {
-    /// **A walk of a join arrives from the active peer `sender`**: the model's
+    /// **A walk of a join arrives from `sender`**: the model's
     /// [`hv_forward_join`].
+    ///
+    /// A walk from a node that is not an active peer, or one that has come back to
+    /// `new` itself, changes nothing and sends nothing.
     ///
     /// At the end of the walk (no hops left, or `sender` is the only active peer)
     /// `new` becomes an active peer and is asked to reciprocate. Before the end the
@@ -859,7 +862,6 @@ impl HvTable {
     ) -> (out: Vec<ExecMsg>)
         requires
             old(self).well_formed(),
-            old(self).views().active.contains(sender),
         ensures
             final(self).well_formed(),
             forall|sent: Set<HvMsg>|
@@ -878,7 +880,7 @@ impl HvTable {
         proof {
             lemma_len(self.active@);
         }
-        if new == me {
+        if new == me || !self.in_active(sender) {
             proof {
                 assert forall|sent: Set<HvMsg>|
                     #[trigger] hv_step(

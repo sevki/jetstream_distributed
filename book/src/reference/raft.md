@@ -605,3 +605,15 @@ Safety is gone. Not because the proof is wrong, but because `already_voted` was
 reported `false` when the model's `has_voted` was true. `tests/raft_election.rs`
 runs that in both directions: a restarted voter that refuses the second request,
 and a forgetful one that grants it and elects two leaders.
+
+**The driver that was left to the caller is now written, and it is plain Rust.** The wire
+trait is `RaftRpc`; `raft::replicated::RaftLog` holds a `Peer` and a handle to each other
+server and implements the crate's one consensus interface,
+[`ReplicatedLog`](consensus.md): `propose` appends at the leader, replicates one entry at a
+time with the prefix backing off on a refusal, and returns once the commit point passes the
+slot. Every decision is still `Peer`'s; what `RaftLog` adds is the order calls are made in,
+a per-call timeout, and a heartbeat that carries the commit point, and **none of that is
+proved**. There is no election timer (`elect` is what one would call), and only the leader
+proposes, so `propose` elsewhere returns `NotPlaced`. The evidence is the shared contract
+(C1 in [Consensus](consensus.md)), not a theorem about Raft's State Machine Safety, which
+remains unproved.

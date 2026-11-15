@@ -136,7 +136,7 @@ pub proof fn theorem_every_step_keeps_the_views_well_formed(pre: HvNode, post: H
             lemma_active_added_keeps_views_ok(me, acap, pcap, views_of(pre), w, new, dropped);
         },
         HvStep::ForwardJoin { new, ttl, sender } => {
-            if new == me {
+            if new == me || !pre.active.contains(sender) {
             } else if ttl == 0 || pre.active.remove(sender).len() == 0 {
                 let (dropped, w) = choose|dropped: Option<Id>, w: Views|
                     active_added(me, acap, pcap, views_of(pre), w, new, dropped)
